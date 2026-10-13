@@ -7,6 +7,24 @@ import { BrowserViewport } from './BrowserViewport'
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const base = { image: 'data:image/jpeg;base64,AA==', width: 1200, height: 760, label: 'Page', resizeEnabled: false }
 
+it('discards queued text after same-generation disable and scene replacement', async () => {
+  const container = document.createElement('div'); const root = createRoot(container)
+  let finish!: (value: {}) => void
+  const send = vi.fn(() => new Promise<{}>(resolve => { finish = resolve }))
+  try {
+    await act(async () => root.render(createElement(BrowserViewport, { ...base, enabled: true, generation: 2, sceneId: 'old', send, onError: vi.fn() })))
+    const field = container.querySelector('textarea')!
+    await act(async () => {
+      field.value = 'first'; field.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      field.value = 'old queued text'; field.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    await act(async () => root.render(createElement(BrowserViewport, { ...base, enabled: false, generation: 2, sceneId: 'old', send, onError: vi.fn() })))
+    await act(async () => root.render(createElement(BrowserViewport, { ...base, enabled: true, generation: 2, sceneId: 'new', send, onError: vi.fn() })))
+    await act(async () => finish({}))
+    expect(send).toHaveBeenCalledExactlyOnceWith({ kind: 'text', text: 'first', generation: 2, scene_id: 'old' })
+  } finally { await act(async () => root.unmount()) }
+})
+
 it('drops queued input after handoff and never cuts when clipboard writing fails', async () => {
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)

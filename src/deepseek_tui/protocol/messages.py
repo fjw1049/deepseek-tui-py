@@ -63,6 +63,7 @@ class ImageBlock(BaseModel):
     byte_size: int = Field(gt=0)
     detail: Literal["auto", "low", "high"] = "auto"
     crop: tuple[int, int, int, int] | None = None
+    source: dict[str, Any] | None = None
 
     @field_validator("crop")
     @classmethod

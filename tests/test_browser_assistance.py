@@ -7,7 +7,14 @@ import pytest
 
 from deepseek_tui.browser.service import BrowserAction, BrowserRun, BrowserService
 from deepseek_tui.engine.handle import EngineHandle
+from deepseek_tui.client.base import LLMClient
 from deepseek_tui.server.threads.manager import RuntimeThreadManager
+
+
+class NoSecondaryRequests(LLMClient):
+    async def stream_chat_completion(self, request):
+        raise AssertionError("Only the primary model should be called")
+        yield
 
 
 @pytest.fixture
@@ -26,6 +33,15 @@ def help_task(tmp_path):
         _internal=SimpleNamespace(client=SimpleNamespace(send=AsyncMock(return_value={}))),
     )
     run = BrowserRun("one", tmp_path / "profile", session=session, url="https://example.test")
+    async def cdp(method, params=None):
+        if method == "Page.createIsolatedWorld":
+            return {"executionContextId": 1}
+        if method == "Runtime.evaluate":
+            return {"result": {"value": {"url": run.url, "title": "Login",
+                    "text": "Login still required", "elements": [], "warnings": [],
+                    "viewport": {"width": 1200, "height": 760}, "truncated": False}}}
+        return {"frameTree": {"frame": {"id": "tab", "loaderId": "doc", "url": run.url}}}
+    session._internal.client.send.side_effect = cdp
     manager.browser_service.runs["one"] = run
     return manager, run, handle
 
@@ -47,6 +63,7 @@ async def test_takeover_continue_preserves_turn_and_requires_verification(help_t
     await manager.respond_browser_assistance("one", request["id"], "continue")
     assert not handle.pause.paused and run.owner == "agent" and run.assistance is None
     assert "NOT guaranteed" in handle.resume_context
+    assert "not permission to change methods" in handle.resume_context
     assert "Login still required" in handle.resume_context
     assert handle._op_queue.empty()
     with pytest.raises(ValueError, match="ended"):
@@ -60,6 +77,7 @@ async def test_ignore_returns_decision_to_model_without_classifying_next_request
     await manager.respond_browser_assistance("one", run.assistance["id"], "ignore")
     assert "Do not skip" in handle.resume_context
     assert "without new evidence" in handle.resume_context
+    assert "obtain explicit permission before switching" in handle.resume_context
     assert not handle.pause.paused
     # The model, not reason-string matching, decides whether new evidence warrants help.
     assert (await manager.request_browser_assistance("one", "Optional login"))["success"]
@@ -71,8 +89,10 @@ async def test_failed_observation_keeps_request_and_pause(help_task):
     await manager.request_browser_assistance("one", "Verify")
     request_id = run.assistance["id"]
     await manager.respond_browser_assistance("one", request_id, "takeover")
-    run.session.dom_tree.side_effect = ConnectionError("Disconnected")
-    with pytest.raises(ConnectionError):
+    run.session._internal.client.send.side_effect = ConnectionError("Disconnected")
+    from deepseek_tui.browser.service import BrowserActionError
+
+    with pytest.raises(BrowserActionError, match="Disconnected"):
         await manager.respond_browser_assistance("one", request_id, "continue")
     assert handle.pause.paused and run.owner == "user" and run.assistance["id"] == request_id
 
@@ -87,7 +107,9 @@ async def test_information_and_stale_cancelled_requests(help_task):
     await manager.respond_browser_assistance(
         "one", request_id, "information", "Use the public link"
     )
-    assert "Use the public link" in handle.resume_context and not handle.pause.paused
+    assert not handle.pause.paused
+    assert handle.drain_steers() == ["Use the public link"]
+    assert "Login still required" in handle.resume_context
     await manager.request_browser_assistance("one", "New obstacle")
     handle.cancel_event.set()
     with pytest.raises(ValueError, match="ended"):
@@ -155,12 +177,9 @@ async def test_engine_fences_bing_until_explicit_user_decision(help_task, tmp_pa
         return SimpleNamespace(success=True, content="Page opened", error=None)
 
     run.session.navigate = AsyncMock(side_effect=navigate)
-    run.session._internal.client.send.side_effect = lambda *args, **kwargs: {
-        "frameTree": {"frame": {"url": run.url}}
-    }
     engine = await Engine.create(
         handle=handle,
-        client=AsyncMock(),
+        client=NoSecondaryRequests(),
         working_directory=tmp_path,
         config=Config(
             features=FeatureConfig(tasks=False, subagents=False, mcp=False, automations=False)
@@ -223,4 +242,56 @@ async def test_engine_fences_bing_until_explicit_user_decision(help_task, tmp_pa
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        await engine.shutdown_session()
+
+
+async def test_information_reaches_primary_model_in_active_engine(help_task, tmp_path):
+    import json
+
+    from deepseek_tui.config.models import Config, FeatureConfig
+    from deepseek_tui.engine.orchestrator import Engine
+    from deepseek_tui.engine.turn import TurnResult
+    from deepseek_tui.protocol.messages import Message
+    from deepseek_tui.protocol.responses import ToolCall
+
+    manager, run, handle = help_task
+    requests = []
+
+    engine = await Engine.create(handle=handle, client=NoSecondaryRequests(), working_directory=tmp_path,
+        config=Config(features=FeatureConfig(
+            tasks=False, subagents=False, mcp=False, automations=False)), start_mcp=False)
+    engine.tool_context.metadata.update(browser_service=manager.browser_service,
+                                        runtime_thread_id="one")
+    engine._handle_subagent_turn_handoff = AsyncMock(return_value=False)
+    engine._handle_shell_process_turn_handoff = AsyncMock(return_value=False)
+    calls = iter([
+        TurnResult(assistant_message=None, tool_calls=[ToolCall(
+            id="help", name="browser_use", arguments={"action": "request_assistance"})]),
+        TurnResult(assistant_message=None, tool_calls=[ToolCall(
+            id="read", name="browser_use", arguments={"action": "observe"})]),
+        TurnResult(assistant_message=Message.assistant("川沙测试店评分4.8。")),
+    ])
+
+    async def primary(request, *args, **kwargs):
+        requests.append(request)
+        return next(calls)
+
+    async def execute(tool_calls, model):
+        if tool_calls[0].id == "help":
+            await manager.request_browser_assistance("one", "请提供地区")
+            await manager.respond_browser_assistance(
+                "one", run.assistance["id"], "information", "我在川沙")
+            return [Message.tool_result("help", '{"success":true}')]
+        return [Message.tool_result("read", json.dumps({
+            "receipt": {"action_id": "read1", "execution": "executed"},
+            "observation": {"observation_id": "o1", "text": "川沙测试店评分4.8"}}))]
+
+    engine.turn_loop.run = primary
+    engine._execute_tool_calls = execute
+    try:
+        result = await engine._run_conversation(
+            [Message.user("用浏览器推荐附近店")], "test", "sys", None)
+        assert result.assistant_message.text_content() == "川沙测试店评分4.8。"
+        assert any("我在川沙" in m.text_content() for m in requests[-1].messages)
+    finally:
         await engine.shutdown_session()

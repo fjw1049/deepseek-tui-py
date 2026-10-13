@@ -1,0 +1,436 @@
+"""Scoped Workbench capture using Octop's validated recording transport and store."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import uuid
+from contextlib import suppress
+from datetime import datetime, timezone
+from pathlib import Path
+
+from octop_browser.cdp.client import CDPClient
+from octop_browser.record.models import (
+    PrivacySettings,
+    RecordingManifest,
+    RecordingTarget,
+    SemanticStep,
+)
+from octop_browser.record.privacy import redact_url
+from octop_browser.record.recorder import RecordSession
+from octop_browser.record.semantic import SemanticProcessor
+
+from deepseek_tui.browser.frames import FrameContext, discover_frames
+from deepseek_tui.browser.observation import (
+    ACCESSIBLE_NAME,
+    CANONICAL_ROLE,
+    READ_TEXT,
+    SCOPE_CONTEXT,
+    VISIBLE,
+    document_identity,
+    evaluate,
+)
+
+
+class ScopedSemanticProcessor(SemanticProcessor):
+    def _filter_events(self, events):
+        useful = {id(event) for event in super()._filter_events(events)}
+        return [
+            event for event in events if id(event) in useful or event.get("kind") == "native_dialog"
+        ]
+
+    def _build_steps(self, events, start_url):
+        # Octop compares IDs/names across trees. Compile contiguous scopes separately
+        # so a shadow input cannot consume a same-named input in the parent page.
+        blocks, block, scope = [], [], None
+        for original in events:
+            event = dict(original)
+            target = event.get("target") or {}
+            if event.get("kind") == "native_dialog":
+                if block:
+                    blocks.append(block)
+                blocks.append([event])
+                block, scope = [], None
+                continue
+            if target:
+                current = (
+                    event.get("targetId"),
+                    json.dumps(target.get("framePath") or [], sort_keys=True),
+                    tuple(target.get("shadowPath") or []),
+                    target.get("frameUrl"),
+                    json.dumps(target.get("scope"), sort_keys=True),
+                )
+                if block and current != scope:
+                    blocks.append(block)
+                    block = []
+                scope = current
+            if event.get("redacted") and event.get("kind") in {"input", "change"}:
+                # Masked values are all equal; equality cannot prove edits are duplicates.
+                event["value"] = "{{recorded_input_" + str(event["seq"]) + "}}"
+            block.append(event)
+        if block:
+            blocks.append(block)
+        steps, aliases, active_tab = [], {}, None
+        for index, block in enumerate(blocks):
+            tab = next((e.get("targetId") for e in block if e.get("targetId")), None)
+            if tab and tab != active_tab:
+                if tab not in aliases:
+                    alias = "main" if not aliases else "tab_" + str(len(aliases))
+                    aliases[tab] = alias
+                    if steps:
+                        url = next(
+                            (
+                                e.get("page", {}).get("url")
+                                for e in block
+                                if e.get("page", {}).get("url")
+                            ),
+                            "",
+                        )
+                        steps.append(
+                            SemanticStep(
+                                id="pending",
+                                kind="new_tab",
+                                url=url,
+                                target={"tabAlias": alias},
+                                description="Open recorded task tab",
+                            )
+                        )
+                elif steps:
+                    steps.append(
+                        SemanticStep(
+                            id="pending",
+                            kind="switch_tab",
+                            target={"tabAlias": aliases[tab]},
+                            description="Return to recorded task tab",
+                        )
+                    )
+                active_tab = tab
+            compiled = super()._build_steps(block, start_url)
+            for event in block:
+                if event.get("kind") == "native_dialog":
+                    compiled.append(
+                        SemanticStep(
+                            id="pending",
+                            kind="handle_dialog",
+                            value="{{dialog_answer_" + str(event.get("seq", 0)) + "}}"
+                            if event.get("value")
+                            else "",
+                            target={"accept": event["accept"]},
+                            description="Answer the recorded native dialog",
+                        )
+                    )
+            frame_url = next(
+                (
+                    (e.get("target") or {}).get("frameUrl")
+                    for e in block
+                    if (e.get("target") or {}).get("frameUrl")
+                ),
+                None,
+            )
+            for step in compiled:
+                if tab:
+                    step.target = {**(step.target or {}), "tabAlias": aliases[tab]}
+                original = next(
+                    (
+                        e.get("target")
+                        for e in block
+                        if e.get("target")
+                        and (
+                            e["target"].get("selectorCandidates")
+                            == (step.target or {}).get("selectorCandidates")
+                            or e["target"].get("id")
+                            and e["target"].get("id") == (step.target or {}).get("id")
+                        )
+                    ),
+                    None,
+                )
+                if original:
+                    for key in ("framePath", "shadowPath", "scope"):
+                        if key in original:
+                            step.target[key] = original[key]
+                    if original.get("type") == "file" and step.kind == "fill":
+                        step.kind = "upload"
+                if frame_url and (step.target or {}).get("framePath"):
+                    step.target["frameUrl"] = frame_url
+            if index and compiled and compiled[0].kind == "open":
+                compiled.pop(0)
+            compiled = [step for step in compiled if step.kind != "new_tab"]
+            steps.extend(compiled)
+        for index, step in enumerate(steps, 1):
+            step.id = f"step_{index:03d}"
+        return steps
+
+    def _infer_variables(self, steps):
+        steps, inputs = super()._infer_variables(steps)
+        known = {item["name"] for item in inputs}
+        for step in steps:
+            if step.kind not in {"upload", "handle_dialog"}:
+                continue
+            for name in re.findall(r"\{\{([^{}]+)\}\}", step.value or ""):
+                if name not in known:
+                    inputs.append(
+                        {
+                            "name": name,
+                            "required": True,
+                            "sensitive": True,
+                            "kind": "files" if step.kind == "upload" else "text",
+                            "description": "JSON list of explicit file paths"
+                            if step.kind == "upload"
+                            else "Native prompt answer",
+                        }
+                    )
+                    known.add(name)
+        return steps, inputs
+
+
+class WorkbenchRecordSession(RecordSession):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.scripts = {}
+        self.frames = {}
+        self.frame_changed = asyncio.Event()
+        self.frame_lock = asyncio.Lock()
+        self.capture_warnings = set()
+
+    def _append(self, event):
+        event = dict(event)
+        if event.get("kind") == "capture_warning":
+            self.capture_warnings.add(event.get("error", "Incomplete browser capture"))
+        if (event.get("target") or {}).get("frameUrl"):
+            event["target"] = {
+                **event["target"],
+                "frameUrl": redact_url(event["target"]["frameUrl"], self.manifest.privacy),
+            }
+        super()._append(event)
+
+    def _on_binding_called(self, params):
+        if (
+            self.active
+            and params.get("name") == self.binding_name
+            and len(str(params.get("payload", "")).encode("utf-8"))
+            > self.rr_settings.max_event_bytes
+        ):
+            self._warn("Recording event exceeded the capture size limit")
+            return
+        try:
+            super()._on_binding_called(params)
+        except Exception:
+            with suppress(Exception):
+                self._warn("Recording event could not be stored")
+
+    def _rate_limit_ok(self):
+        allowed = super()._rate_limit_ok()
+        if not allowed:
+            self._warn("Recording event rate exceeded the capture limit")
+        return allowed
+
+    def _warn(self, message):
+        if message not in self.capture_warnings:
+            self.capture_warnings.add(message)
+            self._append({"kind": "capture_warning", "error": message})
+
+    def _recorder_source(self, target_id=None, *, frame_path=None, page=None):
+        config = {
+            "recordingId": self.manifest.recording_id,
+            "bindingName": self.binding_name,
+            "nonce": self.nonce,
+            "targetId": target_id or "",
+            "framePath": frame_path or [],
+            "page": page,
+        }
+        source = Path(__file__).with_suffix(".js").read_text()
+        source = source.replace("__VISIBLE__", VISIBLE).replace("__READ_TEXT__", READ_TEXT)
+        source = source.replace("__NAME__", ACCESSIBLE_NAME).replace("__ROLE__", CANONICAL_ROLE)
+        source = source.replace("__SCOPE_CONTEXT__", SCOPE_CONTEXT)
+        return "globalThis.__HBR_RECORDER_CONFIG__=" + json.dumps(config) + ";\n" + source
+
+    async def _install_on_client(self, client, target_id):
+        client.on("Runtime.bindingCalled", self._on_binding_called)
+        client.on("Page.frameNavigated", lambda params: self._frame_navigated(params, target_id))
+        client.on("Page.frameAttached", lambda params: self.frame_changed.set())
+        for domain in ("Runtime", "Page", "DOM"):
+            await client.enable_domain(domain)
+        await client.send("Runtime.addBinding", {"name": self.binding_name})
+        source = self._recorder_source(target_id)
+        script = await client.send("Page.addScriptToEvaluateOnNewDocument", {"source": source})
+        self.scripts[id(client)] = script["identifier"]
+        await evaluate(client, "(()=>{" + source + ";return true})()")
+
+    def _frame_navigated(self, params, target_id):
+        self.frame_changed.set()
+        if not params.get("frame", {}).get("parentId"):
+            self._on_frame_navigated(params, target_id)
+
+    async def start(self):
+        await super().start()
+        await self._sync_frames()
+
+    async def _sync_frames(self):
+        async with self.frame_lock:
+            await self._sync_frames_locked()
+
+    async def _sync_frames_locked(self):
+        alive = set()
+        for target_id, client in list(self._clients.items()):
+            frames = await discover_frames(client)
+            page = await evaluate(client, "({url:location.href,title:document.title})")
+            for frame in frames[1:]:
+                key = (target_id, frame["id"])
+                alive.add(key)
+                existing = self.frames.get(key)
+                if existing:
+                    context, identity = existing
+                    try:
+                        if await document_identity(context) == identity:
+                            config = json.dumps(
+                                {"page": page, "framePath": await context.owner_path()}
+                            )
+                            refreshed = await evaluate(
+                                context,
+                                "(()=>{const r=globalThis.__deepseekRecorder;"
+                                "if(!r)return false;Object.assign(r.config,"
+                                + config
+                                + ");r.refresh();return true})()",
+                            )
+                            if refreshed is True:
+                                continue
+                    except Exception:
+                        pass
+                    await context.close()
+                    self.frames.pop(key, None)
+                context = await FrameContext.create(client, frame["id"])
+                try:
+                    path = await context.owner_path()
+                    await context._send("Runtime.enable")
+                    if context.session_id:
+                        context.on("Runtime.bindingCalled", self._on_binding_called)
+                    await context._send(
+                        "Runtime.addBinding",
+                        {"name": self.binding_name, "executionContextId": context.context_id},
+                    )
+                    source = self._recorder_source(target_id, frame_path=path, page=page)
+                    await evaluate(context, "(()=>{" + source + ";return true})()")
+                    self.frames[key] = context, await document_identity(context)
+                except BaseException:
+                    await context.close()
+                    raise
+        for key in self.frames.keys() - alive:
+            context, _ = self.frames.pop(key)
+            await context.close()
+
+    async def _poll_targets(self):
+        while self.active:
+            try:
+                await self._attach_known_targets()
+                alive = {str(t.get("id") or "") for t in await self._target_infos()}
+                for target_id in self._clients.keys() - alive:
+                    client = self._clients.pop(target_id)
+                    self._client_target_ids.pop(id(client), None)
+                    await client.close()
+                await self._sync_frames()
+            except Exception as exc:
+                self._warn(str(exc))
+            try:
+                await asyncio.wait_for(self.frame_changed.wait(), timeout=0.5)
+            except TimeoutError:
+                pass
+            self.frame_changed.clear()
+
+    async def _dispose(self):
+        if self._poll_task:
+            self._poll_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await self._poll_task
+            self._poll_task = None
+        clients = list({id(c): c for c in [self.client, *self._clients.values()]}.values())
+        for client in [*clients, *(c for c, _ in self.frames.values())]:
+            if id(client) not in self.scripts and not any(
+                client is c for c, _ in self.frames.values()
+            ):
+                continue
+            try:
+                flushed = await evaluate(
+                    client,
+                    "(()=>{const r=globalThis.__deepseekRecorder;"
+                    "if(!r || r.config.recordingId!=="
+                    + json.dumps(self.manifest.recording_id)
+                    + ")return false;r.dispose();return true})()",
+                )
+                if self.active and flushed is not True:
+                    self._warn("Recording stopped before pending input could be confirmed")
+                # A CDP response after synchronous binding emission is our transport drain barrier.
+                await evaluate(client, "true")
+            except Exception:
+                if self.active:
+                    # Keep the evidence and warning even when a page/connection disappears.
+                    with suppress(Exception):
+                        self._warn("Recording stopped before pending input could be confirmed")
+        for client in clients:
+            script = self.scripts.get(id(client))
+            with suppress(Exception):
+                if script:
+                    await client.send(
+                        "Page.removeScriptToEvaluateOnNewDocument", {"identifier": script}
+                    )
+            with suppress(Exception):
+                await client.send("Runtime.removeBinding", {"name": self.binding_name})
+
+    async def stop(self, **kwargs):
+        await self._dispose()
+        return await super().stop(**kwargs)
+
+    async def close(self):
+        await self._dispose()
+        for context, _ in self.frames.values():
+            await context.close()
+        self.frames.clear()
+        await super().close()
+
+
+async def create_recording(run, store):
+    info = await evaluate(
+        run.session._internal.client, "({url:location.href,title:document.title})"
+    )
+    target = (await run.session._internal.client.send("Target.getTargetInfo"))["targetInfo"][
+        "targetId"
+    ]
+    profile = run.profiles.get_or_create("workbench")
+    client = CDPClient(timeout=run.settings.cdp_timeout)
+    manifest = RecordingManifest(
+        recordingId="rec_" + uuid.uuid4().hex,
+        createdAt=datetime.now(timezone.utc).isoformat(),
+        profile="workbench",
+        target=RecordingTarget(
+            target_id=target, start_url=redact_url(info["url"]), title=info["title"]
+        ),
+        privacy=PrivacySettings(input_policy="mask-all"),
+    )
+    session = WorkbenchRecordSession(
+        client,
+        store,
+        manifest,
+        cdp_host=run.settings.cdp_host,
+        cdp_port=profile.cdp_port,
+        initial_target_id=target,
+    )
+    try:
+        await client.connect(
+            f"ws://{run.settings.cdp_host}:{profile.cdp_port}/devtools/page/{target}"
+        )
+        directory = store.create(manifest)
+        await session.start()
+    except BaseException:
+        manifest.status = "failed"
+        manifest.ended_at = datetime.now(timezone.utc).isoformat()
+        with suppress(Exception):
+            store.write_manifest(manifest)
+        await session.close()
+        raise
+    return session, {
+        "ok": True,
+        "recordingId": manifest.recording_id,
+        "store": str(directory),
+        "startUrl": manifest.target.start_url,
+        "name": "",
+    }

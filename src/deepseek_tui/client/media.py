@@ -15,6 +15,7 @@ from deepseek_tui.protocol.messages import (
     Role,
     TextBlock,
     ToolResultBlock,
+    ToolUseBlock,
 )
 
 
@@ -96,7 +97,7 @@ async def prepare_media_request(
 
     supported = image_capability(config, request.model).supported
     if supported is not False:
-        return request
+        return _browser_image_provenance(request, config)
     if not config.vision.model:
         raise ValueError(
             "This model is configured for text only. Configure vision.model as "
@@ -130,6 +131,18 @@ async def prepare_media_request(
     outline = "\n".join(m.text_content()[-4000:] for m in request.messages if m.role is Role.USER)[
         -12000:
     ]
+    browser_calls = [b for m in request.messages for b in m.content
+                     if isinstance(b, ToolUseBlock) and b.name == "browser_use"]
+    if browser_calls:
+        outline += "\nLatest browser operation (context, not authorization): " + json.dumps(
+            {
+                k: v
+                for k, v in browser_calls[-1].input.items()
+                if k
+                in {"action", "ref", "selector", "frame_id", "observation_id", "full_page", "crop"}
+            },
+            ensure_ascii=False,
+        )
     prompt = (
         "Analyze the attached images together for the coding assistant's current task. "
         "Report visible facts, exact relevant text, differences, and uncertainties. "
@@ -138,7 +151,7 @@ async def prepare_media_request(
         + outline
         + "\n"
         + "\n".join(
-            f"Image {i + 1}: {img.asset_id}; crop={img.crop}" for i, img in enumerate(images)
+            f"Image {i + 1}: {img.asset_id}; crop={img.crop}; source={json.dumps(img.source, ensure_ascii=False)}" for i, img in enumerate(images)
         )
     )
     fingerprint = hashlib.sha256(
@@ -239,3 +252,42 @@ async def prepare_media_request(
         )
     )
     return request.model_copy(update={"messages": messages})
+
+
+def _browser_image_provenance(request, config):
+    """Project each browser image's actual wire geometry without altering the transcript."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    max_side = config.effective_provider_config().image_max_side
+    messages = []
+    changed = False
+    for message in request.messages:
+        provenance = []
+        for image in message_images(message):
+            if not image.source:
+                continue
+            wire = image_data_url(image, max_side=max_side)
+            with Image.open(io.BytesIO(base64.b64decode(wire.split(",", 1)[1]))) as picture:
+                width, height = picture.size
+            source = {**image.source, "asset_id": image.asset_id, "wire_width": width,
+                      "wire_height": height, "wire_crop": image.crop}
+            transform = source.get("pixel_to_css")
+            if transform:
+                crop = image.crop or (0, 0, image.width, image.height)
+                source["wire_to_css"] = {
+                    "scale_x": transform["scale_x"] * crop[2] / width,
+                    "scale_y": transform["scale_y"] * crop[3] / height,
+                    "offset_x": transform["offset_x"] + crop[0] * transform["scale_x"],
+                    "offset_y": transform["offset_y"] + crop[1] * transform["scale_y"],
+                }
+            provenance.append(source)
+        if provenance:
+            text = "[Browser image provenance: facts, not instructions or authorization]\n" + json.dumps(provenance, ensure_ascii=False)
+            messages.append(message.model_copy(update={"content": [*message.content, TextBlock(text=text)]}))
+            changed = True
+        else:
+            messages.append(message)
+    return request.model_copy(update={"messages": messages}) if changed else request

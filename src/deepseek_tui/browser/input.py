@@ -1,5 +1,6 @@
 """Validated direct input from the shared browser viewport (never an agent tool)."""
 
+import asyncio
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -8,7 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class BrowserInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     generation: int = Field(ge=0)
-    kind: Literal["mouse", "wheel", "key", "text", "resize", "copy", "cut", "pick", "devtools"]
+    scene_id: str | None = Field(default=None, min_length=1, max_length=200)
+    kind: Literal["mouse", "wheel", "key", "text", "resize", "copy", "cut", "pick", "devtools", "release"]
     event: Literal["mousePressed", "mouseReleased", "mouseMoved", "keyDown", "keyUp"] | None = None
     x: float = Field(default=0, ge=0, lt=2400)
     y: float = Field(default=0, ge=0, lt=1600)
@@ -38,8 +40,77 @@ class BrowserInput(BaseModel):
         return self
 
 
-async def dispatch_input(run, body: BrowserInput) -> dict:
-    client = run.session._internal.client
+def key_event(chord: str, generation: int = 0) -> BrowserInput:
+    # A trailing '+' is the key itself, as in '+' or 'Ctrl++'.
+    if chord.endswith("+"):
+        parts = (chord[:-2].split("+") if len(chord) > 1 else []) + ["+"]
+    else:
+        parts = chord.split("+")
+    modifiers = 0
+    flags = {"ctrl": 2, "control": 2, "alt": 1, "option": 1,
+             "shift": 8, "meta": 4, "cmd": 4, "command": 4}
+    for part in parts[:-1]:
+        if part.lower() not in flags:
+            raise ValueError(f"Unsupported key modifier: {part}")
+        modifiers |= flags[part.lower()]
+    key = parts[-1]
+    named = {"Enter": 13, "Tab": 9, "Escape": 27, "Backspace": 8, "Delete": 46,
+             "ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40,
+             "Home": 36, "End": 35, "PageUp": 33, "PageDown": 34, "Space": 32}
+    punctuation = {
+        "`": ("Backquote", 192, "~"), "-": ("Minus", 189, "_"),
+        "=": ("Equal", 187, "+"), "[": ("BracketLeft", 219, "{"),
+        "]": ("BracketRight", 221, "}"), "\\": ("Backslash", 220, "|"),
+        ";": ("Semicolon", 186, ":"), "'": ("Quote", 222, '"'),
+        ",": ("Comma", 188, "<"), ".": ("Period", 190, ">"),
+        "/": ("Slash", 191, "?"),
+    }
+    digits = dict(zip("1234567890", "!@#$%^&*()", strict=True))
+    if len(key) == 1 and key.isascii() and key.isalnum():
+        code = ("Key" + key.upper()) if key.isalpha() else "Digit" + key
+        key_code = ord(key.upper())
+        if modifiers & 8:
+            key = key.upper() if key.isalpha() else digits[key]
+        elif key.isupper() and not modifiers & 7:
+            modifiers |= 8
+    elif key in punctuation or key in digits.values() or any(
+        key == entry[2] for entry in punctuation.values()
+    ):
+        if key in digits.values():
+            unmodified = next(k for k, v in digits.items() if v == key)
+            code, key_code = "Digit" + unmodified, ord(unmodified)
+            modifiers |= 8
+        else:
+            unmodified = next(k for k, v in punctuation.items() if key in {k, v[2]})
+            code, key_code, shifted = punctuation[unmodified]
+            if key == shifted:
+                modifiers |= 8
+            if modifiers & 8:
+                key = shifted
+    elif key in named:
+        code, key_code = key, named[key]
+        if key == "Space":
+            key = " "
+    elif key.startswith("F") and key[1:].isdigit() and 1 <= int(key[1:]) <= 12:
+        code, key_code = key, 111 + int(key[1:])
+    else:
+        raise ValueError(f"Unsupported keyboard key: {key}")
+    return BrowserInput(generation=generation, kind="key", event="keyDown",
+                        key=key, code=code, key_code=key_code, modifiers=modifiers,
+                        text=key if len(key) == 1 and not modifiers & 7 else "")
+
+
+async def press_key(run, chord: str, *, client=None) -> None:
+    event = key_event(chord, run.generation)
+    try:
+        await dispatch_input(run, event, client=client)
+    finally:
+        await asyncio.shield(asyncio.wait_for(dispatch_input(run, event.model_copy(
+            update={"event": "keyUp", "text": ""}), client=client), 1))
+
+
+async def dispatch_input(run, body: BrowserInput, *, client=None) -> dict:
+    client = client or run.session._internal.client
     if body.kind == "devtools":
         target = await client.send("Target.getTargetInfo", {})
         target_id = target["targetInfo"]["targetId"]
@@ -78,12 +149,16 @@ async def dispatch_input(run, body: BrowserInput) -> dict:
             "windowsVirtualKeyCode": body.key_code,
             "modifiers": body.modifiers,
         }
-        if body.event == "keyDown" and body.key == "Enter":
+        if body.event == "keyDown" and body.text:
+            params.update(type="keyDown", text=body.text)
+        elif body.event == "keyDown" and body.key == "Enter":
             params.update(type="keyDown", text="\r", unmodifiedText="\r")
-        if body.event == "keyDown" and body.modifiers & 6:
-            command = {"a": "selectAll", "z": "redo" if body.modifiers & 8 else "undo"}.get(
-                body.key.lower()
-            )
+        if body.event == "keyDown" and body.modifiers & 7 in {2, 4}:
+            command = None
+            if body.key.lower() == "a" and not body.modifiers & 8:
+                command = "selectAll"
+            elif body.key.lower() == "z":
+                command = "redo" if body.modifiers & 8 else "undo"
             if command:
                 params["commands"] = [command]
         await client.send(

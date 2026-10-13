@@ -198,7 +198,8 @@ async def test_rewind_resyncs_warm_engine_session(runtime_app) -> None:
             synced.append(list(messages))
 
     manager._active[thread_id] = SimpleNamespace(
-        engine=FakeEngine(), active_turn=None
+        engine=FakeEngine(), active_turn=None,
+        handle=SimpleNamespace(resume_context=None),
     )
     try:
         await manager.rewind_thread(thread_id, before_item_id="item_u2")

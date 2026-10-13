@@ -914,10 +914,9 @@ class ToolExecutionMixin:
         if fp_name == "browser_use":
             browser = self.tool_context.metadata.get("browser_service")
             thread_id = str(self.tool_context.metadata.get("runtime_thread_id", ""))
-            fp_args = {
-                "arguments": fp_args,
-                "scope": browser.approval_scope(thread_id) if browser else "unavailable",
-            }
+            task_id = self.tool_context.metadata.get("goal_turn_id") or self.tool_context.metadata.get("turn_latency_turn_id")
+            fp_args = browser.approval_fingerprint(thread_id, fp_args, task_id) if browser and hasattr(browser, "approval_fingerprint") else {
+                "arguments": fp_args, "scope": browser.approval_scope(thread_id) if browser else "unavailable"}
         cache_key = build_approval_key(
             fp_name, fp_args, working_directory=self.tool_context.working_directory
         )

@@ -55,6 +55,7 @@ class ReadFileTool(ToolSpec):
             "properties": {
                 "crop": {
                     "type": "array",
+                    "description": "Image region [x, y, width, height] in oriented original pixels; crop is evidence, not current browser coordinates.",
                     "items": {"type": "integer"},
                     "minItems": 4,
                     "maxItems": 4,

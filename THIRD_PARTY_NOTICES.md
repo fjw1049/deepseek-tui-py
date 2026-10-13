@@ -5,6 +5,10 @@ The browser integration depends on octop-browser 1.0.0 (MIT, Copyright
 src/deepseek_tui/browser/service.py are adapted from Octop's
 src/octop/api/routers/browser/{harness,stream}.py.
 
+Scoped workflow recording in src/deepseek_tui/browser/recording.py wraps
+octop-browser's RecordSession and SemanticProcessor. Workbench event capture
+in recording.js uses the same recording event protocol.
+
 Octop source: https://github.com/TencentCloud/Octop
 
 MIT License

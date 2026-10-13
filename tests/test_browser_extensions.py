@@ -102,3 +102,33 @@ def test_skill_preview_install_discovery_and_no_overwrite(tmp_path, monkeypatch)
     assert Path(result["path"]).read_text() == preview["content"]
     with pytest.raises(ValueError, match="Skill name"):
         preview_skill(service, "one", "rec_test", "../escape", "test")
+
+
+def test_scoped_skill_preserves_frame_and_shadow_instructions(tmp_path, monkeypatch):
+    from octop_browser.record.models import SemanticStep, StepsDocument
+
+    from deepseek_tui.browser import skills
+
+    doc = StepsDocument(
+        recordingId="rec_scope",
+        steps=[
+            SemanticStep(
+                id="1",
+                kind="fill",
+                value="{{draft}}",
+                target={
+                    "framePath": ["#frame"],
+                    "shadowPath": ["#host"],
+                    "frameUrl": "https://example.test/child",
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr(skills, "read_workflow", lambda *args: doc)
+    content = preview_skill(
+        BrowserService(tmp_path), "one", "rec_scope", "scoped-form", "Fill draft"
+    )["content"]
+    assert all(
+        field in content for field in ["frame_selector", "shadow_path", "frameUrl", "parent page"]
+    )
+    assert '"framePath"' in content and '"shadowPath"' in content

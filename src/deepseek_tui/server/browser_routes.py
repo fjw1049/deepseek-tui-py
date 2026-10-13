@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from deepseek_tui.browser.input import BrowserInput
-from deepseek_tui.browser.service import BrowserAction, BrowserService
+from deepseek_tui.browser.service import BrowserAction, BrowserActionError, BrowserService
 
 router = APIRouter(prefix="/v1/threads/{thread_id}/browser", tags=["browser"])
 
@@ -52,6 +52,8 @@ async def view(request: Request, thread_id: str) -> dict[str, Any]:
 async def browser_input(request: Request, thread_id: str, body: BrowserInput) -> dict[str, Any]:
     try:
         return await service(request, thread_id).input(thread_id, body)
+    except BrowserActionError as exc:
+        raise HTTPException(409, exc.response) from exc
     except (ValueError, TimeoutError, RuntimeError, ConnectionError) as exc:
         raise HTTPException(409, str(exc) or "Browser input failed") from exc
 
@@ -60,13 +62,25 @@ async def browser_input(request: Request, thread_id: str, body: BrowserInput) ->
 async def action(request: Request, thread_id: str, body: BrowserAction) -> dict[str, Any]:
     browser = service(request, thread_id)
     try:
+        if thread_id in browser.runs and body.generation is None:
+            raise ValueError("UI browser actions require the current control generation")
         # Opening from the UI starts a user-controlled session.
-        if body.action in {"open", "new_tab"} and not browser.state(thread_id)["active"]:
+        if body.action in {"open", "new_tab"} and thread_id not in browser.runs:
             await browser.ensure(thread_id)
             await browser.control(thread_id, "user")
         return await browser.action(thread_id, body, actor="user")
-    except (ValueError, TimeoutError) as exc:
+    except BrowserActionError as exc:
+        raise HTTPException(409, exc.response) from exc
+    except (ValueError, TimeoutError, RuntimeError, ConnectionError) as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/operations/{action_id}")
+async def operation(request: Request, thread_id: str, action_id: str) -> dict[str, Any]:
+    try:
+        return service(request, thread_id).operation(thread_id, action_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 class ControlBody(BaseModel):
@@ -141,8 +155,13 @@ async def configure(request: Request, thread_id: str, body: PreferencesBody) -> 
 
 @router.post("/recover")
 async def recover(request: Request, thread_id: str) -> dict[str, Any]:
+    browser = service(request, thread_id)
     try:
-        return await service(request, thread_id).recover(thread_id)
+        run = browser.runs.get(thread_id)
+        if run:
+            await request.app.state.thread_manager.control_browser(
+                thread_id, "user", generation=run.generation)
+        return await browser.recover(thread_id)
     except (ValueError, RuntimeError, TimeoutError) as exc:
         raise HTTPException(409, str(exc)) from exc
 

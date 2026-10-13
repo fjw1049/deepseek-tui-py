@@ -21,7 +21,29 @@ def fake_session():
     output = io.BytesIO()
     Image.new("RGB", (1200, 760), "white").save(output, format="JPEG")
     result = SimpleNamespace(success=True, content="done", error=None)
-    return SimpleNamespace(
+    async def send(method, params=None):
+        if method == "Page.createIsolatedWorld":
+            return {"executionContextId": 1}
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": {"id": "main", "loaderId": "doc", "url": "https://example.test"}}}
+        if method == "Runtime.evaluate":
+            if "function textFrom" in params["expression"]:
+                import json
+
+                args = json.loads(params["expression"].rsplit("})(", 1)[1][:-1])
+                result = await session.eval_js(params["expression"])
+                body = json.loads(result.content) if result.success else None
+                passed = isinstance(body, str) and args["text"] in body
+                if args["state"] == "hidden":
+                    passed = not passed
+                return {"result": {"value": passed}}
+            if "const s=window.__deepseekObservation" in params["expression"]:
+                return {"result": {"value": {}}}
+            if "const refs = new Map" in params["expression"]:
+                return {"result": {"value": {"url": "https://example.test", "text": "Saved", "elements": []}}}
+            return {"result": {"value": True}}
+        return {"data": base64.b64encode(output.getvalue()).decode()}
+    session = SimpleNamespace(
         navigate=AsyncMock(return_value=result),
         click=AsyncMock(return_value=result),
         fill=AsyncMock(return_value=result),
@@ -33,10 +55,11 @@ def fake_session():
         close=AsyncMock(),
         _internal=SimpleNamespace(
             client=SimpleNamespace(
-                send=AsyncMock(return_value={"data": base64.b64encode(output.getvalue()).decode()})
+                send=AsyncMock(side_effect=send, return_value={"data": base64.b64encode(output.getvalue()).decode()})
             )
         ),
     )
+    return session
 
 
 @pytest.fixture
@@ -82,12 +105,13 @@ async def test_frame_reports_current_page_and_export_preserves_assertions(browse
 
     run = browser.runs["one"]
     original = run.session._internal.client.send.return_value
+    original_handler = run.session._internal.client.send.side_effect
     run.session._internal.client.send.side_effect = [
         {"frameTree": {"frame": {"url": "http://localhost/redirected#section"}}}, original
     ]
     await browser.frame("one")
     assert browser.state("one")["url"] == "http://localhost/redirected#section"
-    run.session._internal.client.send.side_effect = None
+    run.session._internal.client.send.side_effect = original_handler
     await browser.action("one", BrowserAction(action="check_text", text="Missing"))
     await browser.close("one")
     with zipfile.ZipFile(browser.export_evidence("one")) as archive:
@@ -175,7 +199,8 @@ async def test_failed_actions_and_recording_preserve_evidence(browser):
     run.session.click.side_effect = RuntimeError("page disconnected")
     with pytest.raises(RuntimeError):
         await browser.action("one", BrowserAction(action="click", selector="#save"))
-    assert run.log[-1] == {"action": "click", "success": False}
+    assert run.log[-1]["action"] == "click" and not run.log[-1]["success"]
+    assert run.log[-1]["execution"] == "unknown"
     await browser.close("one")
     saved = browser.state("one")
     assert saved["error"] == "page disconnected"
@@ -222,7 +247,7 @@ async def test_skill_form_actions_are_idempotent_and_use_the_owned_session(brows
     await browser.action(
         "one", BrowserAction(action="set_checked", selector="#notify", checked=False)
     )
-    session.click.assert_awaited_once_with(selector="#notify")
+    session.click.assert_awaited_once_with(ref=None, selector="#notify")
     await browser.action("one", BrowserAction(action="select", selector="#plan", text="pro"))
     session.select.assert_awaited_once_with(value="pro", selector="#plan", ref=None)
 
@@ -251,7 +276,7 @@ async def test_workflow_preflight_and_takeover(browser, monkeypatch):
     models = pytest.importorskip("octop_browser.record.models")
     doc = models.StepsDocument(
         recordingId="rec_test",
-        steps=[models.SemanticStep(id="1", kind="new_tab", url="https://example.com")],
+        steps=[models.SemanticStep(id="1", kind="unsupported", url="https://example.com")],
     )
     monkeypatch.setattr(flows, "read_workflow", lambda *args: doc)
     await browser.control("one", "user")
@@ -262,12 +287,57 @@ async def test_workflow_preflight_and_takeover(browser, monkeypatch):
     with pytest.raises(ValueError, match="Missing"):
         await flows.start_replay(browser, "one", "rec_test", {})
     doc.steps = [models.SemanticStep(id=str(i), kind="press", key="Enter") for i in range(4)]
+    dispatched = asyncio.Event()
+    hold = asyncio.Event()
+    original_step = flows._step
+
+    async def blocked_step(*args):
+        dispatched.set()
+        await hold.wait()
+        return await original_step(*args)
+
+    monkeypatch.setattr(flows, "_step", blocked_step)
     await flows.start_replay(browser, "one", "rec_test", {})
-    await asyncio.sleep(0.05)
+    await dispatched.wait()
     await browser.control("one", "user")
     assert browser.state("one")["demo_status"] == "stopped"
     assert browser.runs["one"].session.press.await_count < 4
     assert browser.state("two")["log"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,value,key,error",
+    [
+        ("press", None, "UnsupportedKey", "Unsupported"),
+        ("set_checked", "maybe", None, "Checkbox"),
+        ("set_checked", "{{confirmation}}", None, "Missing"),
+    ],
+)
+async def test_workflow_rejects_invalid_later_input_before_taking_control(
+    browser, monkeypatch, kind, value, key, error
+):
+    from octop_browser.record.models import SemanticStep, StepsDocument
+
+    from deepseek_tui.browser import workflows
+
+    doc = StepsDocument(
+        recordingId="rec_invalid",
+        steps=[
+            SemanticStep(id="1", kind="click", target={"selectorCandidates": ["#save"]}),
+            SemanticStep(
+                id="2", kind=kind, value=value, key=key, target={"selectorCandidates": ["#q"]}
+            ),
+        ],
+    )
+    monkeypatch.setattr(workflows, "read_workflow", lambda *args: doc)
+    await browser.control("one", "user")
+    run = browser.runs["one"]
+    generation = run.generation
+    with pytest.raises(ValueError, match=error):
+        await workflows.start_replay(browser, "one", "rec_invalid", {})
+    assert run.owner == "user" and run.generation == generation and run.demo_task is None
+    run.session.click.assert_not_called()
 
 
 def test_profile_preferences_require_closed_session_and_survive_restart(browser):
@@ -445,6 +515,7 @@ async def test_status_without_start_and_during_takeover(browser):
     assert result["content"]["active"] is False
     assert "new" not in browser.runs
     await browser.control("one", "user")
+    browser.runs["one"].session._internal.client.send.side_effect = None
     browser.runs["one"].session._internal.client.send.return_value = {
         "frameTree": {"frame": {"url": "https://example.test/after-login"}}
     }
@@ -454,6 +525,7 @@ async def test_status_without_start_and_during_takeover(browser):
         "owner": "user",
         "url": "https://example.test/after-login",
         "viewport": {"width": 1200, "height": 760},
+        "unresolved": [], "unresolved_total": 0, "next_operation_offset": None,
     }
     with pytest.raises(ValueError, match="control changed"):
         await browser.action("one", BrowserAction(action="reload"))
@@ -487,18 +559,29 @@ async def test_navigation_wait_and_tabs_use_owned_session(browser):
     assert tabs["tabs"][0]["tab_id"] == "popup"
     await browser.action("one", BrowserAction(action="switch_tab", tab_id="popup"))
     session.switch_tab.assert_awaited_once_with("popup")
+    async def observed(method, params=None):
+        if method == "Page.createIsolatedWorld":
+            return {"executionContextId": 2}
+        if method == "Runtime.evaluate":
+            if "const nodes=" in params["expression"]:
+                return {"result": {"value": True}}
+            return {"result": {"value": {"text": "ready", "elements": [], "url": "https://example.test"}}}
+        return {"frameTree": {"frame": {"id": "popup", "loaderId": "doc"}}}
+    session._internal.client.send.side_effect = observed
     await browser.action("one", BrowserAction(action="wait", selector="#ready"))
-    session.wait.assert_awaited_once_with(
-        text=None, selector="#ready", url_contains=None, timeout_ms=10000
-    )
-    await browser.action("one", BrowserAction(action="hover", ref="ref_1"))
+    session.wait.assert_not_called()
+    await browser.action("one", BrowserAction(action="hover", ref="ref_1",
+        observation_id=browser.runs["one"].latest_observation["observation_id"]))
     session.hover.assert_awaited_once_with(ref="ref_1")
     await browser.action("one", BrowserAction(action="type", text="中文"))
-    session.type.assert_awaited_once_with(text="中文", ref=None, selector=None)
-    await browser.action("one", BrowserAction(action="observe"))
-    session.dom_tree.assert_awaited_once_with(level="interactive")
+    assert any(
+        call.args == ("Input.insertText", {"text": "中文"})
+        for call in session._internal.client.send.await_args_list
+    )
+    observation = await browser.action("one", BrowserAction(action="observe"))
+    assert observation["observation"]["text"] == "ready"
     await browser.action("one", BrowserAction(action="observe", level="full"))
-    session.dom_tree.assert_awaited_with(level="full")
+    session.dom_tree.assert_not_called()
     session._internal.client.send.side_effect = ConnectionError("disconnected after reload")
     completed = await browser.action("one", BrowserAction(action="reload"))
     assert completed["success"] and completed["page"]["stale"]
@@ -551,7 +634,7 @@ async def test_scoped_assertion_does_not_accept_missing_region(browser):
         "one", BrowserAction(action="check_text", selector="#current-record", text="Saved")
     )
     assert not result["success"]
-    assert "els.length === 1" in session.eval_js.call_args.args[0]
+    assert "els.length !== 1" in session.eval_js.call_args.args[0]
     assert "#current-record" in session.eval_js.call_args.args[0]
 
 
@@ -658,3 +741,27 @@ async def test_real_new_tab_cold_start(tmp_path):
         assert (await service.frame("cold-start")).startswith("data:image/jpeg;base64,")
     finally:
         await service.close_all()
+
+
+@pytest.mark.parametrize("action", ["open", "new_tab", "switch_tab", "back", "forward",
+                                     "reload", "hover", "scroll", "screenshot"])
+def test_navigation_and_inspection_do_not_prompt_for_approval(action):
+    assert BrowserUseTool().approval_requirement_for_input({"action": action}) == ApprovalRequirement.AUTO
+
+
+async def test_reading_does_not_invalidate_approval_scope(browser):
+    scope = browser.approval_scope("one")
+    await browser.action("one", BrowserAction(action="observe"))
+    assert browser.approval_scope("one") == scope
+
+
+async def test_replay_evidence_failure_preserves_success(browser, monkeypatch):
+    from deepseek_tui.browser import workflows
+
+    run = browser.runs["one"]
+    document = SimpleNamespace(steps=[], verification=[])
+    monkeypatch.setattr(browser, "stop_video", AsyncMock(side_effect=OSError("video unavailable")))
+    await workflows._replay(browser, run, document, {})
+    assert run.demo_status == "passed"
+    assert not run.recording
+    assert any(item["action"] == "evidence" and not item["success"] for item in run.log)

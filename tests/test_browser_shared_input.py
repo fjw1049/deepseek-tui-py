@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import ValidationError
 
-from deepseek_tui.browser.input import BrowserInput
+from deepseek_tui.browser.input import BrowserInput, key_event
 from deepseek_tui.browser.service import BrowserAction, BrowserRun, BrowserService
 
 
@@ -27,6 +27,29 @@ def shared(tmp_path):
     return browser, run, client
 
 
+async def test_same_generation_navigation_rejects_old_scene_and_releases_keys(shared):
+    browser, run, client = shared
+    frame = {"id": "tab", "loaderId": "before", "url": "https://example.test/one"}
+
+    async def send(method, params=None):
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": frame}}
+        return {}
+
+    client.send.side_effect = send
+    scene = await browser._scene(run)
+    await browser.input("one", BrowserInput(kind="key", event="keyDown", key="Shift",
+        code="ShiftLeft", generation=0, scene_id=scene["scene_id"]))
+    frame.update(loaderId="after", url="https://example.test/two")
+    with pytest.raises(ValueError, match="page changed"):
+        await browser.input("one", BrowserInput(kind="text", text="STALE_TEXT",
+            generation=0, scene_id=scene["scene_id"]))
+    assert not run.pressed_keys
+    assert any(call.args[0] == "Input.dispatchKeyEvent" and call.args[1]["type"] == "keyUp"
+               for call in client.send.await_args_list)
+    assert not any(call.args[0] == "Input.insertText" for call in client.send.await_args_list)
+
+
 @pytest.mark.asyncio
 async def test_input_ownership_generation_and_private_text(shared):
     browser, run, client = shared
@@ -41,6 +64,31 @@ async def test_input_ownership_generation_and_private_text(shared):
     with pytest.raises(ValueError, match="control changed"):
         await browser.input("one", body)
     assert client.send.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_key_and_text_events_do_not_duplicate_printable_input(shared):
+    browser, run, client = shared
+    for body in [
+        BrowserInput(kind="key", event="keyDown", key="a", code="KeyA", generation=0),
+        BrowserInput(kind="text", text="a", generation=0),
+        BrowserInput(kind="key", event="keyUp", key="a", code="KeyA", generation=0),
+    ]:
+        await browser.input("one", body)
+    calls = client.send.await_args_list
+    assert [call.args[0] for call in calls] == [
+        "Input.dispatchKeyEvent",
+        "Input.insertText",
+        "Input.dispatchKeyEvent",
+    ]
+    assert calls[0].args[1]["type"] == "rawKeyDown" and "text" not in calls[0].args[1]
+    assert calls[2].args[1]["type"] == "keyUp" and "text" not in calls[2].args[1]
+
+
+@pytest.mark.parametrize("chord", ["Ctrl+a", "Meta+A", "Ctrl++", "Alt+Shift+1"])
+def test_shortcuts_never_emit_printable_text(chord):
+    event = key_event(chord)
+    assert event.text == "" and event.modifiers & 7
 
 
 @pytest.mark.asyncio
@@ -255,3 +303,13 @@ async def test_real_picker_and_devtools_share_current_tab(tmp_path):
         assert devtools["url"].endswith("/devtools/page/" + target["targetInfo"]["targetId"])
     finally:
         await browser.close("one")
+
+
+async def test_manual_input_capture_failure_does_not_report_input_failure(shared, monkeypatch):
+    browser, run, client = shared
+    run.recording = True
+    monkeypatch.setattr(browser, "_capture", AsyncMock(side_effect=RuntimeError("capture unavailable")))
+    result = await browser.input("one", BrowserInput(kind="text", text="draft", generation=0))
+    assert result["success"] and result["evidence_warning"]
+    client.send.assert_awaited_once_with("Input.insertText", {"text": "draft"})
+    assert not run.recording

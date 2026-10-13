@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from deepseek_tui.browser.service import BrowserService
-from deepseek_tui.browser.workflows import read_workflow
+from deepseek_tui.browser.workflows import assert_capture_complete, read_workflow, validate_scope
 
 
 def preview_skill(
@@ -22,9 +22,12 @@ def preview_skill(
     if not description.strip() or len(description) > 500:
         raise ValueError("Describe when this skill should be used (1–500 chars)")
     doc = read_workflow(service, thread_id, recording_id)
-    supported = {"open", "navigate", "click", "fill", "select", "set_checked", "press"}
+    assert_capture_complete(service, thread_id, recording_id)
+    supported = {"open", "navigate", "new_tab", "switch_tab", "click", "fill", "select", "set_checked", "press", "upload", "handle_dialog"}
     if not doc.steps or any(step.kind not in supported for step in doc.steps):
-        raise ValueError("Record a supported single-page workflow before generating a skill")
+        raise ValueError("Record a supported workflow before generating a skill")
+    for step in doc.steps:
+        validate_scope(step.target)
     data = doc.model_dump(mode="json", by_alias=True)
     local_urls: dict[str, str] = {}
     for step in data["steps"]:
@@ -65,6 +68,15 @@ def preview_skill(
         "- `set_checked`: `set_checked` with `selector` and boolean `checked`.\n"
         "- `click` / `press`: matching action with the target or `key`.\n\n"
         "Use `observe` after opening a page and whenever it changes. Confirm that recorded "
+        "targets are current. Pass the latest `observation_id` with each interaction; "
+        "consume the fresh observation returned after every action. Execute one state-changing "
+        "browser action per tool round; previous observation IDs become invalid. "
+        "For a recorded direct child `framePath`, call `observe` with `frame_selector` "
+        "set to that owner selector; verify the observed URL against `frameUrl` when present. "
+        "For `shadowPath`, pass its ordered host selectors as `shadow_path` to `observe`, "
+        "combined with the frame scope when present. Use the returned refs for interactions. "
+        "Never fall back to a similarly named target in the parent page. "
+        "Confirm that recorded "
         "selectors still identify the intended element; stop on ambiguous targets. "
         "Do not guess replacement destinations. Submissions and other external changes must "
         "be within the user's authorization. Stop if the user takes control. "

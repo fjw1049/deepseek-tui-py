@@ -438,14 +438,28 @@ def test_thread_restore_retains_user_and_tool_images(tmp_path):
 
 def test_conversation_bundle_restores_original_images(tmp_path):
     import zipfile
+    from datetime import datetime, timezone
 
     from deepseek_tui.server.data_bundle import export_bundle, import_bundle
+    from deepseek_tui.server.threads import (
+        RuntimeTurnStatus, ThreadRecord, TurnItemKind, TurnItemLifecycleStatus,
+        TurnItemRecord, TurnRecord,
+    )
+    from deepseek_tui.server.threads.items import reconstruct_messages_from_turn
+    from deepseek_tui.server.threads.store import RuntimeThreadStore
 
     data = image_bytes()
     block = import_image(data)
-    records = tmp_path / "threads"
-    records.mkdir()
-    (records / "record.json").write_text(Message.user("image", images=[block]).model_dump_json())
+    store = RuntimeThreadStore(tmp_path / "threads")
+    now = datetime.now(timezone.utc)
+    store.save_thread(ThreadRecord(id="thread", created_at=now, updated_at=now,
+                                  model="deepseek-chat", workspace=str(tmp_path), latest_turn_id="turn"))
+    turn = TurnRecord(id="turn", thread_id="thread", status=RuntimeTurnStatus.COMPLETED,
+                      input_summary="image", created_at=now, item_ids=["user"])
+    store.save_turn(turn)
+    store.save_item(TurnItemRecord(id="user", turn_id="turn", kind=TurnItemKind.USER_MESSAGE,
+        status=TurnItemLifecycleStatus.COMPLETED, summary="image",
+        metadata={"input_message": Message.user("image", images=[block]).model_dump(mode="json")}))
     orphan = import_image(image_bytes(size=(2, 2)))
     bundle = tmp_path / "export.zip"
     export_bundle(
@@ -465,6 +479,9 @@ def test_conversation_bundle_restores_original_images(tmp_path):
         import_settings=False,
     )
     assert (user_media_dir() / block.asset_id).read_bytes() == data
+    restored_store = RuntimeThreadStore(tmp_path / "threads2")
+    restored = reconstruct_messages_from_turn(restored_store, restored_store.load_turn("turn"))
+    assert message_images(restored[0]) == [block]
 
 
 def test_switch_route_updates_new_subagent_runtime_only(tmp_path):
@@ -493,7 +510,13 @@ def test_switch_route_updates_new_subagent_runtime_only(tmp_path):
     assert manager.default_model == "new"
     assert original.model == "old"
     assert original.client is not engine.client
-    assert engine.tool_context.metadata["task_config"] is cfg
+    snapshot = engine.tool_context.metadata["task_config"]
+    assert snapshot is not cfg and snapshot == cfg
+    cfg.vision.model = "changed-after-route"
+    assert snapshot.vision.model != cfg.vision.model
+    snapshot.vision.timeout_seconds = 31
+    assert cfg.vision.timeout_seconds != 31
+    assert manager.loop_runtime.config is snapshot
 
 
 async def test_compaction_keeps_reread_references_across_multiple_compactions(monkeypatch):
@@ -540,7 +563,8 @@ async def test_subagent_qualified_route_preserves_identity_and_closes_owned_clie
 
     monkeypatch.setattr("deepseek_tui.tools.subagent.run_subagent_loop", run)
     original = Runtime(helper_config(), VisionStub(), "deepseek-chat")
-    agent = SimpleNamespace(model="visual::image-model", loop_runtime=original, conversation=None)
+    agent = SimpleNamespace(model="visual::image-model", provider=None,
+                            loop_runtime=original, conversation=None)
     await real_subagent_executor(agent, asyncio.Event())
     assert captured[0].model == "image-model"
     assert captured[0].config.provider == "visual"

@@ -26,12 +26,32 @@ type BrowserState = {
   activity?: string; workflow_recording?: boolean; demo_step?: number; demo_total?: number
   error: string | null; log: { action: string; success: boolean }[]
   artifacts: { id: string; label: string; path: string }[]
+  scene?: { scene_id: string; tab_id: string; document_id: string; viewport_epoch: number }
+  view_sequence?: number
+  capabilities?: { video?: { ready: boolean } }
+  unresolved?: ActionReceipt[]
+  dialog?: { id: string; type: string; message: string } | null
+  file_chooser?: { id: string; mode: string } | null
+  downloads?: { id: string; state: string; filename: string; received_bytes: number; path?: string }[]
+}
+
+type ActionReceipt = { action_id: string; execution: string; effect?: string; reconciliation?: unknown }
+type ActionResult = { success?: boolean; content?: unknown; receipt?: ActionReceipt; dialog?: BrowserState['dialog'] }
+export class BrowserRequestError extends Error {
+  constructor(message: string, readonly result?: ActionResult) { super(message) }
 }
 
 export async function browserRequest<T>(threadId: string, suffix = '', body?: unknown): Promise<T> {
   const response = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/browser${suffix}`,
     body === undefined ? 'GET' : 'POST', body === undefined ? undefined : JSON.stringify(body))
-  if (!response.ok) throw new Error(formatAutomationApiError(response.body, `HTTP ${response.status}`))
+  if (!response.ok) {
+    let result: ActionResult | undefined
+    try {
+      const data = JSON.parse(response.body); const detail = data.detail ?? data
+      if (detail && typeof detail === 'object' && detail.receipt) result = detail
+    } catch { /* The runtime may also return a plain transport error. */ }
+    throw new BrowserRequestError(formatAutomationApiError(response.body, `HTTP ${response.status}`), result)
+  }
   return JSON.parse(response.body) as T
 }
 
@@ -77,9 +97,12 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   detailsRequest = 0, onReturnToPages }: BrowserWorkspaceProps & {
     threadId: string; detailsRequest?: number; onReturnToPages?: () => void
   }): ReactElement {
+  const [dialogAnswer, setDialogAnswer] = useState('')
   const { t } = useTranslation('common')
   const [state, setState] = useState<BrowserState | null>(null)
+  useEffect(() => { setDialogAnswer('') }, [state?.dialog?.id])
   const [image, setImage] = useState<string | null>(null)
+  const [frameFresh, setFrameFresh] = useState(false)
   const [artifactImage, setArtifactImage] = useState<string | null>(null)
   const [url, setUrl] = useState('')
   const [selector, setSelector] = useState('')
@@ -97,7 +120,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const detailsButton = useRef<HTMLButtonElement>(null)
   const [fresh, setFresh] = useState(false)
   useLightDismiss({ open: more, refs: [menuRoot], onDismiss: () => setMore(false) })
-  useEffect(() => { if (!visible) { setMore(false); setDetails(false); setFresh(false) } }, [visible])
+  useEffect(() => { if (!visible) { setMore(false); setDetails(false); setFresh(false); setFrameFresh(false) } }, [visible])
   useEffect(() => {
     if (more) menuRoot.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
   }, [more])
@@ -105,6 +128,8 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const alive = useRef(true)
   const transferring = useRef(false)
   const latestGeneration = useRef(-1)
+  const latestView = useRef(-1)
+  const [lastReceipt, setLastReceipt] = useState<ActionReceipt | null>(null)
   const lastPreferred = useRef<string | null>(null)
   const [previewFiles, setPreviewFiles] = useState<Record<string, string>>({})
   const [waitingPreview, setWaitingPreview] = useState<{ url: string; filePath?: string | null } | null>(null)
@@ -121,8 +146,12 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => { if (state?.url) setUrl(state.url === 'about:blank' ? '' : state.url) }, [state?.url])
   const apply = useCallback((next: BrowserState): void => {
-    if (!alive.current || transferring.current || (next.generation ?? -1) < latestGeneration.current && next.active) return
+    if (!alive.current || transferring.current || (next.generation ?? -1) < latestGeneration.current) return
+    if ((next.generation ?? -1) > latestGeneration.current) latestView.current = -1
+    if (next.view_sequence !== undefined && next.view_sequence < latestView.current) return
+    if (next.view_sequence !== undefined) latestView.current = next.view_sequence
     latestGeneration.current = next.generation ?? -1
+    setFresh(true); setFrameFresh(!!next.image && !next.transferring)
     setState(next); if (next.image) setImage(next.image); else if (!next.active) setImage(null)
   }, [])
   useEffect(() => {
@@ -134,10 +163,10 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       try {
         const next = await browserRequest<BrowserState>(threadId, '/view')
         if (!disposed) {
-          apply(next); setConnectionError(''); setFresh(true)
+          apply(next); setConnectionError('')
           delay = next.active ? (next.owner === 'user' ? 120 : 300) : 600
         }
-      } catch (e) { if (!disposed) setConnectionError(e instanceof Error ? e.message : String(e)) }
+      } catch (e) { if (!disposed) { setFresh(false); setFrameFresh(false); setConnectionError(e instanceof Error ? e.message : String(e)) } }
       finally { if (!disposed) timer = setTimeout(() => void poll(), delay) }
     }
     void poll(); return () => { disposed = true; clearTimeout(timer) }
@@ -145,15 +174,31 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const perform = useCallback(async (suffix: string, body: unknown): Promise<boolean> => {
     setError(''); setPending(true)
     try {
-      const result = await browserRequest<{ success?: boolean; content?: unknown }>(threadId, suffix, body)
-      if (result.success === false) throw new Error(typeof result.content === 'string' ? result.content : JSON.stringify(result.content))
+      const payload = suffix === '/action' && state?.active ? { ...(body as Record<string, unknown>), generation: state.generation } : body
+      const result = await browserRequest<ActionResult>(threadId, suffix, payload)
       if (!alive.current) return false
+      if (result.receipt) setLastReceipt(result.receipt)
+      if (result.dialog) setState(previous => previous ? { ...previous, dialog: result.dialog } : previous)
+      if (result.success === false) setError(typeof result.content === 'string' ? result.content : JSON.stringify(result.content))
       if (result.content !== undefined) setDom(typeof result.content === 'string' ? result.content : JSON.stringify(result.content))
-      apply(await browserRequest<BrowserState>(threadId, '/view'))
-      return true
-    } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)); return false }
+      try { apply(await browserRequest<BrowserState>(threadId, '/view')); setConnectionError('') }
+      catch (e) {
+        if (alive.current) {
+          setFresh(false); setFrameFresh(false)
+          setConnectionError(e instanceof Error ? e.message : String(e))
+          if (result.receipt?.execution === 'executed') setNotice(t('browserActionSentViewUnavailable'))
+        }
+      }
+      return result.success !== false
+    } catch (e) {
+      if (alive.current) {
+        if (e instanceof BrowserRequestError && e.result?.receipt) setLastReceipt(e.result.receipt)
+        setError(e instanceof Error ? e.message : String(e))
+      }
+      return false
+    }
     finally { if (alive.current) setPending(false) }
-  }, [threadId, apply])
+  }, [threadId, apply, state?.active, state?.generation, t])
   const action = useCallback((body: unknown): void => { void perform('/action', body) }, [perform])
   async function control(owner: 'agent' | 'user' | 'stopped'): Promise<void> {
     setPending(true); setControlTarget(owner); setError(''); transferring.current = true
@@ -282,7 +327,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
             }}>
             {onReturnToPages ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={onReturnToPages}><ArrowLeft size={15} />{t('browserReturnToPages')}</button> : null}
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
             <div className="ds-browser-menu-divider" role="separator" />
             {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
@@ -299,10 +344,36 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     </div>
     {waitingPreview ? <div className="ds-browser-notice"><span>{t('browserPreviewWaiting')}</span><button disabled={!userControls} onClick={() => void openPreview(waitingPreview.url, waitingPreview.filePath)}>{t('browserOpen')}</button><button aria-label={t('browserDismissPreview')} onClick={() => setWaitingPreview(null)}><X size={13} /></button></div> : null}
     {inspect || notice ? <div className="ds-browser-notice" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
+    {(state?.unresolved?.[0] || (lastReceipt?.execution === 'unknown' && !lastReceipt.reconciliation ? lastReceipt : null)) ?
+      <div role="status" className="ds-browser-notice"><span>{t('browserOutcomeUnknown')}</span>
+        {['executed', 'not_executed'].map(outcome => <button key={outcome} disabled={pending} onClick={() => {
+          const receipt = state?.unresolved?.[0] || lastReceipt
+          if (receipt) void action({ action: 'resolve_operation', operation_id: receipt.action_id, outcome,
+            reason: t(outcome === 'executed' ? 'browserReviewedDone' : 'browserReviewedNotDone') })
+        }}>{t(outcome === 'executed' ? 'browserReviewedDone' : 'browserReviewedNotDone')}</button>)}
+      </div> : null}
+    {state?.dialog ? <div role="dialog" aria-label={t('browserNativeDialog')} className="ds-browser-notice">
+      <span>{state.dialog.message}</span>
+      {state.dialog.type === 'prompt' ? <input aria-label={t('browserDialogAnswer')} value={dialogAnswer} onChange={e => setDialogAnswer(e.target.value)} /> : null}
+      <button disabled={pending || state.owner !== 'user'} onClick={() => void action({ action: 'handle_dialog', dialog_id: state.dialog?.id, accept: true, text: dialogAnswer })}>{t('browserDialogAccept')}</button>
+      <button disabled={pending || state.owner !== 'user'} onClick={() => void action({ action: 'handle_dialog', dialog_id: state.dialog?.id, accept: false })}>{t('browserDialogDismiss')}</button>
+    </div> : null}
+    {state?.file_chooser ? <div className="ds-browser-notice"><span>{t('browserChooseFiles')}</span>
+      <button disabled={pending || state.owner !== 'user'} onClick={() => void (async () => {
+        const chooser = state.file_chooser
+        const picked = await window.dsGui.pickWorkspaceFiles()
+        if (picked.ok && chooser) await action({ action: 'upload', chooser_id: chooser.id, files: picked.paths })
+      })().catch(e => setError(String(e)))}>{t('browserChooseFiles')}</button>
+      <button disabled={pending || state.owner !== 'user'} onClick={() => void action({ action: 'upload', chooser_id: state.file_chooser?.id, files: [] })}>{t('browserDialogDismiss')}</button>
+    </div> : null}
+    {state?.downloads?.length ? <div className="ds-browser-notice">{state.downloads.map(item =>
+      <span key={item.id}>{item.filename} · {item.state === 'completed' ? t('browserDownloadReady') : t('browserDownloadPending')}
+        {item.state === 'completed' && item.path ? <button onClick={() => void window.dsGui.showItemInFolder(item.path!)}>{t('browserDownloadReady')}</button> : null}
+      </span>)}</div> : null}
     {error || connectionError || state?.error ? <div role="alert" className="ds-browser-error">{error || connectionError || state?.error}</div> : null}
     <div className="ds-browser-content">
-      {image && state?.active ? <BrowserViewport image={image} enabled={!!userControls && !details && !more} resizeEnabled={!!userControls && !details && !more && !state.video_recording} generation={state.generation ?? 0}
-        inspect={inspect && canInspect} onInspectCancel={() => setInspect(false)} width={state.viewport?.width ?? 1200} height={state.viewport?.height ?? 760} label={t('browserLiveView')}
+      {image && state?.active ? <BrowserViewport image={image} enabled={!!userControls && frameFresh && !details && !more && !state.dialog && !state.unresolved?.length} resizeEnabled={!!userControls && frameFresh && !details && !more && !state.video_recording} generation={state.generation ?? 0}
+        sceneId={state.scene?.scene_id} inspect={inspect && canInspect} onInspectCancel={() => setInspect(false)} width={state.viewport?.width ?? 1200} height={state.viewport?.height ?? 760} label={t('browserLiveView')}
         send={async (body) => {
           if (body.kind === 'pick') {
             const result = await browserRequest<{ pick?: unknown; url?: string }>(threadId, '/input', body)
@@ -312,11 +383,21 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
             }
             return {}
           }
-          if (body.kind !== 'resize') return browserRequest(threadId, '/input', body)
+          if (body.kind !== 'resize') {
+            try {
+              const result = await browserRequest<ActionResult & { text?: string }>(threadId, '/input', body)
+              if (result.receipt && alive.current) setLastReceipt(result.receipt)
+              return result
+            } catch (e) {
+              if (alive.current && e instanceof BrowserRequestError && e.result?.receipt) setLastReceipt(e.result.receipt)
+              throw e
+            }
+          }
           setPending(true)
           try {
             const result = await browserRequest<{ text?: string }>(threadId, '/input', body)
-            apply(await browserRequest<BrowserState>(threadId, '/view'))
+            try { apply(await browserRequest<BrowserState>(threadId, '/view')) }
+            catch (e) { if (alive.current) { setFresh(false); setFrameFresh(false); setConnectionError(e instanceof Error ? e.message : String(e)) } }
             return result
           } finally { if (alive.current) setPending(false) }
         }} onError={setError} /> :

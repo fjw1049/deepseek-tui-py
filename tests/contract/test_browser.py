@@ -1,3 +1,14 @@
+def observation_cdp(session, text, url="https://example.test"):
+    async def send(method, params=None):
+        if method == "Page.createIsolatedWorld":
+            return {"executionContextId": 1}
+        if method == "Runtime.evaluate":
+            return {"result": {"value": {"text": text, "elements": [], "url": url,
+                "title": "Test", "viewport": {}, "warnings": [], "truncated": False}}}
+        return {"frameTree": {"frame": {"id": "tab", "loaderId": "doc", "url": url}}}
+    session._internal.client.send.side_effect = send
+
+
 async def test_browser_routes_require_auth_and_existing_thread(authed_client):
     client, token = authed_client
     headers = {"Authorization": f"Bearer {token}"}
@@ -94,6 +105,7 @@ async def test_takeover_resumes_existing_turn_only_after_fresh_observation(
     )
     run = BrowserRun(thread_id, tmp_path / "page", session=session)
     manager.browser_service.runs[thread_id] = run
+    observation_cdp(run.session, run.session.dom_tree.return_value.content)
     try:
         response = await client.post(base + "/control", json={"owner": "user", "generation": 0})
         assert response.status_code == 200
@@ -103,13 +115,14 @@ async def test_takeover_resumes_existing_turn_only_after_fresh_observation(
         assert handle.pause.paused
         generation = run.generation
         # Failed observation leaves the same task paused and the user in control.
-        session.dom_tree.side_effect = ConnectionError("Page disconnected")
+        original_cdp = session._internal.client.send.side_effect
+        session._internal.client.send.side_effect = ConnectionError("Page disconnected")
         response = await client.post(
             base + "/control", json={"owner": "agent", "generation": generation},
         )
         assert response.status_code == 409
         assert handle.pause.paused and run.owner == "user"
-        session.dom_tree.side_effect = None
+        session._internal.client.send.side_effect = original_cdp
         response = await client.post(
             base + "/control", json={"owner": "agent", "generation": generation},
         )
@@ -120,13 +133,13 @@ async def test_takeover_resumes_existing_turn_only_after_fresh_observation(
         assert "unknown" in handle.resume_context
         assert handle._op_queue.empty()
         assert manager._active[thread_id].active_turn is turn
-        before = session.dom_tree.await_count
+        before = session._internal.client.send.await_count
         # A retry of the same response-lost request is idempotent.
         response = await client.post(
             base + "/control", json={"owner": "agent", "generation": generation},
         )
         assert response.status_code == 200
-        assert session.dom_tree.await_count == before
+        assert session._internal.client.send.await_count == before
         # A stale takeover cannot revoke control after a later handoff.
         response = await client.post(base + "/control", json={"owner": "user", "generation": 0})
         assert response.status_code == 409
@@ -247,7 +260,9 @@ async def test_real_browser_takeover_observes_manual_change_before_resuming(
         assert takeover.status_code == 200, takeover.text
         await asyncio.wait_for(closed.wait(), 2)
         assert takeover.json()["task_paused"]
-        clicked = await client.post(base + "/action", json={"action": "click", "selector": "#us"})
+        clicked = await client.post(base + "/action", json={
+            "action": "click", "selector": "#us", "generation": takeover.json()["generation"],
+        })
         assert clicked.json()["success"]
         assert len(requests) == 1
         resumed = await client.post(base + "/control", json={
@@ -301,6 +316,7 @@ async def test_browser_assistance_routes_pause_and_resume_original_task(
         ),
     )
     manager.browser_service.runs[thread_id] = run
+    observation_cdp(run.session, run.session.dom_tree.return_value.content)
     base = f"/v1/threads/{thread_id}/browser/assistance"
     try:
         assert (
@@ -321,7 +337,7 @@ async def test_browser_assistance_routes_pause_and_resume_original_task(
         body["text"] = "Use the public manual"
         response = await client.post(base, json=body)
         assert response.status_code == 200 and not response.json()["task_paused"]
-        assert "Use the public manual" in handle.resume_context
+        assert handle.drain_steers() == ["Use the public manual"]
         assert (await client.get("/v1/browser-assistance")).json()["items"] == []
         assert (await client.post(base, json=body)).status_code == 409
     finally:
@@ -355,6 +371,7 @@ async def test_model_assistance_call_reaches_ui_and_returns_evidence(
         "frameTree": {"frame": {"url": run.url}},
     }
     manager.browser_service.runs[thread_id] = run
+    observation_cdp(run.session, run.session.dom_tree.return_value.content)
     try:
         await manager.browser_service.action(thread_id, BrowserAction(action="status"))
         assert (await client.get("/v1/browser-assistance")).json()["items"] == []
@@ -381,6 +398,132 @@ async def test_model_assistance_call_reaches_ui_and_returns_evidence(
         assert "NOT guaranteed" in handle.resume_context
         assert "Verify" in handle.resume_context
         assert (await client.get("/v1/browser-assistance")).json()["items"] == []
+    finally:
+        manager._active.pop(thread_id, None)
+        manager.browser_service.runs.pop(thread_id, None)
+
+
+async def test_ui_actions_require_current_generation(authed_client, authed_runtime_app, tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserRun
+
+    client, _ = authed_client
+    app, _ = authed_runtime_app
+    browser = app.state.thread_manager.browser_service
+    thread_id = (await client.post("/v1/threads", json={"title": "Generation"})).json()["id"]
+    run = BrowserRun(thread_id, tmp_path / "page", session=SimpleNamespace(),
+                     owner="user", generation=3)
+    browser.runs[thread_id] = run
+    browser._action = AsyncMock(return_value={"success": True, "receipt": {
+        "action_id": "test-operation", "execution": "executed", "effect": "unchecked"}})
+    base = f"/v1/threads/{thread_id}/browser/action"
+    try:
+        for body in [{"action": "reload"}, {"action": "reload", "generation": 2}]:
+            response = await client.post(base, json=body)
+            assert response.status_code == 409
+        browser._action.assert_not_awaited()
+        response = await client.post(base, json={"action": "reload", "generation": 3})
+        assert response.status_code == 200 and response.json()["success"]
+        browser._action.assert_awaited_once()
+    finally:
+        browser.runs.pop(thread_id, None)
+
+
+async def test_permanent_thread_deletion_closes_browser(authed_client, authed_runtime_app, tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserRun
+
+    client, _ = authed_client
+    app, _ = authed_runtime_app
+    manager = app.state.thread_manager
+    thread_id = (await client.post("/v1/threads", json={"title": "Delete"})).json()["id"]
+    directory = tmp_path / "disposable-browser"
+    directory.mkdir()
+    session = SimpleNamespace(close=AsyncMock())
+    manager.browser_service.runs[thread_id] = BrowserRun(thread_id, directory, session=session)
+    await manager.delete_thread(thread_id)
+    session.close.assert_awaited_once_with(kill=True)
+    assert thread_id not in manager.browser_service.runs
+    assert not directory.exists()
+
+
+async def test_recovery_keeps_original_task_paused_and_assistance_pending(
+    authed_client, authed_runtime_app, tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserRun
+    from deepseek_tui.engine.handle import EngineHandle
+
+    client, _ = authed_client
+    app, _ = authed_runtime_app
+    manager = app.state.thread_manager
+    thread_id = (await client.post("/v1/threads", json={"title": "Recover"})).json()["id"]
+    handle = EngineHandle()
+    handle._mark_turn_active()
+    turn = SimpleNamespace(turn_id="original")
+    manager._active[thread_id] = SimpleNamespace(handle=handle, active_turn=turn)
+    old = BrowserRun(thread_id, tmp_path / "old", session=SimpleNamespace(close=AsyncMock()),
+                     generation=2, healthy=False)
+    old.assistance = {"id": "request", "status": "pending", "turn_id": "original"}
+    manager.browser_service.runs[thread_id] = old
+    replacement = BrowserRun(thread_id, tmp_path / "new", session=SimpleNamespace(), generation=5)
+
+    async def ensure(thread):
+        manager.browser_service.runs[thread] = replacement
+        return replacement
+
+    monkeypatch.setattr(manager.browser_service, "ensure", ensure)
+    try:
+        response = await client.post(f"/v1/threads/{thread_id}/browser/recover", json={})
+        assert response.status_code == 200
+        state = response.json()
+        assert state["owner"] == "user" and state["generation"] == 5
+        assert state["assistance"]["id"] == "request" and state["assistance"]["status"] == "human"
+        assert handle.pause.paused and manager._active[thread_id].active_turn is turn
+    finally:
+        manager._active.pop(thread_id, None)
+        manager.browser_service.runs.pop(thread_id, None)
+
+
+async def test_large_handoff_observation_remains_valid_json(
+    authed_client, authed_runtime_app, tmp_path,
+):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserRun
+    from deepseek_tui.engine.handle import EngineHandle
+
+    client, _ = authed_client
+    app, _ = authed_runtime_app
+    manager = app.state.thread_manager
+    thread_id = (await client.post("/v1/threads", json={"title": "Handoff"})).json()["id"]
+    handle = EngineHandle()
+    handle._mark_turn_active()
+    handle.pause.pause()
+    manager._active[thread_id] = SimpleNamespace(
+        handle=handle, active_turn=SimpleNamespace(turn_id="original"))
+    session = SimpleNamespace(_internal=SimpleNamespace(client=SimpleNamespace(send=AsyncMock())))
+    observation_cdp(session, "Region details " * 3000)
+    run = BrowserRun(thread_id, tmp_path / "page", session=session, owner="user")
+    manager.browser_service.runs[thread_id] = run
+    try:
+        response = await client.post(f"/v1/threads/{thread_id}/browser/control",
+                                     json={"owner": "agent", "generation": 0})
+        assert response.status_code == 200
+        content = handle.resume_context.split("Fresh browser observation:\n", 1)[1]
+        observed = json.loads(content)
+        assert len(content) <= 12000
+        assert observed["observation"]["observation_id"] == run.latest_observation["observation_id"]
+        assert observed["observation"]["control_generation"] == run.generation
+        assert observed["observation"]["next_text_offset"] > 0
     finally:
         manager._active.pop(thread_id, None)
         manager.browser_service.runs.pop(thread_id, None)

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, type ReactElement } from 'react'
 
 type Input = Record<string, unknown>
-export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspect = false, onInspectCancel, generation, width, height, label, send, onError }: {
+export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspect = false, onInspectCancel, generation, sceneId, width, height, label, send, onError }: {
   image: string; enabled: boolean; inspect?: boolean; onInspectCancel?: () => void; resizeEnabled?: boolean; generation: number; width: number; height: number; label: string
-  send: (input: Input) => Promise<{ text?: string }>; onError: (message: string) => void
+  sceneId?: string; send: (input: Input) => Promise<{ text?: string }>; onError: (message: string) => void
 }): ReactElement {
   const surface = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -12,25 +12,51 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
   const mounted = useRef(true)
   const moveAt = useRef(0)
   const click = useRef({ time: 0, x: 0, y: 0, count: 0 })
-  const current = useRef({ enabled, generation, send, onError, inspect })
-  current.current = { enabled, generation, send, onError, inspect }
+  const epoch = useRef(0)
+  const pressed = useRef(new Set<string>())
+  const current = useRef({ enabled, generation, sceneId, send, onError, inspect })
+  if (current.current.enabled !== enabled || current.current.generation !== generation || current.current.sceneId !== sceneId) epoch.current++
+  current.current = { enabled, generation, sceneId, send, onError, inspect }
   const enqueue = useCallback((input: Input): void => {
     const token = current.current.generation
+    const queueEpoch = epoch.current
+    const scene = current.current.sceneId
+    const pair = input.kind === 'mouse' ? `mouse:${input.button}` : `key:${input.code || input.key}`
+    if (input.event === 'mousePressed' || input.event === 'keyDown') pressed.current.add(pair)
     queue.current = queue.current.then(async () => {
-      if (!mounted.current || !current.current.enabled || current.current.generation !== token) return
+      if (!mounted.current || !current.current.enabled || current.current.generation !== token || epoch.current !== queueEpoch) return
       if (current.current.inspect && !['pick', 'wheel', 'resize'].includes(String(input.kind))) return
       if (input.kind === 'pick' && !current.current.inspect) return
-      const result = await current.current.send({ ...input, kind: input.kind === 'cut' ? 'copy' : input.kind, generation: token })
+      const result = await current.current.send({ ...input, kind: input.kind === 'cut' ? 'copy' : input.kind, generation: token, ...(scene ? { scene_id: scene } : {}) })
+      if (input.event === 'mouseReleased' || input.event === 'keyUp') pressed.current.delete(pair)
       if (typeof result.text === 'string' && result.text) {
         await navigator.clipboard.writeText(result.text)
-        if (mounted.current && input.kind === 'cut' && current.current.enabled && current.current.generation === token) {
-          await current.current.send({ kind: 'cut', text: result.text, generation: token })
+        if (mounted.current && input.kind === 'cut' && current.current.enabled && current.current.generation === token && epoch.current === queueEpoch) {
+          await current.current.send({ kind: 'cut', text: result.text, generation: token, ...(scene ? { scene_id: scene } : {}) })
         }
       }
     }).catch((e: Error) => { if (mounted.current) current.current.onError(e.message) })
   }, [])
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  useEffect(() => { if (!enabled) { field.current?.blur(); if (field.current) field.current.value = '' } }, [enabled])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (pressed.current.size) {
+        pressed.current.clear()
+        const state = current.current
+        void state.send({ kind: 'release', generation: state.generation, ...(state.sceneId ? { scene_id: state.sceneId } : {}) }).catch(() => {})
+      }
+    }
+  }, [])
+  useEffect(() => {
+    if (!enabled) {
+      field.current?.blur(); if (field.current) field.current.value = ''; composing.current = false
+      if (pressed.current.size) {
+        pressed.current.clear()
+        void send({ kind: 'release', generation, ...(sceneId ? { scene_id: sceneId } : {}) }).catch(() => {})
+      }
+    }
+  }, [enabled, generation, sceneId, send])
   useEffect(() => {
     const target = surface.current
     if (!target || !resizeEnabled) return
@@ -97,7 +123,7 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
     onWheel={(e) => {
       if (!enabled) return
       const p = point(e); if (!p) return
-      enqueue({ kind: 'wheel', ...p, delta_x: Math.max(-5000, Math.min(5000, e.deltaX * (e.deltaMode === 1 ? 16 : 1))), delta_y: Math.max(-5000, Math.min(5000, e.deltaY * (e.deltaMode === 1 ? 16 : 1))), modifiers: modifiers(e) })
+      enqueue({ kind: 'wheel', ...p, delta_x: Math.max(-5000, Math.min(5000, e.deltaX * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? width : 1))), delta_y: Math.max(-5000, Math.min(5000, e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? height : 1))), modifiers: modifiers(e) })
     }}>
     <img src={image} alt={label} draggable={false} />
     <textarea ref={field} className="ds-browser-input" aria-label={label} disabled={!enabled} autoComplete="off" autoCapitalize="off" spellCheck={false}

@@ -538,6 +538,11 @@ class ToolRegistry:
                 self._serialise_tool(tool)
                 for _, tool in sorted(self._tools.items())
             ]
+        if self._context is not None and not (
+            self._context.metadata.get("browser_service") and
+            self._context.metadata.get("runtime_thread_id")
+        ):
+            return [t for t in self._api_cache if t["function"]["name"] != "browser_use"]
         return self._api_cache
 
     # ------------------------------------------------------------------
