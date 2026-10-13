@@ -71,6 +71,37 @@ async def test_takeover_continue_preserves_turn_and_requires_verification(help_t
 
 
 @pytest.mark.asyncio
+async def test_user_held_browser_asks_for_return_and_resumes(help_task):
+    manager, run, handle = help_task
+    run.owner = "user"  # The user opened the page from the panel before asking.
+    with pytest.raises(ValueError, match="user controls this browser"):
+        await manager.browser_service.action("one", BrowserAction(action="observe"))
+    result = await manager.request_browser_assistance("one", "Please return control")
+    assert result["success"] and "return control" in result["content"]
+    assert run.assistance["status"] == "human" and handle.pause.paused
+    await manager.respond_browser_assistance("one", run.assistance["id"], "continue")
+    assert not handle.pause.paused and run.owner == "agent" and run.assistance is None
+    assert "Login still required" in handle.resume_context
+
+
+async def test_finish_reports_blocker_while_user_holds_browser(tmp_path):
+    from deepseek_tui.tools.registry import ToolContext, ToolError
+    from deepseek_tui.tools.task_delivery import FinishTaskTool, TaskDelivery
+
+    service = BrowserService(tmp_path)
+    service.runs["one"] = BrowserRun("one", tmp_path, owner="user")
+    delivery = TaskDelivery(active=True, evidence={"tool:s"})
+    context = ToolContext(working_directory=tmp_path, metadata={
+        "task_delivery": delivery, "browser_service": service, "runtime_thread_id": "one"})
+    args = {"answer": "Return control so I can continue.", "evidence": ["tool:s"]}
+    with pytest.raises(ToolError, match="report partial/blocked"):
+        await FinishTaskTool().execute({**args, "status": "completed", "remaining": []}, context)
+    result = await FinishTaskTool().execute(
+        {**args, "status": "blocked", "remaining": ["User holds browser control"]}, context)
+    assert result.success and delivery.outcome["status"] == "blocked"
+
+
+@pytest.mark.asyncio
 async def test_ignore_returns_decision_to_model_without_classifying_next_request(help_task):
     manager, run, handle = help_task
     await manager.request_browser_assistance("one", "Optional login")

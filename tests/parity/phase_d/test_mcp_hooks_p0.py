@@ -25,6 +25,12 @@ from deepseek_tui.protocol.events import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # AppRuntime takes the task scheduler lock under DEEPSEEK_HOME; never share the user's.
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+
+
 class TestMcpRequiredStartup:
     async def test_raise_if_required_server_failed(self) -> None:
         mgr = McpManager(

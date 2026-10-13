@@ -248,12 +248,13 @@ async def test_focus_blocks_hidden_tool_then_enables_only_requested_tool(tmp_pat
     try:
         result = await engine._run_conversation([Message.user("Read report")], "test", "sys", None)
         names = lambda req: {(t.get("function") or t)["name"] for t in req.tools}
-        assert "read_file" not in names(client.requests[1])
-        assert "read_file" in names(client.requests[3])
-        assert "exec_shell" not in names(client.requests[3])
+        # The advertised list stays stable for prefix caching; focus is enforced on execution.
+        assert names(client.requests[1]) == names(client.requests[3])
+        assert "read_file" in names(client.requests[1])
         tool_results = {b.tool_use_id: b for m in client.requests[-1].messages
                         for b in m.content if b.type == "tool_result"}
         assert tool_results["hidden"].is_error
+        assert "request_task_tools" in str(tool_results["hidden"].content)
         assert not tool_results["file"].is_error
         assert result.task_outcome["status"] == "completed"
         # Focus and evidence belong to one task, not the next conversation turn.

@@ -20,7 +20,10 @@ automation target from `status` and `tabs`. The user's regular Chrome, native
 desktop apps, and other file viewers are separate surfaces.
 
 Start with `status`. If no page is active, open the intended URL; otherwise reuse
-the relevant page without reloading unfinished input. Use `tabs` when selecting
+the relevant page without reloading unfinished input. If `status` shows owner=user,
+the user holds the browser: ask them to return control with
+`request_user_input(kind="action", surface="browser", reason=...)` instead of
+retrying browser actions, or finish as blocked. Use `tabs` when selecting
 another page or investigating a popup, and only switch using fresh tab IDs.
 Before changing data, establish the intended account or workspace and specific
 target object from page evidence. Resolve ambiguous targets before acting; do
@@ -32,7 +35,9 @@ changes, verify the active filters, selected records, selection across pages,
 and intended affected count; resolve unclear scope before acting.
 
 Observe before acting: interactive elements for controls, full content for
-reading. Use observed refs/selectors; use coordinates only from a recent
+reading. An element's `scope` names an entry in `observation.scopes` (its enclosing
+record, row or form with text and data keys); use it to tell same-named controls
+apart. Use observed refs/selectors; use coordinates only from a recent
 screenshot actually received and inspected. After navigation, tab changes,
 takeover, or changes that invalidate the target, observe again. A stale page
 result needs a fresh observation. `vision_available` describes capability, not
@@ -58,6 +63,7 @@ Do not request both DOM and screenshots routinely. Form actions already return
 fresh observations, so consume those rather than requesting a redundant read.
 For local UI tests after code changes, ensure the page
 reflects the new code; reload when needed without discarding unfinished input.
+Reload is refused on a page reached by form submission because it would resend the form.
 Use conditional `wait` for asynchronous pages, not repeated blind clicks.
 If the session disconnects, inspect `status` and use `recover` to establish a new
 session and fresh observation. Recovery does not retry the previous action.
@@ -196,10 +202,10 @@ cropped, full-page, compressed or older images are evidence and must be mapped o
 
 The first browser call activates a task-scoped tool set: browser_use,
 request_user_input, checklist, finish_task, and request_task_tools. This is a
-phase of the existing Engine, not a separate browser agent. If another capability
-is needed (for example reading a downloaded report), call request_task_tools with
-its names and the concrete dependency; names=[] lists eligible tools. New tools
-become available next round. Existing approval, sandbox, and user restrictions
+phase of the existing Engine, not a separate browser agent. Other listed tools stay
+visible but are rejected until enabled. If another capability is needed (for example
+reading a downloaded report), call request_task_tools with its names and the concrete
+dependency; names=[] lists eligible tools. New tools become usable next round. Existing approval, sandbox, and user restrictions
 still apply. Do not use another tool to bypass a denied browser operation.
 
 End the whole task with finish_task as the only call. Supply the actual answer,

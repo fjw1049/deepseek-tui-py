@@ -136,9 +136,12 @@ async def test_elevation_wait_rethrows_cancelled_error() -> None:
     )
 
     async def _cancel_pending() -> None:
-        await asyncio.sleep(0)
-        fut = bridge._pending.get("c1")  # noqa: SLF001
-        assert fut is not None
+        # Pending elevations are keyed by a generated elevation_id, not the tool call id.
+        for _ in range(100):
+            if bridge._pending:  # noqa: SLF001
+                break
+            await asyncio.sleep(0.01)
+        (fut,) = bridge._pending.values()  # noqa: SLF001
         fut.cancel()
 
     cancel_task = asyncio.create_task(_cancel_pending())
@@ -480,7 +483,7 @@ async def test_subagent_loop_auto_approve_does_not_grant_trust_mode(
 
 
 @pytest.mark.asyncio
-async def test_collect_turn_events_streams_live_text_to_task_record() -> None:
+async def test_collect_turn_events_streams_live_text_to_task_record(tmp_path, monkeypatch) -> None:
     """Text deltas must land in task.live_text via record_live_text."""
     recorded: list[tuple[str, str]] = []
 
@@ -488,8 +491,13 @@ async def test_collect_turn_events_streams_live_text_to_task_record() -> None:
         async def record_live_text(self, task_id: str, text: str) -> None:
             recorded.append((task_id, text))
 
+    # The run conversation transcript is written under DEEPSEEK_HOME.
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path))
+
     class _Task:
         id = "task_live1"
+        prompt = "stream"
+        workspace = str(tmp_path)
         task_manager = _Mgr()
 
     handle = EngineHandle()

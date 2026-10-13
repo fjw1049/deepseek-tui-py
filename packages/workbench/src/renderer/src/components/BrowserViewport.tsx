@@ -13,18 +13,25 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
   const moveAt = useRef(0)
   const click = useRef({ time: 0, x: 0, y: 0, count: 0 })
   const epoch = useRef(0)
+  const sceneEpoch = useRef(0)
   const pressed = useRef(new Set<string>())
   const current = useRef({ enabled, generation, sceneId, send, onError, inspect })
-  if (current.current.enabled !== enabled || current.current.generation !== generation || current.current.sceneId !== sceneId) epoch.current++
+  if (current.current.enabled !== enabled || current.current.generation !== generation) epoch.current++
+  if (current.current.sceneId !== sceneId) sceneEpoch.current++
   current.current = { enabled, generation, sceneId, send, onError, inspect }
   const enqueue = useCallback((input: Input): void => {
     const token = current.current.generation
     const queueEpoch = epoch.current
+    const queueScene = sceneEpoch.current
     const scene = current.current.sceneId
+    // Typing is re-checked by the runtime against the focused field's record, so a
+    // URL that changes per keystroke must not drop it; pointers need the exact frame.
+    const sceneBound = !['text', 'key'].includes(String(input.kind))
     const pair = input.kind === 'mouse' ? `mouse:${input.button}` : `key:${input.code || input.key}`
     if (input.event === 'mousePressed' || input.event === 'keyDown') pressed.current.add(pair)
     queue.current = queue.current.then(async () => {
       if (!mounted.current || !current.current.enabled || current.current.generation !== token || epoch.current !== queueEpoch) return
+      if (sceneBound && sceneEpoch.current !== queueScene) return
       if (current.current.inspect && !['pick', 'wheel', 'resize'].includes(String(input.kind))) return
       if (input.kind === 'pick' && !current.current.inspect) return
       const result = await current.current.send({ ...input, kind: input.kind === 'cut' ? 'copy' : input.kind, generation: token, ...(scene ? { scene_id: scene } : {}) })

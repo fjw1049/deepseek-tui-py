@@ -66,8 +66,10 @@ async def test_action_quit_awaits_cancelled_engine_task() -> None:
         except asyncio.CancelledError:
             raise
 
-    app._engine_task = asyncio.create_task(_slow_run())
+    task = asyncio.create_task(_slow_run())
+    app._engine_task = task
     with patch.object(app, "exit") as mock_exit:
         await app.action_quit()
-    assert app._engine_task.done()
+    # Shutdown awaits the cancelled task, then drops its reference.
+    assert task.done() and app._engine_task is None
     mock_exit.assert_called_once()

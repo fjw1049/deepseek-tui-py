@@ -527,7 +527,7 @@ async def test_status_without_start_and_during_takeover(browser):
         "viewport": {"width": 1200, "height": 760},
         "unresolved": [], "unresolved_total": 0, "next_operation_offset": None,
     }
-    with pytest.raises(ValueError, match="control changed"):
+    with pytest.raises(ValueError, match="user controls this browser.*request_user_input"):
         await browser.action("one", BrowserAction(action="reload"))
 
 

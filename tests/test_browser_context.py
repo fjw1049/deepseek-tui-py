@@ -138,6 +138,30 @@ def test_large_options_and_frame_catalog_do_not_starve_targets():
     assert data["observation"]["next_frame_offset"] == 2
 
 
+@pytest.mark.parametrize("budget", [1_000_000, 3000])
+def test_projection_lists_shared_scope_once_and_drops_backend_fields(budget):
+    from deepseek_tui.browser.context import project_result
+
+    def row(i):
+        return {"tag": "tr", "id": "", "keys": [["data-row-key", f"r{i}"]], "text": f"Item {i}"}
+
+    elements = [
+        {"ref": f"e{2 * i + j}", "target_id": f"obs_x:n{2 * i + j}", "role": "button",
+         "tag": "button", "name": name, "disabled": False, "editable": False, "readonly": False,
+         "box": {"x": 1.5, "y": 2.5, "width": 3, "height": 4}, "scope": row(i)}
+        for i in range(40) for j, name in enumerate(("Edit", "Delete"))
+    ]
+    result = {"success": True, "observation": {"observation_id": "obs", "text": "t",
+                                               "elements": elements}}
+    observation = json.loads(project_result(result, budget))["observation"]
+    first, second = observation["elements"][:2]
+    assert first == {"ref": "e0", "role": "button", "name": "Edit", "scope": "s0"}
+    assert second["scope"] == "s0" and observation["scopes"]["s0"] == row(0)
+    assert {e["scope"] for e in observation["elements"]} == set(observation["scopes"])
+    if budget == 3000:
+        assert observation["next_element_offset"] == len(observation["elements"]) < 80
+
+
 def test_runtime_without_browser_does_not_advertise_browser_tool(tmp_path):
     from deepseek_tui.tools.browser import BrowserUseTool
     from deepseek_tui.tools.registry import ToolContext, ToolRegistry

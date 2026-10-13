@@ -34,10 +34,11 @@ async def test_file_search_caps_huge_listings(tmp_path: Path) -> None:
     result = await FileSearchTool().execute({"pattern": "", "path": "."}, context)
 
     lines = result.content.splitlines()
-    # Capped listing plus one truncation notice; true count kept in metadata.
+    # Capped listing plus one truncation notice; the walk stops one past the cap.
     assert len(lines) == _MAX_FILE_RESULTS + 1
-    assert "showing 500 of 520 files" in lines[-1]
-    assert result.metadata["count"] == _MAX_FILE_RESULTS + 20
+    assert "showing 500 of at least 501 files" in lines[-1]
+    assert result.metadata["count"] == _MAX_FILE_RESULTS + 1
+    assert result.metadata["count_is_exact"] is False
 
 
 @pytest.mark.asyncio

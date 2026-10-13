@@ -2553,6 +2553,7 @@ class RuntimeThreadManager:
                 thread = self.store.load_thread(thread_id)
                 await self._discard_owned_worktree_claimed(thread)
             await self.browser_service.close(thread_id)
+            self.browser_service.delete_thread_data(thread_id)
             delete_thread_tree(self.store, self.checkpoints, thread_id)
             await asyncio.to_thread(self._prune_orphaned_worktrees)
 
@@ -2957,6 +2958,10 @@ class RuntimeThreadManager:
                 "cannot clear conversation history while threads contain "
                 f"unpublished code: {', '.join(sorted(kept))}"
             )
+        thread_ids = [thread.id for thread in self.store.list_threads()]
+        for thread_id in thread_ids:
+            await self.browser_service.close(thread_id)
+            self.browser_service.delete_thread_data(thread_id)
         report = clear_conversation_history(self.store, self.checkpoints)
         await asyncio.to_thread(self._prune_orphaned_worktrees)
         return report.to_dict()
@@ -4538,22 +4543,27 @@ class RuntimeThreadManager:
                 run.assistance = None
             if run.assistance:
                 return {"success": True, "content": "Already waiting for user assistance."}
-            if run.owner != "agent":
-                raise ValueError("The user already owns browser control")
+            if run.owner not in {"agent", "user"} or run.transferring:
+                raise ValueError("Browser control is changing; check status before asking again")
             from deepseek_tui.browser.handoff import baseline
 
             state.handle.pause.pause()
             run.handoff_baseline = baseline(run.latest_observation)
+            # A user who already holds control is asked to return it, not to take over.
+            human = run.owner == "user"
             run.assistance = {
                 "id": uuid.uuid4().hex,
                 "reason": reason.strip(),
-                "status": "pending",
+                "status": "human" if human else "pending",
                 "turn_id": state.active_turn.turn_id,
                 "url": run.url,
             }
             return {
                 "success": True,
                 "content": (
+                    "Task paused. The user controls the browser; the assistance UI asks them "
+                    "to return control. Wait for their decision."
+                    if human else
                     "Task paused. The assistance UI will notify the user. "
                     "Wait for their decision."
                 ),

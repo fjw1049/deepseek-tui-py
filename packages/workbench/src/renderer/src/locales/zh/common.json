@@ -10,7 +10,7 @@
   "browserControlPaused": "任务已暂停",
   "browserControlHelpHint": "接手完成当前步骤，再交还给 Agent",
   "browserControlHumanHint": "自动操作已暂停，完成后交还继续",
-  "browserControlHumanIdleHint": "可以直接点击、滚动和输入",
+  "browserControlHumanIdleHint": "可以直接点击、滚动和输入；要让 AI 操作，请先交还控制",
   "browserControlReadyHint": "共享浏览器，随时可以接手",
   "browserControlSwitchHint": "正在交接，请稍候",
   "browserControlSwitching": "正在交接…",

@@ -28,9 +28,12 @@ from deepseek_tui.browser.observation import (
     READ_TEXT,
     SCOPE_CONTEXT,
     VISIBLE,
+    DocumentContext,
     document_identity,
     evaluate,
 )
+
+RECORDER_WORLD = "deepseek-recorder"
 
 
 class ScopedSemanticProcessor(SemanticProcessor):
@@ -192,6 +195,7 @@ class WorkbenchRecordSession(RecordSession):
         self.frame_changed = asyncio.Event()
         self.frame_lock = asyncio.Lock()
         self.capture_warnings = set()
+        self.navigations = set()
 
     def _append(self, event):
         event = dict(event)
@@ -251,11 +255,46 @@ class WorkbenchRecordSession(RecordSession):
         client.on("Page.frameAttached", lambda params: self.frame_changed.set())
         for domain in ("Runtime", "Page", "DOM"):
             await client.enable_domain(domain)
-        await client.send("Runtime.addBinding", {"name": self.binding_name})
+        world = await self._world(client)
+        main_frame = world.identity[0]
+        # History API changes are invisible to the isolated recorder; CDP reports them.
+        def within_document(params):
+            if params.get("frameId") == main_frame:
+                task = asyncio.create_task(
+                    self._navigated_within_document(client, params.get("url"), target_id)
+                )
+                self.navigations.add(task)
+                task.add_done_callback(self.navigations.discard)
+
+        client.on("Page.navigatedWithinDocument", within_document)
+        # Page scripts must not reach the binding or nonce, or they could forge steps.
+        await client.send(
+            "Runtime.addBinding",
+            {"name": self.binding_name, "executionContextName": RECORDER_WORLD},
+        )
         source = self._recorder_source(target_id)
-        script = await client.send("Page.addScriptToEvaluateOnNewDocument", {"source": source})
+        script = await client.send(
+            "Page.addScriptToEvaluateOnNewDocument", {"source": source, "worldName": RECORDER_WORLD}
+        )
         self.scripts[id(client)] = script["identifier"]
-        await evaluate(client, "(()=>{" + source + ";return true})()")
+        await evaluate(world, "(()=>{" + source + ";return true})()")
+
+    async def _navigated_within_document(self, client, url, target_id):
+        # Flush debounced edits first so a live-search entry precedes its URL change.
+        with suppress(Exception):
+            await evaluate(
+                await self._world(client),
+                "(()=>{globalThis.__deepseekRecorder?.flush();return true})()",
+            )
+        self._on_frame_navigated({"frame": {"url": url}}, target_id)
+
+    async def _world(self, client):
+        """The top document's recorder world; the same name always yields the same context."""
+        frame = (await client.send("Page.getFrameTree"))["frameTree"]["frame"]["id"]
+        world = await client.send(
+            "Page.createIsolatedWorld", {"frameId": frame, "worldName": RECORDER_WORLD}
+        )
+        return DocumentContext(client, (frame, ""), world["executionContextId"])
 
     def _frame_navigated(self, params, target_id):
         self.frame_changed.set()
@@ -343,6 +382,7 @@ class WorkbenchRecordSession(RecordSession):
             with suppress(asyncio.CancelledError, Exception):
                 await self._poll_task
             self._poll_task = None
+        await asyncio.gather(*self.navigations, return_exceptions=True)
         clients = list({id(c): c for c in [self.client, *self._clients.values()]}.values())
         for client in [*clients, *(c for c, _ in self.frames.values())]:
             if id(client) not in self.scripts and not any(
@@ -350,6 +390,8 @@ class WorkbenchRecordSession(RecordSession):
             ):
                 continue
             try:
+                if not isinstance(client, FrameContext):
+                    client = await self._world(client)
                 flushed = await evaluate(
                     client,
                     "(()=>{const r=globalThis.__deepseekRecorder;"

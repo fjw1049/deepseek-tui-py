@@ -10,7 +10,7 @@
   "browserControlPaused": "Task paused",
   "browserControlHelpHint": "Take over for this step, then return control",
   "browserControlHumanHint": "Automation is paused. Return control when ready",
-  "browserControlHumanIdleHint": "Click, scroll and type directly",
+  "browserControlHumanIdleHint": "Click, scroll and type directly; return control before asking the agent to act",
   "browserControlReadyHint": "A shared browser you can take over anytime",
   "browserControlSwitchHint": "Transferring control. One moment",
   "browserControlSwitching": "Transferring…",

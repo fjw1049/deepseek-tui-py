@@ -7,7 +7,11 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_resume_thread_returns_detail(client: AsyncClient) -> None:
+async def test_resume_thread_returns_detail(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Resume loads the engine, which needs a configured (placeholder) provider key.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     create = await client.post("/v1/threads", json={})
     thread_id = create.json()["id"]
     r = await client.post(f"/v1/threads/{thread_id}/resume")

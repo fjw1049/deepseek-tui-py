@@ -113,8 +113,9 @@ def test_batching_keeps_the_payload_prefix_reusable() -> None:
     prune_old_tool_results(batched, config=batched_config)
     eager_before, batched_before = _wire(eager), _wire(batched)
 
-    eager.extend(_turn(14, "Z" * SETTLED_BODY_CHARS))
-    batched.extend(_turn(14, "Z" * SETTLED_BODY_CHARS))
+    # The next turn after turns 0-18; reusing an existing call id would be deduped on the wire.
+    eager.extend(_turn(19, "Z" * SETTLED_BODY_CHARS))
+    batched.extend(_turn(19, "Z" * SETTLED_BODY_CHARS))
     prune_old_tool_results(eager, config=ToolPruneConfig())
     prune_old_tool_results(batched, config=batched_config)
     eager_after, batched_after = _wire(eager), _wire(batched)

@@ -102,7 +102,10 @@ class RequestUserInputTool(ToolSpec):
                     "type": "string", "enum": ["information", "decision", "action"],
                     "description": "Defaults to information; action requests manual takeover.",
                 },
-                "surface": {"type": "string", "enum": ["browser"]},
+                "surface": {
+                    "type": "string", "enum": ["browser"],
+                    "description": "Required for action: where the human takes over.",
+                },
                 "reason": {
                     "type": "string",
                     "description": "For action: blocker and smallest useful human step.",

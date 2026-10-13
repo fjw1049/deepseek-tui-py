@@ -432,6 +432,7 @@ async def test_engine_pre_tool_hook_deny_blocks_execution(
     from unittest.mock import AsyncMock, MagicMock
 
     from deepseek_tui.engine.orchestrator.core import Engine
+    from deepseek_tui.engine.handle import EngineHandle
     from deepseek_tui.protocol.responses import ToolCall
     from deepseek_tui.tools.registry import ToolResult
 
@@ -450,6 +451,7 @@ async def test_engine_pre_tool_hook_deny_blocks_execution(
         ]
     )
     engine = Engine.__new__(Engine)
+    engine.handle = EngineHandle()  # tool execution checks human takeover first
     engine.goal_service = MagicMock()
     engine.goal_service.snapshot.return_value = None
     engine.mode = "agent"
@@ -477,6 +479,7 @@ async def test_engine_post_tool_hook_feedback_appended(tmp_path: Path) -> None:
     from unittest.mock import AsyncMock, MagicMock
 
     from deepseek_tui.engine.orchestrator.core import Engine
+    from deepseek_tui.engine.handle import EngineHandle
     from deepseek_tui.protocol.responses import ToolCall
     from deepseek_tui.tools.registry import ToolResult
 
@@ -496,6 +499,7 @@ async def test_engine_post_tool_hook_feedback_appended(tmp_path: Path) -> None:
         ]
     )
     engine = Engine.__new__(Engine)
+    engine.handle = EngineHandle()  # tool execution checks human takeover first
     engine.goal_service = MagicMock()
     engine.goal_service.snapshot.return_value = None
     engine.mode = "agent"

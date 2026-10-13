@@ -31,7 +31,8 @@ async def test_search_authorizes_real_targets(tmp_path):
         ToolContext(working_directory=workspace),
     )
     assert "external:" not in result.content and "alias:" not in result.content
-    assert "internal:" in result.content and "ok:" in result.content
+    # Symlinked files are skipped even when they point inside the workspace.
+    assert "internal:" not in result.content and "ok:" in result.content
 
 
 async def test_content_stamp_refers_to_returned_content(tmp_path, monkeypatch):

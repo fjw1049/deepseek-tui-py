@@ -25,6 +25,29 @@ it('discards queued text after same-generation disable and scene replacement', a
   } finally { await act(async () => root.unmount()) }
 })
 
+it('keeps queued typing across a scene change but drops queued pointer input', async () => {
+  const container = document.createElement('div'); const root = createRoot(container)
+  let finish!: (value: {}) => void
+  const send = vi.fn((input: Record<string, unknown>) => input.text === 'a'
+    ? new Promise<{}>(resolve => { finish = resolve }) : Promise.resolve({}))
+  try {
+    await act(async () => root.render(createElement(BrowserViewport, { ...base, enabled: true, generation: 2, sceneId: 'old', send, onError: vi.fn() })))
+    const field = container.querySelector('textarea')!
+    const viewport = container.querySelector<HTMLDivElement>('.ds-browser-viewport')!
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 1200, height: 760 } as DOMRect)
+    await act(async () => {
+      field.value = 'a'; field.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      field.value = 'b'; field.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      viewport.dispatchEvent(new PointerEvent('pointerdown', { clientX: 30, clientY: 40, button: 0, buttons: 1, bubbles: true }))
+    })
+    // A live-search field rewrote the URL, so the runtime reported a new scene.
+    await act(async () => root.render(createElement(BrowserViewport, { ...base, enabled: true, generation: 2, sceneId: 'new', send, onError: vi.fn() })))
+    await act(async () => finish({}))
+    expect(send.mock.calls.map(([input]) => input.kind)).toEqual(['text', 'text'])
+    expect(send).toHaveBeenLastCalledWith({ kind: 'text', text: 'b', generation: 2, scene_id: 'old' })
+  } finally { await act(async () => root.unmount()) }
+})
+
 it('drops queued input after handoff and never cuts when clipboard writing fails', async () => {
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)

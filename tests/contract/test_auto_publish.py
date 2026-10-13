@@ -87,6 +87,7 @@ async def test_start_turn_never_dispatches_without_checkpoint(
         del trace
         engine = SimpleNamespace(
             mode="agent",
+            default_model=live_thread.model,
             tool_context=ToolContext(working_directory=execution_root(live_thread)),
         )
         async with manager._active_lock:

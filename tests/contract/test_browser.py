@@ -449,10 +449,16 @@ async def test_permanent_thread_deletion_closes_browser(authed_client, authed_ru
     directory.mkdir()
     session = SimpleNamespace(close=AsyncMock())
     manager.browser_service.runs[thread_id] = BrowserRun(thread_id, directory, session=session)
+    saved = manager.browser_service.artifact_root / thread_id
+    (saved / "profile").mkdir(parents=True)
+    (saved / "profile" / "Cookies").write_text("session")
+    (saved / "evidence.jpg").write_bytes(b"jpg")
     await manager.delete_thread(thread_id)
     session.close.assert_awaited_once_with(kill=True)
     assert thread_id not in manager.browser_service.runs
     assert not directory.exists()
+    # Evidence, downloads and saved logins belong to the deleted conversation.
+    assert not saved.exists()
 
 
 async def test_recovery_keeps_original_task_paused_and_assistance_pending(

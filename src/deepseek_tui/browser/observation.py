@@ -509,8 +509,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
         }
         if (a.x!==null && (s.width!==innerWidth || s.height!==innerHeight ||
             s.scrollX!==scrollX || s.scrollY!==scrollY)) return {error:'stale_viewport'};
-        if (a.x!==null && (s.revision!==window.__deepseekPageRevision.value ||
-            s.scrolls.some(v=>v.x!==(v.window?v.node.scrollX:v.node.scrollLeft) ||
+        if (a.x!==null && (s.scrolls.some(v=>v.x!==(v.window?v.node.scrollX:v.node.scrollLeft) ||
               v.y!==(v.window?v.node.scrollY:v.node.scrollTop)) ||
             [...s.refs.values()].some(v=>{
               const r=v.element.getBoundingClientRect();

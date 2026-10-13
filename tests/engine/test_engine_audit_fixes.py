@@ -356,3 +356,18 @@ async def test_cancel_during_startup_event_stops_activity_coordinator(engine):
     with pytest.raises(asyncio.CancelledError):
         await runner
     assert engine._activity_coordinator._task is None
+
+
+async def test_browser_input_is_not_written_to_tool_start_logs(engine, caplog):
+    import logging
+
+    engine._execute_single_tool = AsyncMock(return_value=ToolResult(True, "filled"))
+    with caplog.at_level(logging.INFO, logger="deepseek_tui.engine.orchestrator.tooling"):
+        await engine._execute_tool_calls([
+            ToolCall(id="browser-secret", name="browser_use", arguments={
+                "action": "fill", "selector": "#password", "text": "private-password-123"
+            })
+        ])
+    assert "browser arguments redacted" in caplog.text
+    assert "private-password-123" not in caplog.text
+    engine._execute_single_tool.assert_awaited_once()

@@ -40,11 +40,14 @@ class TaskDelivery:
         return not self.active or name in FOCUS_TOOLS | self.extra_tools
 
     def tools(self, catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Focus is enforced at execution (allows); keeping the advertised list
+        # stable preserves the provider prefix cache across focus changes.
+        if self.active and self.stop_reminded:
+            return [t for t in catalog if (t.get("function") or t)["name"] == "finish_task"]
         return [
             t
             for t in catalog
-            if self.allows((t.get("function") or t)["name"])
-            and (self.active or (t.get("function") or t)["name"] not in CONTROL_TOOLS)
+            if self.active or (t.get("function") or t)["name"] not in CONTROL_TOOLS
         ]
 
 
@@ -72,8 +75,14 @@ class RequestTaskToolsTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "names": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
-                "reason": {"type": "string", "minLength": 1},
+                "names": {
+                    "type": "array", "items": {"type": "string"}, "maxItems": 8,
+                    "description": "Tool names to enable for this task; [] lists eligible tools.",
+                },
+                "reason": {
+                    "type": "string", "minLength": 1,
+                    "description": "Concrete task dependency that needs these tools.",
+                },
             },
             "required": ["names", "reason"],
         }
@@ -128,10 +137,22 @@ class FinishTaskTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["completed", "partial", "blocked"]},
-                "answer": {"type": "string", "minLength": 1},
-                "evidence": {"type": "array", "items": {"type": "string"}},
-                "remaining": {"type": "array", "items": {"type": "string"}},
+                "status": {
+                    "type": "string", "enum": ["completed", "partial", "blocked"],
+                    "description": "completed needs evidence and no remaining work.",
+                },
+                "answer": {
+                    "type": "string", "minLength": 1,
+                    "description": "The actual final answer for the user, delivered verbatim.",
+                },
+                "evidence": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "tool:<tool_call_id> references to successful task results.",
+                },
+                "remaining": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Unfinished work or blockers; required for partial/blocked.",
+                },
             },
             "required": ["status", "answer", "evidence", "remaining"],
         }
@@ -170,8 +191,13 @@ class FinishTaskTool(ToolSpec):
             browser.state(thread_id) if callable(getattr(browser, "state", None)) else {}
         )
         unresolved = browser_state.get("unresolved") or (run.unresolved if run else {})
-        if run and (run.assistance or run.owner != "agent"):
+        if run and run.assistance:
             raise ToolError("Wait for the user to return control before finishing")
+        if run and run.owner != "agent" and status == "completed":
+            # Reporting the blocker must stay possible while the user holds the browser.
+            raise ToolError(
+                "The user controls the browser; report partial/blocked or request control first"
+            )
         if status == "completed":
             if not evidence or remaining:
                 raise ToolError("Completed requires evidence and no remaining work")

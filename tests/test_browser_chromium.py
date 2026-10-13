@@ -426,6 +426,67 @@ async def test_coordinate_click_requires_current_capture(chrome):
     assert stale["receipt"]["reason"] == "stale_layout"
 
 
+@pytest.mark.parametrize("motion", ["css_spinner", "js_clock"])
+async def test_coordinate_click_tolerates_unrelated_motion(chrome, motion):
+    service, run = chrome
+    client = run.session._internal.client
+    extra = {
+        "css_spinner": "<style>@keyframes s{to{transform:rotate(360deg)}}</style>"
+        "<div style='position:absolute;left:500px;top:100px;width:20px;height:20px;"
+        "border:3px solid #333;border-top-color:transparent;animation:s 1s linear infinite'></div>",
+        "js_clock": "<div id=k style='position:absolute;left:600px;top:300px'></div>",
+    }[motion]
+    await evaluate(client, "document.body.innerHTML=`<button onclick='window.c=(window.c||0)+1' "
+        "style='position:absolute;left:100px;top:100px;width:120px;height:40px'>Go</button>"
+        + extra + "`;window.c=0;"
+        + ("setInterval(()=>k.textContent=Date.now(),50);" if motion == "js_clock" else "")
+        + "true")
+    capture = await service.action("t", BrowserAction(action="screenshot"))
+    await asyncio.sleep(0.3)
+    result = await act(service, capture["observation"], "click", x=160, y=120)
+    assert result["success"], result
+    assert await evaluate(client, "window.c") == 1
+
+
+async def test_reload_refuses_form_result_page(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client, "document.body.innerHTML="
+        "`<form method=post action=/submit><input name=a value=1><button>Send</button></form>`;true")
+    observation = await read(service)
+    sent = await act(service, observation, "click", ref=ref(observation, "Send"))
+    assert sent["success"], sent
+    reloaded = await service.action("t", BrowserAction(action="reload"), require_observation=True)
+    assert reloaded["receipt"]["execution"] == "not_executed"
+    assert reloaded["receipt"]["reason"] == "reload_would_resubmit_form"
+    # Ordinary pages still reload.
+    await service.action("t", BrowserAction(action="open", url=run.url.replace("/submit", "/plain")))
+    assert (await service.action("t", BrowserAction(action="reload")))["success"]
+
+
+async def test_coordinate_click_outside_viewport_is_a_recorded_rejection(chrome):
+    service, _ = chrome
+    capture = await service.action("t", BrowserAction(action="screenshot"))
+    for _ in range(2):  # The same operation_id must replay its receipt, not fail lookup.
+        result = await act(service, capture["observation"], "click", x=1300, y=10,
+                           operation_id="outside")
+        assert result["receipt"]["execution"] == "not_executed"
+        assert result["receipt"]["reason"] == "pointer_outside_viewport"
+
+
+async def test_coordinate_click_rejects_changed_pixels_at_point(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML=`<button onclick='window.c=(window.c||0)+1' "
+        "style='position:absolute;left:100px;top:100px;width:120px;height:40px'>Go</button>`;"
+        "window.c=0;true")
+    capture = await service.action("t", BrowserAction(action="screenshot"))
+    await evaluate(client, "document.body.insertAdjacentHTML('beforeend',"
+        "`<div style='position:fixed;inset:0;background:#fff'>modal</div>`);true")
+    result = await act(service, capture["observation"], "click", x=160, y=120)
+    assert result["receipt"]["reason"] == "screenshot_pixels_changed"
+    assert await evaluate(client, "window.c") == 0
+
+
 async def test_real_engine_observes_clicks_and_returns_answer(chrome, tmp_path):
     """Full engine/tool/CDP chain driven only by the primary model outputs."""
     import json
@@ -477,9 +538,11 @@ async def test_real_engine_observes_clicks_and_returns_answer(chrome, tmp_path):
                 "observation_id": observation["observation_id"],
             }
         else:
-            return TurnResult(
-                assistant_message=Message.assistant("推荐川沙测试店，评分4.8分，距离800米。")
-            )
+            return TurnResult(assistant_message=None, tool_calls=[ToolCall(
+                id="finish", name="finish_task", arguments={
+                    "status": "completed", "answer": "推荐川沙测试店，评分4.8分，距离800米。",
+                    "evidence": ["tool:browser-2"], "remaining": [],
+                })])
         return TurnResult(
             assistant_message=None,
             tool_calls=[
@@ -1675,6 +1738,23 @@ async def test_nested_frame_capture_can_finish_without_incomplete_warning(chrome
     assert recording_store(service, "t").read_manifest(started["recordingId"]).status == "stopped"
 
 
+async def test_page_scripts_cannot_reach_recorder_or_forge_steps(chrome):
+    from deepseek_tui.browser.workflows import finish_recording, read_workflow, start_recording
+
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML='<button id=danger>Delete account</button>';true")
+    await service.control("t", "user")
+    await start_recording(service, "t")
+    exposed = await evaluate(client, "(()=>Object.keys(window).filter(k=>/HBR|deepseek|binding/i"
+        ".test(k) || (typeof window[k]==='function' && /^__/.test(k))))()")
+    assert exposed == []
+    async with run.lock:
+        result = await finish_recording(run)
+    steps = read_workflow(service, "t", result["recordingId"]).steps
+    assert not any(s.kind == "click" for s in steps)
+
+
 async def test_partial_recording_install_failure_disposes_injected_hooks(chrome, monkeypatch):
     from deepseek_tui.browser.recording import WorkbenchRecordSession
     from deepseek_tui.browser.workflows import start_recording
@@ -1826,6 +1906,28 @@ async def test_visible_record_change_discards_queued_human_input_without_control
         await service.input("t", BrowserInput(kind="text", text="OLD_RECORD_INPUT",
             generation=run.generation, scene_id=scene))
     assert await evaluate(run.session._internal.client, "document.querySelector('input').value") == ""
+
+
+async def test_typing_survives_url_rewrites_but_not_record_changes(chrome):
+    from deepseek_tui.browser.input import BrowserInput
+
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML=`<section data-record=A><input id=q "
+        "oninput=\"history.replaceState(null,'','?q='+this.value)\"></section>`;true")
+    await service.control("t", "user")
+    await service.action("t", BrowserAction(action="click", selector="#q", generation=run.generation),
+                         actor="user")
+    scene = (await service.view("t"))["scene"]["scene_id"]
+    for ch in "hello":  # Each keystroke rewrites the URL before the next frame arrives.
+        await service.input("t", BrowserInput(kind="text", text=ch, generation=run.generation,
+                                              scene_id=scene))
+    assert await evaluate(client, "document.querySelector('#q').value") == "hello"
+    await evaluate(client, "document.querySelector('section').dataset.record='B';true")
+    with pytest.raises(ValueError, match="page changed"):
+        await service.input("t", BrowserInput(kind="text", text="!", generation=run.generation,
+                                              scene_id=scene))
+    assert await evaluate(client, "document.querySelector('#q').value") == "hello"
 
 
 async def test_upload_and_prompt_are_captured_as_explicit_private_replay_inputs(chrome, tmp_path):

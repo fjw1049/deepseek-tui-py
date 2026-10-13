@@ -11,7 +11,7 @@
   const visible = __VISIBLE__, readText = __READ_TEXT__;
   const pending = new Map(), revisions = new WeakMap(), emitted = new WeakMap();
   const roots = new WeakSet(), seen = new WeakSet(), removals = [], observers = [];
-  let sequence = 0, stopped = false, lastUrl = location.href, lastScroll = 0;
+  let sequence = 0, stopped = false, lastScroll = 0;
   const editable = e => e?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e?.tagName);
   const fullName=__NAME__, role=__ROLE__, context=__SCOPE_CONTEXT__;
   const name=e=>Array.from(fullName(e)).slice(0,300).join('');
@@ -137,27 +137,9 @@
     for(const e of [...(node.nodeType===1?[node]:[]),...node.querySelectorAll('*')])
       if(e.shadowRoot) watch(e.shadowRoot);
   }
-  const attachShadow=Element.prototype.attachShadow;
-  function attached(...args) {
-    const root=attachShadow.apply(this,args);
-    if(root.mode==='open') watch(root);
-    return root;
-  }
-  Element.prototype.attachShadow=attached;
-  const historyMethods=[];
-  function checkUrl() {
-    if(location.href===lastUrl) return;
-    flushAll(); const before=lastUrl; lastUrl=location.href;
-    if(window===window.top) emit('navigation',{urlBefore:before,urlAfter:lastUrl});
-  }
-  if(window===window.top) {
-    for(const key of ['pushState','replaceState']) {
-      const original=history[key];
-      const wrapped=function(...args){const result=original.apply(this,args);checkUrl();return result};
-      history[key]=wrapped; historyMethods.push({key,original,wrapped});
-    }
-    listen(window,'popstate',checkUrl); listen(window,'hashchange',checkUrl);
-  }
+  // This runs in an isolated world: page-world prototypes and history are out of
+  // reach, so shadow roots come from scans and same-document navigation from CDP.
+  if(window===window.top) listen(window,'popstate',flushAll);
   listen(window,'pagehide',flushAll);
   listen(window,'beforeunload',flushAll);
   const overlay=document.createElement('div');
@@ -174,9 +156,6 @@
     if(stopped) return;
     flushAll(); stopped=true;
     removals.forEach(remove=>remove()); observers.forEach(observer=>observer.disconnect());
-    if(Element.prototype.attachShadow===attached) Element.prototype.attachShadow=attachShadow;
-    for(const {key,original,wrapped} of historyMethods)
-      if(history[key]===wrapped) history[key]=original;
     overlay.remove(); globalThis.__deepseekRecorder=null;
   }};
   watch(document);

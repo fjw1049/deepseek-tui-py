@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from deepseek_tui.browser.input import BrowserInput
 from deepseek_tui.browser.observation import (
+    SCOPE_CONTEXT,
     document_identity,
     evaluate,
     observe,
@@ -36,6 +37,15 @@ from deepseek_tui.browser.observation import (
     target_state,
 )
 
+# Identity of the focused editable field and its record scope, without its contents.
+FOCUSED_FIELD = (
+    "(()=>{let e=document.activeElement;while(e?.shadowRoot?.activeElement)"
+    "e=e.shadowRoot.activeElement;if(!e || !(e.isContentEditable || "
+    "/^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName)))return {};"
+    "const ids=window.__deepseekFocusIds || (window.__deepseekFocusIds={map:new WeakMap(),next:0});"
+    "if(!ids.map.has(e))ids.map.set(e,ids.next++);const s=(" + SCOPE_CONTEXT + ")(e);"
+    "return {node:ids.map.get(e),scope:s?{tag:s.tag,id:s.id,keys:s.keys}:null}})()"
+)
 TARGET_ACTIONS = {"click", "fill", "type", "select", "set_checked", "hover", "press", "scroll", "upload"}
 OBSERVE_AFTER = TARGET_ACTIONS | {"open", "new_tab", "switch_tab", "close_tab", "back",
                                   "forward", "reload", "wait", "check_text", "screenshot"}
@@ -299,6 +309,7 @@ class BrowserRun:
     tab_cache_time: float = 0
     failures: dict[str, int] = field(default_factory=dict)
     consecutive_action_failures: int = 0
+    focus_tokens: dict[str, str | None] = field(default_factory=dict)
 
 
 class BrowserService:
@@ -369,6 +380,14 @@ class BrowserService:
         if thread_id in self.runs:
             raise ValueError("End the browser session before clearing saved login data")
         shutil.rmtree(self.artifact_root / thread_id / "profile", ignore_errors=True)
+
+    def delete_thread_data(self, thread_id: str) -> None:
+        """Remove a deleted thread's evidence, downloads, workflows and saved login profile."""
+        if thread_id in self.runs:
+            raise ValueError("End the browser session before deleting its data")
+        if Path(thread_id).name != thread_id:
+            raise ValueError("Invalid thread ID")
+        shutil.rmtree(self.artifact_root / thread_id, ignore_errors=True)
 
     async def ensure(self, thread_id: str) -> BrowserRun:
         existing = self.runs.get(thread_id)
@@ -749,10 +768,17 @@ class BrowserService:
                 "if(keys.flat().some(v=>v?.length>1024))return {error:true};return {count:nodes.length,keys}})()")
             if keys.get("error"):
                 raise ValueError("Visible record scope is too large for direct viewport input; use scoped targets")
+            focus = await evaluate(await root_context(run), FOCUSED_FIELD)
             if await document_identity(run.session._internal.client) != (frame.get("id", ""), frame.get("loaderId", "")):
                 raise RuntimeError("Browser document changed during scene read")
             scene["business_scope"] = hashlib.sha256(json.dumps(keys, ensure_ascii=True).encode()).hexdigest()[:32]
         scene["scene_id"] = hashlib.sha256(json.dumps(scene, sort_keys=True).encode()).hexdigest()[:32]
+        if run.native_events:
+            run.focus_tokens[scene["scene_id"]] = hashlib.sha256(json.dumps(
+                [scene["tab_id"], scene["document_id"], focus], sort_keys=True).encode()
+            ).hexdigest() if focus else None
+            while len(run.focus_tokens) > 32:
+                run.focus_tokens.pop(next(iter(run.focus_tokens)))
         if run.scene and scene != run.scene:
             await self._release_inputs(run)
         run.scene = scene
@@ -778,7 +804,7 @@ class BrowserService:
                 raise ValueError("An earlier input outcome is unknown; review its receipt before further changes")
             if body.scene_id is not None or run.scene is not None:
                 scene = await self._scene(run)
-                if body.scene_id != scene["scene_id"]:
+                if body.scene_id != scene["scene_id"] and not self._same_focus(run, body, scene):
                     raise ValueError("Browser page changed; queued input was discarded")
             if run.recorder and run.recorder.frame_changed.is_set():
                 await run.recorder._sync_frames()
@@ -830,6 +856,17 @@ class BrowserService:
                     result["evidence_warning"] = "Evidence could not be persisted: " + str(exc)
             return self._remember_response(run, result, persist=body.kind not in {"wheel"} and
                                            not (body.kind == "mouse" and body.event == "mouseMoved"))
+
+    def _same_focus(self, run: BrowserRun, body: BrowserInput, scene: dict[str, Any]) -> bool:
+        """Typing follows the focused field and its record, not URL or list churn elsewhere.
+
+        Pointer input and keys without an editable focus (page shortcuts) keep the full
+        scene binding, so they cannot act on records that changed after the frame was seen.
+        """
+        if body.kind not in {"text", "key"}:
+            return False
+        current = run.focus_tokens.get(scene["scene_id"])
+        return current is not None and run.focus_tokens.get(body.scene_id) == current
 
     async def _execute_input(self, run, body, action_id):
         from deepseek_tui.browser.input import dispatch_input
@@ -1028,8 +1065,9 @@ class BrowserService:
         run.log[:] = run.log[-80:]
         guidance = {
             "target_obscured": "Inspect and dismiss the overlay using its own observed controls; do not click through it.",
-            "screenshot_pixels_changed": "Page pixels changed. Prefer an observed element ref/selector on dynamic pages; if none is available, inspect a fresh screenshot or request manual help.",
+            "screenshot_pixels_changed": "Pixels around the target point changed. Prefer an observed element ref/selector on dynamic pages; if none is available, inspect a fresh screenshot or request manual help.",
             "focus_not_active": "The page could not receive keyboard input. Inspect the active tab or request manual help.",
+            "reload_would_resubmit_form": "This page came from a form submission; reloading would send the form again. Observe the current page, or open a specific URL for fresh content.",
         }
         content = reason + (": " + guidance[reason] if reason in guidance else "")
         if run.failures[key] >= 3:
@@ -1121,6 +1159,14 @@ class BrowserService:
         queued_at = asyncio.get_running_loop().time()
         action._deadline = asyncio.get_running_loop().time() + 35
         async with run.lock:
+            # Already user-owned when issued, rather than a takeover racing this action.
+            if (actor == "agent" and run.owner == "user" and not run.transferring
+                    and run.generation == generation):
+                raise ValueError(
+                    "The user controls this browser. Ask them to return control with "
+                    "request_user_input(kind=action, surface=browser, reason=...), "
+                    "or finish the task as blocked."
+                )
             if run.owner != actor or run.transferring or run.generation != generation:
                 raise ValueError("Browser control changed; queued action was discarded")
             if action.generation is not None and action.generation != run.generation:
@@ -1157,6 +1203,8 @@ class BrowserService:
                 return await self._reject_action(run, action, "unresolved_operation")
             if len(run.unresolved) >= 8 and action.action in {"open", "new_tab", "switch_tab"}:
                 return await self._reject_action(run, action, "unresolved_operation_limit")
+            if action.action == "reload" and await self._form_submission_page(run):
+                return await self._reject_action(run, action, "reload_would_resubmit_form")
             if action.action == "record_start" and run.recording:
                 raise ValueError("Recording is already running; finish it before starting again")
             if action.action == "video_start" and run.video:
@@ -1194,8 +1242,9 @@ class BrowserService:
                 if resolved.get("error"):
                     return await self._reject_action(run, action, resolved["error"])
                 if action.x is not None and not (action.ref or action.selector):
-                    expected = (run.latest_observation or {}).get("screenshot_digest")
-                    if not expected or hashlib.sha256(await self._capture(run)).hexdigest() != expected:
+                    if action.x >= run.width or action.y is None or action.y >= run.height:
+                        return await self._reject_action(run, action, "pointer_outside_viewport")
+                    if not await self._point_unchanged(run, action.x, action.y):
                         return await self._reject_action(run, action, "screenshot_pixels_changed")
                 if resolved.get("frame_id"):
                     action = action.model_copy(
@@ -1613,14 +1662,15 @@ class BrowserService:
                 try:
                     same_page = await document_identity(s._internal.client) == (
                         observation["tab_id"], observation["document_id"])
+                    # Unrelated DOM churn (clocks, feeds) must not void the capture;
+                    # coordinate clicks re-check layout and pixels at the point.
                     same_layout = await evaluate(await root_context(run),
-                        "window.__deepseekObservation?.revision === "
-                        "window.__deepseekPageRevision?.value")
+                        "window.__deepseekObservation?.id === "
+                        + json.dumps(observation["observation_id"]))
                 except Exception:
                     same_page, same_layout = False, False
                 if same_page and same_layout is True and not (a.full_page or a.crop or a.frame_id):
                     observation["screenshot_artifact_id"] = artifact["id"]
-                    observation["screenshot_digest"] = hashlib.sha256(image).hexdigest()
                 elif a.full_page or a.crop or a.frame_id:
                     observation["screenshot_scope"] = (
                         "full_page" if a.full_page else "crop" if a.crop else "parent_viewport"
@@ -1788,6 +1838,38 @@ class BrowserService:
                 pass
             raise
         return ToolResult(True, "Clicked observed target")
+
+    async def _form_submission_page(self, run: BrowserRun) -> bool:
+        """CDP reload silently re-posts form results; Chrome's resubmit prompt is absent."""
+        try:
+            history = await run.session._internal.client.send("Page.getNavigationHistory")
+        except Exception:
+            return False  # A session that cannot read history cannot reload either.
+        entries, index = history.get("entries") or [], history.get("currentIndex", -1)
+        return 0 <= index < len(entries) and entries[index].get("transitionType") == "form_submit"
+
+    async def _point_unchanged(self, run: BrowserRun, x: int, y: int) -> bool:
+        """Compare pixels near the click point; unrelated animation elsewhere must not block it."""
+        from PIL import Image, ImageChops
+
+        artifact = (run.latest_observation or {}).get("screenshot_artifact_id")
+        if not artifact:
+            return False
+        try:
+            path = self.artifact(run.thread_id, artifact)
+        except ValueError:
+            return False
+        current = await self._capture(run)
+        box = (max(0, x - 32), max(0, y - 32), min(run.width, x + 32), min(run.height, y + 32))
+        with Image.open(path) as before, Image.open(io.BytesIO(current)) as after:
+            if before.size != after.size:
+                return False
+            diff = ImageChops.difference(
+                before.convert("RGB").crop(box), after.convert("RGB").crop(box)
+            ).convert("L")
+        # Tolerates a caret or JPEG noise; an overlay or moved control changes far more.
+        changed = sum(diff.histogram()[49:])
+        return changed <= 0.02 * diff.width * diff.height
 
     async def _dispatch_guard(self, run, action):
         if run.transferring or run.generation != action.generation:

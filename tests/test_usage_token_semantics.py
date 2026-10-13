@@ -130,7 +130,12 @@ def test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder(
         api_tools=api_tools,
         real_input_tokens=usage.input_tokens,
     )
-    assert naive["total"] == 204
+    estimate = estimate_context_breakdown(
+        model="deepseek-chat", workspace=tmp_path, api_tools=api_tools
+    )
+    # An uncached remainder below the static estimate no longer shrinks the buckets.
+    assert naive["total"] == estimate["total"] > 204
+    assert naive["system_prompt"] == estimate["system_prompt"]
     assert naive["conversation"] == 0
 
     fixed = estimate_context_breakdown(
@@ -141,7 +146,7 @@ def test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder(
     )
     assert fixed["total"] == ANTHROPIC_TOTAL_INPUT
     assert fixed["conversation"] > 0
-    assert fixed["system_prompt"] > naive["system_prompt"]
+    assert fixed["system_prompt"] == naive["system_prompt"]
     assert fixed["total"] == (
         fixed["system_prompt"]
         + fixed["rules"]

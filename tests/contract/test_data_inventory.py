@@ -213,6 +213,8 @@ async def test_clear_history_keeps_skills_and_config(
     sessions = user_sessions_dir()
     sessions.mkdir(parents=True, exist_ok=True)
     (sessions / "current.json").write_text("{}", encoding="utf-8")
+    browser_data = mgr.browser_service.artifact_root / thread.id / "profile"
+    browser_data.mkdir(parents=True)
 
     r = await client.post("/v1/data/clear-history")
     assert r.status_code == 200, r.text
@@ -226,6 +228,7 @@ async def test_clear_history_keeps_skills_and_config(
     assert (home / "config.toml").is_file()
     assert (home / "mcp.json").is_file()
     assert not (sessions / "current.json").exists()
+    assert not (mgr.browser_service.artifact_root / thread.id).exists()
 
 
 @pytest.mark.asyncio

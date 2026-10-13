@@ -317,6 +317,8 @@ async def test_hidden_internal_turn_carries_its_own_provenance(
 
     marker = f"internal-marker-{kind_ref}"
     if kind_ref == "goal_continuation":
+        # Continuations without an active goal are cancelled as stale.
+        engine.goal_service.create("Keep going")
         content = marker + ("x" * 10_000)
     else:
         workspace = engine.tool_context.working_directory

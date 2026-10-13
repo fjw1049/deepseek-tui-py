@@ -5,6 +5,78 @@ from __future__ import annotations
 import json
 from typing import Any
 
+ELEMENT_KEYS = {
+    "ref",
+    "role",
+    "tag",
+    "name",
+    "disabled",
+    "checked",
+    "selected_text",
+    "expanded",
+    "type",
+    "editable",
+    "readonly",
+    "selector",
+    "href",
+    "options",
+    "option_offset",
+    "total_options",
+    "next_option_offset",
+    "frame_id",
+    "scope",
+    "name_truncated",
+    "name_offset",
+    "next_name_offset",
+    "details_truncated",
+}
+# Omitted when false: the model only needs the exceptions.
+DEFAULT_FALSE = ("disabled", "editable", "readonly", "name_truncated", "details_truncated")
+
+
+def _compact_element(element: dict[str, Any]) -> dict[str, Any]:
+    """Drop backend-only identity/geometry and default flags from a model-facing element."""
+    item = {k: v for k, v in element.items() if k in ELEMENT_KEYS}
+    for key in DEFAULT_FALSE:
+        if item.get(key) is False:
+            item.pop(key)
+    if item.get("tag") in {item.get("role"), "input"}:  # Role and input type already say it.
+        item.pop("tag", None)
+    if "options" in item:
+        item["options"] = [
+            {k: v for k, v in o.items() if not (k in {"disabled", "value_omitted"} and v is False)}
+            for o in item["options"]
+        ]
+    return item
+
+
+class _Scopes:
+    """Shared record/row/form context, listed once and referenced by elements."""
+
+    def __init__(self, observation: dict[str, Any]):
+        self.table: dict[str, Any] = {}
+        self.index: dict[str, str] = {}
+        observation["scopes"] = self.table
+
+    def bind(self, item: dict[str, Any]) -> str | None:
+        """Replace item's scope with a short ID; return the ID if newly listed."""
+        scope = item.get("scope")
+        if not isinstance(scope, dict):
+            item.pop("scope", None)
+            return None
+        key = json.dumps(scope, ensure_ascii=False, sort_keys=True)
+        added = None
+        if key not in self.index:
+            added = self.index[key] = "s" + str(len(self.index))
+            self.table[added] = scope
+        item["scope"] = self.index[key]
+        return added
+
+    def unbind(self, added: str | None) -> None:
+        if added:
+            self.table.pop(added)
+            self.index = {k: v for k, v in self.index.items() if v != added}
+
 
 def project_result(result: dict[str, Any], budget: int) -> str:
     def encode(value):
@@ -22,11 +94,18 @@ def project_result(result: dict[str, Any], budget: int) -> str:
             "Observation collected" if data["content"].lstrip().startswith("{") else data["content"]
         )
     )
+    elements = observation.get("elements", [])
+    scopes = _Scopes(observation)
+    observation["elements"] = [_compact_element(e) for e in elements]
+    for item in observation["elements"]:
+        scopes.bind(item)
+    if not scopes.table:
+        observation.pop("scopes")
     if len(encode(data)) <= budget:
         return encode(data)
     text = observation.get("text", "")
-    elements = observation.get("elements", [])
     observation.update(text="", elements=[], context_truncated=True)
+    scopes = _Scopes(observation)
     observation["scope_ref"] = observation.get("observation_id")
     for key in ("scope_selector", "scope_shadow_path", "scope_frame_selector"):
         if key in observation and len(encode(observation[key])) > 1000:
@@ -53,38 +132,8 @@ def project_result(result: dict[str, Any], budget: int) -> str:
         ]
         data["tabs_truncated"] = len(result["tabs"]) > 2
     for element in elements:
-        item = {
-            k: v
-            for k, v in element.items()
-            if k
-            in {
-                "ref",
-                "target_id",
-                "role",
-                "tag",
-                "name",
-                "disabled",
-                "checked",
-                "selected_text",
-                "expanded",
-                "type",
-                "editable",
-                "readonly",
-                "selector",
-                "href",
-                "options",
-                "option_offset",
-                "total_options",
-                "next_option_offset",
-                "frame_id",
-                "box",
-                "scope",
-                "name_truncated",
-                "name_offset",
-                "next_name_offset",
-                "details_truncated",
-            }
-        }
+        item = _compact_element(element)
+        added = scopes.bind(item)
         for key, value in list(item.items()):
             if key in {"selector", "href"} and isinstance(value, str) and len(value) > 512:
                 item.pop(key)  # A shortened selector/URL would refer to a different target.
@@ -103,6 +152,7 @@ def project_result(result: dict[str, Any], budget: int) -> str:
         # Reserve room for readable text and continuation metadata.
         if len(encode(data)) > budget - 1200:
             observation["elements"].pop()
+            scopes.unbind(added)
             if not observation["elements"]:
                 observation["elements"].append(
                     {
@@ -115,6 +165,8 @@ def project_result(result: dict[str, Any], budget: int) -> str:
         observation["next_element_offset"] = observation.get("element_offset", 0) + len(
             observation["elements"]
         )
+    if not scopes.table:
+        observation.pop("scopes")
     available = max(0, budget - len(encode(data)) - 150)
     observation["text"] = text[:available]
     if len(observation["text"]) < len(text):

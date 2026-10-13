@@ -23,8 +23,10 @@ from deepseek_tui.tools.registry import ToolContext
 
 @pytest.mark.asyncio
 async def test_monitor_turn_user_input_required_event_log(
-    runtime_app: object,
+    runtime_app: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Loading the engine needs a configured (placeholder) provider key.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
     handle = EngineHandle()
     thread = await manager.create_thread(CreateThreadRequest())

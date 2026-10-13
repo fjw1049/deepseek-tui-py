@@ -348,6 +348,8 @@ class TestLiveTodayIntegration:
                 exec_policy=ExecPolicyEngine(approval_policy="auto"),
             )
             try:
+                # The app server preloads the MCP catalog at startup; do the same here.
+                await mgr.await_startup_preload()
                 tools = await engine._get_tools_with_mcp()
                 tool_name = next(
                     t["function"]["name"]

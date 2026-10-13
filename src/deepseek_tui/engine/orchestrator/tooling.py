@@ -706,6 +706,12 @@ class ToolExecutionMixin:
         model: str,
     ) -> ToolResult | None:
         """Execute a single tool call, handling special tools and approval."""
+        tool_name, _arguments = _normalise_tool_call(
+            tool_call.name, tool_call.arguments
+        )
+        # A tool absent from the request catalog is rejected before touching runtime state.
+        if tool_name not in _allowed_tool_names(api_tools):
+            raise ToolError(missing_tool_error_message(tool_call.name, api_tools))
         self._check_human_intervention()
         goal = self.goal_service.snapshot()
         goal_control = tool_call.name in {"CreateGoal", "GetGoal", "SetGoalBudget", "checklist"} or (
@@ -729,12 +735,7 @@ class ToolExecutionMixin:
                     raise ToolError(
                         "Cannot verify workspace contents; retry after files are readable"
                     )
-        tool_name, _arguments = _normalise_tool_call(
-            tool_call.name, tool_call.arguments
-        )
-        if tool_name not in _allowed_tool_names(api_tools):
-            raise ToolError(missing_tool_error_message(tool_call.name, api_tools))
-        delivery = self.tool_context.metadata.get("task_delivery")
+        delivery =self.tool_context.metadata.get("task_delivery")
         if delivery:
             if not delivery.allows(tool_name):
                 raise ToolError("Tool is outside this task's browser phase; "
