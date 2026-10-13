@@ -462,6 +462,7 @@ class BrowserService:
 
         run = self.runs.get(thread_id)
         if run is None:
+            saved = self._saved_state(thread_id)
             return {
                 "active": False,
                 "owner": "agent",
@@ -471,7 +472,8 @@ class BrowserService:
                 "demo_status": "idle",
                 "error": None,
                 "capabilities": browser_capabilities(video_ready=bool(shutil.which("ffmpeg"))),
-                **self._saved_state(thread_id),
+                **saved,
+                "unresolved": list(saved.get("unresolved", {}).values()),
             }
         return {
             "active": run.session is not None
@@ -550,7 +552,7 @@ class BrowserService:
         return f"{run.directory.name}:{run.generation}" if run else "new"
 
     def approval_fingerprint(self, thread_id, arguments, task_id):
-        """Reuse only the same user-approved task, exact node, scope and effect arguments."""
+        """Reuse only the same observation, task, exact node, scope and effect arguments."""
         result = {"arguments": deepcopy(arguments), "scope": self.approval_scope(thread_id)}
         run = self.runs.get(thread_id)
         observation = run.latest_observation if run else None
@@ -565,7 +567,7 @@ class BrowserService:
         if target.get("name_truncated") or (target.get("scope") or {}).get("truncated"):
             return result
         effect_arguments = {k: v for k, v in arguments.items() if k not in {
-            "ref", "selector", "observation_id", "generation", "operation_id", "x", "y"}}
+            "ref", "selector", "generation", "operation_id", "x", "y"}}
         result["arguments"] = effect_arguments
         result["task_constraints"] = {
             "task_id": task_id, "expiry": "task_end_or_control_change",
@@ -751,6 +753,8 @@ class BrowserService:
             if body.kind == "release":
                 await self._release_inputs(run)
                 return {"success": True, "released": True}
+            if run.native_events:
+                await run.native_events.install(run.session._internal.client)
             if run.native_events and run.native_events.dialog:
                 if body.event in {"keyUp", "mouseReleased"}:
                     return {"success": True, "cleanup": "after_dialog"}
@@ -1072,6 +1076,8 @@ class BrowserService:
                 async with run.lock:
                     try:
                         state = await self.page_state(run)
+                        if run.native_events:
+                            state.update(run.native_events.state())
                         run.healthy = True
                     except Exception as exc:
                         run.healthy = False
@@ -1359,7 +1365,12 @@ class BrowserService:
         elif a.action == "tabs":
             result = await s.list_tabs()
         elif a.action == "new_tab":
-            result = await s.new_tab(url=a.url or None, force_new=True)
+            result = await s.new_tab(force_new=True)
+            if result.success:
+                if run.native_events:
+                    await run.native_events.install(s._internal.client)
+                if a.url:
+                    result = await s.navigate(a.url)
         elif a.action == "switch_tab":
             result = await s.switch_tab(a.tab_id)
         elif a.action == "close_tab":
@@ -1500,6 +1511,8 @@ class BrowserService:
             result = None
         else:
             result = None
+        if run.native_events and a.action in {"open", "new_tab", "switch_tab", "close_tab"}:
+            await run.native_events.install(s._internal.client)
         if a.action in {"fill", "select", "set_checked"} and (result is None or result.success):
             expected = json.dumps(a.checked if a.action == "set_checked" else a.text)
             state = (

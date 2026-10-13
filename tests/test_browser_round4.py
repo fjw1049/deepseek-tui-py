@@ -18,7 +18,7 @@ from deepseek_tui.browser.service import (
 
 @pytest.mark.parametrize(
     "changed",
-    ["ref_only", "node", "record", "document", "generation", "task", "effect", "truncated"],
+    ["ref_only", "observation", "node", "record", "document", "generation", "task", "effect", "truncated"],
 )
 def test_task_approval_equivalence_never_expands_target_or_effect(tmp_path, changed):
     service = BrowserService(tmp_path)
@@ -39,11 +39,14 @@ def test_task_approval_equivalence_never_expands_target_or_effect(tmp_path, chan
     }
     args = {"action": "click", "ref": "e1", "observation_id": "old"}
     previous = service.approval_fingerprint("t", args, "task")
-    run.latest_observation["observation_id"] = "new"
+    assert service.approval_fingerprint("t", args, "task") == previous
     run.latest_observation["elements"][0]["ref"] = "e9"
-    args.update(ref="e9", observation_id="new")
+    args.update(ref="e9")
     task = "task"
-    if changed == "node":
+    if changed == "observation":
+        run.latest_observation["observation_id"] = "new"
+        args["observation_id"] = "new"
+    elif changed == "node":
         run.latest_observation["elements"][0]["target_id"] = "stable_node_B"
     elif changed == "record":
         run.latest_observation["elements"][0]["scope"]["keys"][0][1] = "B"

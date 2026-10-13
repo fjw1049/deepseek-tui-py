@@ -1962,3 +1962,136 @@ async def test_nested_remote_renderers_keep_the_full_ancestor_input_chain(chrome
     finally:
         server.close()
         await server.wait_closed()
+
+
+async def test_close_session_returns_success(chrome):
+    service, run = chrome
+    result = await service.action("t", BrowserAction(action="close_session"))
+    assert result["success"]
+
+
+async def test_iframe_continuation(chrome):
+    service, run = chrome
+    await evaluate(
+        run.session._internal.client,
+        "document.querySelector('#frame').contentDocument.body.innerHTML='<div>'+('long content '.repeat(2000))+'</div>';true",
+    )
+    root = await read(service)
+    first = await service.action(
+        "t", BrowserAction(action="observe", frame_id=root["frames"][0]["frame_id"])
+    )
+    obs = first["observation"]
+    assert obs["next_text_offset"] is not None
+    second = await service.action(
+        "t",
+        BrowserAction(
+            action="observe", scope_ref=obs["observation_id"], text_offset=obs["next_text_offset"]
+        ),
+    )
+    assert second["success"]
+    assert obs["text"] + second["observation"]["text"] == ("long content " * 2000).strip()
+    await evaluate(run.observation_context, "document.body.append('changed');true")
+    with pytest.raises(RuntimeError, match="Paging snapshot changed"):
+        await service.action("t", BrowserAction(
+            action="observe", scope_ref=second["observation"]["observation_id"], text_offset=1))
+
+
+async def test_status_exposes_native_chooser(chrome):
+    service, run = chrome
+    await evaluate(
+        run.session._internal.client, "document.body.innerHTML='<input type=file id=f>';true"
+    )
+    obs = await read(service)
+    await act(service, obs, "click", selector="#f")
+    assert run.native_events.chooser
+    from deepseek_tui.tools.browser import BrowserUseTool
+    from deepseek_tui.tools.registry import ToolContext
+
+    context = ToolContext(working_directory=run.directory, metadata={
+        "browser_service": service, "runtime_thread_id": "t"})
+    status = await BrowserUseTool().execute({"action": "status"}, context)
+    assert status.metadata["browser"]["content"]["file_chooser"]["id"] == run.native_events.chooser["id"]
+
+
+async def test_user_new_tab_installs_native_events(chrome):
+    service, run = chrome
+    await service.control("t", "user")
+    await service.action("t", BrowserAction(action="new_tab", url=run.url), actor="user")
+    assert run.session._internal.client in run.native_events.clients
+
+
+async def test_approval_changes_with_recipient(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(
+        client,
+        "document.body.innerHTML='<form><label>Recipient<input id=to value=alice></label><button id=send type=button>Send</button></form>';true",
+    )
+    first = await read(service)
+    args = {"action": "click", "selector": "#send", "observation_id": first["observation_id"]}
+    original = service.approval_fingerprint("t", args, "same-task")
+    await evaluate(client, "document.querySelector('#to').value='bob';true")
+    second = await read(service)
+    args["observation_id"] = second["observation_id"]
+    changed = service.approval_fingerprint("t", args, "same-task")
+    assert original != changed, "Different recipient reuses same approval fingerprint"
+
+
+@pytest.mark.parametrize("switch_back", [False, True])
+async def test_human_dialog_on_new_tab(chrome, switch_back):
+    from deepseek_tui.browser.input import BrowserInput
+
+    service, run = chrome
+    await service.control("t", "user")
+    await service.action("t", BrowserAction(action="new_tab", url=run.url), actor="user")
+    if switch_back:
+        original = next(tab["tab_id"] for tab in run.tabs if not tab.get("active"))
+        await service.action("t", BrowserAction(action="switch_tab", tab_id=original), actor="user")
+    await evaluate(
+        run.session._internal.client,
+        "document.body.innerHTML=`<button onclick=\"window.answer=confirm('Confirm?')\">Ask</button>`;true",
+    )
+    box = await evaluate(
+        run.session._internal.client,
+        "(()=>{const r=document.querySelector('button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()",
+    )
+    for event in ["mousePressed", "mouseReleased"]:
+        result = await service.input(
+            "t",
+            BrowserInput(
+                kind="mouse", event=event, button="left", generation=run.generation, **box
+            ),
+        )
+    assert run.native_events.dialog, result
+    await service.action("t", BrowserAction(action="handle_dialog",
+        dialog_id=run.native_events.dialog["id"], accept=True), actor="user")
+    assert await evaluate(run.session._internal.client, "window.answer") is True
+    assert not run.unresolved
+
+
+async def test_new_tab_captures_dialog_during_navigation(chrome, monkeypatch):
+    import sys
+
+    service, run = chrome
+    monkeypatch.setattr(sys.modules[__name__], "PAGE",
+        b"<!doctype html><script>window.answer=confirm('On load')</script>")
+    result = await service.action("t", BrowserAction(action="new_tab", url=run.url))
+    assert result["dialog"]["message"] == "On load"
+    await service.action("t", BrowserAction(action="handle_dialog",
+        dialog_id=result["dialog"]["id"], accept=True))
+    assert await evaluate(run.session._internal.client, "window.answer") is True
+
+
+async def test_hidden_scoped_text_after_removal(chrome):
+    service, run = chrome
+    await evaluate(
+        run.session._internal.client,
+        "document.body.innerHTML='<div id=loading>Loading</div>';setTimeout(()=>document.querySelector('#loading').remove(),100);true",
+    )
+    result = await service.action(
+        "t",
+        BrowserAction(
+            action="wait", selector="#loading", text="Loading", wait_state="hidden", timeout_ms=500
+        ),
+    )
+    assert result["success"], result

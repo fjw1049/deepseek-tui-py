@@ -352,12 +352,17 @@ async def observe(
     started = time.perf_counter()
     client = await root_context(run)
     root_identity = await document_identity(client)
-    if run.observation_context:
+    continuing_frame = bool(continuation_id and frame_id and run.observation_context
+                            and run.observation_context.frame_id == frame_id)
+    if continuing_frame:
+        await run.observation_context.validate_ancestors()
+    if run.observation_context and not continuing_frame:
         await run.observation_context.release_observation()
         await run.observation_context.close()
         run.observation_context = None
     if frame_id:
-        run.observation_context = await FrameContext.create(run.session._internal.client, frame_id)
+        if not continuing_frame:
+            run.observation_context = await FrameContext.create(run.session._internal.client, frame_id)
         client = run.observation_context
     for _ in range(2):
         identity = await document_identity(client)

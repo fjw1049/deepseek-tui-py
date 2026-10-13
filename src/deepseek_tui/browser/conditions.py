@@ -74,7 +74,8 @@ async def _check_condition(run, action, deadline):
         passed=nodes.length===1 && nodes[0].value===a.text;
       else if(a.kind==='checked_equals')passed=nodes.length===1 && nodes[0].checked===a.checked;
       else {
-        if(a.selector && a.text && nodes.length!==1)return false;
+        if(a.selector && a.text && nodes.length!==1)
+          return nodes.length===0 && a.state==='hidden' && (!a.url || location.href.includes(a.url));
         const body=root===document?text(a.selector):Array.from(root.childNodes)
           .filter(n=>n.nodeType===1).map(n=>textFrom(n)).join('\n');
         passed=(!a.text || (a.selector?textFrom(nodes[0]):body)?.includes(a.text)) &&

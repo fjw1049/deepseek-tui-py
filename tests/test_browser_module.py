@@ -765,3 +765,12 @@ async def test_replay_evidence_failure_preserves_success(browser, monkeypatch):
     assert run.demo_status == "passed"
     assert not run.recording
     assert any(item["action"] == "evidence" and not item["success"] for item in run.log)
+
+
+async def test_close_session_returns_list_of_persisted_unresolved_operations(browser):
+    run = browser.runs["one"]
+    run.unresolved["pending"] = {"action_id": "pending", "execution": "unknown"}
+    result = await browser.action("one", BrowserAction(action="close_session"))
+    assert result["success"]
+    assert result["content"]["unresolved"] == [run.unresolved["pending"]]
+    assert browser.state("one")["unresolved"] == [run.unresolved["pending"]]
