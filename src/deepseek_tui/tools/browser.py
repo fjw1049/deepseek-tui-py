@@ -99,7 +99,11 @@ class BrowserUseTool(ToolSpec):
             "ref": "Exact element reference from the latest observation.",
             "observation_id": "Latest observation ID; required for all page interaction actions.",
             "selector": "CSS selector for a unique observed target, or a read/wait scope.",
-            "text": "Text to insert, select value, or visible text expected by check_text/wait.",
+            "text": (
+                "Text to insert, select value, or visible text expected by check_text/wait. "
+                "fill on date/time/color/range inputs takes their HTML value format, e.g. "
+                "2026-10-14, 13:45, #ff0000."
+            ),
             "checked": "Desired checkbox state for set_checked; prevents toggling on retries.",
             "key": "Keyboard key or chord for press, default Enter.",
             "x": "Viewport x coordinate from a current screenshot, in CSS pixels.",
@@ -107,7 +111,7 @@ class BrowserUseTool(ToolSpec):
             "direction": "Scroll direction, default down.",
             "amount": "Scroll distance in CSS pixels, default 300.",
             "timeout_ms": "Condition deadline in milliseconds; wait defaults to 10000.",
-            "operation_id": "Optional stable request ID for retrying the same arguments; a duplicate returns its receipt without dispatching again. Unknown outcomes must be inspected first.",
+            "operation_id": "Optional stable request ID for retrying the same arguments; a duplicate of a dispatched operation returns its receipt without dispatching again, while a not_executed attempt may be retried with the same ID and a fresh observation. Unknown outcomes must be inspected first.",
             "condition": "Optional wait predicate, including title/field/checked/selected checks. Field checks require a unique selector and return a boolean result without exposing its contents.",
             "scope_ref": "Latest observation ID for continuing the same scope and snapshot without resending long selectors; changed snapshots require restarting the read.",
             "option_ref": "Observed option handle for select; keeps opaque or long option values on the backend. Old or changed options are rejected.",

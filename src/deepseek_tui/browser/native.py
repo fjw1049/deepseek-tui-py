@@ -19,6 +19,7 @@ class NativeBrowserEvents:
             d["id"]: d for d in service._saved_state(run.thread_id).get("downloads", [])
         }
         self.changed = asyncio.Event()
+        self.requests = {}  # Document/XHR/Fetch requests in flight: id -> (client, seen at)
 
     async def install(self, client):
         if client in self.clients:
@@ -37,6 +38,10 @@ class NativeBrowserEvents:
                     "downloadPath": str(directory.resolve()),
                     "eventsEnabled": True,
                 },
+            )
+            # Only request lifecycles are needed; keep no response bodies.
+            await client.send(
+                "Network.enable", {"maxTotalBufferSize": 0, "maxResourceBufferSize": 0}
             )
         identity = await document_identity(client)
         tree = (await client.send("Page.getFrameTree"))["frameTree"]
@@ -108,7 +113,21 @@ class NativeBrowserEvents:
                 item["path"] = str(path)
                 self.service._persist(self.run)
 
+        def request_sent(params):
+            if params.get("type") in {"Document", "XHR", "Fetch"}:
+                self.requests[params["requestId"]] = (
+                    client, asyncio.get_running_loop().time()
+                )
+                while len(self.requests) > 200:
+                    self.requests.pop(next(iter(self.requests)))
+
+        def request_done(params):
+            self.requests.pop(params.get("requestId"), None)
+
         for event, callback in {
+            "Network.requestWillBeSent": request_sent,
+            "Network.loadingFinished": request_done,
+            "Network.loadingFailed": request_done,
             "Page.frameNavigated": navigated,
             "Page.javascriptDialogOpening": dialog_opened,
             "Page.javascriptDialogClosed": lambda _: setattr(self, "dialog", None),
@@ -118,6 +137,10 @@ class NativeBrowserEvents:
         }.items():
             client.on(event, callback)
         self.clients.add(client)
+
+    def pending_requests(self, client, since):
+        """Page requests started after ``since`` (loop time) that have not finished."""
+        return any(c is client and seen >= since for c, seen in self.requests.values())
 
     def state(self):
         return {

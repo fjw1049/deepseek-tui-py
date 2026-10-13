@@ -537,3 +537,64 @@ async def test_large_handoff_observation_remains_valid_json(
     finally:
         manager._active.pop(thread_id, None)
         manager.browser_service.runs.pop(thread_id, None)
+
+
+async def test_persisted_browser_result_is_the_bounded_projection(authed_runtime_app, monkeypatch):
+    import asyncio
+    import json
+    import uuid
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.engine.events import ToolCallEvent, ToolResultEvent, TurnCompleteEvent
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.protocol.responses import ToolCall
+    from deepseek_tui.server.threads import (
+        CreateThreadRequest,
+        RuntimeTurnStatus,
+        TurnRecord,
+        _ActiveThreadState,
+    )
+    from deepseek_tui.tools.registry import ToolContext
+
+    manager = authed_runtime_app[0].state.thread_manager
+    monkeypatch.setattr(manager, "_recover_missing_final_answer", AsyncMock(return_value=None))
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(TurnRecord(id=turn_id, thread_id=thread.id,
+        status=RuntimeTurnStatus.IN_PROGRESS, input_summary="test", created_at=now, started_at=now))
+    engine = SimpleNamespace(tool_context=ToolContext(working_directory=manager.workspace))
+    idle = asyncio.create_task(asyncio.sleep(3600))
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, engine, idle)
+    result = {"success": True, "content": "Observation collected",
+              "receipt": {"action_id": "a", "execution": "executed", "effect": "unchecked"},
+              "observation": {"observation_id": "obs", "text": "page text " * 2000,
+                              "elements": [{"ref": f"e{i}", "role": "button", "name": "Edit",
+                                            "target_id": f"obs:n{i}", "box": {"x": 1, "y": 2}}
+                                           for i in range(250)]}}
+    tool = ToolCall(id="tc_browser", name="browser_use", arguments={"action": "observe"})
+
+    async def pump():
+        await handle.emit(ToolCallEvent(tool_call=tool))
+        await handle.emit(ToolResultEvent(tool_call_id="tc_browser", tool_name="browser_use",
+            content=json.dumps(result), success=True, metadata={"browser": result}))
+        await handle.emit(TurnCompleteEvent(assistant_message=None))
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        await asyncio.wait_for(manager._monitor_turn(thread.id, turn_id, handle, "agent"), 10)
+    finally:
+        await pump_task
+        idle.cancel()
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
+    items = [manager.store.load_item(i) for i in manager.store.load_turn(turn_id).item_ids]
+    detail = next(i.detail for i in items if (i.metadata or {}).get("tool_name") == "browser_use")
+    assert len(json.dumps(result)) > 40_000 and len(detail) <= 12_000
+    persisted = json.loads(detail)
+    assert persisted["receipt"]["execution"] == "executed"
+    assert persisted["observation"]["observation_id"] == "obs"

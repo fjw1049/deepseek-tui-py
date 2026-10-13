@@ -774,3 +774,26 @@ async def test_close_session_returns_list_of_persisted_unresolved_operations(bro
     assert result["success"]
     assert result["content"]["unresolved"] == [run.unresolved["pending"]]
     assert browser.state("one")["unresolved"] == [run.unresolved["pending"]]
+
+
+async def test_session_cap_reclaims_only_the_longest_idle_unused_session(tmp_path):
+    import time
+
+    service = BrowserService(tmp_path / "artifacts")
+    now = time.monotonic()
+    for index in range(8):
+        directory = tmp_path / f"run{index}"
+        directory.mkdir()
+        run = BrowserRun(f"t{index}", directory)
+        run.last_used = now - 60  # Recently used.
+        service.runs[run.thread_id] = run
+    service.runs["t1"].last_used = now - 3600
+    service.runs["t1"].owner = "user"  # The user may come back to a page they hold.
+    service.runs["t2"].last_used = now - 1800
+    service.runs["t3"].last_used = now - 2400
+    service.runs["t3"].recording = True
+    await service._reclaim_idle_session()
+    assert set(service.runs) == {f"t{i}" for i in range(8)} - {"t2"}
+    service.runs["t2"] = BrowserRun("t2", tmp_path / "run2")
+    with pytest.raises(ValueError, match="maximum 8"):
+        await service._reclaim_idle_session()

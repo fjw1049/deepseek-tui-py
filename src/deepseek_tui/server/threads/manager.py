@@ -145,6 +145,8 @@ _UNSET = object()
 
 # ponytail: fixed threshold; make configurable when per-project needs appear.
 IDLE_WORKTREE_RECLAIM_AFTER = timedelta(days=3)
+# Matches the small-window tool-result cap used for soft-resume context.
+BROWSER_DETAIL_CHARS = 12_000
 
 UNPUBLISHED_WORKTREE_LABOR = "<unpublished-worktree-labor>"
 PUBLISH_FAILED = "<publish-failed>"
@@ -296,9 +298,10 @@ class RuntimeThreadManager:
         self.workspace = workspace.resolve()
         self.manager_cfg = manager_cfg
         self.store = RuntimeThreadStore(manager_cfg.data_dir)
+        from deepseek_tui.browser import ARTIFACTS_DIRNAME
         from deepseek_tui.browser.service import BrowserService
 
-        self.browser_service = BrowserService(manager_cfg.data_dir / "browser-artifacts")
+        self.browser_service = BrowserService(manager_cfg.data_dir / ARTIFACTS_DIRNAME)
         from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
 
         self.checkpoints = TurnCheckpointStore(manager_cfg.data_dir / "checkpoints")
@@ -2553,7 +2556,6 @@ class RuntimeThreadManager:
                 thread = self.store.load_thread(thread_id)
                 await self._discard_owned_worktree_claimed(thread)
             await self.browser_service.close(thread_id)
-            self.browser_service.delete_thread_data(thread_id)
             delete_thread_tree(self.store, self.checkpoints, thread_id)
             await asyncio.to_thread(self._prune_orphaned_worktrees)
 
@@ -2958,10 +2960,9 @@ class RuntimeThreadManager:
                 "cannot clear conversation history while threads contain "
                 f"unpublished code: {', '.join(sorted(kept))}"
             )
-        thread_ids = [thread.id for thread in self.store.list_threads()]
-        for thread_id in thread_ids:
+        # Live sessions write state while closing; end them before their data is removed.
+        for thread_id in list(self.browser_service.runs):
             await self.browser_service.close(thread_id)
-            self.browser_service.delete_thread_data(thread_id)
         report = clear_conversation_history(self.store, self.checkpoints)
         await asyncio.to_thread(self._prune_orphaned_worktrees)
         return report.to_dict()
@@ -2985,6 +2986,8 @@ class RuntimeThreadManager:
                 active_ids = list(self._active.keys())
             for thread_id in active_ids:
                 await self._evict_active_thread(thread_id)
+            for thread_id in list(self.browser_service.runs):
+                await self.browser_service.close(thread_id)
         return await self._complete_mutation(asyncio.to_thread(
             import_bundle, Path(path),
             mode=mode,  # type: ignore[arg-type]
@@ -6270,6 +6273,16 @@ class RuntimeThreadManager:
                             tool_args,
                             event.content or "",
                             event.metadata,
+                        )
+                    elif event.tool_name == "browser_use" and isinstance(
+                        (event.metadata or {}).get("browser"), dict
+                    ):
+                        # A raw browser result repeats every element and up to 16k of page
+                        # text per action; persist the same bounded projection the model reads.
+                        from deepseek_tui.browser.context import project_result
+
+                        item.detail = project_result(
+                            event.metadata["browser"], BROWSER_DETAIL_CHARS
                         )
                     else:
                         item.detail = event.content

@@ -16,6 +16,7 @@ import shutil
 import socket
 import sys
 import tempfile
+import time
 import uuid
 import zipfile
 from copy import deepcopy
@@ -29,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from deepseek_tui.browser.input import BrowserInput
 from deepseek_tui.browser.observation import (
     SCOPE_CONTEXT,
+    VALUE_INPUTS,
     document_identity,
     evaluate,
     observe,
@@ -46,6 +48,8 @@ FOCUSED_FIELD = (
     "if(!ids.map.has(e))ids.map.set(e,ids.next++);const s=(" + SCOPE_CONTEXT + ")(e);"
     "return {node:ids.map.get(e),scope:s?{tag:s.tag,id:s.id,keys:s.keys}:null}})()"
 )
+# At the session cap, a session unused this long may be closed for a new thread.
+IDLE_RECLAIM_SECONDS = 600
 TARGET_ACTIONS = {"click", "fill", "type", "select", "set_checked", "hover", "press", "scroll", "upload"}
 OBSERVE_AFTER = TARGET_ACTIONS | {"open", "new_tab", "switch_tab", "close_tab", "back",
                                   "forward", "reload", "wait", "check_text", "screenshot"}
@@ -310,6 +314,7 @@ class BrowserRun:
     failures: dict[str, int] = field(default_factory=dict)
     consecutive_action_failures: int = 0
     focus_tokens: dict[str, str | None] = field(default_factory=dict)
+    last_used: float = field(default_factory=time.monotonic)
 
 
 class BrowserService:
@@ -381,14 +386,6 @@ class BrowserService:
             raise ValueError("End the browser session before clearing saved login data")
         shutil.rmtree(self.artifact_root / thread_id / "profile", ignore_errors=True)
 
-    def delete_thread_data(self, thread_id: str) -> None:
-        """Remove a deleted thread's evidence, downloads, workflows and saved login profile."""
-        if thread_id in self.runs:
-            raise ValueError("End the browser session before deleting its data")
-        if Path(thread_id).name != thread_id:
-            raise ValueError("Invalid thread ID")
-        shutil.rmtree(self.artifact_root / thread_id, ignore_errors=True)
-
     async def ensure(self, thread_id: str) -> BrowserRun:
         existing = self.runs.get(thread_id)
         if existing and existing.session and not (existing.native_events and existing.native_events.dialog):
@@ -402,7 +399,7 @@ class BrowserService:
                 raise ValueError("Browser disconnected; recover the session before acting") from exc
         if thread_id not in self.runs:
             if len(self.runs) >= 8:
-                raise ValueError("Close an existing browser session first (maximum 8)")
+                await self._reclaim_idle_session()
             self.runs[thread_id] = BrowserRun(
                 thread_id, Path(tempfile.mkdtemp(prefix="deepseek-browser-")),
                 generation=self._saved_state(thread_id).get("generation", -1) + 1,
@@ -477,6 +474,20 @@ class BrowserService:
                     self.runs.pop(thread_id, None)
                     raise
         return run
+
+    async def _reclaim_idle_session(self) -> None:
+        """At the cap, close the least recently used session that nobody is using."""
+        now = time.monotonic()
+        idle = [
+            run for run in self.runs.values()
+            if now - run.last_used >= IDLE_RECLAIM_SECONDS and run.owner != "user"
+            and run.assistance is None and not run.unresolved and not run.lock.locked()
+            and not (run.recorder or run.recording or run.video)
+            and not (run.demo_task and not run.demo_task.done())
+        ]
+        if not idle:
+            raise ValueError("Close an existing browser session first (maximum 8)")
+        await self.close(min(idle, key=lambda run: run.last_used).thread_id)
 
     def state(self, thread_id: str) -> dict[str, Any]:
         from deepseek_tui.browser.capabilities import browser_capabilities
@@ -691,6 +702,8 @@ class BrowserService:
         """A coherent frame and tab snapshot; observing never takes control."""
         run = self.runs.get(thread_id)
         image = None
+        if run:
+            run.last_used = time.monotonic()  # A visible panel keeps its session.
         if run and run.native_events and run.native_events.dialog:
             run.view_sequence += 1
             return {**self.state(thread_id), "image": None}
@@ -788,6 +801,7 @@ class BrowserService:
         run = self.runs.get(thread_id)
         if not run or not run.session:
             raise ValueError("Open a browser page first")
+        run.last_used = time.monotonic()
         async with run.lock:
             if run.owner != "user" or run.transferring or run.generation != body.generation:
                 raise ValueError("Browser control changed; queued input was discarded")
@@ -1155,6 +1169,7 @@ class BrowserService:
             run = await self.ensure(thread_id)
         if actor == "agent" and check_assistance and run.assistance is not None:
             raise ValueError("Waiting for browser assistance; do not repeat actions")
+        run.last_used = time.monotonic()
         generation = run.generation
         queued_at = asyncio.get_running_loop().time()
         action._deadline = asyncio.get_running_loop().time() + 35
@@ -1192,10 +1207,13 @@ class BrowserService:
                 fingerprint = hashlib.sha256(json.dumps(action.model_dump(exclude={"operation_id"}),
                     sort_keys=True, ensure_ascii=True).encode()).hexdigest()
                 previous = run.requests.get(action.operation_id)
-                if previous:
+                saved = run.operations.get(previous[1]) if previous else None
+                # An attempt that never dispatched (or never got a receipt) leaves the ID
+                # free, so a retry with a fresh observation can actually run.
+                if saved and saved["receipt"].get("execution") != "not_executed":
                     if previous[0] != fingerprint:
                         raise ValueError("Operation ID cannot be reused for different browser arguments")
-                    return {**run.operations[previous[1]], "duplicate": True}
+                    return {**saved, "duplicate": True}
                 run.requests[action.operation_id] = (fingerprint, action._action_id)
             if asyncio.get_running_loop().time() >= action._deadline:
                 return await self._reject_action(run, action, "deadline_expired")
@@ -1502,6 +1520,20 @@ class BrowserService:
                     await self._focus_ready(run, a)
                 await input_client.send("Input.insertText", {"text": a.text})
                 result = None
+        elif a.action == "fill" and await target_state(
+            run, a, f"e.tagName==='INPUT' && /^({VALUE_INPUTS})$/.test(e.type)"
+        ) is True:
+            # Picker inputs have no caret; set the HTML value and fire the events the
+            # browser's own picker sends. The field-state check below confirms the value.
+            run.last_dispatch_id = a._action_id
+            await target_state(
+                run,
+                a,
+                "(()=>{e.focus();e.value=" + json.dumps(a.text)
+                + ";e.dispatchEvent(new Event('input',{bubbles:true}));"
+                + "e.dispatchEvent(new Event('change',{bubbles:true}));return true})()",
+            )
+            result = None
         elif a.action == "fill":
             result = await self._click(run, a)
             if result.success:
@@ -1899,25 +1931,39 @@ class BrowserService:
         return list(run.tabs)
 
     async def _settle(self, run: BrowserRun, *, frame_id: str = "") -> str | None:
-        """Bounded DOM quiet period, rather than assuming CDP dispatch means SPA readiness."""
-        previous, quiet_since = None, asyncio.get_running_loop().time()
-        deadline = quiet_since + 1.5
-        deadline = min(deadline, run.action_deadline or float("inf"))
+        """Bounded DOM and network quiet period, rather than assuming CDP dispatch means
+        SPA readiness. Requests the action started extend the wait from 1.5s to 3s."""
+        loop = asyncio.get_running_loop()
+        previous, started = None, loop.time()
+        quiet_since = started
+        soft = min(started + 1.5, run.action_deadline or float("inf"))
+        hard = min(started + 3.0, run.action_deadline or float("inf"))
         client = run.observation_context if frame_id else await root_context(run)
-        while asyncio.get_running_loop().time() < deadline:
+        native, page = run.native_events, run.session._internal.client
+        awaited_requests = False
+        while (now := loop.time()) < hard:
+            # Long-lived requests from before the action (polling, streams) are not its effect.
+            busy = bool(native) and native.pending_requests(page, started - 2.0)
+            awaited_requests = awaited_requests or busy
+            # After awaited requests finish, let their DOM update settle within the hard bound.
+            if now >= soft and not busy and not awaited_requests:
+                break
             current = await evaluate(
                 client,
                 "[location.href,document.readyState,window.__deepseekPageRevision?.value || 0]",
             )
             if not isinstance(current, list):
                 return
-            now = asyncio.get_running_loop().time()
-            if current != previous or current[1] == "loading":
+            now = loop.time()
+            if current != previous or current[1] == "loading" or busy:
                 quiet_since, previous = now, current
             elif now - quiet_since >= 0.15:
                 return
             await asyncio.sleep(0.05)
-        return "Page did not settle within 1.5s; use a task-specific wait condition"
+        return (
+            "Page did not settle (DOM or requests still busy); "
+            "use a task-specific wait condition"
+        )
 
     async def control(self, thread_id: str, owner: str) -> dict[str, Any]:
         if owner not in {"agent", "user", "stopped"}:

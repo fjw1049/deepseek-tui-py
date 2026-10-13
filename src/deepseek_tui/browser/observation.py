@@ -92,6 +92,9 @@ SCOPE_CONTEXT = r"""e => {
     text:texts.join('\n'),id:container.id,tag:container.tagName.toLowerCase()};
 }""".replace("__VISIBLE__", VISIBLE)
 
+# Picker inputs take an HTML value string (e.g. 2026-10-14, 13:45, #ff0000) instead of typing.
+VALUE_INPUTS = "date|time|datetime-local|month|week|color|range"
+
 COLLECT = (
     r"""({id, selector, limit, textOffset=0, elementOffset=0, optionOffset=0,
                shadowPath=[],continuation=null}) => {
@@ -173,7 +176,8 @@ COLLECT = (
               truncated:scope.text.length>500 || scope.keys.some(([k,v])=>v?.length>300)}:undefined,
             type:tag==='input'?e.type:e.getAttribute('type') || undefined,
             editable:e.isContentEditable || tag==='textarea' ||
-              (tag==='input' && /^(text|search|email|password|tel|url|number)$/.test(e.type)),
+              (tag==='input' && /^(text|search|email|password|tel|url|number)$/.test(e.type)) ||
+              (tag==='input' && /^(__VALUE_INPUTS__)$/.test(e.type)),
             readonly:!!e.readOnly,
             selector:e.id && e.getRootNode()===scopeRoot &&
               scopeRoot.querySelectorAll('#'+CSS.escape(e.id)).length===1
@@ -242,6 +246,7 @@ COLLECT = (
     .replace("__SCOPE_CONTEXT__", SCOPE_CONTEXT)
     .replace("__NAME__", ACCESSIBLE_NAME)
     .replace("__ROLE__", CANONICAL_ROLE)
+    .replace("__VALUE_INPUTS__", VALUE_INPUTS)
 )
 
 VISIBLE_TEXT = r"""selector => {
@@ -485,7 +490,8 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
         if (a.action==='fill' || a.action==='type') {
           if (!(e?.isContentEditable || e?.tagName==='TEXTAREA' ||
               (e?.tagName==='INPUT' &&
-                /^(text|search|email|password|tel|url|number)$/.test(e.type))))
+                /^(text|search|email|password|tel|url|number)$/.test(e.type)) ||
+              (a.action==='fill' && e?.tagName==='INPUT' && /^(__VALUE_INPUTS__)$/.test(e.type))))
             return 'target_not_editable';
           if (e.readOnly) return 'target_readonly';
         }
@@ -581,7 +587,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
       }
       window.__deepseekTarget=e;
       return {bound:true,target_id:entry.target_id,x:px,y:py};
-    })("""
+    })(""".replace("__VALUE_INPUTS__", VALUE_INPUTS)
         + args
         + ")",
     )

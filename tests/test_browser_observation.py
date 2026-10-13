@@ -151,6 +151,26 @@ async def test_duplicate_operation_returns_its_receipt_without_dispatch(tmp_path
     assert service.operation("t", first["receipt"]["action_id"])["receipt"]["execution"] == "executed"
 
 
+async def test_not_executed_operation_id_can_be_retried(tmp_path, monkeypatch):
+    service, run, _, _ = browser(tmp_path)
+    async def resolve(run, action):
+        if action.observation_id == "old":
+            return {"error": "stale_observation"}
+        return {"selector": "#exact", "x": 30, "y": 30}
+
+    monkeypatch.setattr("deepseek_tui.browser.service.target", resolve)
+    stale = BrowserAction(action="click", ref="e0", observation_id="old", operation_id="retry-1")
+    rejected = await service.action("t", stale, require_observation=True)
+    assert rejected["receipt"]["execution"] == "not_executed"
+    # The retry carries a fresh observation, so its arguments differ; it still runs once.
+    retry = stale.model_copy(update={"observation_id": "current"})
+    done = await service.action("t", retry, require_observation=True)
+    assert done["receipt"]["execution"] == "executed" and not done.get("duplicate")
+    again = await service.action("t", retry, require_observation=True)
+    assert again["duplicate"]
+    run.session.click.assert_awaited_once()
+
+
 async def test_unknown_receipt_survives_log_clear_and_persistence_failure(tmp_path, monkeypatch):
     import pytest
 

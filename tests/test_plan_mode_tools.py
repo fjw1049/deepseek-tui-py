@@ -284,5 +284,10 @@ def test_delete_thread_tree_removes_plan_file(
     plan = user_thread_plan_path(tid)
     plan.parent.mkdir(parents=True, exist_ok=True)
     plan.write_text("# plan\n", encoding="utf-8")
+    # The TUI deletes through this tree too; browser logins must not outlive the thread.
+    profile = store.root / "browser-artifacts" / tid / "profile"
+    profile.mkdir(parents=True)
+    (profile / "Cookies").write_text("session", encoding="utf-8")
     delete_thread_tree(store, checkpoints, tid)
     assert not plan.exists()
+    assert not profile.parent.exists()

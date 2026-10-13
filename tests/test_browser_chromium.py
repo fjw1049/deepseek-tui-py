@@ -465,8 +465,8 @@ async def test_reload_refuses_form_result_page(chrome):
 
 async def test_coordinate_click_outside_viewport_is_a_recorded_rejection(chrome):
     service, _ = chrome
-    capture = await service.action("t", BrowserAction(action="screenshot"))
-    for _ in range(2):  # The same operation_id must replay its receipt, not fail lookup.
+    for _ in range(2):  # A rejected attempt leaves its operation_id free to retry.
+        capture = await service.action("t", BrowserAction(action="screenshot"))
         result = await act(service, capture["observation"], "click", x=1300, y=10,
                            operation_id="outside")
         assert result["receipt"]["execution"] == "not_executed"
@@ -1066,6 +1066,56 @@ async def test_dead_session_recovery_does_not_replay_completed_actions(chrome):
         )
         == ""
     )
+
+
+async def test_click_observation_waits_for_requests_it_started(chrome):
+    async def api(reader, writer):
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            await asyncio.sleep(0.8)
+            writer.write(b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\n"
+                         b"Content-Length: 12\r\nConnection: close\r\n\r\nRESULT READY")
+            await writer.drain()
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(api, "127.0.0.1", 0)
+    service, run = chrome
+    try:
+        url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/api"
+        await evaluate(run.session._internal.client, "document.body.innerHTML="
+            f"`<button onclick=\"fetch('{url}').then(r=>r.text()).then(t=>out.textContent=t)\">"
+            "Load</button><div id=out></div>`;true")
+        observation = await read(service)
+        clicked = await act(service, observation, "click", ref=ref(observation, "Load"))
+        assert "RESULT READY" in clicked["observation"]["text"]
+        assert not clicked["observation"].get("warnings")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_fill_sets_picker_inputs_and_confirms_their_value(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML=`<input type=date aria-label=Day "
+        "onchange='window.changes=(window.changes||0)+1'><input type=time aria-label=At>"
+        "<input type=color aria-label=Tint>`;true")
+    observation = await read(service)
+    assert next(e for e in observation["elements"] if e["name"] == "Day")["editable"]
+    for name, value in [("Day", "2026-10-14"), ("At", "13:45"), ("Tint", "#ff0000")]:
+        result = await act(service, observation, "fill", ref=ref(observation, name), text=value)
+        assert result["success"] and result["receipt"]["effect"] == "confirmed", result
+        observation = result["observation"]
+    day = "document.querySelector('[aria-label=Day]').value"
+    assert await evaluate(client, day) == "2026-10-14"
+    assert await evaluate(client, "window.changes") == 1
+    invalid = await act(service, observation, "fill", ref=ref(observation, "Day"),
+                        text="14/10/2026")
+    assert not invalid["success"] and invalid["receipt"]["effect"] == "not_confirmed"
+    observation = invalid["observation"]
+    typed = await act(service, observation, "type", ref=ref(observation, "At"), text="1")
+    assert typed["receipt"]["reason"] == "target_not_editable"
 
 
 async def test_direct_service_fill_cannot_click_submit_button(chrome):

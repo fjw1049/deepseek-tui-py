@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from deepseek_tui.browser import ARTIFACTS_DIRNAME
 from deepseek_tui.config.paths import (
     user_deepseek_dir,
     user_sessions_dir,
@@ -231,6 +232,9 @@ def delete_thread_tree(
         checkpoints.delete(cp.turn_id)
     store.delete_events(thread_id)
     store.delete_thread(thread_id)
+    # Browser evidence, downloads and saved logins belong to the deleted conversation.
+    if Path(thread_id).name == thread_id:
+        shutil.rmtree(store.root / ARTIFACTS_DIRNAME / thread_id, ignore_errors=True)
     try:
         plan_path = user_thread_plan_path(thread_id)
         if plan_path.is_file():
