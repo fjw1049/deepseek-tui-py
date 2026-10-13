@@ -19,11 +19,43 @@ from deepseek_tui.protocol.messages import (
 )
 
 
-def budget_media_request(request: MessageRequest, config: Config | None) -> MessageRequest:
+def budget_media_request(
+    request: MessageRequest, config: Config | None, *, max_bytes: int | None = None
+) -> MessageRequest:
     if not any(message_images(m) for m in request.messages):
         return request
+    # Only deduplicate browser tool screenshots, retaining the newest provenance.
+    seen = set()
+    messages = []
+    for message in reversed(request.messages):
+        blocks = []
+        for block in reversed(message.content):
+            if isinstance(block, ToolResultBlock) and block.images:
+                kept = []
+                omitted = []
+                for img in reversed(block.images):
+                    key = (img.asset_id, img.crop)
+                    browser = (img.source or {}).get("kind") == "browser"
+                    if browser and key in seen:
+                        omitted.append(f"media:{img.asset_id}")
+                    else:
+                        kept.append(img)
+                    if browser:
+                        seen.add(key)
+                if omitted:
+                    block = block.model_copy(update={
+                        "images": list(reversed(kept)),
+                        "content": (block.content
+                                    + "\n[Duplicate pixels omitted; newest screenshot retained: "
+                                    + ", ".join(omitted) + ".]"),
+                    })
+            blocks.append(block)
+        messages.append(message.model_copy(update={"content": list(reversed(blocks))}))
+    request = request.model_copy(update={"messages": list(reversed(messages))})
     pc = config.effective_provider_config() if config else None
     limit = pc.image_request_bytes if pc else 20 * 1024 * 1024
+    if max_bytes is not None:
+        limit = min(limit, max_bytes)
     # Reserve the actual non-image request plus room for protocol framing.
     total = len(request.model_dump_json().encode()) + 16_384
     costs = {
@@ -43,10 +75,11 @@ def budget_media_request(request: MessageRequest, config: Config | None) -> Mess
         default=max((i for i, m in enumerate(request.messages) if m.role is Role.USER), default=0),
     )
     messages = list(request.messages)
-    # Strip images from every message except the user's own latest attachments;
-    # tool images after the latest user message are the common overflow source.
+    latest_image = max(i for i, m in enumerate(messages) if message_images(m))
+    # Preserve the latest user attachments and current visual evidence. Remove
+    # older tool screenshots first; the persisted transcript remains intact.
     for index, message in enumerate(messages):
-        if index == latest_user:
+        if index in {latest_user, latest_image}:
             continue
         if total <= limit * 0.75:
             break

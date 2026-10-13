@@ -272,6 +272,7 @@ class BrowserRun:
     tabs: list[dict[str, Any]] = field(default_factory=list)
     assistance: dict[str, Any] | None = None
     latest_observation: dict[str, Any] | None = None
+    handoff_baseline: dict[str, Any] | None = None
     healthy: bool = True
     observation_context: Any = None
     observation_root_context: Any = None
@@ -297,6 +298,7 @@ class BrowserRun:
     last_dispatch_id: str | None = None
     tab_cache_time: float = 0
     failures: dict[str, int] = field(default_factory=dict)
+    consecutive_action_failures: int = 0
 
 
 class BrowserService:
@@ -593,6 +595,19 @@ class BrowserService:
         receipt.setdefault("evidence", "unavailable" if response.get("evidence_warning") else
                            "saved" if response.get("artifact") else "not_requested")
         action_id = receipt["action_id"]
+        if action_id not in run.operations:
+            if not response["success"]:
+                run.consecutive_action_failures += 1
+            elif receipt.get("action") not in {"observe", "describe", "screenshot", "tabs", "downloads"}:
+                run.consecutive_action_failures = 0
+            if run.consecutive_action_failures >= 3:
+                receipt["consecutive_action_failures"] = run.consecutive_action_failures
+                receipt["retry_kind"] = "change_route_or_assistance"
+                response["content"] = str(response.get("content", "")) + (
+                    "; repeated action failures across attempts. Inspect the blocker; "
+                    "use a different supported route or request_user_input for help. "
+                    "Taking another screenshot alone does not resolve the blocker."
+                )
         saved = {"success": response["success"], "content": str(response.get("content", ""))[:2000],
                  "receipt": dict(receipt)}
         run.operations[action_id] = saved
@@ -1011,7 +1026,12 @@ class BrowserService:
         run.active_timings = None
         run.log.append({"action": action.action, "success": False, **receipt})
         run.log[:] = run.log[-80:]
-        content = reason
+        guidance = {
+            "target_obscured": "Inspect and dismiss the overlay using its own observed controls; do not click through it.",
+            "screenshot_pixels_changed": "Page pixels changed. Prefer an observed element ref/selector on dynamic pages; if none is available, inspect a fresh screenshot or request manual help.",
+            "focus_not_active": "The page could not receive keyboard input. Inspect the active tab or request manual help.",
+        }
+        content = reason + (": " + guidance[reason] if reason in guidance else "")
         if run.failures[key] >= 3:
             content += ": repeated without target or business progress; change route or request assistance"
         if reason == "screenshot_required":
@@ -1159,6 +1179,18 @@ class BrowserService:
                         5, max(0.001, action._deadline - asyncio.get_running_loop().time())))
                 except Exception:  # validation failed before dispatch
                     resolved = {"error": "target_validation_unavailable"}
+                if (resolved.get("error") == "focus_not_active" and action.action == "press"
+                        and not action.ref and not action.selector):
+                    # Focus only our validated page, then repeat all target checks.
+                    if run.transferring or run.generation != generation:
+                        raise ValueError("Browser control changed before focus recovery")
+                    try:
+                        await asyncio.wait_for(
+                            run.session._internal.client.send("Page.bringToFront"), timeout=5
+                        )
+                        resolved = await asyncio.wait_for(target(run, action), timeout=5)
+                    except Exception:
+                        resolved = {"error": "focus_recovery_unavailable"}
                 if resolved.get("error"):
                     return await self._reject_action(run, action, resolved["error"])
                 if action.x is not None and not (action.ref or action.selector):

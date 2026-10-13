@@ -182,6 +182,7 @@ class TurnResult:
     # the same request would truncate at the same place, so the decision of
     # what a fragment is worth belongs to the caller.
     truncated: bool = False
+    task_outcome: dict[str, Any] | None = None
 
 
 @dataclass

@@ -152,6 +152,17 @@ class ToolExecutionMixin:
             api_tools = await self._get_tools_with_mcp()
         self._tool_dedup.begin_batch()
 
+        # Phase changes and delivery must not race other calls in the same response.
+        exclusive = {"finish_task", "request_task_tools", REQUEST_USER_INPUT_NAME}
+        if len(tool_calls) > 1 and any(c.name in exclusive for c in tool_calls):
+            for call in tool_calls:
+                content = ("Not executed: task delivery, tool expansion and user input "
+                           "must be called alone.")
+                await self.handle.emit(ToolResultEvent(tool_call_id=call.id, tool_name=call.name,
+                                                      success=False, content=content))
+                results.append(Message.tool_result(call.id, content, is_error=True))
+            return results
+
         try:
             # Build execution plans and check if batch can be parallelized.
             # Duplicate fingerprints fall back to the sequential path so reuse /
@@ -403,6 +414,13 @@ class ToolExecutionMixin:
         )
         from deepseek_tui.goal.tools import capture_goal_checklist
         from deepseek_tui.tools.registry import ToolCapability
+
+        delivery = self.tool_context.metadata.get("task_delivery")
+        if delivery and delivery.active and result.success and tool_call.name not in {
+            "finish_task", "request_task_tools", "request_user_input", "checklist",
+        }:
+            if tool_call.name != "browser_use" or tool_call.arguments.get("action") != "request_assistance":
+                delivery.evidence.add("tool:" + tool_call.id)
 
         if tool_call.name == "checklist" and result.success:
             capture_goal_checklist(self.tool_context)
@@ -716,6 +734,13 @@ class ToolExecutionMixin:
         )
         if tool_name not in _allowed_tool_names(api_tools):
             raise ToolError(missing_tool_error_message(tool_call.name, api_tools))
+        delivery = self.tool_context.metadata.get("task_delivery")
+        if delivery:
+            if not delivery.allows(tool_name):
+                raise ToolError("Tool is outside this task's browser phase; "
+                                "request_task_tools with the task dependency first")
+            if tool_name == "browser_use":
+                delivery.active = True
 
         hook_ctx = self._lifecycle_hook_context(
             tool_name=tool_name,
@@ -1168,6 +1193,36 @@ class ToolExecutionMixin:
         """Emit UserInputRequiredEvent and block until TUI resolves."""
         from deepseek_tui.tools.user_input import validate_user_input_request
 
+        kind = input_data.get("kind", "information")
+        if not isinstance(kind, str) or kind not in {"information", "decision", "action"}:
+            raise ToolError("Unknown user input kind")
+        if kind == "action":
+            if (self.mode or "agent") != "agent":
+                raise ToolError("Manual browser action is unavailable outside agent mode")
+            delivery = self.tool_context.metadata.get("task_delivery")
+            if delivery and "browser_use" not in delivery.catalog:
+                raise ToolError("Browser assistance is unavailable under this tool profile")
+            reason = input_data.get("reason")
+            if (input_data.get("surface") != "browser"
+                    or not isinstance(reason, str) or not reason.strip()):
+                raise ToolError("Manual action requires surface=browser and a non-empty reason")
+            request = self.tool_context.metadata.get("request_browser_assistance")
+            thread_id = self.tool_context.metadata.get("runtime_thread_id")
+            if request is None or not thread_id:
+                raise ToolError("Browser assistance is unavailable in this runtime")
+            import json
+
+            # The takeover protocol owns suspension; never also wait on an input future.
+            try:
+                response = await request(str(thread_id), reason.strip())
+            except (ValueError, RuntimeError) as exc:
+                raise ToolError(str(exc)) from exc
+            delivery = self.tool_context.metadata.get("task_delivery")
+            if delivery:
+                delivery.active = True
+            return ToolResult(
+                content=json.dumps(response, ensure_ascii=False), success=response["success"]
+            )
         questions = validate_user_input_request(input_data)
         questions_payload: list[dict[str, object]] = [
             {

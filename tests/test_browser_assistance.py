@@ -63,7 +63,7 @@ async def test_takeover_continue_preserves_turn_and_requires_verification(help_t
     await manager.respond_browser_assistance("one", request["id"], "continue")
     assert not handle.pause.paused and run.owner == "agent" and run.assistance is None
     assert "NOT guaranteed" in handle.resume_context
-    assert "not permission to change methods" in handle.resume_context
+    assert "within its authorization" in handle.resume_context
     assert "Login still required" in handle.resume_context
     assert handle._op_queue.empty()
     with pytest.raises(ValueError, match="ended"):
@@ -77,24 +77,24 @@ async def test_ignore_returns_decision_to_model_without_classifying_next_request
     await manager.respond_browser_assistance("one", run.assistance["id"], "ignore")
     assert "Do not skip" in handle.resume_context
     assert "without new evidence" in handle.resume_context
-    assert "obtain explicit permission before switching" in handle.resume_context
+    assert "original authorization" in handle.resume_context
     assert not handle.pause.paused
     # The model, not reason-string matching, decides whether new evidence warrants help.
     assert (await manager.request_browser_assistance("one", "Optional login"))["success"]
 
 
 @pytest.mark.asyncio
-async def test_failed_observation_keeps_request_and_pause(help_task):
+async def test_failed_observation_resumes_with_explicit_recovery_requirement(help_task):
     manager, run, handle = help_task
     await manager.request_browser_assistance("one", "Verify")
     request_id = run.assistance["id"]
     await manager.respond_browser_assistance("one", request_id, "takeover")
     run.session._internal.client.send.side_effect = ConnectionError("Disconnected")
-    from deepseek_tui.browser.service import BrowserActionError
-
-    with pytest.raises(BrowserActionError, match="Disconnected"):
-        await manager.respond_browser_assistance("one", request_id, "continue")
-    assert handle.pause.paused and run.owner == "user" and run.assistance["id"] == request_id
+    await manager.respond_browser_assistance("one", request_id, "continue")
+    assert not handle.pause.paused and run.owner == "agent" and run.assistance is None
+    assert run.latest_observation is None
+    assert '"status": "unavailable"' in handle.resume_context
+    assert "recover and observe" in handle.resume_context
 
 
 @pytest.mark.asyncio
@@ -104,12 +104,13 @@ async def test_information_and_stale_cancelled_requests(help_task):
     request_id = run.assistance["id"]
     with pytest.raises(ValueError, match="additional"):
         await manager.respond_browser_assistance("one", request_id, "information", " ")
+    run.session._internal.client.send.side_effect = ConnectionError("Disconnected")
     await manager.respond_browser_assistance(
         "one", request_id, "information", "Use the public link"
     )
     assert not handle.pause.paused
     assert handle.drain_steers() == ["Use the public link"]
-    assert "Login still required" in handle.resume_context
+    assert "No manual handoff" in handle.resume_context
     await manager.request_browser_assistance("one", "New obstacle")
     handle.cancel_event.set()
     with pytest.raises(ValueError, match="ended"):
@@ -237,7 +238,7 @@ async def test_engine_fences_bing_until_explicit_user_decision(help_task, tmp_pa
         await manager.respond_browser_assistance("one", run.assistance["id"], "ignore")
         await asyncio.wait_for(task, 3)
         assert run.session.navigate.await_count == 0  # queued Bing action was discarded
-        assert len(requests) == 2
+        assert len(requests) == 3
         assert any("Do not skip" in m.text_content() for m in requests[1].messages)
     finally:
         task.cancel()
@@ -295,3 +296,36 @@ async def test_information_reaches_primary_model_in_active_engine(help_task, tmp
         assert any("我在川沙" in m.text_content() for m in requests[-1].messages)
     finally:
         await engine.shutdown_session()
+
+
+async def test_handoff_reports_sampled_changes_without_claiming_user_actions(help_task):
+    import json
+    manager, run, handle = help_task
+    await manager.browser_service.action("one", BrowserAction(action="observe"))
+    await manager.request_browser_assistance("one", "Please log in")
+    request_id = run.assistance["id"]
+    await manager.respond_browser_assistance("one", request_id, "takeover")
+    run.url = "https://example.test/orders"
+    run.unresolved["old-submit"] = {"effect": "unknown"}
+    await manager.respond_browser_assistance("one", request_id, "continue")
+    report = json.loads(handle.resume_context.split("Resume reconciliation:\n")[1].split("\nFresh browser observation:")[0])
+    assert report["status"] == "compared"
+    assert report["changes"]["url"]["after"].endswith("/orders")
+    assert report["unresolved_action_ids"] == ["old-submit"]
+    assert "outcomes remain unknown" in report["limits"]
+    assert run.handoff_baseline is None
+
+
+def test_handoff_detects_checkbox_change_without_retaining_input_values():
+    import json
+    from deepseek_tui.browser.handoff import baseline, resume_context
+    before = {"observation_id": "old", "tab_id": "t", "document_id": "d", "text": "Notify",
+              "elements": [{"selector": "#notify", "checked": False, "value": "SECRET"}]}
+    after = {**before, "observation_id": "new", "elements": [{"selector": "#notify", "checked": True}]}
+    saved = baseline(before)
+    assert "SECRET" not in json.dumps(saved)
+    run = SimpleNamespace(handoff_baseline=saved, assistance=None, unresolved={})
+    result = resume_context(run, {"success": True, "observation": after}, "Returned")
+    report = json.loads(result.split("Resume reconciliation:\n")[1].split("\nFresh browser observation:")[0])
+    assert report["sampled_controls_changed"] is True
+    assert report["visible_text_changed"] is False

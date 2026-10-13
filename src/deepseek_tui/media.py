@@ -116,6 +116,12 @@ def _encode_image_data_url(block: ImageBlock, *, max_side: int = 2048) -> str:
     if hashlib.sha256(data).hexdigest() != block.asset_id:
         raise ValueError(f"Stored image failed integrity check: {block.asset_id}")
     image = _decode(data)
+    # Browser captures are already bounded JPEGs; PNG would inflate their wire size.
+    if (block.mime_type == "image/jpeg" and block.crop is None
+            and max(image.size) <= max_side and len(data) <= 2 * 1024 * 1024):
+        with Image.open(io.BytesIO(data)) as original:
+            if original.format == "JPEG" and original.getexif().get(274, 1) == 1:
+                return "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")
     if block.crop is not None:
         x, y, width, height = block.crop
         if (

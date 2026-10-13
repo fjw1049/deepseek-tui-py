@@ -594,3 +594,131 @@ async def test_deepseek_text_model_can_use_official_vision_helper(monkeypatch):
     assert stub.requests[0].model == "deepseek-v4-flash-vision-exp"
     assert message_images(stub.requests[0].messages[0])
     assert all(not message_images(message) for message in projected.messages)
+
+
+def test_bounded_jpeg_preserves_original_wire_bytes():
+    raw = image_bytes(format="JPEG", size=(1200, 760))
+    block = import_image(raw)
+    wire = image_data_url(block)
+    assert wire.startswith("data:image/jpeg;base64,")
+    assert base64.b64decode(wire.split(",", 1)[1]) == raw
+    cropped = block.model_copy(update={"crop": (0, 0, 100, 100)})
+    with Image.open(
+        io.BytesIO(base64.b64decode(image_data_url(cropped).split(",", 1)[1]))
+    ) as image:
+        assert image.size == (100, 100)
+
+
+def test_browser_duplicate_pixels_keep_latest_provenance_without_mutating_history():
+    block = import_image(image_bytes()).model_copy(
+        update={"source": {"kind": "browser", "observation_id": "old"}}
+    )
+    latest = block.model_copy(update={"source": {"kind": "browser", "observation_id": "new"}})
+    request = MessageRequest(
+        model="vision",
+        messages=[
+            Message.user("look", origin=MessageOrigin.REAL_USER),
+            Message.tool_result("a", "First", images=[block]),
+            Message.tool_result("b", "Second", images=[latest]),
+        ],
+    )
+    projected = budget_media_request(request, None)
+    assert not message_images(projected.messages[1])
+    assert message_images(projected.messages[2])[0].source["observation_id"] == "new"
+    assert message_images(request.messages[1])
+
+
+def test_budget_never_silently_removes_current_screenshot(monkeypatch):
+    block = import_image(image_bytes())
+    monkeypatch.setattr("deepseek_tui.client.media.image_data_url", lambda *a, **k: "x" * 600_000)
+    request = MessageRequest(
+        model="vision",
+        messages=[
+            Message.user("look", origin=MessageOrigin.REAL_USER),
+            Message.tool_result("a", "Current screenshot", images=[block]),
+        ],
+    )
+    with pytest.raises(ValueError, match="budget"):
+        budget_media_request(request, None, max_bytes=500_000)
+    assert message_images(request.messages[-1])
+
+
+@pytest.mark.parametrize("recovery_succeeds", [False, True])
+async def test_anthropic_413_reduces_old_images_then_retries_once(monkeypatch, recovery_succeeds):
+    from deepseek_tui.client.anthropic import AnthropicCompatClient
+    from deepseek_tui.protocol.responses import StreamError
+
+    block = import_image(image_bytes())
+    # Simulate images below the normal budget but above the recovery budget.
+    monkeypatch.setattr("deepseek_tui.client.media.image_data_url", lambda *a, **k: "x" * 1_500_000)
+    requests = []
+
+    async def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if recovery_succeeds and len(requests) == 2:
+            return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                 text='event: message_stop\ndata: {"type":"message_stop"}\n\n')
+        return httpx.Response(413, text="Payload too large")
+
+    client = AnthropicCompatClient(
+        api_key="test", base_url="https://test.invalid", transport=httpx.MockTransport(handler)
+    )
+    messages = [Message.user("inspect", origin=MessageOrigin.REAL_USER)]
+    for i in range(4):
+        messages += [
+            Message(
+                role=Role.ASSISTANT, content=[ToolUseBlock(id=str(i), name="browser_use", input={})]
+            ),
+            Message.tool_result(str(i), "screenshot", images=[block]),
+        ]
+    try:
+        events = [
+            e
+            async for e in client.stream_chat_completion(
+                MessageRequest(model="vision", messages=messages)
+            )
+        ]
+    finally:
+        await client.close()
+
+    def count_images(body):
+        return sum(
+            1
+            for m in body["messages"]
+            for b in m["content"]
+            if b["type"] == "tool_result" and isinstance(b["content"], list)
+            for part in b["content"]
+            if part["type"] == "image"
+        )
+
+    assert len(requests) == 2
+    assert count_images(requests[0]) == 4
+    assert 0 < count_images(requests[1]) < 4
+    if recovery_succeeds:
+        assert isinstance(events[-1], StreamDone)
+        assert not any(isinstance(e, StreamError) for e in events)
+    else:
+        assert isinstance(events[-1], StreamError) and not events[-1].retryable
+    assert len([m for m in messages if message_images(m)]) == 4
+
+
+async def test_anthropic_413_does_not_retry_identical_request():
+    from deepseek_tui.client.anthropic import AnthropicCompatClient
+    from deepseek_tui.protocol.responses import StreamError
+
+    calls = []
+
+    async def handler(request):
+        calls.append(request)
+        return httpx.Response(413, text="Payload too large")
+
+    client = AnthropicCompatClient(api_key="test", base_url="https://test.invalid",
+                                  transport=httpx.MockTransport(handler))
+    try:
+        events = [e async for e in client.stream_chat_completion(
+            MessageRequest(model="vision", messages=[Message.user("question")]))]
+    finally:
+        await client.close()
+    assert len(calls) == 1
+    assert isinstance(events[-1], StreamError) and not events[-1].retryable

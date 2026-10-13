@@ -2451,6 +2451,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     cache_miss_tokens=cache_miss_tokens,
                     running_subagents=running_subagents,
                     running_tasks=running_tasks,
+                    task_outcome=result.task_outcome,
                 )
             )
             await self._finish_goal_turn(
@@ -3113,7 +3114,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.last_real_input_tokens = 0
             self.last_real_input_estimate = 0
         self._context_measurement_model = model
-        tools = await self._get_tools_with_mcp()
+        from deepseek_tui.tools.task_delivery import (
+            FINALIZATION_MAX_TOKENS, FINALIZATION_TIMEOUT_SECONDS, TaskDelivery,
+        )
+
+        task_catalog = await self._get_tools_with_mcp()
+        delivery = TaskDelivery(catalog={(t.get("function") or t)["name"] for t in task_catalog})
+        self.tool_context.metadata["task_delivery"] = delivery
+        tools = delivery.tools(task_catalog)
         # Execute calls against the exact catalog attached to their request;
         # background MCP discovery must not change eligibility after sampling.
         self._active_api_tools = tools
@@ -3150,17 +3158,41 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         checklist_gate_last_open: str | None = None
         held_stop_result: TurnResult | None = None
         result = TurnResult(assistant_message=None)
+        async def incomplete_delivery(reason: str) -> TurnResult:
+            from deepseek_tui.engine.events import TextDeltaEvent
+
+            warning = (
+                "结果整理未能完成，任务尚未完成核验。以下仅为此前生成的未核验草稿："
+                if str(getattr(self, "reply_locale", "")).startswith("zh") else
+                "Result finalization did not complete; task completion was not verified. "
+                "Earlier unverified draft:"
+            )
+            answer = warning + ("\n\n" + delivery.draft_answer if delivery.draft_answer else "")
+            delivery.outcome = {"status": "partial", "answer": answer,
+                                "evidence": sorted(delivery.evidence), "remaining": [reason]}
+            message = Message.assistant(answer)
+            messages.append(message)
+            await self.handle.emit(TextDeltaEvent(text=answer))
+            return TurnResult(assistant_message=message, task_outcome=delivery.outcome,
+                              tool_round_count=tool_round_count)
+
         round_idx = -1
-        while round_idx < self.max_tool_round_trips:
+        while (round_idx < self.max_tool_round_trips or delivery.outcome is not None
+               or delivery.stop_reminded):
             round_idx += 1
             await self.handle.pause.wait(self.handle.cancel_event)
             if self.handle.resume_context is not None:
+                delivery.outcome = None
+                delivery.stop_reminded = delivery.finalization_attempted = False
+                delivery.draft_answer = ""
                 from deepseek_tui.engine import reminders
 
                 messages.append(reminders.reminder_message(
                     reminders.HUMAN_RESUME, self.handle.resume_context,
                 ))
                 self.handle.resume_context = None
+            tools = delivery.tools(task_catalog)
+            self._active_api_tools = tools
             model_generation = self.handle.pause.generation
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
@@ -3174,9 +3206,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # Drain steer messages — mid-turn user input
             # 这是中途转向机制
             for steer_text in self.handle.drain_steers():
+                delivery.outcome = None
                 steer_text = steer_text.strip()
                 if not steer_text:
                     continue
+                delivery.stop_reminded = delivery.finalization_attempted = False
+                delivery.draft_answer = ""
                 # Honor @plugin: mount/unmount in steers (same as primary send).
                 pre_mount_steer = steer_text
                 steer_text = await self._apply_plugin_mount(steer_text)
@@ -3219,7 +3254,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 tools=tools,
                 model_config=getattr(self, "_app_config", None),
             )
-            if should_trigger:
+            if delivery.stop_reminded and delivery.finalization_attempted and delivery.outcome is None:
+                return await incomplete_delivery("Structured finalization was not supplied or accepted.")
+            if should_trigger and not delivery.stop_reminded:
                 from deepseek_tui.config.providers import max_output_tokens_for_model
 
                 logger.info(
@@ -3228,7 +3265,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self._compact_cooldown_rounds,
                 )
                 compact_result = await self.handle.pause.model_request(
-                    lambda: self._run_compaction(
+                    lambda tools=tools: self._run_compaction(
                         messages, model=model, system_prompt=system_prompt, tools=tools,
                         output_reserve=max_tokens or max_output_tokens_for_model(model),
                     ), self.handle.cancel_event,
@@ -3266,15 +3303,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self._flush_pending_lsp_diagnostics(messages)
             # tool_choice is resolved in turn_loop (auto by default; bare
             # string "required" only when config.strict_tool_mode is set).
+            tools = delivery.tools(task_catalog)
+            self._active_api_tools = tools
             request = MessageRequest(
                 model=model,
                 messages=messages,
                 system_prompt=system_prompt,
                 tools=tools,
-                max_tokens=max_tokens,
+                max_tokens=min(max_tokens or FINALIZATION_MAX_TOKENS, FINALIZATION_MAX_TOKENS)
+                if delivery.stop_reminded else max_tokens,
                 temperature=self.default_temperature,
                 top_p=self.default_top_p,
-                reasoning_effort=reasoning_effort or self.default_reasoning_effort,
+                reasoning_effort="off" if delivery.stop_reminded else (
+                    reasoning_effort or self.default_reasoning_effort),
                 extra_body=dict(self.default_extra_body),
             )
             from deepseek_tui.engine.context_pressure import estimate_request_tokens
@@ -3304,22 +3345,37 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     calls.append(event.tool_call)
                 await self.handle.emit(event)
 
-            with usage_source("agent_round"):
-                # 跑一轮 LLM 流式调用，result(TurnResult) 含本轮产出与状态：
-                # assistant_message=回复 / tool_calls=待调工具(空=结束) / usage=token用量
-                # cancelled=是否取消 / outcome=成功或失败类型 / error_message=错误描述
-                result = await self.handle.pause.model_request(
-                    partial(
-                        self.turn_loop.run,
-                        request,
-                        emit_model_event,
+            if delivery.outcome is not None:
+                result = TurnResult(assistant_message=Message.assistant(delivery.outcome["answer"]))
+                from deepseek_tui.engine.events import TextDeltaEvent
+
+                await self.handle.emit(TextDeltaEvent(text=delivery.outcome["answer"]))
+            else:
+                with usage_source("agent_round"):
+                    # 跑一轮 LLM 流式调用，result(TurnResult) 含本轮产出与状态：
+                    # assistant_message=回复 / tool_calls=待调工具(空=结束) / usage=token用量
+                    # cancelled=是否取消 / outcome=成功或失败类型 / error_message=错误描述
+                    sample = self.handle.pause.model_request(
+                        partial(
+                            self.turn_loop.run,
+                            request,
+                            emit_model_event,
+                            self.handle.cancel_event,
+                            tools=tools,
+                            latency_turn_id=latency_turn_id,
+                            round_idx=round_idx,
+                        ),
                         self.handle.cancel_event,
-                        tools=tools,
-                        latency_turn_id=latency_turn_id,
-                        round_idx=round_idx,
-                    ),
-                    self.handle.cancel_event,
-                )
+                    )
+                    if delivery.stop_reminded:
+                        delivery.finalization_attempted = True
+                        try:
+                            result = await asyncio.wait_for(sample, FINALIZATION_TIMEOUT_SECONDS)
+                        except TimeoutError:
+                            await self.handle.emit(ModelRequestInterruptedEvent())
+                            return await incomplete_delivery("Result finalization timed out.")
+                    else:
+                        result = await sample
             if result is None or model_generation != self.handle.pause.generation:
                 # Settle UI fragments/tool cards without completing the logical turn.
                 await self.handle.emit(ModelRequestInterruptedEvent())
@@ -3392,6 +3448,26 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     tool_calls=[],
                     tool_round_count=tool_round_count,
                 )
+            if delivery.active and result.error_message and not result.tool_calls:
+                from dataclasses import replace
+                from deepseek_tui.engine.events import TextDeltaEvent
+
+                answer = (
+                    "浏览器任务尚未完成。模型请求失败，无法继续核验和整理结果。"
+                    "已执行的浏览器操作及回执保留在本次记录中；恢复后需要重新观察页面再继续。"
+                    if str(getattr(self, "reply_locale", "")).startswith("zh") else
+                    "The browser task is incomplete because the model request failed. "
+                    "Browser operations and receipts remain in this turn's history. "
+                    "Observe the page again before continuing."
+                )
+                outcome = {"status": "blocked", "answer": answer,
+                           "evidence": sorted(delivery.evidence),
+                           "remaining": [result.error_message]}
+                message = Message.assistant(answer)
+                messages.append(message)
+                await self.handle.emit(TextDeltaEvent(text=answer))
+                return replace(result, assistant_message=message, task_outcome=outcome,
+                               tool_round_count=tool_round_count)
             if not result.tool_calls:
                 if self.handle.pause.paused or model_generation != self.handle.pause.generation:
                     round_idx -= 1
@@ -3414,6 +3490,45 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if self.handle.has_pending_steers():
                     logger.info("turn_end_deferred_pending_steer")
                     continue
+                if delivery.active and delivery.outcome is None and not result.error_message:
+                    if not delivery.stop_reminded and round_idx < self.max_tool_round_trips:
+                        delivery.stop_reminded = True
+                        delivery.draft_answer = (
+                            result.assistant_message.text_content() if result.assistant_message else ""
+                        )
+                        await self.handle.emit(StatusEvent(message=(
+                            "正在整理已有结果（最多 60 秒），此阶段不再操作浏览器。"
+                            if str(getattr(self, "reply_locale", "")).startswith("zh") else
+                            "Finalizing existing results (up to 60 seconds); no further browser actions."
+                        )))
+                        from deepseek_tui.engine import reminders
+
+                        messages.append(reminders.reminder_message(
+                            reminders.TASK_DELIVERY,
+                            "Finalization only: call finish_task once using evidence already collected. "
+                            "Do not perform more work or request additional tools. If the goal is not "
+                            "verified, use partial or blocked and state the remaining work. "
+                            "Do not invent results or treat opening a page/login as task completion."
+                        ))
+                        logger.info("task_delivery_stop_deferred")
+                        continue
+                    from dataclasses import replace
+
+                    text = (result.assistant_message.text_content()
+                            if result.assistant_message else "")
+                    warning = (
+                        "任务尚未完成核验。"
+                        if str(getattr(self, "reply_locale", "")).startswith("zh")
+                        else "Task completion was not verified."
+                    )
+                    answer = warning + "\n\n" + text
+                    delivery.outcome = {"status": "partial", "answer": answer, "evidence": [],
+                                        "remaining": ["Structured task delivery was not supplied."]}
+                    result = replace(result, assistant_message=Message.assistant(answer))
+                    messages.append(result.assistant_message)
+                    from deepseek_tui.engine.events import TextDeltaEvent
+
+                    await self.handle.emit(TextDeltaEvent(text=answer))
                 # Checklist turn-end gate: if the model is about to stop with
                 # open checklist items, hold this stop and inject a reminder
                 # that makes it face each one. Re-fires while the model keeps
@@ -3424,6 +3539,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     last_open=checklist_gate_last_open,
                 )
                 if gate_summary is not None:
+                    delivery.outcome = None
                     checklist_gate_fires += 1
                     checklist_gate_last_open = gate_summary
                     if _assistant_preface_text(result.assistant_message):
@@ -3466,6 +3582,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
                     stop_decision = aggregate_hook_decision(stop_results)
                     if stop_decision.blocked:
+                        delivery.outcome = None
                         stop_hook_active = True
                         stop_hook_fires += 1
                         reason = stop_decision.reason or "A Stop hook blocked ending the turn."
@@ -3487,7 +3604,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if self.handle.pause.paused or model_generation != self.handle.pause.generation:
                     round_idx -= 1
                     continue
-                return replace(result, tool_round_count=tool_round_count)
+                if delivery.active:
+                    logger.info("task_delivery_end status=%s",
+                                (delivery.outcome or {}).get("status", "error"))
+                return replace(result, tool_round_count=tool_round_count,
+                               task_outcome=delivery.outcome)
 
             tool_round_count += 1
 
@@ -3528,7 +3649,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 consecutive_tool_error_steps = 0
 
             if self._accept_held_stop_after_tools(
-                held=held_stop_result is not None,
+                held=held_stop_result is not None and not delivery.active,
                 tool_calls=result.tool_calls,
                 tool_errors=tool_errors,
             ):
@@ -3557,10 +3678,24 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 retryable=False,
             )
         )
+        limit_answer = None
+        if delivery.active:
+            text = ("任务因工具调用轮数达到上限而停止，尚未完成核验。"
+                    "继续前请检查已收集的结果和未确认的操作。"
+                    if str(getattr(self, "reply_locale", "")).startswith("zh") else
+                    "Task stopped at the tool round-trip limit. Completion was not verified; "
+                    "inspect the collected results and unresolved operations before continuing.")
+            limit_answer = Message.assistant(text)
+            messages.append(limit_answer)
+            from deepseek_tui.engine.events import TextDeltaEvent
+
+            await self.handle.emit(TextDeltaEvent(text=text))
         return TurnResult(
-            assistant_message=result.assistant_message,
+            assistant_message=limit_answer if delivery.active else result.assistant_message,
             usage=result.usage,
             tool_calls=[],
+            task_outcome=({"status": "partial", "remaining": ["Tool round-trip limit exceeded"]}
+                          if delivery.active else None),
             outcome=TurnOutcomeStatus.FAILED,
             error_message="Tool round-trip limit exceeded",
             tool_round_count=tool_round_count,

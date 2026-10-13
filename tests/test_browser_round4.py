@@ -196,3 +196,36 @@ async def test_repeated_rejections_use_business_progress_not_observation_ids(tmp
         )
     assert result["receipt"]["no_progress_count"] == 3
     assert result["receipt"]["retry_kind"] == "change_route_or_assistance"
+
+
+async def test_mixed_failures_escalate_across_successful_observations(tmp_path, monkeypatch):
+    service = BrowserService(tmp_path)
+    run = BrowserRun("t", tmp_path)
+    monkeypatch.setattr("deepseek_tui.browser.service.observe", AsyncMock(return_value={}))
+    for i, reason in enumerate(
+        ["focus_not_active", "target_obscured", "screenshot_pixels_changed"]
+    ):
+        result = await service._reject_action(
+            run, BrowserAction(action="click", selector="#target"), reason
+        )
+        service._remember_response(
+            run,
+            {
+                "success": True,
+                "content": "observed",
+                "receipt": {"action_id": f"read-{i}", "action": "observe", "execution": "executed"},
+            },
+            persist=False,
+        )
+    assert result["receipt"]["consecutive_action_failures"] == 3
+    assert result["receipt"]["retry_kind"] == "change_route_or_assistance"
+    service._remember_response(
+        run,
+        {
+            "success": True,
+            "content": "done",
+            "receipt": {"action_id": "good", "action": "click", "execution": "executed"},
+        },
+        persist=False,
+    )
+    assert run.consecutive_action_failures == 0

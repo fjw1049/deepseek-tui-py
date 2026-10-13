@@ -164,6 +164,7 @@ class TurnCompleteEvent:
     # Non-blocking background work still running after this turn ends.
     running_subagents: int = 0
     running_tasks: int = 0
+    task_outcome: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

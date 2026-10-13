@@ -684,6 +684,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         from deepseek_tui.tools.browser import BrowserUseTool
 
         registry.register(BrowserUseTool())
+        from deepseek_tui.tools.task_delivery import FinishTaskTool, RequestTaskToolsTool
+
+        registry.register(FinishTaskTool())
+        registry.register(RequestTaskToolsTool())
 
     for tool in [
         ReadFileTool(),

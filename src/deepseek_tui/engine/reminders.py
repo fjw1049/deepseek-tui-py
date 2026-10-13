@@ -67,6 +67,14 @@ class ReminderSpec:
     max_chars: int | None = None
 
 
+TASK_DELIVERY = ReminderSpec(
+    name="task_delivery",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+)
+
+
 # --- Head: session framing, injected ahead of the user's first turn --------
 
 GIT_SNAPSHOT = ReminderSpec(

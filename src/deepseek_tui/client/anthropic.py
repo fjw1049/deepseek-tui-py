@@ -13,7 +13,6 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from deepseek_tui.client.base import LLMClient
-from deepseek_tui.tools.encoding import to_api_tool_name
 from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
 from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import AnthropicStreamParser
@@ -28,7 +27,8 @@ from deepseek_tui.protocol.messages import (
     ToolResultBlock,
     ToolUseBlock,
 )
-from deepseek_tui.protocol.responses import StreamEvent
+from deepseek_tui.protocol.responses import StreamError, StreamEvent
+from deepseek_tui.tools.encoding import to_api_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,43 @@ class AnthropicCompatClient(LLMClient):
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         request = await self.prepare_media(request)
+        from deepseek_tui.client.media import budget_media_request
+
+        # Keep headroom below 10 MiB gateways; retry 413 only with a smaller projection.
+        previous = None
+        for attempt in range(2):
+            try:
+                projected = await asyncio.to_thread(
+                    budget_media_request, request, self.media_config,
+                    max_bytes=(8 if attempt == 0 else 4) * 1024 * 1024,
+                )
+                if attempt and projected == previous:
+                    yield StreamError(
+                        message=("Model request cannot be reduced safely below "
+                                 "the size limit (HTTP 413)."),
+                        retryable=False,
+                    )
+                    return
+                previous = projected
+                async for event in self._stream_request(projected):
+                    yield event
+                return
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 413:
+                    raise
+                if attempt == 1:
+                    yield StreamError(
+                        message="Model request remains too large after image reduction (HTTP 413).",
+                        retryable=False,
+                    )
+                    return
+            except ValueError as exc:
+                if "request size budget" not in str(exc):
+                    raise
+                yield StreamError(message=str(exc), retryable=False)
+                return
+
+    async def _stream_request(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         parser = AnthropicStreamParser()
         headers = {
             "x-api-key": self.api_key,
@@ -116,7 +153,7 @@ class AnthropicCompatClient(LLMClient):
     def _build_payload(self, request: MessageRequest) -> dict[str, Any]:
         from deepseek_tui.client.media import budget_media_request
 
-        request = budget_media_request(request, self.media_config)
+        request = budget_media_request(request, self.media_config, max_bytes=8 * 1024 * 1024)
         system, messages = _build_anthropic_messages(
             request.messages,
             system_prompt=request.system_prompt,

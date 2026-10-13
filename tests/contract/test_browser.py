@@ -114,14 +114,18 @@ async def test_takeover_resumes_existing_turn_only_after_fresh_observation(
         await handle.steer("Keep the original task")
         assert handle.pause.paused
         generation = run.generation
-        # Failed observation leaves the same task paused and the user in control.
+        # Failed observation returns a recovery requirement, never stale refs.
         original_cdp = session._internal.client.send.side_effect
         session._internal.client.send.side_effect = ConnectionError("Page disconnected")
         response = await client.post(
             base + "/control", json={"owner": "agent", "generation": generation},
         )
-        assert response.status_code == 409
-        assert handle.pause.paused and run.owner == "user"
+        assert response.status_code == 200
+        assert not handle.pause.paused and run.owner == "agent"
+        assert run.latest_observation is None
+        assert "unavailable" in handle.resume_context
+        await client.post(base + "/control", json={"owner": "user", "generation": run.generation})
+        generation = run.generation
         session._internal.client.send.side_effect = original_cdp
         response = await client.post(
             base + "/control", json={"owner": "agent", "generation": generation},

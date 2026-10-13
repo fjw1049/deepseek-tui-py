@@ -2095,3 +2095,76 @@ async def test_hidden_scoped_text_after_removal(chrome):
         ),
     )
     assert result["success"], result
+
+
+async def test_human_handoff_reconciles_real_page_and_invalidates_old_actions(chrome):
+    import json
+    from types import SimpleNamespace
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.server.threads.manager import RuntimeThreadManager
+
+    service, run = chrome
+    before = await service.action("t", BrowserAction(action="observe"))
+    old_id = before["observation"]["observation_id"]
+    manager = RuntimeThreadManager.__new__(RuntimeThreadManager)
+    manager.browser_service = service
+    handle = EngineHandle()
+    handle._mark_turn_active()
+    manager._active = {"t": SimpleNamespace(handle=handle, active_turn=SimpleNamespace(turn_id="turn"))}
+    await manager.control_browser("t", "user", run.generation)
+    await run.session._internal.client.send("Runtime.evaluate", {
+        "expression": "document.querySelector('#result').textContent='MANUAL_DONE'",
+        "returnByValue": True,
+    })
+    await manager.control_browser("t", "agent", run.generation)
+    assert not handle.pause.paused
+    assert "MANUAL_DONE" in handle.resume_context
+    report = json.loads(handle.resume_context.split("Resume reconciliation:\n")[1].split("\nFresh browser observation:")[0])
+    assert report["visible_text_changed"] is True
+    assert run.latest_observation["observation_id"] != old_id
+    rejected = await service.action(
+        "t", BrowserAction(action="click", selector="#search", observation_id=old_id),
+        require_observation=True,
+    )
+    assert not rejected["success"], rejected
+    assert rejected["receipt"]["execution"] == "not_executed"
+    assert "MANUAL_DONE" in rejected["observation"]["text"]
+
+
+@pytest.mark.parametrize("focus_changes", [False, True])
+async def test_press_recovers_inactive_page_focus_then_revalidates(chrome, monkeypatch, focus_changes):
+    from unittest.mock import AsyncMock
+    import deepseek_tui.browser.service as module
+
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(
+        client,
+        "document.addEventListener('keydown', e => { if(e.key==='Escape') document.querySelector('#result').textContent='ESCAPED'; }); true",
+    )
+    observation = await read(service)
+    original = module.target
+    calls = 0
+
+    async def target_with_lost_focus(run, action):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"error": "focus_not_active"}
+        if calls == 2 and focus_changes:
+            await evaluate(client, "document.querySelector('#q').focus(); true")
+        return await original(run, action)
+
+    send = AsyncMock(wraps=client.send)
+    monkeypatch.setattr(client, "send", send)
+    monkeypatch.setattr(module, "target", target_with_lost_focus)
+    result = await act(service, observation, "press", key="Escape")
+    assert result["success"] is not focus_changes, result
+    assert calls >= 2
+    assert any(c.args[0] == "Page.bringToFront" for c in send.call_args_list)
+    assert await evaluate(client, "document.querySelector('#result').textContent") == (
+        "" if focus_changes else "ESCAPED"
+    )
+    if focus_changes:
+        assert result["receipt"]["execution"] == "not_executed"
+        assert result["receipt"]["reason"] == "focus_changed"

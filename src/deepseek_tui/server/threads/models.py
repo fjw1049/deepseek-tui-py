@@ -136,6 +136,7 @@ class TurnRecord(BaseModel):
     # Falls back to duration_ms when the submit timestamp is unavailable.
     end_to_end_ms: int | None = None
     usage: dict[str, Any] | None = None
+    task_outcome: dict[str, Any] | None = None
     error: str | None = None
     item_ids: list[str] = Field(default_factory=list)
     import_generation: str | None = None

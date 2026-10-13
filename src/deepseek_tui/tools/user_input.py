@@ -59,9 +59,9 @@ def validate_user_input_request(input_data: dict[str, Any]) -> list[UserInputQue
         if qid in seen_ids:
             raise ToolError("question ids must be unique")
         seen_ids.add(qid)
-        options = item.get("options")
-        if not isinstance(options, list) or not (2 <= len(options) <= 4):
-            raise ToolError("each question must have 2-4 options")
+        options = item.get("options", [])
+        if not isinstance(options, list) or len(options) not in {0, 2, 3, 4}:
+            raise ToolError("each question must omit options or have 2-4 options")
 
         for opt in options:
             if not isinstance(opt, dict):
@@ -87,7 +87,10 @@ class RequestUserInputTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Ask the user a multiple-choice question. "
+            "Request information, a decision, or a manual browser action. "
+            "Omit options for a free-text answer. For action, supply reason and surface=browser; "
+            "the existing browser takeover UI pauses the task, without a second question card. "
+            "Never request passwords or verification codes in chat. Use as the only tool call. "
             "Must be handled by the engine — direct execution is an error."
         )
 
@@ -95,6 +98,15 @@ class RequestUserInputTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
+                "kind": {
+                    "type": "string", "enum": ["information", "decision", "action"],
+                    "description": "Defaults to information; action requests manual takeover.",
+                },
+                "surface": {"type": "string", "enum": ["browser"]},
+                "reason": {
+                    "type": "string",
+                    "description": "For action: blocker and smallest useful human step.",
+                },
                 "questions": {
                     "type": "array",
                     "description": (
@@ -156,17 +168,23 @@ class RequestUserInputTool(ToolSpec):
                                 "maxItems": 4,
                             },
                         },
-                        "required": ["header", "id", "question", "options"],
+                        "required": ["header", "id", "question"],
                     },
                     "minItems": 1,
                     "maxItems": 3,
                 }
             },
-            "required": ["questions"],
+            "anyOf": [
+                {"required": ["questions"]},
+                {"required": ["kind", "surface", "reason"]},
+            ],
         }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
+
+    def supports_parallel(self) -> bool:
+        return False
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         raise ToolError("request_user_input must be handled by the engine")
