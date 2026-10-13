@@ -56,7 +56,7 @@ it.each(['project', 'chats', 'pinned'])('reveals a %s conversation from activity
   let request: { threadId: string | null } | null = null
   const render = () => root.render(createElement(Sidebar, {
     threads: [thread], activeThreadId: thread.id, runtimeReady: true, revealRequest: request,
-    onSelectThread: (id) => { useChatStore.getState().setRoute('chat'); request = { threadId: id }; render() },
+    onSelectThread: (id, revealInSidebar = true) => { useChatStore.getState().setRoute('chat'); request = revealInSidebar ? { threadId: id } : null; render() },
     onNewChat: () => { useChatStore.getState().setRoute('chat'); request = { threadId: null }; render() },
     onNewChatsThread: noop, onNewChatInWorkspace: noop, onOpenThreadTerminal: noop,
     onDeleteThread: noop, onArchiveThread: noop, onOpenSettings: noop, onCollapseSidebar: noop
@@ -67,6 +67,12 @@ it.each(['project', 'chats', 'pinned'])('reveals a %s conversation from activity
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="sidebar-activity"]')!.click())
     expect(container.querySelector<HTMLElement>('.ds-sidebar-middle')!.style.display).toBe('none')
     await act(async () => container.querySelector<HTMLButtonElement>('.ds-activity-row')!.click())
+    await act(async () => flushFrames())
+    expect(useChatStore.getState().route).toBe('chat')
+    expect(container.querySelector<HTMLElement>('.ds-sidebar-middle')!.style.display).toBe('none')
+    expect(container.querySelector('.ds-activity-row')).not.toBeNull()
+    expect(scroll).not.toHaveBeenCalled()
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="activityRevealThread"]')!.click())
     await act(async () => flushFrames())
     expect(container.querySelector<HTMLElement>('.ds-sidebar-middle')!.style.display).toBe('')
     expect(container.querySelector('.ds-activity-row')).toBeNull()

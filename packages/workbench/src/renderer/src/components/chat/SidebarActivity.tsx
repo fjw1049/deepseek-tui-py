@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { Archive, Trash2, FolderClosed, GitBranch, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CirclePause, Loader2, MessageCircleQuestion } from 'lucide-react'
+import { ArrowRightToLine, FolderClosed, GitBranch, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CirclePause, Loader2, MessageCircleQuestion } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { activityDismissalKey, type ActivityRow } from '../../lib/sidebar-activity'
 import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
@@ -15,9 +15,8 @@ const branchPath = (thread: ActivityRow['thread']): string => {
   return isChatsWorkspace(path) ? '' : path
 }
 
-export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectThread, onDismiss, onArchiveThread, onDeleteThread }: {
-  onArchiveThread: (id: string) => Promise<void>
-  onDeleteThread: (id: string) => Promise<void>
+export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectThread, onDismiss, onRevealThread }: {
+  onRevealThread: (id: string) => void
   rows: ActivityRow[]
   activeThreadId: string | null
   runtimeReady: boolean
@@ -28,17 +27,6 @@ export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectTh
   const [collapsed, setCollapsed] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
-  const [pendingId, setPendingId] = useState<string | null>(null)
-  const handleAction = async (activity: ActivityRow, action: 'archive' | 'delete'): Promise<void> => {
-    if (pendingId || !runtimeReady) return
-    if (action === 'delete' && !window.confirm(t('sidebarThreadDeleteConfirm', { title: activity.thread.title }))) return
-    setPendingId(activity.thread.id)
-    try {
-      await (action === 'archive' ? onArchiveThread : onDeleteThread)(activity.thread.id)
-    } finally {
-      setPendingId(null)
-    }
-  }
   const [branches, setBranches] = useState<Record<string, string | null>>({})
   const pathsKey = [...new Set(rows.map(({ thread }) => branchPath(thread)).filter(Boolean))].sort().join('\0')
   useEffect(() => {
@@ -95,12 +83,9 @@ export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectTh
               onSelect={() => onSelectThread(thread.id)}
               onDismiss={() => { setOpenId(null); onDismiss(activity) }}
               actions={<div className="ds-activity-actions">
-                <button type="button" disabled={!runtimeReady || pendingId !== null}
-                  title={t('sidebarThreadArchive')} aria-label={t('sidebarThreadArchive')}
-                  onClick={() => void handleAction(activity, 'archive')}><Archive size={14} strokeWidth={1.9} /></button>
-                <button type="button" disabled={!runtimeReady || pendingId !== null}
-                  title={t('sidebarThreadDelete')} aria-label={t('sidebarThreadDelete')} className="ds-activity-delete"
-                  onClick={() => void handleAction(activity, 'delete')}><Trash2 size={14} strokeWidth={1.9} /></button>
+                <button type="button" disabled={!runtimeReady}
+                  title={t('activityRevealThread')} aria-label={t('activityRevealThread')}
+                  onClick={() => onRevealThread(thread.id)}><ArrowRightToLine size={15} strokeWidth={1.8} /></button>
               </div>}>
               <Icon size={15} strokeWidth={1.8} className={`ds-activity-icon ds-activity-icon--${status} ${status === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`} />
               <span className="ds-activity-copy"><HoverMarqueeText className="ds-activity-title"

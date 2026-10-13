@@ -22,7 +22,7 @@ it('opens exactly the selected conversation and keeps unread state untouched whi
     hiddenWorkspacePaths: [], runningIds: new Set(), unreadThreadIds: unread, activeThreadId: null, activeWaiting: false
   })
   try {
-    await act(async () => root.render(createElement(SidebarActivity, { rows, activeThreadId: null, runtimeReady: true, onSelectThread: select, onDismiss: vi.fn(), onArchiveThread: vi.fn(), onDeleteThread: vi.fn() })))
+    await act(async () => root.render(createElement(SidebarActivity, { rows, activeThreadId: null, runtimeReady: true, onSelectThread: select, onDismiss: vi.fn(), onRevealThread: vi.fn() })))
     expect(select).not.toHaveBeenCalled()
     expect(container.textContent).toContain('demo')
     expect(container.querySelectorAll('.ds-activity-row')).toHaveLength(2)
@@ -39,16 +39,12 @@ it('opens exactly the selected conversation and keeps unread state untouched whi
 })
 
 
-it('archives and deletes only the chosen conversation, with confirmation and without opening it', async () => {
+it('reveals only the chosen conversation with a separate action and no archive or delete controls', async () => {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   const select = vi.fn()
-  let finishArchive!: () => void
-  const archive = vi.fn(() => new Promise<void>((resolve) => { finishArchive = resolve }))
-  const remove = vi.fn(async () => {})
-  const confirm = vi.fn(() => false)
-  vi.stubGlobal('confirm', confirm)
+  const reveal = vi.fn()
   const rows = buildSidebarActivity({
     threads: [{ id: 'target', title: 'Conversation', workspace: '/demo', model: '', mode: '', updatedAt: '', latestTurnStatus: 'completed' }],
     hiddenWorkspacePaths: [], runningIds: new Set(), unreadThreadIds: {}, activeThreadId: null, activeWaiting: false
@@ -56,24 +52,16 @@ it('archives and deletes only the chosen conversation, with confirmation and wit
   try {
     await act(async () => root.render(createElement(SidebarActivity, {
       rows, activeThreadId: null, runtimeReady: true, onSelectThread: select,
-      onDismiss: vi.fn(), onArchiveThread: archive, onDeleteThread: remove
+      onDismiss: vi.fn(), onRevealThread: reveal
     })))
     expect(container.querySelector('.ds-activity-meta')?.textContent).toBe('demo')
     expect(container.querySelector('.ds-activity-title > span')).not.toBeNull()
-    const archiveButton = container.querySelector<HTMLButtonElement>('[aria-label="sidebarThreadArchive"]')!
-    const deleteButton = container.querySelector<HTMLButtonElement>('[aria-label="sidebarThreadDelete"]')!
+    expect(container.querySelector('[aria-label="sidebarThreadArchive"]')).toBeNull()
+    expect(container.querySelector('[aria-label="sidebarThreadDelete"]')).toBeNull()
     expect(container.querySelector('button button')).toBeNull()
-    await act(async () => archiveButton.click())
-    expect(archive).toHaveBeenCalledExactlyOnceWith('target')
-    expect(deleteButton.disabled).toBe(true)
-    await act(async () => { finishArchive() })
-    expect(deleteButton.disabled).toBe(false)
-    await act(async () => deleteButton.click())
-    expect(confirm).toHaveBeenCalledOnce()
-    expect(remove).not.toHaveBeenCalled()
-    confirm.mockReturnValue(true)
-    await act(async () => deleteButton.click())
-    expect(remove).toHaveBeenCalledExactlyOnceWith('target')
+    const revealButton = container.querySelector<HTMLButtonElement>('[aria-label="activityRevealThread"]')!
+    await act(async () => revealButton.click())
+    expect(reveal).toHaveBeenCalledExactlyOnceWith('target')
     expect(select).not.toHaveBeenCalled()
   } finally {
     vi.unstubAllGlobals()
@@ -100,7 +88,7 @@ it('shows available branches, resolves worktrees separately, and reads each dire
   try {
     await act(async () => root.render(createElement(SidebarActivity, {
       rows, activeThreadId: null, runtimeReady: true, onSelectThread: vi.fn(), onDismiss: vi.fn(),
-      onArchiveThread: vi.fn(), onDeleteThread: vi.fn()
+      onRevealThread: vi.fn()
     })))
     expect(getGitBranches).toHaveBeenCalledTimes(3)
     expect(Array.from(container.querySelectorAll('.ds-activity-meta'), (el) => el.textContent)).toEqual([

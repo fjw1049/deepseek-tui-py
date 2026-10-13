@@ -2275,6 +2275,7 @@
   "activityStatus_completed": "Completed",
   "activityStatus_idle": "Idle",
   "activityStatus_stopped": "Stopped",
+  "activityRevealThread": "Reveal in main sidebar",
   "activityTitle": "Recent activity",
   "activityStatus_waiting": "Waiting for you",
   "activityStatus_failed": "Failed / blocked",

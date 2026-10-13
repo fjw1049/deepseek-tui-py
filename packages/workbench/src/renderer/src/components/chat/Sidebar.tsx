@@ -36,7 +36,7 @@ type Props = {
   threads: NormalizedThread[]
   activeThreadId: string | null
   runtimeReady: boolean
-  onSelectThread: (id: string) => void
+  onSelectThread: (id: string, revealInSidebar?: boolean) => void
   onOpenThreadTerminal: (id: string) => Promise<void>
   onDeleteThread: (id: string) => Promise<void>
   onArchiveThread: (id: string) => Promise<void>
@@ -341,8 +341,8 @@ export function Sidebar({
           </div>
 
           {activityOpen && <SidebarActivity rows={activityRows} activeThreadId={activeThreadId}
-            runtimeReady={runtimeReady} onSelectThread={onSelectThread} onDismiss={dismissActivity}
-            onArchiveThread={onArchiveThread} onDeleteThread={onDeleteThread} />}
+            runtimeReady={runtimeReady} onSelectThread={(id) => onSelectThread(id, false)} onDismiss={dismissActivity}
+            onRevealThread={onSelectThread} />}
 
           <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-1">
             <div className="min-w-0 flex-1">

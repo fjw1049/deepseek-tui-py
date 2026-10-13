@@ -2275,6 +2275,7 @@
   "activityStatus_completed": "已完成",
   "activityStatus_idle": "空闲",
   "activityStatus_stopped": "已停止",
+  "activityRevealThread": "定位到主会话",
   "activityTitle": "最近活动",
   "activityStatus_waiting": "等待你处理",
   "activityStatus_failed": "失败 / 受阻",

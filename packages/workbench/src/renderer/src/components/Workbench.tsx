@@ -1318,9 +1318,9 @@ export function Workbench(): ReactElement {
     rightSidebarWidth
   ])
 
-  const openThread = (id: string): void => {
+  const openThread = (id: string, revealInSidebar = true): void => {
     sidebarNavigationVersion.current += 1
-    setSidebarRevealRequest({ threadId: id })
+    setSidebarRevealRequest(revealInSidebar ? { threadId: id } : null)
     setRoute('chat')
     void selectThread(id)
   }
