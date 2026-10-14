@@ -206,19 +206,26 @@ async def delivery_engine(tmp_path, replies):
     return engine, client
 
 
-async def test_early_stop_gets_one_delivery_reminder_then_exact_final_answer(tmp_path):
-    from deepseek_tui.engine.events import TextDeltaEvent
+@pytest.mark.parametrize("early_stop", [False, True])
+@pytest.mark.parametrize("locale", ["en", "zh"])
+async def test_delivery_returns_exact_answer_without_finalization_notice(tmp_path, early_stop, locale):
+    from deepseek_tui.engine.events import StatusEvent, TextDeltaEvent
     engine, client = await delivery_engine(tmp_path, [
         ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        "I opened the page.", finish(),
+        *(["I opened the page."] if early_stop else []), finish(),
     ])
+    engine.reply_locale = locale
     try:
         result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 3  # no model call to rewrite the accepted delivery
+        assert len(client.requests) == 2 + early_stop  # no model call to rewrite the accepted delivery
         assert result.assistant_message.text_content() == "The total is 42."
         assert result.task_outcome["status"] == "completed"
+        events = engine.handle.drain_events()
         assert any(isinstance(e, TextDeltaEvent) and e.text == "The total is 42."
-                   for e in engine.handle.drain_events())
+                   for e in events)
+        assert not any(isinstance(e, StatusEvent) and (
+            "Finalizing existing results" in e.message or "正在整理已有结果" in e.message
+        ) for e in events)
     finally:
         await engine.shutdown_session()
 

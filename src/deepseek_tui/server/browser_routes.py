@@ -103,7 +103,11 @@ async def cookie_sync_state(request: Request, thread_id: str) -> dict[str, Any]:
     from deepseek_tui.browser.chrome_cookies import profiles
 
     browser = service(request, thread_id)
-    return {**browser.cookies.state(), "profiles": await asyncio.to_thread(profiles)}
+    return {
+        **browser.cookies.state(),
+        "profiles": await asyncio.to_thread(profiles),
+        "has_saved_cookies": await asyncio.to_thread(browser.cookies.has_saved_cookies),
+    }
 
 
 @router.post("/cookie-sync")
@@ -273,14 +277,6 @@ async def control(request: Request, thread_id: str, body: ControlBody) -> dict[s
             thread_id, body.owner, body.generation,
         )
     except (ValueError, RuntimeError, TimeoutError, ConnectionError) as exc:
-        raise HTTPException(409, str(exc)) from exc
-
-
-@router.post("/demo")
-async def demo(request: Request, thread_id: str) -> dict[str, Any]:
-    try:
-        return await service(request, thread_id).start_demo(thread_id)
-    except (ValueError, TimeoutError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
 

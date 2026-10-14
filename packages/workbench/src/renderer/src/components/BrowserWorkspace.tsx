@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Bot, Hand, Play, Settings2, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
 import { parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
 import { isHtmlPreviewPath } from '@shared/html-preview'
-import { BrowserSessionSettings } from './BrowserSessionSettings'
 import { BrowserCookieSync, type CookieSyncState } from './BrowserCookieSync'
 import { DevBrowserPanel } from './DevBrowserPanel'
 import { BrowserViewport } from './BrowserViewport'
@@ -24,8 +23,8 @@ type BrowserState = {
   viewport?: { width: number; height: number }
   tabs?: { tab_id: string; title: string; url: string; active: boolean }[]
   image?: string | null; video_recording?: boolean; video_error?: string | null
-  owner: 'agent' | 'user' | 'stopped'; recording: boolean; demo_status: string
-  activity?: string; workflow_recording?: boolean; demo_step?: number; demo_total?: number
+  owner: 'agent' | 'user' | 'stopped'; recording: boolean
+  activity?: string; workflow_recording?: boolean
   error: string | null; log: { action: string; success: boolean }[]
   artifacts: { id: string; label: string; path: string }[]
   scene?: { scene_id: string; tab_id: string; document_id: string; viewport_epoch: number }
@@ -38,7 +37,7 @@ type BrowserState = {
   downloads?: { id: string; state: string; filename: string; received_bytes: number; path?: string }[]
 }
 
-type ActionReceipt = { action_id: string; execution: string; effect?: string; reconciliation?: unknown }
+type ActionReceipt = { action?: string; target_url?: string; action_id: string; execution: string; effect?: string; reconciliation?: unknown }
 type ActionResult = { success?: boolean; content?: unknown; receipt?: ActionReceipt; dialog?: BrowserState['dialog'] }
 export class BrowserRequestError extends Error {
   constructor(message: string, readonly result?: ActionResult) { super(message) }
@@ -71,7 +70,6 @@ export function BrowserWorkspace({ agentRequest = 0, ...props }: BrowserWorkspac
   const { t } = useTranslation('common')
   const [mode, setMode] = useState<'preview' | 'agent'>(agentRequest ? 'agent' : 'preview')
   const [agentOpened, setAgentOpened] = useState(!!agentRequest)
-  const [detailsRequest, setDetailsRequest] = useState(0)
   useEffect(() => {
     if (props.preferredUrl || props.externalError) setMode('preview')
   }, [props.preferredUrl, props.externalError])
@@ -81,15 +79,12 @@ export function BrowserWorkspace({ agentRequest = 0, ...props }: BrowserWorkspac
   return <div className="flex h-full min-h-0 flex-col">
     <div className={mode === 'preview' ? 'min-h-0 flex-1' : 'hidden'} inert={mode !== 'preview'}>
       <DevBrowserPanel {...props} blocks={props.blocks ?? []} className="h-full w-full"
-        visible={props.visible !== false && mode === 'preview'}
-        onOpenAutomation={props.threadId ? () => {
-          setDetailsRequest(value => value + 1); setAgentOpened(true); setMode('agent')
-        } : undefined} />
+        visible={props.visible !== false && mode === 'preview'} />
     </div>
     {agentOpened ? <div className={mode === 'agent' ? 'min-h-0 flex-1' : 'hidden'} inert={mode !== 'agent'}>
       {props.threadId ? <AgentBrowserPanel key={props.threadId} {...props} threadId={props.threadId}
         visible={props.visible !== false && mode === 'agent'} preferredUrl={null} externalError={null}
-        detailsRequest={detailsRequest} onReturnToPages={() => setMode('preview')} /> :
+        onReturnToPages={() => setMode('preview')} /> :
         <p className="p-5 text-sm text-ds-muted">{t('browserNeedThread')}</p>}
     </div> : null}
   </div>
@@ -97,8 +92,8 @@ export function BrowserWorkspace({ agentRequest = 0, ...props }: BrowserWorkspac
 
 export function AgentBrowserPanel({ threadId, visible = true, blocks = [], preferredUrl, preferredFilePath,
   onPreferredUrlConsumed, externalError, onExternalErrorConsumed, onPreviewPick, onOpenFileInEditor,
-  detailsRequest = 0, onReturnToPages }: BrowserWorkspaceProps & {
-    threadId: string; detailsRequest?: number; onReturnToPages?: () => void
+  onReturnToPages }: BrowserWorkspaceProps & {
+    threadId: string; onReturnToPages?: () => void
   }): ReactElement {
   const [dialogAnswer, setDialogAnswer] = useState('')
   const { t } = useTranslation('common')
@@ -106,29 +101,33 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   useEffect(() => { setDialogAnswer('') }, [state?.dialog?.id])
   const [image, setImage] = useState<string | null>(null)
   const [frameFresh, setFrameFresh] = useState(false)
-  const [artifactImage, setArtifactImage] = useState<string | null>(null)
   const [url, setUrl] = useState('')
-  const [selector, setSelector] = useState('')
-  const [text, setText] = useState('')
-  const [dom, setDom] = useState('')
   const [error, setError] = useState('')
   const [connectionError, setConnectionError] = useState('')
   const [pending, setPending] = useState(false)
   const [controlTarget, setControlTarget] = useState<'agent' | 'user' | 'stopped' | null>(null)
   const [more, setMore] = useState(false)
+  const controlOptionsId = useId()
+  const [controlOpen, setControlOpen] = useState(false)
+  const controlRoot = useRef<HTMLElement>(null)
+  const controlButton = useRef<HTMLButtonElement>(null)
+  const [controlPosition, setControlPosition] = useState({ x: 0.5, y: 0 })
+  const controlDrag = useRef<{ id: number; x: number; y: number; left: number; top: number } | null>(null)
+  const suppressControlClick = useRef(false)
+  useLightDismiss({ open: controlOpen, refs: [controlRoot], onDismiss: () => {
+    if (controlRoot.current?.contains(document.activeElement)) controlButton.current?.focus()
+    setControlOpen(false)
+  } })
   const [cookieSettings, setCookieSettings] = useState(false)
-  const [details, setDetails] = useState(!!detailsRequest)
-  useEffect(() => { if (detailsRequest) setDetails(true) }, [detailsRequest])
+  const [cookieAnchor, setCookieAnchor] = useState<DOMRect | null>(null)
   const menuRoot = useRef<HTMLDivElement>(null)
   const menuButton = useRef<HTMLButtonElement>(null)
-  const detailsButton = useRef<HTMLButtonElement>(null)
   const [fresh, setFresh] = useState(false)
   useLightDismiss({ open: more, refs: [menuRoot], onDismiss: () => setMore(false) })
-  useEffect(() => { if (!visible) { setMore(false); setDetails(false); setFresh(false); setFrameFresh(false) } }, [visible])
+  useEffect(() => { if (!visible) { setMore(false); setControlOpen(false); setCookieSettings(false); setFresh(false); setFrameFresh(false) } }, [visible])
   useEffect(() => {
     if (more) menuRoot.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
   }, [more])
-  useEffect(() => { if (details) detailsButton.current?.focus() }, [details])
   const alive = useRef(true)
   const transferring = useRef(false)
   const latestGeneration = useRef(-1)
@@ -139,6 +138,11 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const [waitingPreview, setWaitingPreview] = useState<{ url: string; filePath?: string | null } | null>(null)
   const [inspect, setInspect] = useState(false)
   const [notice, setNotice] = useState('')
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
   const detectedUrls = useMemo(() => extractDetectedDevPreviewUrls(blocks), [blocks])
   const filePath = state?.url ? previewFiles[state.url.split('#')[0]] : undefined
   const canInspect = !!filePath && isHtmlPreviewPath(filePath) && !!onPreviewPick
@@ -146,7 +150,6 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   useEffect(() => { if (externalError) { setError(externalError); onExternalErrorConsumed?.() } }, [externalError, onExternalErrorConsumed])
   const userControls = visible && fresh && state?.owner === 'user' && !state.transferring && !pending
   const canNavigate = visible && fresh && !pending && !state?.transferring && (!state?.active || userControls)
-  const button = 'inline-flex items-center gap-1 rounded-md border border-ds-border px-2 py-1.5 text-xs disabled:opacity-40'
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => { if (state?.url) setUrl(state.url === 'about:blank' ? '' : state.url) }, [state?.url])
   const displayedScene = useRef<string | undefined>(undefined)
@@ -192,7 +195,6 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       if (result.receipt) setLastReceipt(result.receipt)
       if (result.dialog) setState(previous => previous ? { ...previous, dialog: result.dialog } : previous)
       if (result.success === false) setError(typeof result.content === 'string' ? result.content : JSON.stringify(result.content))
-      if (result.content !== undefined) setDom(typeof result.content === 'string' ? result.content : JSON.stringify(result.content))
       try { apply(await browserRequest<BrowserState>(threadId, '/view')); setConnectionError('') }
       catch (e) {
         if (alive.current) {
@@ -212,6 +214,15 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     finally { if (alive.current) setPending(false) }
   }, [threadId, apply, state?.active, state?.generation, t])
   const action = useCallback((body: unknown): void => { void perform('/action', body) }, [perform])
+  async function refreshBrowser(): Promise<void> {
+    setPending(true); setFrameFresh(false)
+    try {
+      if (state?.active) await browserRequest(threadId, '/action', { action: 'observe', generation: state.generation })
+      apply(await browserRequest<BrowserState>(threadId, '/view'))
+      setLastReceipt(null); setError(''); setConnectionError('')
+    } catch (e) { setConnectionError(e instanceof Error ? e.message : String(e)) }
+    finally { setPending(false) }
+  }
   async function control(owner: 'agent' | 'user' | 'stopped'): Promise<void> {
     setPending(true); setControlTarget(owner); setError(''); transferring.current = true
     try {
@@ -225,6 +236,12 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       transferring.current = false
       if (!alive.current) return
       apply(next)
+      if (owner === 'user' && next.unresolved?.length) {
+        await browserRequest(threadId, '/action', { action: 'observe', generation: next.generation })
+        apply(await browserRequest<BrowserState>(threadId, '/view'))
+        setLastReceipt(null)
+        setControlOpen(true)
+      }
       if (owner === 'stopped') onReturnToPages?.()
 
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
@@ -273,34 +290,24 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     action({ action: 'open', url: target })
   }
   const controlBusy = controlTarget !== null || !!state?.transferring || !!state?.task_pausing
+  const unresolvedReceipt = state?.unresolved?.[0] || (lastReceipt?.execution === 'unknown' && !lastReceipt.reconciliation ? lastReceipt : null)
+  const reviewActionLabel = ({ click: 'browserClick', fill: 'browserFill', open: 'browserOpen', reload: 'browserReload' } as Record<string, string>)[unresolvedReceipt?.action ?? '']
+  const requiresReview = !!(unresolvedReceipt || state?.dialog || state?.file_chooser)
+  const hasConnectionProblem = !!(error || connectionError || state?.error)
+  const needsAttention = !!(unresolvedReceipt || state?.dialog || state?.file_chooser || waitingPreview || error || connectionError || state?.error)
   const needsHelp = state?.assistance?.status === 'pending'
-  const controlTone = needsHelp ? 'attention' : state?.owner === 'user' ? 'human' : state?.active && state.task_running ? 'agent' : 'idle'
+  const controlTone = needsHelp || needsAttention ? 'attention' : state?.owner === 'user' ? 'human' : state?.active && state.task_running ? 'agent' : 'idle'
   const controlTitle = controlTarget === 'user' ? 'browserPausing' : controlTarget === 'agent' ? 'browserResuming'
     : controlTarget === 'stopped' ? 'browserWorking' : state?.task_pausing ? 'browserTaskPausing'
-    : state?.transferring ? 'browserWorking' : !state?.active ? 'browserIdle' : needsHelp ? 'browserControlNeedsHelp'
+    : state?.transferring ? 'browserWorking' : requiresReview || needsHelp ? 'browserWaitingForYou' : hasConnectionProblem ? 'browserConnectionProblem' : !state?.active ? 'browserIdle'
     : state.owner === 'user' ? state.task_paused ? 'browserTaskPaused' : 'browserUserControl' : state.task_paused ? 'browserControlPaused'
     : state.task_running === false ? 'browserAgentReady' : 'browserAgentControl'
-  const controlHint = controlBusy ? 'browserControlSwitchHint' : needsHelp ? 'browserControlHelpHint'
+  const controlHint = controlBusy ? 'browserControlSwitchHint' : unresolvedReceipt ? 'browserReviewHint' : requiresReview ? 'browserResponseHint' : hasConnectionProblem ? 'browserReconnectHint' : needsHelp ? 'browserControlHelpHint'
     : state?.owner === 'user' ? state.task_running || state.task_paused ? 'browserControlHumanHint' : 'browserControlHumanIdleHint'
     : state?.active && state.task_running ? 'browserAgentHint' : 'browserControlReadyHint'
   return <div className={`ds-shared-browser${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
-    <header className={`ds-browser-status is-${controlTone}`} aria-label={t('browserControlLabel')}>
-      <span className="ds-browser-status-icon" aria-hidden="true">
-        {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={18} /> : state?.owner === 'user' || needsHelp ? <Hand size={18} /> : <Bot size={18} />}
-      </span>
-      <div className="ds-browser-status-copy" role="status" aria-live="polite" aria-atomic="true">
-        <strong><span className="ds-browser-status-dot" aria-hidden="true" />{t(controlTitle)}</strong>
-        <span className="ds-browser-status-hint">{t(controlHint)}</span>
-        {state?.demo_status === 'running' ? <progress aria-label={t('browserDemoRunning')} value={state.demo_step ?? 0} max={state.demo_total ?? 9} /> : null}
-      </div>
-      {state?.active ? <button type="button" className="ds-browser-control" disabled={!visible || !fresh || pending || controlBusy}
-        aria-busy={controlBusy} onClick={() => void control(state.owner === 'user' ? 'agent' : 'user')}>
-        {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={14} /> : state.owner === 'user' ? <Play size={14} /> : <Hand size={14} />}
-        {t(controlBusy ? 'browserControlSwitching' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? state.task_running === false ? 'browserGiveControl' : 'browserReturnControl' : 'browserTakeControl')}
-      </button> : null}
-    </header>
     {visible ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
-      manage={cookieSettings} onClose={() => setCookieSettings(false)} /> : null}
+      manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
     <div className="ds-dev-browser__chrome ds-browser-chrome">
       <div className="ds-dev-browser__tabs">
         <div className="ds-dev-browser__tab-scroll" aria-label={t('browserTabs')}>
@@ -339,14 +346,12 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
                 items[next]?.focus()
               } else if (e.key === 'Tab') setMore(false)
             }}>
-            {onReturnToPages ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={onReturnToPages}><ArrowLeft size={15} />{t('browserReturnToPages')}</button> : null}
-            <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setCookieSettings(true)}><Globe2 size={15} />{t('browserCookieManage')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" aria-haspopup="dialog" onClick={event => { setCookieAnchor(menuButton.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()); setCookieSettings(true) }}><Globe2 size={15} />{t('browserCookieManage')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
             <div className="ds-browser-menu-divider" role="separator" />
             {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
-            <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setDetails(true)}><Settings2 size={15} />{t('browserSettingsAndHistory')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!image} onClick={() => void copyScreenshot()}><Copy size={15} />{t('browserCopyScreenshot')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.url || !normalizeBrowseUrlInput(state.url)} onClick={() => { if (state?.url) void window.dsGui.openExternal(state.url).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
@@ -357,23 +362,84 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       </form>
       {detectedUrls.length ? <div className="ds-dev-browser__chips">{detectedUrls.map(target => <button key={target} className="ds-dev-browser__chip" disabled={pending || !fresh} title={target} onClick={() => void openPreview(target)}>{formatDevPreviewUrlLabel(target)}</button>)}</div> : null}
     </div>
+    <div className="ds-browser-content">
+    {inspect || notice ? <div className="ds-browser-feedback" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
+
+    <header ref={controlRoot} className={`ds-browser-status is-${controlTone}`} style={{
+      left: `calc(${controlPosition.x * 100}% + ${8 - controlPosition.x * 16}px)`,
+      top: `calc(${controlPosition.y * 100}% + ${8 - controlPosition.y * 16}px)`,
+      transform: `translate(${-controlPosition.x * 100}%, ${-controlPosition.y * 100}%)`
+    }} aria-label={t('browserControlLabel')}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setControlOpen(false) }}>
+      <button ref={controlButton} type="button" className="ds-browser-status-trigger" aria-expanded={controlOpen}
+        aria-controls={controlOptionsId}
+        onPointerDown={event => {
+          if (event.button !== 0 || !event.isPrimary) return
+          const rect = controlRoot.current!.getBoundingClientRect()
+          controlDrag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top }
+          suppressControlClick.current = false
+          event.currentTarget.setPointerCapture(event.pointerId)
+        }}
+        onPointerMove={event => {
+          const drag = controlDrag.current
+          if (!drag || drag.id !== event.pointerId) return
+          const dx = event.clientX - drag.x, dy = event.clientY - drag.y
+          if (!suppressControlClick.current && Math.hypot(dx, dy) < 5) return
+          suppressControlClick.current = true
+          const panel = controlRoot.current!
+          const bounds = panel.parentElement!.getBoundingClientRect()
+          const rect = panel.getBoundingClientRect()
+          setControlPosition({
+            x: Math.max(0, Math.min(1, (drag.left + dx - bounds.left - 8) / Math.max(1, bounds.width - rect.width - 16))),
+            y: Math.max(0, Math.min(1, (drag.top + dy - bounds.top - 8) / Math.max(1, bounds.height - rect.height - 16)))
+          })
+        }}
+        onPointerUp={event => {
+          if (controlDrag.current?.id !== event.pointerId) return
+          controlDrag.current = null
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }}
+        onPointerCancel={() => { controlDrag.current = null; suppressControlClick.current = true }}
+        onLostPointerCapture={() => { controlDrag.current = null }}
+        onClick={event => {
+          if (event.detail !== 0 && suppressControlClick.current) { suppressControlClick.current = false; return }
+          setControlOpen(!controlOpen)
+        }}>
+        <span className="ds-browser-status-copy" role="status" aria-live="polite" aria-atomic="true">
+          <strong><span className="ds-browser-status-dot" aria-hidden="true" />{t(controlTitle)}{needsAttention && !requiresReview && !hasConnectionProblem ? <span className="ds-browser-attention">{t('browserNeedsAttention')}</span> : state?.downloads?.length ? <span className="ds-browser-attention">{t('browserDownloads')}</span> : null}</strong>
+        </span>
+        <ChevronDown size={14} aria-hidden="true" className={controlOpen ? 'is-open' : ''} />
+      </button>
+      {controlOpen ? <div id={controlOptionsId} className="ds-browser-control-details">
+        <p>{t(controlHint)}</p>
+        {state?.active && !(requiresReview && state.owner === 'user') && (!hasConnectionProblem || requiresReview) ? <button type="button" className="ds-browser-control" disabled={!visible || !fresh || pending || controlBusy}
+          aria-busy={controlBusy} onClick={() => {
+            setControlOpen(false); controlButton.current?.focus()
+            void control(state.owner === 'user' ? 'agent' : 'user')
+          }}>
+          {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={14} /> : state.owner === 'user' ? <Play size={14} /> : <Hand size={14} />}
+          {t(controlBusy ? 'browserControlSwitching' : requiresReview && state.owner !== 'user' ? 'browserInspectAndHandle' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? state.task_running === false ? 'browserGiveControl' : 'browserReturnControl' : 'browserTakeControl')}
+        </button> : null}
     {waitingPreview ? <div className="ds-browser-notice"><span>{t('browserPreviewWaiting')}</span><button disabled={!userControls} onClick={() => void openPreview(waitingPreview.url, waitingPreview.filePath)}>{t('browserOpen')}</button><button aria-label={t('browserDismissPreview')} onClick={() => setWaitingPreview(null)}><X size={13} /></button></div> : null}
-    {inspect || notice ? <div className="ds-browser-notice" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
-    {(state?.unresolved?.[0] || (lastReceipt?.execution === 'unknown' && !lastReceipt.reconciliation ? lastReceipt : null)) ?
+    {unresolvedReceipt && userControls ?
       <div role="status" className="ds-browser-notice"><span>{t('browserOutcomeUnknown')}</span>
-        {['executed', 'not_executed'].map(outcome => <button key={outcome} disabled={pending} onClick={() => {
-          const receipt = state?.unresolved?.[0] || lastReceipt
+        <button disabled={pending} onClick={() => void refreshBrowser()}>{t('browserRefreshView')}</button>
+        {reviewActionLabel ? <strong>{t('browserReviewAction', { action: t(reviewActionLabel) })}</strong> : null}
+        {unresolvedReceipt.target_url ? <span className="ds-browser-review-url">{unresolvedReceipt.target_url}</span> : null}
+        {['executed', 'not_executed'].map(outcome => <button key={outcome} disabled={!userControls} onClick={() => {
+          const receipt = unresolvedReceipt
           if (receipt) void action({ action: 'resolve_operation', operation_id: receipt.action_id, outcome,
             reason: t(outcome === 'executed' ? 'browserReviewedDone' : 'browserReviewedNotDone') })
         }}>{t(outcome === 'executed' ? 'browserReviewedDone' : 'browserReviewedNotDone')}</button>)}
+      <button onClick={() => { setControlOpen(false); controlButton.current?.focus() }}>{t('browserReviewLater')}</button>
       </div> : null}
-    {state?.dialog ? <div role="dialog" aria-label={t('browserNativeDialog')} className="ds-browser-notice">
+    {state?.dialog && userControls ? <div role="dialog" aria-label={t('browserNativeDialog')} className="ds-browser-notice">
       <span>{state.dialog.message}</span>
       {state.dialog.type === 'prompt' ? <input aria-label={t('browserDialogAnswer')} value={dialogAnswer} onChange={e => setDialogAnswer(e.target.value)} /> : null}
       <button disabled={pending || state.owner !== 'user'} onClick={() => void action({ action: 'handle_dialog', dialog_id: state.dialog?.id, accept: true, text: dialogAnswer })}>{t('browserDialogAccept')}</button>
       <button disabled={pending || state.owner !== 'user'} onClick={() => void action({ action: 'handle_dialog', dialog_id: state.dialog?.id, accept: false })}>{t('browserDialogDismiss')}</button>
     </div> : null}
-    {state?.file_chooser ? <div className="ds-browser-notice"><span>{t('browserChooseFiles')}</span>
+    {state?.file_chooser && userControls ? <div className="ds-browser-notice"><span>{t('browserChooseFiles')}</span>
       <button disabled={pending || state.owner !== 'user'} onClick={() => void (async () => {
         const chooser = state.file_chooser
         const picked = await window.dsGui.pickWorkspaceFiles()
@@ -385,9 +451,13 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       <span key={item.id}>{item.filename} · {item.state === 'completed' ? t('browserDownloadReady') : t('browserDownloadPending')}
         {item.state === 'completed' && item.path ? <button onClick={() => void window.dsGui.showItemInFolder(item.path!)}>{t('browserDownloadReady')}</button> : null}
       </span>)}</div> : null}
-    {error || connectionError || state?.error ? <div role="alert" className="ds-browser-error">{error || connectionError || state?.error}</div> : null}
-    <div className="ds-browser-content">
-      {image && state?.active ? <BrowserViewport image={image} enabled={!!userControls && frameFresh && !details && !more && !state.dialog && !state.unresolved?.length} resizeEnabled={!!userControls && frameFresh && !details && !more && !state.video_recording} generation={state.generation ?? 0}
+    {hasConnectionProblem && !requiresReview ? <div className="ds-browser-notice">
+      <button disabled={pending || controlBusy} onClick={() => void refreshBrowser()}>{t('browserRefreshView')}</button>
+      <details><summary>{t('browserTechnicalDetails')}</summary><pre>{error || connectionError || state?.error}</pre></details>
+    </div> : null}
+      </div> : null}
+    </header>
+      {image && state?.active ? <BrowserViewport image={image} enabled={!!userControls && frameFresh && !controlOpen && !more && !state.dialog} reviewOnly={!!unresolvedReceipt} resizeEnabled={!!userControls && frameFresh && !controlOpen && !more && !state.video_recording} generation={state.generation ?? 0}
         sceneId={state.scene?.scene_id} inspect={inspect && canInspect} onInspectCancel={() => setInspect(false)} width={state.viewport?.width ?? 1200} height={state.viewport?.height ?? 760} label={t('browserLiveView')}
         send={async (body) => {
           if (body.kind === 'pick') {
@@ -404,6 +474,17 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
               if (result.receipt && alive.current) setLastReceipt(result.receipt)
               return result
             } catch (e) {
+              if (alive.current && e instanceof Error && /Browser (page|control) changed; queued input was discarded/.test(e.message)) {
+                setFrameFresh(false)
+                try {
+                  apply(await browserRequest<BrowserState>(threadId, '/view'))
+                  setError(''); setConnectionError('')
+                  setNotice(t('browserInputDiscarded'))
+                } catch (refreshError) {
+                  setConnectionError(refreshError instanceof Error ? refreshError.message : String(refreshError))
+                }
+                return { discardQueued: true }
+              }
               if (alive.current && e instanceof BrowserRequestError && e.result?.receipt) setLastReceipt(e.result.receipt)
               throw e
             }
@@ -416,50 +497,8 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
             return result
           } finally { if (alive.current) setPending(false) }
         }} onError={setError} /> :
-        <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t(pending ? 'browserStarting' : 'browserStartTitle')}</h3><p>{t('browserStartHint')}</p><button className={button} onClick={() => setDetails(true)}>{t('browserSessionSettings')}</button></div>}
-      {details ? <section className="ds-browser-details" aria-label={t('browserSettingsAndHistory')}>
-        <header className="ds-dock-header"><button ref={detailsButton} className="ds-dock-action" aria-label={t('browserCloseDetails')} onClick={() => { setDetails(false); if (!state?.active) onReturnToPages?.(); else menuButton.current?.focus() }}><ArrowLeft size={15} /></button><strong>{t('browserSettingsAndHistory')}</strong></header>
-        <div className="ds-browser-details-body">
-        {state?.demo_status && state.demo_status !== 'idle' ? <p role="status" className="mb-3 text-xs text-ds-muted">{t(state.demo_status === 'passed' ? 'browserDemoPassed' : state.demo_status === 'running' ? 'browserDemoRunning' : 'browserDemoStopped')}</p> : null}
-        <button className={button} disabled={pending || state?.demo_status === 'running' || state?.workflow_recording || userControls}
-          onClick={() => { setArtifactImage(null); void perform('/demo', {}) }}><Play size={13} />{t('browserRunDemo')}</button>
-    <details className="mb-3 text-xs">
-      <summary className="cursor-pointer py-2">{t('browserElementActions')}</summary>
-      <div className="flex flex-col gap-2">
-        <input className="rounded border border-ds-border bg-transparent p-2" placeholder={t('browserElementTarget')} value={selector} onChange={(e) => setSelector(e.target.value)} />
-        <input className="rounded border border-ds-border bg-transparent p-2" placeholder={t('browserElementValue')} value={text} onChange={(e) => setText(e.target.value)} />
-        <div className="flex gap-2">
-          <button className={button} disabled={!userControls || pending || !selector} onClick={() => action({ action: 'fill', selector, text })}>{t('browserFill')}</button>
-          <button className={button} disabled={!userControls || pending || !selector} onClick={() => action({ action: 'click', selector })}>{t('browserClick')}</button>
-          <button className={button} disabled={!userControls || pending || !text.trim()} onClick={() => action({ action: 'check_text', text, timeout_ms: 3000 })}>{t('browserCheckText')}</button>
-        </div>
-        {dom ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-ds-surface p-2">{dom}</pre> : null}
-      </div>
-    </details>
-    <BrowserSessionSettings threadId={threadId} active={!!state?.active} userControls={!!userControls} recording={!!state?.workflow_recording} />
-    <div className="text-xs font-semibold">{t('browserEvidence')}</div>
-    <p className="my-2 text-xs text-ds-muted">{t('browserVideoHint')}</p>
-    {state?.video_error ? <p role="alert" className="text-xs text-red-500">{state.video_error}</p> : null}
-    <button className={button} disabled={pending || state?.video_recording || state?.demo_status === 'running' || (!state?.artifacts.length && !state?.log.length)} onClick={() => {
-      setPending(true)
-      setError('')
-      void browserRequest<{ path: string }>(threadId, '/export', {})
-        .then((result) => window.dsGui.showItemInFolder(result.path))
-        .catch((e: Error) => setError(e.message)).finally(() => setPending(false))
-    }}>{t('browserExportEvidence')}</button>
-    <div className="my-2 flex flex-wrap gap-2">{state?.artifacts.map((artifact, index) =>
-      <button key={artifact.id} className={button} onClick={() => {
-        void browserRequest<{ image: string }>(threadId, '/artifacts/' + artifact.id)
-          .then((result) => setArtifactImage(result.image)).catch((e: Error) => setError(e.message))
-      }}>{index + 1}. {artifact.id.endsWith('.webm') ? t('browserVideo') : artifact.id.endsWith('.gif') ? t('browserStepAnimation') : artifact.label === '失败现场' ? t('browserFailureEvidence') : t('browserSaveEvidence')}</button>
-    )}</div>
-    {artifactImage?.startsWith('data:video/') ? <video className="mb-3 w-full rounded-lg border border-ds-border" controls src={artifactImage} aria-label={t('browserVideo')} /> : artifactImage ? <img className="mb-3 w-full rounded-lg border border-ds-border" src={artifactImage} alt={t('browserEvidence')} /> : null}
-    <ol className="space-y-1 text-xs text-ds-muted">{state?.log.map((entry, i) =>
-      <li key={i}>{entry.success ? '✓' : '✕'} {entry.action}</li>
-    )}</ol>
-    <p className="mt-3 text-[11px] leading-relaxed text-ds-muted">{t('browserDemoDisclaimer')}</p>
-        </div>
-      </section> : null}
+        <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t(pending ? 'browserStarting' : 'browserStartTitle')}</h3><p>{t('browserStartHint')}</p></div>}
+
     </div>
   </div>
 }

@@ -372,3 +372,14 @@ async def test_unchanged_cookies_do_not_read_or_rewrite_vault(store, tmp_path, m
         raise AssertionError("Unchanged browser cookies must not decrypt the vault")
     monkeypatch.setattr(store, "_read", unexpected_read)
     await store.capture(run)
+
+
+def test_saved_cookie_notice_state(tmp_path):
+    store = CookieStore(tmp_path)
+    assert not store.has_saved_cookies()
+    expired = {**cookie(), "expires": 1}
+    store._write({"cookies": {"expired": expired}, "sites": []})
+    assert not store.has_saved_cookies()
+    store._write({"cookies": {"login": cookie()}, "sites": []})
+    assert store.has_saved_cookies()
+    assert "PRIVATE_COOKIE_SENTINEL" not in str(store.state())

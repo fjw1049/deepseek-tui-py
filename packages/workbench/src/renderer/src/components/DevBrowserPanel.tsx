@@ -14,7 +14,6 @@ import {
   Globe2,
   Loader2,
   MoreHorizontal,
-  Settings2,
   Plus,
   Radar,
   RefreshCw,
@@ -318,7 +317,6 @@ export function DevBrowserPanel({
   onExternalErrorConsumed,
   onPreviewPick,
   onOpenFileInEditor,
-  onOpenAutomation,
   visible = true,
   className
 }: {
@@ -329,7 +327,6 @@ export function DevBrowserPanel({
   onPreferredUrlConsumed?: () => void
   onExternalErrorConsumed?: () => void
   onPreviewPick?: (pick: PreviewElementPick) => void
-  onOpenAutomation?: () => void
   visible?: boolean
   onOpenFileInEditor?: (path: string) => void
   className?: string
@@ -1228,8 +1225,6 @@ export function DevBrowserPanel({
               }}>
               {activeFilePath && isHtmlPreviewPath(activeFilePath) && onOpenFileInEditor ? <button type="button" role="menuitem"
                 className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(activeFilePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
-              {onOpenAutomation ? <button type="button" role="menuitem" className="ds-dock-menu-item"
-                onClick={onOpenAutomation}><Settings2 size={15} />{t('browserSettingsAndHistory')}</button> : null}
               {useElectronWebview ? <>
                 <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!activeUrl}
                   onClick={openDevTools}><Bug size={15} />{t('browserDevTools')}</button>

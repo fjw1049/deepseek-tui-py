@@ -139,3 +139,24 @@ it('coalesces queued motion without moving it across a click or losing scroll di
     expect(send.mock.calls[4][0].delta_y).toBe(600)
   } finally { clock.mockRestore(); await act(async () => root.unmount()) }
 })
+
+it('allows review scrolling without sending clicks or typed text', async () => {
+  const container = document.createElement('div'); const root = createRoot(container)
+  const send = vi.fn(async (_input: Record<string, unknown>) => ({}))
+  try {
+    await act(async () => root.render(createElement(BrowserViewport, { ...base, enabled: true, reviewOnly: true, generation: 2, send, onError: vi.fn() })))
+    const viewport = container.querySelector('.ds-browser-viewport')!
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 1200, height: 760 } as DOMRect)
+    expect(container.querySelector('textarea')!.disabled).toBe(true)
+    await act(async () => {
+      const wheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true })
+      Object.defineProperties(wheel, { clientX: { value: 50 }, clientY: { value: 50 } })
+      viewport.dispatchEvent(wheel)
+      viewport.dispatchEvent(new PointerEvent('pointerdown', { clientX: 50, clientY: 50, bubbles: true }))
+      const field = container.querySelector('textarea')!; field.value = 'unsafe'
+      field.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0][0].kind).toBe('wheel')
+  } finally { await act(async () => root.unmount()) }
+})

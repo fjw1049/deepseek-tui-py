@@ -17,7 +17,7 @@ function mount(state = { active: true, owner: 'user', generation: 2, url: 'https
   Object.defineProperty(window, 'dsGui', { configurable: true, value: { openExternal: vi.fn(async () => {}), runtimeRequest: request, onDevBrowserOpenUrl: vi.fn(() => () => {}) } })
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
-  const click = async (label: string): Promise<void> => { await act(async () => { const button = [...container.querySelectorAll('button')].find(b => !b.closest('.hidden') && (b.textContent === label || b.getAttribute('aria-label') === label)); expect(button).toBeTruthy(); button!.click() }) }
+  const click = async (label: string): Promise<void> => { await act(async () => { const button = [...document.querySelectorAll('button')].find(b => !b.closest('.hidden') && (b.textContent === label || b.getAttribute('aria-label') === label)); expect(button).toBeTruthy(); button!.click() }) }
   return { root, container, request, click, close: async () => { await act(async () => root.unmount()); container.remove() } }
 }
 
@@ -34,11 +34,17 @@ it('keeps the executed receipt when only the following view fails', async () => 
   })
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    vi.useFakeTimers()
     await h.click('browserReload')
     expect(executed).toBe(1)
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.textContent).toContain('browserActionSentViewUnavailable')
     expect(h.container.querySelector('textarea')?.disabled).toBe(true)
-  } finally { await h.close() }
+    expect(h.container.querySelector('.ds-browser-feedback')?.parentElement?.className).toBe('ds-browser-content')
+    await act(async () => vi.advanceTimersByTime(4000))
+    expect(h.container.querySelector('.ds-browser-feedback')).toBeNull()
+    expect(h.container.textContent).toContain('browserConnectionProblem')
+  } finally { vi.useRealTimers(); await h.close() }
 })
 
 it('preserves an unknown HTTP action receipt for the user', async () => {
@@ -50,6 +56,7 @@ it('preserves an unknown HTTP action receipt for the user', async () => {
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
     await h.click('browserReload')
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.textContent).toContain('browserOutcomeUnknown')
   } finally { await h.close() }
 })
@@ -80,6 +87,7 @@ it('answers the exact native dialog and preserves the original dispatched receip
   const h = mount(state)
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.querySelector('[role="dialog"]')?.textContent).toContain('Confirm draft')
     expect(h.container.querySelector('textarea')?.disabled).toBe(true)
     await h.click('browserDialogAccept')
@@ -91,6 +99,7 @@ it('requires an explicit human assessment to clear a persisted unknown operation
   const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [], image: 'data:image/jpeg;base64,AA==', unresolved: [{ action_id: 'saved-unknown', execution: 'unknown' }] })
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.textContent).toContain('browserOutcomeUnknown')
     expect(h.container.querySelector('textarea')?.disabled).toBe(true)
     await h.click('browserReviewedDone')
@@ -103,6 +112,7 @@ it('uploads only the files explicitly returned by the native picker', async () =
   window.dsGui.pickWorkspaceFiles = vi.fn(async () => ({ ok: true as const, paths: ['/fixture/draft.txt'], files: [{ path: '/fixture/draft.txt', size: 12 }] }))
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     await h.click('browserChooseFiles')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'upload', chooser_id: 'chooser-now', files: ['/fixture/draft.txt'], generation: 2 }))
   } finally { await h.close() }
@@ -143,10 +153,10 @@ it('reveals the agent on a live request and returns to lightweight HTML while ke
     const guest = h.container.querySelector('webview')
     expect(guest?.getAttribute('src')).toBe('http://localhost:5173/design.html')
     await h.click('browserMore')
-    await h.click('browserSettingsAndHistory')
-    expect(h.container.querySelector('.ds-browser-details')).not.toBeNull()
+    expect(h.container.textContent).not.toContain('browserSettingsAndHistory')
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'first', agentRequest: 2 })))
     await h.click('browserMore')
-    await h.click('browserReturnToPages')
+    expect(h.container.textContent).not.toContain('browserReturnToPages')
     expect(h.container.querySelector('webview')).toBe(guest)
   } finally { await h.close() }
 })
@@ -155,12 +165,10 @@ it('returns to the preserved page after ending automation', async () => {
   const h = mount()
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, {
-      threadId: 'one', preferredUrl: 'http://localhost:5173/design.html'
+      threadId: 'one', agentRequest: 1, preferredUrl: 'http://localhost:5173/design.html'
     })))
     const guest = h.container.querySelector('webview')
-    await h.click('browserMore')
-    await h.click('browserSettingsAndHistory')
-    await h.click('browserCloseDetails')
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', agentRequest: 2 })))
     await h.click('browserMore')
     await h.click('browserEndSession')
     expect(h.container.querySelector('webview')).toBe(guest)
@@ -169,14 +177,13 @@ it('returns to the preserved page after ending automation', async () => {
   } finally { await h.close() }
 })
 
-it('keeps agent settings secondary', async () => {
+it('does not expose the removed settings and history panel', async () => {
   const h = mount()
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { blocks: [], threadId: 'one' })))
     expect(h.container.querySelector('[aria-label="browserSettingsAndHistory"]')).toBeNull()
-    await h.click('browserMore'); await h.click('browserSettingsAndHistory')
-    expect(h.container.querySelector('[aria-label="browserSettingsAndHistory"]')).not.toBeNull()
-    await h.click('browserCloseDetails')
+    await h.click('browserMore')
+    expect(h.container.textContent).not.toContain('browserSettingsAndHistory')
     expect(h.container.querySelector('[aria-label="browserSettingsAndHistory"]')).toBeNull()
   } finally { await h.close() }
 })
@@ -185,10 +192,12 @@ it('returns control through the runtime without sending another user query', asy
   const h = mount()
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     await h.click('browserReturnControl')
     expect(resume).not.toHaveBeenCalled()
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/control', 'POST', '{"owner":"agent","generation":2}')
     expect(h.container.querySelector('textarea')?.disabled).toBe(true)
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     await h.click('browserTakeControl')
     expect(h.container.querySelector('textarea')?.disabled).toBe(false)
   } finally { await h.close() }
@@ -247,7 +256,7 @@ it('opens HTML in a shared tab and reuses the same URL without replacing another
   const h = mount()
   const consumed = vi.fn()
   try {
-    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', preferredUrl: 'http://localhost:5173/design.html', preferredFilePath: '/project/design.html', onPreferredUrlConsumed: consumed })))
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', agentRequest: 1, preferredUrl: 'http://localhost:5173/design.html', preferredFilePath: '/project/design.html', onPreferredUrlConsumed: consumed })))
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'new_tab', url: 'http://localhost:5173/design.html', generation: 2 }))
     expect(consumed).toHaveBeenCalledTimes(1)
     expect(h.container.textContent).not.toContain('browserDocumentPreview')
@@ -261,9 +270,11 @@ it('defers previews while the agent is operating and opens them after explicit h
   const h = mount({ active: true, owner: 'agent', generation: 1, tabs: [], log: [], artifacts: [] })
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', preferredUrl: 'http://localhost:5173/' })))
-    expect(h.container.textContent).toContain('browserPreviewWaiting')
+    expect(h.container.textContent).toContain('browserNeedsAttention')
     expect(h.request.mock.calls.some(([path]) => path.endsWith('/action'))).toBe(false)
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     await h.click('browserTakeControl')
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     const open = [...h.container.querySelectorAll<HTMLButtonElement>('.ds-browser-notice button')][0]
     await act(async () => open.click())
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'new_tab', url: 'http://localhost:5173/', generation: 2 }))
@@ -296,9 +307,12 @@ it('keeps manual control and shows a retryable error when resume observation fai
     h.request.mockImplementation(async (path: string) => path.endsWith('/control')
       ? { ok: false, status: 409, body: JSON.stringify({ detail: 'Page disconnected; retry' }) }
       : { ok: true, status: 200, body: '{}' })
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     await h.click('browserReturnControl')
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.textContent).toContain('Page disconnected; retry')
-    expect(h.container.textContent).toContain('browserTaskPaused')
+    expect(h.container.textContent).toContain('browserConnectionProblem')
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.querySelector('textarea')?.disabled).toBe(false)
     expect(resume).not.toHaveBeenCalled()
   } finally { await h.close() }
@@ -310,8 +324,11 @@ it('disables repeated handoff clicks and shows the page-read status during resum
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
     let finish!: (value: { ok: boolean; status: number; body: string }) => void
     h.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     await h.click('browserReturnControl')
     expect(h.container.textContent).toContain('browserResuming')
+    expect(h.container.querySelector('.ds-browser-control-details')).toBeNull()
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     const button = h.container.querySelector<HTMLButtonElement>('.ds-browser-control')!
     expect(button.disabled).toBe(true)
     await act(async () => button.click())
@@ -325,16 +342,19 @@ it('disables repeated handoff clicks and shows the page-read status during resum
 it.each([
   { owner: 'agent', task_running: true, title: 'browserAgentControl', tone: 'is-agent' },
   { owner: 'agent', task_running: false, title: 'browserAgentReady', tone: 'is-idle' },
-  { owner: 'agent', task_running: true, assistance: { id: 'help', status: 'pending' }, title: 'browserControlNeedsHelp', tone: 'is-attention' },
-])('keeps $title above page navigation with the correct control state', async ({ title, tone, ...state }) => {
+  { owner: 'agent', task_running: true, assistance: { id: 'help', status: 'pending' }, title: 'browserWaitingForYou', tone: 'is-attention' },
+])('floats the complete $title panel inside the page with the correct control state', async ({ title, tone, ...state }) => {
   const h = mount({ active: true, generation: 2, log: [], artifacts: [], ...state })
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
     const bar = h.container.querySelector('.ds-browser-status')!
-    expect(h.container.querySelector('.ds-shared-browser')?.firstElementChild).toBe(bar)
+    expect(bar.parentElement).toBe(h.container.querySelector('.ds-browser-content'))
+    expect(h.container.querySelector('.ds-shared-browser')?.firstElementChild).not.toBe(bar)
     expect(bar.classList.contains(tone)).toBe(true)
     expect(bar.querySelector('[role="status"]')?.textContent).toContain(title)
-    expect(bar.querySelector('button')?.textContent).toContain('browserTakeControl')
+    expect(bar.querySelector('.ds-browser-control')).toBeNull()
+    await act(async () => bar.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
+    expect(bar.querySelector('.ds-browser-control')?.textContent).toContain('browserTakeControl')
   } finally { await h.close() }
 })
 
@@ -389,4 +409,123 @@ it('keeps typing enabled during a busy frame, but fences a changed scene or owne
     await act(async () => vi.advanceTimersByTimeAsync(60))
     expect(field.disabled).toBe(true)
   } finally { await h.close(); vi.useRealTimers() }
+})
+
+it('opens compact login settings without disabling page input', async () => {
+  const h = mount()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    await h.click('browserMore')
+    await h.click('browserCookieManage')
+    expect(document.querySelector('.ds-browser-cookie-settings')).not.toBeNull()
+    expect(h.container.querySelector('textarea')?.disabled).toBe(false)
+    await h.click('browserCookieDismiss')
+    expect(document.querySelector('.ds-browser-cookie-settings')).toBeNull()
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('browserMore')
+  } finally { await h.close() }
+})
+
+it('dismisses the control dropdown on Escape and outside pointer input', async () => {
+  const h = mount()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    const trigger = h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!
+    await act(async () => { trigger.focus(); trigger.click() })
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(trigger)
+    await act(async () => trigger.click())
+    await act(async () => new Promise(resolve => setTimeout(resolve, 5)))
+    await act(async () => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })))
+    expect(h.container.querySelector('.ds-browser-control-details')).toBeNull()
+  } finally { await h.close() }
+})
+
+it('drags the compact control within the page without toggling it', async () => {
+  const h = mount()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    const panel = h.container.querySelector<HTMLElement>('.ds-browser-status')!
+    const trigger = panel.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ left: 208, top: 8, width: 184, height: 34 } as DOMRect)
+    vi.spyOn(panel.parentElement!, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 600, height: 400 } as DOMRect)
+    trigger.setPointerCapture = vi.fn()
+    trigger.releasePointerCapture = vi.fn()
+    const pointer = async (type: string, x: number, y: number) => {
+      await act(async () => trigger.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, isPrimary: true, button: 0, clientX: x, clientY: y })))
+    }
+    await pointer('pointerdown', 230, 20)
+    await pointer('pointermove', 2000, 2000)
+    expect(panel.style.transform).toBe('translate(-100%, -100%)')
+    await pointer('pointerup', 2000, 2000)
+    await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })))
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(trigger.releasePointerCapture).toHaveBeenCalledWith(1)
+    await pointer('pointerdown', 230, 20)
+    await pointer('pointermove', 232, 21)
+    await pointer('pointerup', 232, 21)
+    await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })))
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  } finally { await h.close() }
+})
+
+it('keeps unresolved work in the floating panel when review is postponed', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [], unresolved: [{ action_id: 'unknown', execution: 'unknown' }] })
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    expect(h.container.textContent).toContain('browserWaitingForYou')
+    expect(h.container.textContent).not.toContain('browserOutcomeUnknown')
+    expect(h.container.querySelector('.ds-shared-browser > .ds-browser-notice')).toBeNull()
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
+    expect(h.container.querySelector('.ds-browser-control-details')?.textContent).toContain('browserOutcomeUnknown')
+    await h.click('browserReviewLater')
+    expect(h.container.textContent).toContain('browserWaitingForYou')
+    expect(h.request.mock.calls.some(([, , body]) => body?.includes('resolve_operation'))).toBe(false)
+  } finally { await h.close() }
+})
+
+it('refreshes an outdated input scene without replaying queued text or exposing a raw error', async () => {
+  const h = mount()
+  const original = h.request.getMockImplementation()!
+  let inputs = 0
+  h.request.mockImplementation(async (path, method, raw) => {
+    if (path.endsWith('/input') && JSON.parse(raw!).kind === 'text') {
+      inputs++
+      return { ok: false, status: 409, body: JSON.stringify({ detail: 'Browser page changed; queued input was discarded' }) }
+    }
+    return original(path, method, raw)
+  })
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    await act(async () => {
+      const field = h.container.querySelector('textarea')!
+      for (const value of ['first', 'do not replay']) {
+        field.value = value; field.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      }
+    })
+    expect(inputs).toBe(1)
+    expect(h.container.textContent).toContain('browserInputDiscarded')
+    expect(h.container.textContent).not.toContain('queued input was discarded')
+    expect(h.container.querySelector('textarea')?.disabled).toBe(false)
+    expect(h.request.mock.calls.filter(([path]) => path.endsWith('/view')).length).toBeGreaterThan(1)
+  } finally { await h.close() }
+})
+
+it('prioritizes the review state and offers one next step before takeover', async () => {
+  const h = mount({ active: true, owner: 'agent', task_running: true, generation: 2, tabs: [], log: [], artifacts: [],
+    error: 'technical timeout', unresolved: [{ action_id: 'pending', action: 'open', target_url: 'https://example.test', execution: 'unknown' }] })
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    expect(h.container.querySelector('[role=status]')?.textContent).toBe('browserWaitingForYou')
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
+    expect(h.container.querySelector('.ds-browser-control')?.textContent).toBe('browserInspectAndHandle')
+    expect(h.container.textContent).not.toContain('browserReviewedDone')
+    expect(h.container.textContent).not.toContain('technical timeout')
+    await h.click('browserInspectAndHandle')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'observe', generation: 3 }))
+    expect(h.container.textContent).toContain('https://example.test')
+    expect(h.container.textContent).toContain('browserReviewedDone')
+    expect(h.container.querySelector('.ds-browser-control')).toBeNull()
+  } finally { await h.close() }
 })

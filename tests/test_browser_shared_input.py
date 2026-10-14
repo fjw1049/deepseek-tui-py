@@ -344,3 +344,14 @@ async def test_manual_text_persists_receipt_once(shared, monkeypatch):
     persist.side_effect = OSError("disk full")
     result = await browser.input("one", BrowserInput(kind="text", text="test", generation=0))
     assert result["success"] and result["receipt"]["evidence"] == "unavailable"
+
+async def test_unresolved_result_allows_scroll_but_blocks_click_and_typing(shared):
+    browser, run, client = shared
+    run.unresolved['pending'] = {'action_id': 'pending', 'execution': 'unknown'}
+    await browser.input('one', BrowserInput(kind='wheel', x=50, y=80, delta_y=300, generation=0))
+    assert client.send.call_args.args[1]['type'] == 'mouseWheel'
+    for body in [BrowserInput(kind='mouse', event='mousePressed', x=50, y=80, generation=0),
+                 BrowserInput(kind='text', text='do not send', generation=0)]:
+        with pytest.raises(ValueError, match='outcome is unknown'):
+            await browser.input('one', body)
+    assert 'pending' in run.unresolved

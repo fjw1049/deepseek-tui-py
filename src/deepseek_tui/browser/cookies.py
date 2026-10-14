@@ -81,6 +81,15 @@ class CookieStore:
             "domains": self.domains,
         }
 
+    def has_saved_cookies(self) -> bool:
+        try:
+            return any(
+                c.get("expires", -1) <= 0 or c["expires"] > time.time()
+                for c in self._read()["cookies"].values()
+            )
+        except (InvalidToken, ValueError, OSError):
+            return False
+
     def configure(self, consent: str, profile: str | None) -> None:
         if consent == "enabled" and profile not in {p["id"] for p in profiles()}:
             raise ValueError("Choose an available Chrome profile")

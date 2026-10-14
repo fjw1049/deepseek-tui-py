@@ -677,6 +677,17 @@ class BrowserService:
         receipt.setdefault("evidence", "unavailable" if response.get("evidence_warning") else
                            "saved" if response.get("artifact") else "not_requested")
         action_id = receipt["action_id"]
+        if receipt.get("action") == "observe" and response["success"] and response.get("observation"):
+            # Confirm navigation's visible result, not whether the interrupted dispatch ran.
+            for pending_id, pending in list(run.unresolved.items()):
+                if (pending.get("action") in {"open", "new_tab"}
+                        and pending.get("target_url") == run.url
+                        and urlsplit(run.url).scheme in {"http", "https"}):
+                    run.operations[pending_id]["receipt"]["reconciliation"] = {
+                        "source": "fresh_observation", "outcome": "target_visible",
+                        "observation_id": response["observation"].get("observation_id"),
+                    }
+                    run.unresolved.pop(pending_id)
         if action_id not in run.operations:
             if not response["success"] or receipt.get("effect") == "not_confirmed":
                 run.consecutive_action_failures += 1
@@ -882,7 +893,7 @@ class BrowserService:
                 if body.event in {"keyUp", "mouseReleased"}:
                     return {"success": True, "cleanup": "after_dialog"}
                 raise ValueError("Answer the current native dialog before sending page input")
-            if run.unresolved and body.kind not in {"resize", "copy", "pick", "devtools"}:
+            if run.unresolved and body.kind not in {"resize", "copy", "pick", "devtools", "wheel"}:
                 raise ValueError("An earlier input outcome is unknown; review its receipt before further changes")
             if body.scene_id is not None or run.scene is not None:
                 scene = await self._scene(run)
@@ -1369,6 +1380,8 @@ class BrowserService:
                            action.observation_id, "phase": "dispatch_or_verification",
                            "target_id": next((e.get("target_id") for e in (run.latest_observation or {}).get("elements", [])
                                               if e.get("ref") == action.ref), None)}
+                if action.action in {"open", "new_tab"}:
+                    receipt["target_url"] = action.url
                 if known:
                     receipt.update({k: v for k, v in known.items() if k not in {"success", "expected"}})
                 run.latest_observation = None

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, type ReactElement } from 'react'
 
 type Input = Record<string, unknown>
-export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspect = false, onInspectCancel, generation, sceneId, width, height, label, send, onError }: {
-  image: string; enabled: boolean; inspect?: boolean; onInspectCancel?: () => void; resizeEnabled?: boolean; generation: number; width: number; height: number; label: string
-  sceneId?: string; send: (input: Input) => Promise<{ text?: string }>; onError: (message: string) => void
+export function BrowserViewport({ image, enabled, resizeEnabled = enabled, reviewOnly = false, inspect = false, onInspectCancel, generation, sceneId, width, height, label, send, onError }: {
+  image: string; enabled: boolean; reviewOnly?: boolean; inspect?: boolean; onInspectCancel?: () => void; resizeEnabled?: boolean; generation: number; width: number; height: number; label: string
+  sceneId?: string; send: (input: Input) => Promise<{ text?: string; discardQueued?: boolean }>; onError: (message: string) => void
 }): ReactElement {
   const surface = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -16,10 +16,10 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
   const epoch = useRef(0)
   const sceneEpoch = useRef(0)
   const pressed = useRef(new Set<string>())
-  const current = useRef({ enabled, generation, sceneId, send, onError, inspect })
-  if (current.current.enabled !== enabled || current.current.generation !== generation) epoch.current++
+  const current = useRef({ enabled, generation, sceneId, send, onError, inspect, reviewOnly })
+  if (current.current.enabled !== enabled || current.current.generation !== generation || current.current.reviewOnly !== reviewOnly) epoch.current++
   if (current.current.sceneId !== sceneId) sceneEpoch.current++
-  current.current = { enabled, generation, sceneId, send, onError, inspect }
+  current.current = { enabled, generation, sceneId, send, onError, inspect, reviewOnly }
   const enqueue = useCallback((input: Input): void => {
     const token = current.current.generation
     const queueEpoch = epoch.current
@@ -52,9 +52,11 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
       if (entry && pendingMotion.current === entry) pendingMotion.current = null
       if (!mounted.current || !current.current.enabled || current.current.generation !== token || epoch.current !== queueEpoch) return
       if (sceneBound && sceneEpoch.current !== queueScene) return
+      if (current.current.reviewOnly && !['wheel', 'resize', 'release'].includes(String(input.kind))) return
       if (current.current.inspect && !['pick', 'wheel', 'resize'].includes(String(input.kind))) return
       if (input.kind === 'pick' && !current.current.inspect) return
       const result = await current.current.send({ ...input, kind: input.kind === 'cut' ? 'copy' : input.kind, generation: token, ...(scene ? { scene_id: scene } : {}) })
+      if (result.discardQueued) { epoch.current++; pressed.current.clear(); return }
       if (input.event === 'mouseReleased' || input.event === 'keyUp') pressed.current.delete(pair)
       if (typeof result.text === 'string' && result.text) {
         await navigator.clipboard.writeText(result.text)
@@ -117,7 +119,7 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
     (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0)
   return <div ref={surface} className="ds-browser-viewport" style={inspect ? { cursor: 'crosshair' } : undefined} onContextMenu={(e) => e.preventDefault()}
     onPointerDown={(e) => {
-      if (!enabled) return
+      if (!enabled || reviewOnly) return
       const p = point(e); if (!p) return
       e.preventDefault()
       if (field.current) {
@@ -134,13 +136,13 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
       enqueue({ kind: 'mouse', event: 'mousePressed', ...p, button: ['left', 'middle', 'right'][e.button] ?? 'left', buttons: e.buttons, clicks: count, modifiers: modifiers(e) })
     }}
     onPointerMove={(e) => {
-      if (!enabled || inspect || Date.now() - moveAt.current < 40) return
+      if (!enabled || reviewOnly || inspect || Date.now() - moveAt.current < 40) return
       const p = point(e); if (!p) return
       moveAt.current = Date.now()
       enqueue({ kind: 'mouse', event: 'mouseMoved', ...p, buttons: e.buttons, modifiers: modifiers(e) })
     }}
     onPointerUp={(e) => {
-      if (!enabled) return
+      if (!enabled || reviewOnly) return
       const p = point(e) ?? { x: click.current.x, y: click.current.y }
       if (inspect) { if (e.button === 0 && point(e)) enqueue({ kind: 'pick', ...p }); return }
       enqueue({ kind: 'mouse', event: 'mouseReleased', ...p, button: ['left', 'middle', 'right'][e.button] ?? 'left', buttons: 0, clicks: click.current.count, modifiers: modifiers(e) })
@@ -153,7 +155,7 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
       enqueue({ kind: 'wheel', ...p, delta_x: Math.max(-5000, Math.min(5000, e.deltaX * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? width : 1))), delta_y: Math.max(-5000, Math.min(5000, e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? height : 1))), modifiers: modifiers(e) })
     }}>
     <img src={image} alt={label} draggable={false} />
-    <textarea ref={field} className="ds-browser-input" aria-label={label} disabled={!enabled} autoComplete="off" autoCapitalize="off" spellCheck={false}
+    <textarea ref={field} className="ds-browser-input" aria-label={label} disabled={!enabled || reviewOnly} autoComplete="off" autoCapitalize="off" spellCheck={false}
       onCompositionStart={() => { composing.current = true }}
       onCompositionEnd={(e) => { composing.current = false; if (e.currentTarget.value) enqueue({ kind: 'text', text: e.currentTarget.value }); e.currentTarget.value = '' }}
       onInput={(e) => { if (composing.current) return; if (e.currentTarget.value) enqueue({ kind: 'text', text: e.currentTarget.value }); e.currentTarget.value = '' }}

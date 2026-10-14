@@ -808,3 +808,21 @@ async def test_navigation_does_not_import_chrome_cookies(browser, monkeypatch):
     result = await browser.action("one", BrowserAction(action="open", url="https://example.test"))
     assert result["success"]
     browser.cookies.read_source.assert_not_called()
+
+@pytest.mark.parametrize('action,target,resolved', [
+    ('open', 'https://example.test', True),
+    ('open', 'https://other.test', False),
+    ('click', 'https://example.test', False),
+    ('open', None, False),
+])
+async def test_fresh_observation_only_resolves_visible_navigation_target(browser, action, target, resolved):
+    run = browser.runs['one']
+    receipt = {'action_id': 'pending', 'action': action, 'execution': 'unknown', 'target_url': target}
+    run.unresolved['pending'] = dict(receipt)
+    run.operations['pending'] = {'success': False, 'receipt': dict(receipt)}
+    result = await browser.action('one', BrowserAction(action='observe'))
+    assert result['success']
+    assert ('pending' not in run.unresolved) == resolved
+    if resolved:
+        assert run.operations['pending']['receipt']['execution'] == 'unknown'
+        assert run.operations['pending']['receipt']['reconciliation']['outcome'] == 'target_visible'

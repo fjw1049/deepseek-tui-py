@@ -3501,11 +3501,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if delivery.active and delivery.outcome is None and not result.error_message:
                     if not delivery.stop_reminded and round_idx < self.max_tool_round_trips:
                         delivery.stop_reminded = True
-                        await self.handle.emit(StatusEvent(message=(
-                            "正在整理已有结果（最多 60 秒），此阶段不再操作浏览器。"
-                            if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                            "Finalizing existing results (up to 60 seconds); no further browser actions."
-                        )))
                         from deepseek_tui.engine import reminders
 
                         messages.append(reminders.reminder_message(

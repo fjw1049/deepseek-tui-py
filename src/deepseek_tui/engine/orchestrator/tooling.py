@@ -28,7 +28,6 @@ from deepseek_tui.engine.events import (
     ElevationRequiredEvent,
     ModeChangedEvent,
     SandboxDeniedEvent,
-    StatusEvent,
     ToolResultEvent,
     UserInputRequiredEvent,
 )
@@ -171,11 +170,6 @@ class ToolExecutionMixin:
                 and tool_calls[0].name == "finish_task" and not delivery.stop_reminded):
             # Even malformed submissions get only one bounded correction round.
             delivery.stop_reminded = True
-            await self.handle.emit(StatusEvent(message=(
-                "正在整理已有结果（最多 60 秒），此阶段不再操作浏览器。"
-                if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                "Finalizing existing results (up to 60 seconds); no further browser actions."
-            )))
 
         try:
             # Build execution plans and check if batch can be parallelized.
