@@ -124,6 +124,11 @@ def user_threads_dir() -> Path:
     return user_deepseek_dir() / "threads"
 
 
+def user_browser_dir(home: Path | None = None) -> Path:
+    """Private browser storage, excluded from conversation exports and deletion."""
+    return (home or user_deepseek_dir()) / "browser"
+
+
 def user_worktrees_dir() -> Path:
     """``~/.deepseek/worktrees/`` — Codex-style managed git worktrees."""
     return user_deepseek_dir() / "worktrees"

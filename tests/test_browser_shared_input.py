@@ -313,3 +313,34 @@ async def test_manual_input_capture_failure_does_not_report_input_failure(shared
     assert result["success"] and result["evidence_warning"]
     client.send.assert_awaited_once_with("Input.insertText", {"text": "draft"})
     assert not run.recording
+
+
+async def test_view_distinguishes_busy_from_changed_frame(shared, monkeypatch):
+    browser, run, _ = shared
+    async with run.lock:
+        view = await browser.view("one")
+    assert view["frame_status"] == "busy" and view["image"] is None
+    scene = {"scene_id": "before", "url": "https://example.test"}
+    monkeypatch.setattr(browser, "_scene", AsyncMock(side_effect=[scene, scene]))
+    monkeypatch.setattr(browser, "_capture", AsyncMock(return_value=b"jpeg"))
+    monkeypatch.setattr(browser, "page_state", AsyncMock())
+    view = await browser.view("one")
+    assert view["frame_status"] == "ready" and view["image"]
+    assert run.url == scene["url"]
+    browser.page_state.assert_not_called()
+    browser._scene.side_effect = [scene, {**scene, "scene_id": "after"}]
+    view = await browser.view("one")
+    assert view["frame_status"] == "changed" and view["image"] is None
+
+
+async def test_manual_text_persists_receipt_once(shared, monkeypatch):
+    from unittest.mock import Mock
+    browser, _, _ = shared
+    persist = Mock()
+    monkeypatch.setattr(browser, "_persist", persist)
+    result = await browser.input("one", BrowserInput(kind="text", text="test", generation=0))
+    persist.assert_called_once()
+    assert result["receipt"]["execution"] == "executed"
+    persist.side_effect = OSError("disk full")
+    result = await browser.input("one", BrowserInput(kind="text", text="test", generation=0))
+    assert result["success"] and result["receipt"]["evidence"] == "unavailable"

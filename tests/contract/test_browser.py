@@ -9,6 +9,34 @@ def observation_cdp(session, text, url="https://example.test"):
     session._internal.client.send.side_effect = send
 
 
+async def test_cookie_sync_consent_auth_and_private_results(authed_client, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    source = AsyncMock(return_value={"cookies": [{
+        "name": "synthetic", "value": "PRIVATE_SENTINEL", "domain": ".example.test",
+        "path": "/", "secure": True, "httpOnly": True,
+    }], "skipped": 0})
+    monkeypatch.setattr("deepseek_tui.browser.cookies.CookieStore.read_source", source)
+    monkeypatch.setattr("deepseek_tui.browser.chrome_cookies.profiles", lambda: [{"id": "Default", "name": "Personal"}])
+    monkeypatch.setattr("deepseek_tui.browser.cookies.profiles", lambda: [{"id": "Default", "name": "Personal"}])
+    client, _ = authed_client
+    thread_id = (await client.post("/v1/threads", json={"title": "Cookies"})).json()["id"]
+    path = f"/v1/threads/{thread_id}/browser/cookie-sync"
+    assert (await client.get(path, headers={"Authorization": ""})).status_code == 401
+    assert (await client.post(path, json={"action": "enable", "profile": "Default"}, headers={"Authorization": ""})).status_code == 401
+    state = (await client.get(path)).json()
+    assert state["consent"] == "pending" and state["profiles"][0]["id"] == "Default"
+    assert (await client.post(path, json={"action": "enable", "profile": "../../other"})).status_code == 409
+    state = (await client.post(path, json={"action": "enable", "profile": "Default"})).json()
+    assert state["consent"] == "enabled"
+    assert (state["status"], state["count"], state["domains"]) == ("synced", 1, 1)
+    source.assert_awaited_once_with("Default")
+    assert "PRIVATE_SENTINEL" not in str(state)
+    assert not {"cookies", "values", "path"} & state.keys()
+    assert (await client.post(path, json={"action": "disable"})).json()["consent"] == "disabled"
+    assert (await client.post(path, json={"action": "clear"})).json()["status"] == "cleared"
+
+
 async def test_browser_routes_require_auth_and_existing_thread(authed_client):
     client, token = authed_client
     headers = {"Authorization": f"Bearer {token}"}
@@ -31,7 +59,7 @@ async def test_browser_routes_require_auth_and_existing_thread(authed_client):
     assert invalid.status_code == 422
     no_session = await client.post(base + "/control", json={"owner": "user"}, headers=headers)
     assert no_session.status_code == 409
-    assert (await client.get(base + "/preferences")).json() == {"persistent": False}
+    assert (await client.get(base + "/preferences")).json() == {"persistent": True}
     assert (await client.post(base + "/preferences", json={"persistent": True})).json() == {
         "persistent": True
     }

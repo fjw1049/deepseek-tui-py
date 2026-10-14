@@ -23,6 +23,7 @@ from typing import Any
 
 from deepseek_tui.browser import ARTIFACTS_DIRNAME
 from deepseek_tui.config.paths import (
+    user_browser_dir,
     user_deepseek_dir,
     user_sessions_dir,
     user_state_db_path,
@@ -235,6 +236,7 @@ def delete_thread_tree(
     # Browser evidence, downloads and saved logins belong to the deleted conversation.
     if Path(thread_id).name == thread_id:
         shutil.rmtree(store.root / ARTIFACTS_DIRNAME / thread_id, ignore_errors=True)
+        shutil.rmtree(user_browser_dir(store.root.parent) / "profiles" / thread_id, ignore_errors=True)
     try:
         plan_path = user_thread_plan_path(thread_id)
         if plan_path.is_file():

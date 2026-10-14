@@ -301,7 +301,12 @@ class RuntimeThreadManager:
         from deepseek_tui.browser import ARTIFACTS_DIRNAME
         from deepseek_tui.browser.service import BrowserService
 
-        self.browser_service = BrowserService(manager_cfg.data_dir / ARTIFACTS_DIRNAME)
+        from deepseek_tui.config.paths import user_browser_dir
+
+        self.browser_service = BrowserService(
+            manager_cfg.data_dir / ARTIFACTS_DIRNAME,
+            profile_root=user_browser_dir(manager_cfg.data_dir.parent),
+        )
         from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
 
         self.checkpoints = TurnCheckpointStore(manager_cfg.data_dir / "checkpoints")

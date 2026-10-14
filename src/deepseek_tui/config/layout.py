@@ -332,6 +332,12 @@ paths = ["skills/", "plugins/", "plugins/.host/"]
 retention = "permanent"
 backup = "custom_only"
 
+[private_browser]
+paths = ["browser/"]
+retention = "until_user_clears"
+backup = "excluded"
+notes = "Local website cookies and browser profiles; never export with conversations."
+
 [layers.L2_conversations]
 paths_canonical = ["threads/"]
 paths_legacy = ["sessions/"]

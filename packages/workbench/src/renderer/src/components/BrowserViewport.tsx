@@ -8,6 +8,7 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
   const surface = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
   const queue = useRef(Promise.resolve())
+  const pendingMotion = useRef<{ input: Input; token: number; epoch: number; scene: number } | null>(null)
   const composing = useRef(false)
   const mounted = useRef(true)
   const moveAt = useRef(0)
@@ -24,12 +25,31 @@ export function BrowserViewport({ image, enabled, resizeEnabled = enabled, inspe
     const queueEpoch = epoch.current
     const queueScene = sceneEpoch.current
     const scene = current.current.sceneId
+    const motion = input.kind === 'wheel' || input.event === 'mouseMoved'
+    const previous = pendingMotion.current
+    if (motion && previous && previous.token === token && previous.epoch === queueEpoch && previous.scene === queueScene
+      && previous.input.kind === input.kind && previous.input.modifiers === input.modifiers && previous.input.buttons === input.buttons) {
+      if (input.kind === 'mouse') {
+        Object.assign(previous.input, input)
+        return
+      }
+      const dx = Number(previous.input.delta_x) + Number(input.delta_x)
+      const dy = Number(previous.input.delta_y) + Number(input.delta_y)
+      if (previous.input.x === input.x && previous.input.y === input.y && Math.abs(dx) <= 5000 && Math.abs(dy) <= 5000) {
+        Object.assign(previous.input, { delta_x: dx, delta_y: dy })
+        return
+      }
+    }
+    const entry = motion ? { input, token, epoch: queueEpoch, scene: queueScene } : null
+    // Only merge adjacent unsent motion; clicks, keys and releases remain ordered barriers.
+    pendingMotion.current = entry
     // Typing is re-checked by the runtime against the focused field's record, so a
     // URL that changes per keystroke must not drop it; pointers need the exact frame.
     const sceneBound = !['text', 'key'].includes(String(input.kind))
     const pair = input.kind === 'mouse' ? `mouse:${input.button}` : `key:${input.code || input.key}`
     if (input.event === 'mousePressed' || input.event === 'keyDown') pressed.current.add(pair)
     queue.current = queue.current.then(async () => {
+      if (entry && pendingMotion.current === entry) pendingMotion.current = null
       if (!mounted.current || !current.current.enabled || current.current.generation !== token || epoch.current !== queueEpoch) return
       if (sceneBound && sceneEpoch.current !== queueScene) return
       if (current.current.inspect && !['pick', 'wheel', 'resize'].includes(String(input.kind))) return

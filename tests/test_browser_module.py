@@ -348,7 +348,9 @@ def test_profile_preferences_require_closed_session_and_survive_restart(browser)
     browser.configure("saved", True)
     restarted = BrowserService(browser.artifact_root)
     assert restarted.preferences("saved") == {"persistent": True}
-    assert restarted.preferences("other") == {"persistent": False}
+    assert restarted.preferences("other") == {"persistent": True}
+    browser.configure("temporary", False)
+    assert restarted.preferences("temporary") == {"persistent": False}
 
 
 @pytest.mark.asyncio
@@ -797,3 +799,12 @@ async def test_session_cap_reclaims_only_the_longest_idle_unused_session(tmp_pat
     service.runs["t2"] = BrowserRun("t2", tmp_path / "run2")
     with pytest.raises(ValueError, match="maximum 8"):
         await service._reclaim_idle_session()
+
+
+async def test_navigation_does_not_import_chrome_cookies(browser, monkeypatch):
+    monkeypatch.setattr("deepseek_tui.browser.cookies.profiles", lambda: [{"id": "Default"}])
+    browser.cookies.configure("enabled", "Default")
+    browser.cookies.read_source = AsyncMock(side_effect=AssertionError("Explicit import only"))
+    result = await browser.action("one", BrowserAction(action="open", url="https://example.test"))
+    assert result["success"]
+    browser.cookies.read_source.assert_not_called()

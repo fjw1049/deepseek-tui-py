@@ -67,7 +67,7 @@ CANONICAL_ROLE = r"""e => e.getAttribute('role') || ({BUTTON:'button', A:'link',
     submit:'button',reset:'button',button:'button',image:'button',file:'button',color:'button'}[e.type]
     || 'textbox'):e.isContentEditable?'textbox':e.tagName.toLowerCase())"""
 
-SCOPE_CONTEXT = r"""e => {
+SCOPE_CONTEXT = r"""(e, cache) => {
   const attrs=['data-record','data-record-id','data-row-key','data-id','data-account-id','data-recipient','data-resource'];
   let container=null;
   for(let p=e.parentElement || e.getRootNode()?.host;p;p=p.parentElement || p.getRootNode()?.host) {
@@ -77,6 +77,7 @@ SCOPE_CONTEXT = r"""e => {
     }
   }
   if(!container) return null;
+  if(cache?.has(container)) return cache.get(container);
   const visible=__VISIBLE__, texts=[];
   const walker=container.ownerDocument.createTreeWalker(container,NodeFilter.SHOW_TEXT);
   while(walker.nextNode()) {
@@ -88,8 +89,10 @@ SCOPE_CONTEXT = r"""e => {
       if(a.isContentEditable){editable=true;break;}
     if(!editable && n.textContent.trim()) texts.push(n.textContent.trim());
   }
-  return {node:container,keys:attrs.map(a=>[a,container.getAttribute(a)]),
+  const result={node:container,keys:attrs.map(a=>[a,container.getAttribute(a)]),
     text:texts.join('\n'),id:container.id,tag:container.tagName.toLowerCase()};
+  cache?.set(container,result);
+  return result;
 }""".replace("__VISIBLE__", VISIBLE)
 
 # Picker inputs take an HTML value string (e.g. 2026-10-14, 13:45, #ff0000) instead of typing.

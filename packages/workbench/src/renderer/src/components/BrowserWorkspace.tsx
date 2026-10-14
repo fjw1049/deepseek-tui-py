@@ -6,6 +6,7 @@ import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/
 import { parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
 import { isHtmlPreviewPath } from '@shared/html-preview'
 import { BrowserSessionSettings } from './BrowserSessionSettings'
+import { BrowserCookieSync, type CookieSyncState } from './BrowserCookieSync'
 import { DevBrowserPanel } from './DevBrowserPanel'
 import { BrowserViewport } from './BrowserViewport'
 import { formatAutomationApiError } from '../lib/automation-runtime-client'
@@ -16,6 +17,7 @@ import { respondToAssistance } from './BrowserAssistance'
 import type { Assistance } from './BrowserAssistanceCard'
 
 type BrowserState = {
+  cookie_sync?: CookieSyncState
   assistance?: Assistance | null
   active: boolean; url?: string; generation?: number; transferring?: boolean
   task_paused?: boolean; task_running?: boolean; task_pausing?: boolean
@@ -28,6 +30,7 @@ type BrowserState = {
   artifacts: { id: string; label: string; path: string }[]
   scene?: { scene_id: string; tab_id: string; document_id: string; viewport_epoch: number }
   view_sequence?: number
+  frame_status?: 'ready' | 'busy' | 'changed'
   capabilities?: { video?: { ready: boolean } }
   unresolved?: ActionReceipt[]
   dialog?: { id: string; type: string; message: string } | null
@@ -113,6 +116,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const [pending, setPending] = useState(false)
   const [controlTarget, setControlTarget] = useState<'agent' | 'user' | 'stopped' | null>(null)
   const [more, setMore] = useState(false)
+  const [cookieSettings, setCookieSettings] = useState(false)
   const [details, setDetails] = useState(!!detailsRequest)
   useEffect(() => { if (detailsRequest) setDetails(true) }, [detailsRequest])
   const menuRoot = useRef<HTMLDivElement>(null)
@@ -145,13 +149,20 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const button = 'inline-flex items-center gap-1 rounded-md border border-ds-border px-2 py-1.5 text-xs disabled:opacity-40'
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => { if (state?.url) setUrl(state.url === 'about:blank' ? '' : state.url) }, [state?.url])
+  const displayedScene = useRef<string | undefined>(undefined)
   const apply = useCallback((next: BrowserState): void => {
     if (!alive.current || transferring.current || (next.generation ?? -1) < latestGeneration.current) return
     if ((next.generation ?? -1) > latestGeneration.current) latestView.current = -1
     if (next.view_sequence !== undefined && next.view_sequence < latestView.current) return
     if (next.view_sequence !== undefined) latestView.current = next.view_sequence
+    const sameGeneration = (next.generation ?? -1) === latestGeneration.current
     latestGeneration.current = next.generation ?? -1
-    setFresh(true); setFrameFresh(!!next.image && !next.transferring)
+    const sameScene = next.scene?.scene_id === displayedScene.current
+    if (next.image) displayedScene.current = next.scene?.scene_id
+    setFresh(true)
+    setFrameFresh(previous => !next.transferring && !!next.active && (
+      !!next.image || (previous && sameGeneration && sameScene && next.frame_status === 'busy')
+    ))
     setState(next); if (next.image) setImage(next.image); else if (!next.active) setImage(null)
   }, [])
   useEffect(() => {
@@ -160,11 +171,12 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     let timer: ReturnType<typeof setTimeout>
     const poll = async (): Promise<void> => {
       let delay = 600
+      const started = performance.now()
       try {
         const next = await browserRequest<BrowserState>(threadId, '/view')
         if (!disposed) {
           apply(next); setConnectionError('')
-          delay = next.active ? (next.owner === 'user' ? 120 : 300) : 600
+          delay = next.active ? (next.owner === 'user' ? Math.max(16, 50 - (performance.now() - started)) : 300) : 600
         }
       } catch (e) { if (!disposed) { setFresh(false); setFrameFresh(false); setConnectionError(e instanceof Error ? e.message : String(e)) } }
       finally { if (!disposed) timer = setTimeout(() => void poll(), delay) }
@@ -287,6 +299,8 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
         {t(controlBusy ? 'browserControlSwitching' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? state.task_running === false ? 'browserGiveControl' : 'browserReturnControl' : 'browserTakeControl')}
       </button> : null}
     </header>
+    {visible ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
+      manage={cookieSettings} onClose={() => setCookieSettings(false)} /> : null}
     <div className="ds-dev-browser__chrome ds-browser-chrome">
       <div className="ds-dev-browser__tabs">
         <div className="ds-dev-browser__tab-scroll" aria-label={t('browserTabs')}>
@@ -326,6 +340,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
               } else if (e.key === 'Tab') setMore(false)
             }}>
             {onReturnToPages ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={onReturnToPages}><ArrowLeft size={15} />{t('browserReturnToPages')}</button> : null}
+            <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setCookieSettings(true)}><Globe2 size={15} />{t('browserCookieManage')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>

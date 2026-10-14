@@ -92,6 +92,47 @@ class PreferencesBody(BaseModel):
     persistent: bool
 
 
+class CookieSyncBody(BaseModel):
+    action: Literal["enable", "skip", "disable", "sync", "clear"]
+    profile: str | None = Field(default=None, max_length=100)
+    generation: int | None = Field(default=None, ge=0)
+
+
+@router.get("/cookie-sync")
+async def cookie_sync_state(request: Request, thread_id: str) -> dict[str, Any]:
+    from deepseek_tui.browser.chrome_cookies import profiles
+
+    browser = service(request, thread_id)
+    return {**browser.cookies.state(), "profiles": await asyncio.to_thread(profiles)}
+
+
+@router.post("/cookie-sync")
+async def cookie_sync(request: Request, thread_id: str, body: CookieSyncBody) -> dict[str, Any]:
+    browser = service(request, thread_id)
+    try:
+        if body.action == "clear":
+            await browser.clear_cookies()
+        elif body.action in {"skip", "disable"}:
+            browser.cookies.configure("skipped" if body.action == "skip" else "disabled", None)
+        else:
+            run = browser.runs.get(thread_id)
+            if run and run.session:
+                if run.unresolved:
+                    raise ValueError("Resolve pending browser actions before syncing cookies")
+                await request.app.state.thread_manager.control_browser(
+                    thread_id, "user", generation=body.generation,
+                )
+            if body.action == "enable":
+                browser.cookies.configure("enabled", body.profile)
+            await browser.sync_cookies(thread_id)
+        return browser.cookies.state()
+    except (ValueError, OSError) as exc:
+        # Never include underlying cookie/decryption failures in API errors.
+        if isinstance(exc, OSError):
+            raise HTTPException(409, "Cookie settings could not be saved") from None
+        raise HTTPException(409, str(exc)) from None
+
+
 @router.get("/environment")
 async def environment(request: Request, thread_id: str) -> dict[str, Any]:
     return service(request, thread_id).environment()

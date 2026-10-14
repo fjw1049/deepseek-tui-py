@@ -315,19 +315,24 @@ class BrowserRun:
     consecutive_action_failures: int = 0
     focus_tokens: dict[str, str | None] = field(default_factory=dict)
     last_used: float = field(default_factory=time.monotonic)
+    cookie_baseline: dict[str, dict] | None = None
+    cookie_saved_at: float = 0
 
 
 class BrowserService:
-    def __init__(self, artifact_root: Path):
+    def __init__(self, artifact_root: Path, *, profile_root: Path | None = None):
         from deepseek_tui.browser.install import BrowserInstaller
+        from deepseek_tui.browser.cookies import CookieStore
 
         self.artifact_root = artifact_root
+        self.profile_root = profile_root or artifact_root.parent / "browser-private"
+        self.cookies = CookieStore(self.profile_root)
         self.installer = BrowserInstaller()
         self.runs: dict[str, BrowserRun] = {}
 
     def preferences(self, thread_id: str) -> dict[str, bool]:
         path = self.artifact_root / thread_id / "preferences.json"
-        return json.loads(path.read_text()) if path.exists() else {"persistent": False}
+        return json.loads(path.read_text()) if path.exists() else {"persistent": True}
 
     def configure(self, thread_id: str, persistent: bool) -> dict[str, bool]:
         from deepseek_tui.utils import write_text_atomic
@@ -385,6 +390,42 @@ class BrowserService:
         if thread_id in self.runs:
             raise ValueError("End the browser session before clearing saved login data")
         shutil.rmtree(self.artifact_root / thread_id / "profile", ignore_errors=True)
+        shutil.rmtree(self.profile_root / "profiles" / thread_id, ignore_errors=True)
+
+    async def save_cookies(self, run: BrowserRun, *, force: bool = False) -> None:
+        if run.cookie_baseline is None or (not force and time.monotonic() - run.cookie_saved_at < 5):
+            return
+        run.cookie_saved_at = time.monotonic()
+        try:
+            await asyncio.wait_for(self.cookies.capture(run), timeout=3)
+        except Exception:
+            self.cookies.status = "save_failed"
+
+    async def sync_cookies(self, thread_id: str) -> dict[str, Any]:
+        run = self.runs.get(thread_id)
+        if not run or not run.session:
+            await self.cookies.sync()
+            return self.cookies.state()
+        async with run.lock:
+            if run.owner != "user" or run.transferring or run.unresolved:
+                raise ValueError("Take control and resolve pending actions before syncing cookies")
+            await self.cookies.sync(run)
+            run.generation += 1
+            run.latest_observation = None
+            run.scene = None
+        return self.cookies.state()
+
+    async def clear_cookies(self) -> None:
+        if self.runs:
+            raise ValueError("Close all app browser sessions before clearing saved cookies")
+        roots = [self.profile_root / "profiles", *self.artifact_root.glob("*/profile")]
+        for root in roots:
+            for database in root.rglob("Cookies"):
+                for suffix in ("", "-wal", "-shm", "-journal"):
+                    path = database.with_name(database.name + suffix)
+                    if path.is_file() or path.is_symlink():
+                        path.unlink()
+        await self.cookies.clear()
 
     async def ensure(self, thread_id: str) -> BrowserRun:
         existing = self.runs.get(thread_id)
@@ -426,7 +467,11 @@ class BrowserService:
                     port = sock.getsockname()[1]
                 profile_dir = run.directory
                 if self.preferences(thread_id)["persistent"]:
-                    profile_dir = self.artifact_root / thread_id / "profile"
+                    profile_dir = self.profile_root / "profiles" / thread_id
+                    legacy = self.artifact_root / thread_id / "profile"
+                    if legacy.exists() and not profile_dir.exists():
+                        profile_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        shutil.move(str(legacy), str(profile_dir))
                     profile_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
                 cfg = OctopSettings(
                     profiles_dir=profile_dir,
@@ -464,6 +509,11 @@ class BrowserService:
                         ),
                         timeout=40,
                     )
+                    if self.preferences(thread_id)["persistent"]:
+                        try:
+                            await asyncio.wait_for(self.cookies.restore(run), timeout=5)
+                        except Exception:
+                            self.cookies.status = "save_failed"
                 except BaseException:
                     from octop_browser.cdp.launcher import terminate_browser
 
@@ -506,6 +556,7 @@ class BrowserService:
                 "capabilities": browser_capabilities(video_ready=bool(shutil.which("ffmpeg"))),
                 **saved,
                 "unresolved": list(saved.get("unresolved", {}).values()),
+                "cookie_sync": self.cookies.state(),
             }
         return {
             "active": run.session is not None
@@ -538,6 +589,7 @@ class BrowserService:
             "view_sequence": run.view_sequence,
             "capabilities": browser_capabilities(video_ready=bool(shutil.which("ffmpeg"))),
             "metrics": run.metrics[-40:],
+            "cookie_sync": self.cookies.state(),
             **(run.native_events.state() if run.native_events else {"dialog": None, "file_chooser": None, "downloads": []}),
         }
 
@@ -702,6 +754,7 @@ class BrowserService:
         """A coherent frame and tab snapshot; observing never takes control."""
         run = self.runs.get(thread_id)
         image = None
+        frame_status = "busy"
         if run:
             run.last_used = time.monotonic()  # A visible panel keeps its session.
         if run and run.native_events and run.native_events.dialog:
@@ -712,7 +765,8 @@ class BrowserService:
                 try:
                     scene = await self._scene(run)
                     run.view_sequence += 1
-                    await self.page_state(run)
+                    run.url = scene["url"]
+                    await self.save_cookies(run)
                     await self._refresh_tabs(run)
                     image = (
                         "data:image/jpeg;base64,"
@@ -720,6 +774,9 @@ class BrowserService:
                     )
                     if scene != await self._scene(run):
                         image = None
+                        frame_status = "changed"
+                    else:
+                        frame_status = "ready"
                 except Exception as exc:
                     if type(exc).__name__ == "CDPSessionError" or isinstance(exc, ConnectionError):
                         run.healthy = False
@@ -728,7 +785,7 @@ class BrowserService:
                         "Browser view unavailable; inspect status/recover: "
                         + (str(exc) or type(exc).__name__)
                     ) from exc
-        return {**self.state(thread_id), "image": image}
+        return {**self.state(thread_id), "image": image, "frame_status": frame_status}
 
     async def _release_inputs(self, run):
         if not run.pressed_keys and not run.pressed_buttons:
@@ -774,7 +831,8 @@ class BrowserService:
         scene["frame_documents"] = [(f.get("id"), f.get("loaderId")) for f in
                                     frame_entries(tree.get("frameTree", {}))]
         if run.native_events:
-            keys = await evaluate(await root_context(run), "(()=>{const names=['data-record','data-record-id',"
+            context = await root_context(run)
+            keys = await evaluate(context, "(()=>{const names=['data-record','data-record-id',"
                 "'data-row-key','data-account-id'];const nodes=[...document.querySelectorAll(names.map(n=>'['+n+']').join(','))]"
                 ".filter(e=>{const r=e.getBoundingClientRect();return r.right>0 && r.bottom>0 && r.x<innerWidth && r.y<innerHeight});"
                 "if(nodes.length>200)return {error:true};const keys=nodes.map(e=>names.map(n=>e.getAttribute(n)));"
@@ -782,13 +840,16 @@ class BrowserService:
             if keys.get("error"):
                 raise ValueError("Visible record scope is too large for direct viewport input; use scoped targets")
             # Bind form context even without a URL/data-record change. Field values are excluded.
-            scopes = await evaluate(await root_context(run),
-                "(()=>{const context=(" + SCOPE_CONTEXT + ");return [...document.querySelectorAll("
-                "'input,textarea,select,[contenteditable]')].map(e=>{const s=context(e);"
-                "return s?{tag:s.tag,id:s.id,keys:s.keys,text:s.text}:null})})()")
+            scopes = await evaluate(context,
+                "(()=>{const context=(" + SCOPE_CONTEXT + ");const cache=new Map(),ids=new Map(),scopes=[];"
+                "const fields=[...document.querySelectorAll('input,textarea,select,[contenteditable]')]"
+                ".map(e=>{const s=context(e,cache);if(!s)return null;"
+                "if(!ids.has(s.node)){ids.set(s.node,scopes.length);"
+                "scopes.push({tag:s.tag,id:s.id,keys:s.keys,text:s.text})}return ids.get(s.node)});"
+                "return {scopes,fields}})()")
             scene["field_scopes"] = hashlib.sha256(
                 json.dumps(scopes, sort_keys=True).encode()).hexdigest()[:32]
-            focus = await evaluate(await root_context(run), FOCUSED_FIELD)
+            focus = await evaluate(context, FOCUSED_FIELD)
             if await document_identity(run.session._internal.client) != (frame.get("id", ""), frame.get("loaderId", "")):
                 raise RuntimeError("Browser document changed during scene read")
             scene["business_scope"] = hashlib.sha256(json.dumps(keys, ensure_ascii=True).encode()).hexdigest()[:32]
@@ -871,10 +932,6 @@ class BrowserService:
                     except Exception as exc:
                         run.recording = False
                         result["evidence_warning"] = "Recording capture failed: " + str(exc)
-                try:
-                    self._persist(run)
-                except OSError as exc:
-                    result["evidence_warning"] = "Evidence could not be persisted: " + str(exc)
             return self._remember_response(run, result, persist=body.kind not in {"wheel"} and
                                            not (body.kind == "mouse" and body.event == "mouseMoved"))
 
@@ -1810,6 +1867,7 @@ class BrowserService:
             page = await self.page_state(run)
         except Exception:
             pass  # A failed observation must not turn a completed submit into a retry.
+        await self.save_cookies(run)
         try:
             self._persist(run)
         except OSError as exc:
@@ -2034,6 +2092,7 @@ class BrowserService:
             # Wait for the current atomic action; queued actions fail the generation check.
             async with run.lock:
                 await self._release_inputs(run)
+                await self.save_cookies(run, force=True)
                 if owner == "user":
                     # The live viewport remains available to the human, but an
                     # agent-started recording must not capture manual credentials.
@@ -2151,6 +2210,7 @@ class BrowserService:
                         run.observation_root_context = None
                     if run.session:
                         try:
+                            await self.save_cookies(run, force=True)
                             await asyncio.wait_for(run.session.close(kill=True), timeout=10)
                         except Exception:
                             if run.profiles:

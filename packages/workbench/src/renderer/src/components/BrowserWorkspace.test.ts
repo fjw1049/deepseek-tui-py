@@ -365,3 +365,28 @@ it('binds UI navigation to the current generation', async () => {
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', '{"action":"reload","generation":2}')
   } finally { await h.close() }
 })
+
+it('keeps typing enabled during a busy frame, but fences a changed scene or owner', async () => {
+  vi.useFakeTimers()
+  const h = mount()
+  let state: Record<string, unknown> = { active: true, owner: 'user', generation: 2, scene: { scene_id: 'same' }, tabs: [], log: [], artifacts: [], image: 'data:image/jpeg;base64,AA==', frame_status: 'ready' }
+  h.request.mockImplementation(async () => ({ ok: true, status: 200, body: JSON.stringify(state) }))
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    const field = h.container.querySelector('textarea')!
+    field.focus()
+    state = { ...state, image: null, frame_status: 'busy' }
+    await act(async () => vi.advanceTimersByTimeAsync(60))
+    expect(field.disabled).toBe(false)
+    expect(document.activeElement).toBe(field)
+    state = { ...state, scene: { scene_id: 'changed' } }
+    await act(async () => vi.advanceTimersByTimeAsync(60))
+    expect(field.disabled).toBe(true)
+    state = { ...state, image: 'data:image/jpeg;base64,AA==', frame_status: 'ready' }
+    await act(async () => vi.advanceTimersByTimeAsync(60))
+    expect(field.disabled).toBe(false)
+    state = { ...state, generation: 3, image: null, frame_status: 'busy' }
+    await act(async () => vi.advanceTimersByTimeAsync(60))
+    expect(field.disabled).toBe(true)
+  } finally { await h.close(); vi.useRealTimers() }
+})

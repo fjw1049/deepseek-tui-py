@@ -342,14 +342,17 @@ def create_backup(
     threads_root = threads_dir or user_threads_dir()
     sessions_root = sessions_dir or user_sessions_dir()
     for root in (threads_root, sessions_root):
-        _reject_symlinks(root)
+        _reject_symlinks(root, exclude_browser_profiles=root == threads_root)
         if target.resolve().is_relative_to(root.resolve()):
             raise ValueError("Backup destination must be outside conversation storage")
     files = 0
     bytes_copied = 0
     if threads_root.exists():
         dest = target / "threads"
-        shutil.copytree(threads_root, dest)
+        shutil.copytree(threads_root, dest, ignore=lambda directory, names: {
+            name for name in names
+            if _browser_profile((Path(directory) / name).relative_to(threads_root))
+        })
         files, bytes_copied = _count_tree(dest)
     for asset in _referenced_media(threads_root, sessions_root):
         dest = target / "media" / asset.name
@@ -392,6 +395,8 @@ def _referenced_media(*roots: Path) -> list[Path]:
     pattern = re.compile(rb'"asset_id"\s*:\s*"([a-f0-9]{64})"')
     for root in roots:
         for record in root.rglob("*.json"):
+            if _browser_profile(record.relative_to(root)):
+                continue
             if record.is_file() and not record.is_symlink():
                 asset_ids.update(
                     value.decode("ascii") for value in pattern.findall(record.read_bytes())
@@ -404,7 +409,7 @@ def _referenced_media(*roots: Path) -> list[Path]:
 
 
 def _zip_tree(zf: zipfile.ZipFile, root: Path, *, arc_prefix: str) -> tuple[int, int]:
-    _reject_symlinks(root)
+    _reject_symlinks(root, exclude_browser_profiles=arc_prefix == "threads")
     zf.writestr(f"{arc_prefix}/", b"")
     if not root.exists():
         return 0, 0
@@ -415,6 +420,8 @@ def _zip_tree(zf: zipfile.ZipFile, root: Path, *, arc_prefix: str) -> tuple[int,
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
+        if arc_prefix == "threads" and _browser_profile(path.relative_to(root)):
+            continue
         zf.write(path, arcname=f"{arc_prefix}/{rel}")
         count += 1
         try:
@@ -472,8 +479,15 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
                 output.write(chunk)
 
 
-def _reject_symlinks(root: Path) -> None:
+def _browser_profile(relative: Path) -> bool:
+    parts = relative.parts
+    return len(parts) >= 3 and parts[0] == "browser-artifacts" and parts[2] == "profile"
+
+
+def _reject_symlinks(root: Path, *, exclude_browser_profiles: bool = False) -> None:
     for path in (root, *root.rglob("*")):
+        if exclude_browser_profiles and _browser_profile(path.relative_to(root)):
+            continue
         if path.is_symlink():
             raise ValueError(f"Cannot copy symlink: {path}")
         if path.exists() and not path.is_file() and not path.is_dir():

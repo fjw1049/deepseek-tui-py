@@ -2391,3 +2391,21 @@ async def test_human_click_then_typing_keeps_scene_binding(chrome):
         await service.input("t", BrowserInput(kind="text", text=text,
                             generation=run.generation, scene_id=scene))
     assert await evaluate(client, "document.querySelector('#q').value") == "hello"
+
+
+async def test_shared_form_scope_scanned_once_per_scene(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML='<form><h2>Customer A</h2>'+"
+                   "'<label>Field<input></label>'.repeat(100)+'</form>';true")
+    from deepseek_tui.browser.observation import root_context
+    context = await root_context(run)
+    await evaluate(context, "window.auditScopeWalks=0;const original=document.createTreeWalker;"
+                   "document.createTreeWalker=function(...args){window.auditScopeWalks++;"
+                   "return original.apply(this,args)};true")
+    first = await service._scene(run)
+    assert await evaluate(context, "window.auditScopeWalks") == 1
+    await evaluate(client, "document.querySelector('h2').textContent='Customer B';true")
+    second = await service._scene(run)
+    assert first["scene_id"] != second["scene_id"]
+    assert await evaluate(context, "window.auditScopeWalks") == 2

@@ -32,6 +32,7 @@ dependencies = [
   "croniter>=2.0.0",
   "pillow>=10.4",
   "octop-browser==1.0.0; python_version >= '3.11'",
+  "browser-cookie3==0.20.1; python_version >= '3.11'",
 ]
 
 [project.optional-dependencies]
