@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>浏览器录制/回放/技能 —— 问题汇总</title>
+<style>
+  :root { --ink:#1f2430; --muted:#6b7280; --paper:#f7f6f3; --card:#fff; --line:#e5e2db;
+          --green:#059669; --amber:#d97706; --red:#dc2626; --blue:#2563eb; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+         background:var(--paper); color:var(--ink); line-height:1.7; padding:40px 16px 80px; }
+  .wrap { max-width:860px; margin:0 auto; }
+  header { text-align:center; margin-bottom:40px; }
+  header h1 { font-size:26px; }
+  header p { color:var(--muted); margin-top:6px; }
+  h2 { font-size:20px; margin:44px 0 6px; }
+  .h2sub { color:var(--muted); font-size:14px; margin-bottom:16px; }
+  .item { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:18px 22px; margin:14px 0; border-left:5px solid var(--muted); }
+  .item.limit { border-left-color:var(--amber); }
+  .item.bug   { border-left-color:var(--red); }
+  .item.design{ border-left-color:var(--green); }
+  .item h3 { font-size:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .tag { font-size:11px; font-weight:700; letter-spacing:.5px; padding:2px 8px; border-radius:10px; }
+  .tag.limit { background:#fef3c7; color:#b45309; }
+  .tag.bug   { background:#fee2e2; color:#b91c1c; }
+  .tag.design{ background:#d1fae5; color:#047857; }
+  .row { margin-top:8px; font-size:14px; }
+  .row b { display:inline-block; min-width:64px; color:var(--muted); font-size:13px; }
+  code { background:#eceae4; border-radius:4px; padding:1px 6px; font-family:Menlo,Consolas,monospace; font-size:12.5px; }
+  .verdict { margin-top:10px; padding:8px 12px; background:#f4f2ec; border-radius:8px; font-size:13.5px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:10px; overflow:hidden; margin:16px 0; font-size:13.5px; }
+  th { background:#efede8; text-align:left; padding:8px 12px; }
+  td { padding:8px 12px; border-top:1px solid var(--line); vertical-align:top; }
+  .legend { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin:18px 0; font-size:13px; }
+  footer { text-align:center; color:var(--muted); font-size:12px; margin-top:50px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>🐛 浏览器「录制 / 回放 / 技能」问题汇总</h1>
+  <p>基于 src/deepseek_tui/browser/ 实际代码核查 · 2026-10-14</p>
+</header>
+
+<div class="legend">
+  <span><span class="tag limit">设计边界</span>&nbsp;行为正确,但你期望的能力不存在</span>
+  <span><span class="tag bug">真实缺陷</span>&nbsp;确实该修</span>
+  <span><span class="tag design">取舍说明</span>&nbsp;看起来像 bug,实际是刻意设计</span>
+</div>
+
+<!-- ==================== 第一部分 ==================== -->
+<h2>一、你问的「不支持」—— 逐条确认</h2>
+<p class="h2sub">以下 3 条全部核实为<b>不支持</b>,且都是设计边界,不是故障。</p>
+
+<div class="item limit">
+  <h3><span class="tag limit">设计边界</span>L1 · 跨网站复用流程(淘宝录的,携程用不了)</h3>
+  <div class="row"><b>现象</b>在淘宝录的登录流程,拿到携程回放。</div>
+  <div class="row"><b>实际行为</b>回放每一步都会先核对 URL / 选择器 / 元素特征(workflows.py:345-400),全部对不上,<span style="color:var(--red)">直接报错停住,一步都不会执行</span>。</div>
+  <div class="row"><b>根因</b>录制清单绑定具体页面的具体元素,是「一条流程一份剧本」,不是「学会登录」的抽象能力。</div>
+  <div class="verdict">✅ <b>结论:不支持,且是故意的</b>(防止在错误网站上执行错误操作)。想要携程的流程,就在携程再录一份。</div>
+</div>
+
+<div class="item limit">
+  <h3><span class="tag limit">设计边界</span>L2 · 无自动触发,录制必须全手动</h3>
+  <div class="row"><b>现象</b>期望系统检测到重复操作时自动开始录制。</div>
+  <div class="row"><b>实际行为</b>唯一入口是用户在前端点「开始/停止录制」按钮(browser_routes.py:248-259),且必须先接管浏览器控制权(workflows.py:68 强制校验)。不会在你浏览时偷录,agent 也无权决定录什么。</div>
+  <div class="verdict">✅ <b>结论:不支持自动触发</b>。什么时候录、录什么、何时停,全部由人手动决定。</div>
+</div>
+
+<div class="item limit">
+  <h3><span class="tag limit">设计边界</span>L3 · 不会举一反三(无跨站点泛化)</h3>
+  <div class="row"><b>现象</b>期望 agent 从淘宝登录录制中"悟出"通用登录能力,以后任何网站都会登录。</div>
+  <div class="row"><b>实际行为</b>技能里装的只是「参考数据 + 操作守则」(skills.py:45-95):agent 会照淘宝的路径操作,发现页面对不上时按守则停下询问,<b>不会自己迁移到携程的页面结构上</b>。</div>
+  <div class="verdict">✅ <b>结论:不支持泛化</b>。每份录制/技能只解决一个具体站点的具体流程。</div>
+</div>
+
+<!-- ==================== 第二部分 ==================== -->
+<h2>二、核查中发现的真问题</h2>
+<p class="h2sub">以下是代码里确实存在、值得处理的缺陷和混淆点。</p>
+
+<div class="item bug">
+  <h3><span class="tag bug">真实缺陷</span>B1 · 两个「录制」同名,UI/文档必然误导用户</h3>
+  <div class="row"><b>现象</b>系统里有两个互不相干的"录制":</div>
+  <div class="row" style="padding-left:72px">
+    ① <code>run.recording</code> = 截图拼 GIF,由 agent 工具 <code>record_start/record_stop</code> 控制(service.py:123-124, 1094)<br>
+    ② <code>run.recorder</code> = 流程录制器,由前端按钮控制(recording.py:190)
+  </div>
+  <div class="row"><b>影响</b>实测有效:真实用户(本次讨论)连问四轮才分清,前几轮全部理解偏(以为是视频、以为有逐张审核)。</div>
+  <div class="row"><b>建议</b>UI/文档层面区分叫法,如「过程动图」vs「流程录制」;有余力再改代码字段名。</div>
+</div>
+
+<div class="item bug">
+  <h3><span class="tag bug">真实缺陷</span>B2 · 录制只在当前会话内可回放,无明示</h3>
+  <div class="row"><b>现象</b>录制数据存在 <code>artifact_root/&lt;thread_id&gt;/flows/</code>(workflows.py:21-23),换一个会话就找不到这份录制。</div>
+  <div class="row"><b>实际行为</b>跨会话复用的唯一途径是手动「生成技能」装进 <code>.agents/skills/</code>(skills.py:117)。</div>
+  <div class="row"><b>建议</b>若产品预期"录制全局可用",这是功能缺口;若维持现状,需在 UI 上明示「录制仅本会话,跨会话请生成技能」。二选一,不能不说。</div>
+</div>
+
+<div class="item design">
+  <h3><span class="tag design">取舍说明</span>D1 · 回放比人手慢(非 bug)</h3>
+  <div class="row"><b>现象</b>回放每步前多一次「观察+比对」(约 1 秒),30 步流程比人慢一倍以上。</div>
+  <div class="row"><b>设计意图</b>用速度换安全:页面改版后宁可停下报错,也不点错按钮/提交错东西。</div>
+  <div class="verdict">ℹ️ 维持现状即可;若未来要提速(如缓存观察结果),需重新评估误操作风险。</div>
+</div>
+
+<div class="item design">
+  <h3><span class="tag design">取舍说明</span>D2 · 流程录制不保存任何真实输入值(非 bug)</h3>
+  <div class="row"><b>现象</b>录制里账号密码全是 <code>{{占位符}}</code>,回放时要现场重新填。</div>
+  <div class="row"><b>设计意图</b>mask-all 脱敏(recording.py:450),密码/敏感内容永不落盘;技能生成时连 example 值都会剥掉(skills.py:42-44)。</div>
+  <div class="verdict">ℹ️ 安全特性,勿"修复"。副作用是每次回放都要重新提供凭据,属预期成本。</div>
+</div>
+
+<!-- ==================== 汇总表 ==================== -->
+<h2>三、汇总表</h2>
+<table>
+  <tr><th>编号</th><th>条目</th><th>性质</th><th>支持?</th><th>需要行动?</th></tr>
+  <tr><td>L1</td><td>跨网站复用流程(淘宝→携程)</td><td>设计边界</td><td style="color:var(--red)">❌ 不支持</td><td>否(想要就重录)</td></tr>
+  <tr><td>L2</td><td>自动触发录制</td><td>设计边界</td><td style="color:var(--red)">❌ 不支持</td><td>否(如需要提需求)</td></tr>
+  <tr><td>L3</td><td>跨站点能力泛化</td><td>设计边界</td><td style="color:var(--red)">❌ 不支持</td><td>否</td></tr>
+  <tr><td>B1</td><td>双「录制」同名混淆</td><td style="color:var(--red)">真实缺陷</td><td>—</td><td style="color:var(--amber)"><b>建议修:改 UI 叫法</b></td></tr>
+  <tr><td>B2</td><td>录制仅会话内可用且无明示</td><td style="color:var(--red)">真实缺陷(UX)</td><td>—</td><td style="color:var(--amber)"><b>建议修:明示或放开</b></td></tr>
+  <tr><td>D1</td><td>回放慢于人工</td><td>刻意取舍</td><td>✅</td><td>否</td></tr>
+  <tr><td>D2</td><td>不保存真实凭据</td><td>刻意取舍</td><td>✅</td><td>否(安全特性)</td></tr>
+</table>
+
+<div class="item" style="border-left-color:var(--blue)">
+  <h3 style="color:var(--blue)">📌 一句话总结</h3>
+  <div class="row">你设想的「录一次、处处通用、自动触发」这套体验,<b>当前系统三项都不支持</b>——它的定位是「一条流程一份剧本,手动录制,同站复用」。真正需要修的只有 B1(命名混淆)和 B2(会话隔离无明示)两处 UX 问题。</div>
+</div>
+
+<footer>核查依据:src/deepseek_tui/browser/{recording,workflows,skills,service}.py · src/deepseek_tui/server/browser_routes.py</footer>
+
+</div>
+</body>
+</html>
