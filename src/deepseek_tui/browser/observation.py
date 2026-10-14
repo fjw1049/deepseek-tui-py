@@ -518,8 +518,13 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
         if (a.x!==null && (s.scrolls.some(v=>v.x!==(v.window?v.node.scrollX:v.node.scrollLeft) ||
               v.y!==(v.window?v.node.scrollY:v.node.scrollTop)) ||
             [...s.refs.values()].some(v=>{
-              const r=v.element.getBoundingClientRect();
-              return !v.element.isConnected ||
+              const r=v.element.getBoundingClientRect(), scope=s.context(v.element), old=v.scope;
+              return !v.element.isConnected || v.element.parentElement!==v.parent ||
+                !!scope!==!!old || (scope && (scope.node!==old.node || scope.id!==old.id ||
+                  scope.text!==old.text || JSON.stringify(scope.keys)!==JSON.stringify(old.keys))) ||
+                (v.element.tagName==='A'?v.element.href:null)!==v.href ||
+                (v.element.form?.action || null)!==v.formAction ||
+                s.canonicalRole(v.element)!==v.role ||
                 s.name(v.element)!==v.name ||
                 [r.x,r.y,r.width,r.height].some((n,i)=>Math.abs(n-v.box[i])>1);
             }))) return {error:'stale_layout'};

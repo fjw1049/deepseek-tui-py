@@ -179,6 +179,7 @@ async def test_large_observation_survives_actual_engine_tool_ingress(tmp_path, m
         result = json.loads(content)
         assert len(content) <= 6000
         assert result["receipt"]["execution"] == "executed"
+        assert result["receipt"]["evidence_ref"] == "tool:read"
         assert result["observation"]["observation_id"] == "obs-current"
         assert result["observation"]["elements"][0]["ref"] == "e0"
         assert result["observation"]["next_element_offset"] > 0
@@ -361,5 +362,89 @@ async def test_provider_failure_after_browser_returns_blocked_delivery(tmp_path)
         assert "413" in result.task_outcome["remaining"][0]
         assert result.error_message and result.assistant_message.text_content()
         assert "tool:open" in result.task_outcome["evidence"]
+    finally:
+        await engine.shutdown_session()
+
+
+@pytest.mark.parametrize("recover", [True, False])
+async def test_rejected_delivery_has_one_correction_and_preserves_actual_answer(tmp_path, recover):
+    wrong = ToolCall(id="bad-finish", name="finish_task", arguments={
+        "status": "completed", "answer": "The report says 42.",
+        "evidence": ["tool:browser-action-id"], "remaining": [],
+    })
+    engine, client = await delivery_engine(tmp_path, [
+        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
+        wrong, finish() if recover else wrong,
+    ])
+    try:
+        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
+        assert len(client.requests) == 3
+        assert {(t.get("function") or t)["name"] for t in client.requests[-1].tools} == {"finish_task"}
+        errors = [b.content for m in client.requests[-1].messages for b in m.content
+                  if b.type == "tool_result" and b.is_error]
+        assert any("tool:read" in e and "action_id" in e for e in errors)
+        assert result.task_outcome["status"] == ("completed" if recover else "partial")
+        assert ("The total is 42." if recover else "The report says 42.") in result.assistant_message.text_content()
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_progress_narration_is_never_reused_as_answer(tmp_path):
+    engine, client = await delivery_engine(tmp_path, [
+        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
+        "Retry with the screenshot ID.", "Trying again.",
+    ])
+    try:
+        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
+        assert len(client.requests) == 3
+        assert result.task_outcome["status"] == "partial"
+        assert "Retry" not in result.assistant_message.text_content()
+        assert "Trying" not in result.assistant_message.text_content()
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_malformed_finish_also_has_bounded_correction(tmp_path):
+    engine, client = await delivery_engine(tmp_path, [
+        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
+        ToolCall(id="bad", name="finish_task", arguments={"answer": "Incomplete schema"}),
+        finish(),
+    ])
+    try:
+        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
+        assert len(client.requests) == 3
+        assert {(t.get("function") or t)["name"] for t in client.requests[-1].tools} == {"finish_task"}
+        assert result.task_outcome["status"] == "completed"
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_stalled_correction_times_out_with_submitted_answer(tmp_path, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("deepseek_tui.tools.task_delivery.FINALIZATION_TIMEOUT_SECONDS", 0.01)
+    engine, client = await delivery_engine(tmp_path, [
+        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
+        ToolCall(id="bad", name="finish_task", arguments={
+            "status": "completed", "answer": "The report says 42.",
+            "evidence": ["tool:wrong"], "remaining": [],
+        }),
+    ])
+    stream = client.stream_chat_completion
+
+    async def stalled(request):
+        if len(client.requests) == 2:
+            client.requests.append(request)
+            await asyncio.Event().wait()
+        async for event in stream(request):
+            yield event
+
+    monkeypatch.setattr(client, "stream_chat_completion", stalled)
+    try:
+        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
+        assert len(client.requests) == 3
+        assert result.task_outcome["status"] == "partial"
+        assert "The report says 42." in result.assistant_message.text_content()
+        assert "timed out" in result.task_outcome["remaining"][0]
     finally:
         await engine.shutdown_session()

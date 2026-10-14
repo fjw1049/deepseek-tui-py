@@ -271,6 +271,7 @@ def _bounded_result(data, budget):
             if k
             in {
                 "action_id",
+                "evidence_ref",
                 "action",
                 "execution",
                 "effect",

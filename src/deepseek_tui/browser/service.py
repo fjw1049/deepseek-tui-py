@@ -46,7 +46,7 @@ FOCUSED_FIELD = (
     "/^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName)))return {};"
     "const ids=window.__deepseekFocusIds || (window.__deepseekFocusIds={map:new WeakMap(),next:0});"
     "if(!ids.map.has(e))ids.map.set(e,ids.next++);const s=(" + SCOPE_CONTEXT + ")(e);"
-    "return {node:ids.map.get(e),scope:s?{tag:s.tag,id:s.id,keys:s.keys}:null}})()"
+    "return {node:ids.map.get(e),scope:s?{tag:s.tag,id:s.id,keys:s.keys,text:s.text}:null}})()"
 )
 # At the session cap, a session unused this long may be closed for a new thread.
 IDLE_RECLAIM_SECONDS = 600
@@ -626,7 +626,7 @@ class BrowserService:
                            "saved" if response.get("artifact") else "not_requested")
         action_id = receipt["action_id"]
         if action_id not in run.operations:
-            if not response["success"]:
+            if not response["success"] or receipt.get("effect") == "not_confirmed":
                 run.consecutive_action_failures += 1
             elif receipt.get("action") not in {"observe", "describe", "screenshot", "tabs", "downloads"}:
                 run.consecutive_action_failures = 0
@@ -781,6 +781,13 @@ class BrowserService:
                 "if(keys.flat().some(v=>v?.length>1024))return {error:true};return {count:nodes.length,keys}})()")
             if keys.get("error"):
                 raise ValueError("Visible record scope is too large for direct viewport input; use scoped targets")
+            # Bind form context even without a URL/data-record change. Field values are excluded.
+            scopes = await evaluate(await root_context(run),
+                "(()=>{const context=(" + SCOPE_CONTEXT + ");return [...document.querySelectorAll("
+                "'input,textarea,select,[contenteditable]')].map(e=>{const s=context(e);"
+                "return s?{tag:s.tag,id:s.id,keys:s.keys,text:s.text}:null})})()")
+            scene["field_scopes"] = hashlib.sha256(
+                json.dumps(scopes, sort_keys=True).encode()).hexdigest()[:32]
             focus = await evaluate(await root_context(run), FOCUSED_FIELD)
             if await document_identity(run.session._internal.client) != (frame.get("id", ""), frame.get("loaderId", "")):
                 raise RuntimeError("Browser document changed during scene read")
@@ -1078,6 +1085,7 @@ class BrowserService:
         run.log.append({"action": action.action, "success": False, **receipt})
         run.log[:] = run.log[-80:]
         guidance = {
+            "missing_observation_id": "Copy observation_id from the returned observation before retrying; the action was not executed.",
             "target_obscured": "Inspect and dismiss the overlay using its own observed controls; do not click through it.",
             "screenshot_pixels_changed": "Pixels around the target point changed. Prefer an observed element ref/selector on dynamic pages; if none is available, inspect a fresh screenshot or request manual help.",
             "focus_not_active": "The page could not receive keyboard input. Inspect the active tab or request manual help.",
@@ -1227,6 +1235,9 @@ class BrowserService:
                 raise ValueError("Recording is already running; finish it before starting again")
             if action.action == "video_start" and run.video:
                 raise ValueError("Video is already recording")
+            if (action.action in TARGET_ACTIONS and require_observation
+                    and not action.chooser_id and not action.observation_id):
+                return await self._reject_action(run, action, "missing_observation_id")
             if action.action in TARGET_ACTIONS and not (
                 require_observation or action.observation_id
             ) and (action.ref or action.selector or action.action in {
@@ -1606,6 +1617,18 @@ class BrowserService:
             await press_key(run, a.key, client=input_client)
             result = None
         elif a.action == "scroll":
+            # Capture positions after target resolution, which may itself scroll into view.
+            try:
+                scroll_context = run.observation_context if a.frame_id else await root_context(run)
+                await evaluate(scroll_context, """(() => {
+                  const entries=window.__deepseekObservation?.scrolls;
+                  window.__deepseekScrollProbe=entries?.map(v=>({...v,
+                    x:v.window?v.node.scrollX:v.node.scrollLeft,
+                    y:v.window?v.node.scrollY:v.node.scrollTop}));
+                  return true;
+                })()""")
+            except Exception:
+                pass  # Dispatch remains valid when effect verification is unavailable.
             await input_client.send("Input.dispatchMouseEvent", {
                 "type": "mouseWheel", "x": a.x if a.x is not None else run.width / 2,
                 "y": a.y if a.y is not None else run.height / 2,
@@ -1732,6 +1755,26 @@ class BrowserService:
                     settle_warning = await self._settle(run, frame_id=a.frame_id)
             except Exception as exc:
                 settle_warning = "Page readiness unavailable: " + (str(exc) or type(exc).__name__)
+            if a.action == "scroll":
+                try:
+                    changed = await evaluate(scroll_context, """(() => {
+                      const entries=window.__deepseekScrollProbe;
+                      delete window.__deepseekScrollProbe;
+                      if(!entries?.length) return null;
+                      return entries.some(v=>v.x!==(v.window?v.node.scrollX:v.node.scrollLeft)
+                        || v.y!==(v.window?v.node.scrollY:v.node.scrollTop));
+                    })()""")
+                    if isinstance(changed, bool):
+                        effect = "confirmed" if changed else "not_confirmed"
+                        content = (
+                            "A scroll position changed; inspect the observation to verify the intended content moved."
+                            if changed else
+                            "Wheel dispatched but no observed scroll position changed. The target may be at its limit "
+                            "or the pointer may be outside the list. Target the intended scroll container with "
+                            "an observed ref/selector, or fresh screenshot coordinates; do not repeat blindly."
+                        )
+                except Exception:
+                    pass  # A missing probe must not imply that the page failed to scroll.
             try:
                 observation = await observe(run, full=True, frame_id=a.frame_id)
                 if settle_warning:
@@ -1753,6 +1796,8 @@ class BrowserService:
                 "verified_at": datetime.now(timezone.utc).isoformat(),
                 "observation_id": (observation or {}).get("observation_id"),
                 "frame_id": a.frame_id, "selector": a.selector}
+        if a.action == "scroll":
+            receipt["verification"] = {"kind": "observed_scroll_position", "x": a.x, "y": a.y}
         entry: dict[str, Any] = {"action": a.action, "success": success, **receipt}
         if a.action == "check_text":
             entry["expected"] = a.text

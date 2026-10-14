@@ -3167,7 +3167,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 "Result finalization did not complete; task completion was not verified. "
                 "Earlier unverified draft:"
             )
-            answer = warning + ("\n\n" + delivery.draft_answer if delivery.draft_answer else "")
+            if delivery.draft_answer:
+                answer = warning + "\n\n" + delivery.draft_answer
+            else:
+                answer = (
+                    "结果整理未能完成，尚无通过核验的答案。请重试或补充信息。"
+                    if str(getattr(self, "reply_locale", "")).startswith("zh") else
+                    "Result finalization did not complete; task completion was not verified. "
+                    "No submitted answer is available."
+                )
             delivery.outcome = {"status": "partial", "answer": answer,
                                 "evidence": sorted(delivery.evidence), "remaining": [reason]}
             message = Message.assistant(answer)
@@ -3493,9 +3501,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if delivery.active and delivery.outcome is None and not result.error_message:
                     if not delivery.stop_reminded and round_idx < self.max_tool_round_trips:
                         delivery.stop_reminded = True
-                        delivery.draft_answer = (
-                            result.assistant_message.text_content() if result.assistant_message else ""
-                        )
                         await self.handle.emit(StatusEvent(message=(
                             "正在整理已有结果（最多 60 秒），此阶段不再操作浏览器。"
                             if str(getattr(self, "reply_locale", "")).startswith("zh") else
@@ -3512,23 +3517,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         ))
                         logger.info("task_delivery_stop_deferred")
                         continue
-                    from dataclasses import replace
-
-                    text = (result.assistant_message.text_content()
-                            if result.assistant_message else "")
-                    warning = (
-                        "任务尚未完成核验。"
-                        if str(getattr(self, "reply_locale", "")).startswith("zh")
-                        else "Task completion was not verified."
-                    )
-                    answer = warning + "\n\n" + text
-                    delivery.outcome = {"status": "partial", "answer": answer, "evidence": [],
-                                        "remaining": ["Structured task delivery was not supplied."]}
-                    result = replace(result, assistant_message=Message.assistant(answer))
-                    messages.append(result.assistant_message)
-                    from deepseek_tui.engine.events import TextDeltaEvent
-
-                    await self.handle.emit(TextDeltaEvent(text=answer))
+                    result = await incomplete_delivery("Structured task delivery was not supplied.")
                 # Checklist turn-end gate: if the model is about to stop with
                 # open checklist items, hold this stop and inject a reminder
                 # that makes it face each one. Re-fires while the model keeps

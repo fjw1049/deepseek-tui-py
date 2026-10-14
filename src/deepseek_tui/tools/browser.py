@@ -43,6 +43,8 @@ class BrowserUseTool(ToolSpec):
             "For click/fill/type/select/set_checked/hover/press/scroll pass observation_id "
             "from "
             "the latest observation. Old refs must never be reused after a new observation. "
+            "For scrolling a list/panel, target its observed ref/selector or fresh screenshot coordinates; "
+            "without a target the wheel is sent at viewport center, which may be outside the list. "
             "Actions return fresh observations automatically. execution is dispatch status; "
             "effect=unchecked does NOT mean the user's task succeeded. If observation fails "
             "after execution, observe again instead of repeating the completed operation. "

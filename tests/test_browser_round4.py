@@ -229,3 +229,16 @@ async def test_mixed_failures_escalate_across_successful_observations(tmp_path, 
         persist=False,
     )
     assert run.consecutive_action_failures == 0
+
+
+def test_dispatched_scroll_without_movement_counts_toward_recovery(tmp_path):
+    service = BrowserService(tmp_path)
+    run = BrowserRun("t", tmp_path)
+    for i in range(3):
+        result = service._remember_response(run, {
+            "success": True, "content": "No observed movement",
+            "receipt": {"action_id": str(i), "action": "scroll",
+                        "execution": "executed", "effect": "not_confirmed"},
+        }, persist=False)
+    assert result["receipt"]["consecutive_action_failures"] == 3
+    assert result["receipt"]["retry_kind"] == "change_route_or_assistance"

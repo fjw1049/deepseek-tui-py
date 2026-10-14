@@ -128,7 +128,8 @@ class FinishTaskTool(ToolSpec):
             "Submit the actual final answer for the whole user task, not an intermediate browser "
             "step. Call alone. status=completed requires evidence and no remaining work. "
             "Use partial/blocked with concrete remaining items when unable to finish. Evidence "
-            "references are tool:<tool_call_id> from successful results in this task. Explain "
+            "references must copy evidence_ref from successful tool results, never action_id "
+            "or observation_id. Explain "
             "what those results establish in answer; dispatch alone is not business success. "
             "The Engine delivers answer verbatim after its existing stop checks."
         )
@@ -174,6 +175,7 @@ class FinishTaskTool(ToolSpec):
             or not answer.strip()
         ):
             raise ToolError("Supply a final status and a non-empty actual answer")
+        state.draft_answer = answer
         if any(
             not isinstance(v, list) or any(not isinstance(x, str) or not x.strip() for x in v)
             for v in (evidence, remaining)
@@ -181,7 +183,10 @@ class FinishTaskTool(ToolSpec):
             raise ToolError("evidence and remaining must be arrays of non-empty strings")
         if set(evidence) - state.evidence:
             raise ToolError(
-                "Unknown evidence reference; use tool:<id> from a successful task result"
+                "Unknown evidence reference; copy evidence_ref, not action_id or observation_id. "
+                "Available references: " + json.dumps(sorted(state.evidence)) +
+                ". Choose only results supporting the answer; "
+                "use partial/blocked for unverified work."
             )
         browser = context.metadata.get("browser_service")
         thread_id = str(context.metadata.get("runtime_thread_id"))

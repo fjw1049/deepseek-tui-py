@@ -739,6 +739,8 @@ async def test_harness_scrolls_target_and_only_requested_axis(chrome):
     assert result["success"]
     await asyncio.sleep(0.15)
     assert await evaluate(client, "document.querySelector('#box').scrollTop") > 0
+    assert result["receipt"]["effect"] == "confirmed"
+    assert result["receipt"]["verification"]["kind"] == "observed_scroll_position"
     result = await act(service, await read(service), "scroll", selector="#box", direction="right")
     await asyncio.sleep(0.15)
     assert await evaluate(client, "window.lastWheel") == {"x": 300, "y": 0}
@@ -2320,3 +2322,72 @@ async def test_press_recovers_inactive_page_focus_then_revalidates(chrome, monke
     if focus_changes:
         assert result["receipt"]["execution"] == "not_executed"
         assert result["receipt"]["reason"] == "focus_changed"
+
+
+async def test_scroll_outside_list_reports_no_observed_movement(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client,
+        "document.body.innerHTML=`<div id=box style='width:100px;height:100px;overflow:auto'>"
+        "<div style='height:3000px'>Content</div></div>`;true")
+    result = await act(service, await read(service), "scroll", amount=300)
+    assert result["success"]  # Dispatch succeeded; effect did not.
+    assert result["receipt"]["execution"] == "executed"
+    assert result["receipt"]["effect"] == "not_confirmed"
+    assert "outside the list" in result["content"]
+
+
+async def test_missing_observation_is_not_reported_as_expired(chrome):
+    service, run = chrome
+    result = await service.action("t", BrowserAction(action="scroll"), require_observation=True)
+    assert not result["success"]
+    assert result["receipt"]["reason"] == "missing_observation_id"
+    assert result["receipt"]["execution"] == "not_executed"
+    assert result["observation"]["observation_id"]
+
+
+async def test_review_coordinate_rejects_reused_control_for_other_record(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML=`<section data-record=A><span id=label style='position:absolute;left:20px;top:20px'>Record A</span><button style='position:absolute;left:100px;top:100px;width:120px;height:40px' onclick='window.deleted=this.parentElement.dataset.record'>Delete</button></section>`;window.deleted=null;true")
+    capture = await service.action('t', BrowserAction(action='screenshot'))
+    await evaluate(client, "document.querySelector('section').dataset.record='B';document.querySelector('#label').textContent='Record B';true")
+    result = await act(service, capture['observation'], 'click', x=160, y=120)
+    deleted = await evaluate(client, "window.deleted || ''")
+    assert deleted == '', f'Wrong record deleted: {deleted}; receipt={result["receipt"]}'
+
+@pytest.mark.parametrize("change_url", [True, False])
+async def test_review_typing_rejects_changed_record_without_data_attributes(chrome, change_url):
+    from deepseek_tui.browser.input import BrowserInput
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML=`<form><label id=who>Customer A</label><input id=q></form>`;history.replaceState(null,'','?customer=A');true")
+    await service.control('t', 'user')
+    await service.action('t', BrowserAction(action='click', selector='#q', generation=run.generation), actor='user')
+    scene = (await service.view('t'))['scene']['scene_id']
+    await evaluate(client, "document.querySelector('#who').textContent='Customer B';"
+                   + ("history.replaceState(null,'','?customer=B');" if change_url else "") + "true")
+    try:
+        await service.input('t', BrowserInput(kind='text', text='private A note', generation=run.generation, scene_id=scene))
+    except ValueError:
+        pass
+    value = await evaluate(client, "document.querySelector('#q').value")
+    assert value == '', f'Queued input entered changed customer form: {value}'
+
+
+async def test_human_click_then_typing_keeps_scene_binding(chrome):
+    from deepseek_tui.browser.input import BrowserInput
+
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML=`<form><label>Search</label>"
+                   "<input id=q style='position:absolute;left:100px;top:100px;width:200px;height:40px'>"
+                   "</form>`;true")
+    await service.control("t", "user")
+    scene = (await service.view("t"))["scene"]["scene_id"]
+    for event in ("mousePressed", "mouseReleased"):
+        await service.input("t", BrowserInput(kind="mouse", event=event, x=150, y=120,
+                            button="left", generation=run.generation, scene_id=scene))
+    for text in "hello":
+        await service.input("t", BrowserInput(kind="text", text=text,
+                            generation=run.generation, scene_id=scene))
+    assert await evaluate(client, "document.querySelector('#q').value") == "hello"

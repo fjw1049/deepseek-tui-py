@@ -7,9 +7,11 @@ interactive user-input waits.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import nullcontext
+from dataclasses import replace
 from typing import Any
 
 from deepseek_tui.engine.context import compact_tool_result_for_context
@@ -26,6 +28,7 @@ from deepseek_tui.engine.events import (
     ElevationRequiredEvent,
     ModeChangedEvent,
     SandboxDeniedEvent,
+    StatusEvent,
     ToolResultEvent,
     UserInputRequiredEvent,
 )
@@ -162,6 +165,17 @@ class ToolExecutionMixin:
                                                       success=False, content=content))
                 results.append(Message.tool_result(call.id, content, is_error=True))
             return results
+
+        delivery = self.tool_context.metadata.get("task_delivery")
+        if (delivery and delivery.active and len(tool_calls) == 1
+                and tool_calls[0].name == "finish_task" and not delivery.stop_reminded):
+            # Even malformed submissions get only one bounded correction round.
+            delivery.stop_reminded = True
+            await self.handle.emit(StatusEvent(message=(
+                "正在整理已有结果（最多 60 秒），此阶段不再操作浏览器。"
+                if str(getattr(self, "reply_locale", "")).startswith("zh") else
+                "Finalizing existing results (up to 60 seconds); no further browser actions."
+            )))
 
         try:
             # Build execution plans and check if batch can be parallelized.
@@ -420,7 +434,19 @@ class ToolExecutionMixin:
             "finish_task", "request_task_tools", "request_user_input", "checklist",
         }:
             if tool_call.name != "browser_use" or tool_call.arguments.get("action") != "request_assistance":
-                delivery.evidence.add("tool:" + tool_call.id)
+                evidence_ref = "tool:" + tool_call.id
+                delivery.evidence.add(evidence_ref)
+                metadata = {**result.metadata, "evidence_ref": evidence_ref}
+                if isinstance(metadata.get("browser"), dict):
+                    browser = {**metadata["browser"]}
+                    browser["receipt"] = {
+                        **browser.get("receipt", {}), "evidence_ref": evidence_ref,
+                    }
+                    metadata["browser"] = browser
+                    result = replace(result, content=json.dumps(browser, ensure_ascii=False),
+                                     metadata=metadata)
+                else:
+                    result = replace(result, metadata=metadata)
 
         if tool_call.name == "checklist" and result.success:
             capture_goal_checklist(self.tool_context)
@@ -488,6 +514,8 @@ class ToolExecutionMixin:
             pressure_ratio=self._ingress_pressure_ratio(model),
             model_config=getattr(self, "_app_config", None),
         )
+        if result.metadata.get("evidence_ref") and tool_call.name != "browser_use":
+            output_for_context += "\nEvidence reference: " + result.metadata["evidence_ref"]
         if not result.images:
             self._tool_dedup.record(
                 decision.key,
