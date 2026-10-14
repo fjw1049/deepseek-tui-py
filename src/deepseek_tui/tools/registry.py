@@ -545,7 +545,8 @@ class ToolRegistry:
             self._context.metadata.get("browser_service") and
             self._context.metadata.get("runtime_thread_id")
         ):
-            return [t for t in self._api_cache if t["function"]["name"] != "browser_use"]
+            return [t for t in self._api_cache
+                    if t["function"]["name"] not in {"browser_use", "browser_skill"}]
         return self._api_cache
 
     # ------------------------------------------------------------------
@@ -685,8 +686,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry = ToolRegistry()
     if mode not in {"plan", "ask"}:
         from deepseek_tui.tools.browser import BrowserUseTool
+        from deepseek_tui.tools.browser_skill import BrowserSkillTool
 
         registry.register(BrowserUseTool())
+        registry.register(BrowserSkillTool())
         from deepseek_tui.tools.task_delivery import FinishTaskTool, RequestTaskToolsTool
 
         registry.register(FinishTaskTool())

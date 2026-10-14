@@ -61,7 +61,8 @@ export function readUiFontFamily(): string {
 /** Terminal/xterm must stay monospace — proportional UI fonts break column layout and FitAddon. */
 export function readTerminalFontFamily(): string {
   const family = getComputedStyle(document.documentElement).getPropertyValue('--font-terminal').trim()
-  return family || DEFAULT_MONO_FONT_STACK
+  // Covers only block elements (see fonts.css); everything else uses the chosen font.
+  return `'DS Terminal Blocks', ${family || DEFAULT_MONO_FONT_STACK}`
 }
 
 export function applyUiFontFamily(family: UiFontFamily): void {

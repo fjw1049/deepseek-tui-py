@@ -317,6 +317,11 @@ class BrowserRun:
     last_used: float = field(default_factory=time.monotonic)
     cookie_baseline: dict[str, dict] | None = None
     cookie_saved_at: float = 0
+    last_view_at: float = 0
+    screencast_client: Any = None
+    screencast_frame: tuple[int, str] | None = None  # (sequence, data URL) of the latest frame
+    screencast_seq: int = 0
+    view_mark: tuple[dict, int, str] | None = None  # scene, frame sequence and image last served
 
 
 class BrowserService:
@@ -329,6 +334,9 @@ class BrowserService:
         self.cookies = CookieStore(self.profile_root)
         self.installer = BrowserInstaller()
         self.runs: dict[str, BrowserRun] = {}
+        from deepseek_tui.browser.suggestions import SkillSuggestions
+
+        self.suggestions = SkillSuggestions(artifact_root / "skill-suggestions.json")
 
     def preferences(self, thread_id: str) -> dict[str, bool]:
         path = self.artifact_root / thread_id / "preferences.json"
@@ -398,18 +406,21 @@ class BrowserService:
         run.cookie_saved_at = time.monotonic()
         try:
             await asyncio.wait_for(self.cookies.capture(run), timeout=3)
+            self.cookies.save_error = False
         except Exception:
-            self.cookies.status = "save_failed"
+            self.cookies.save_error = True
 
-    async def sync_cookies(self, thread_id: str) -> dict[str, Any]:
+    async def sync_cookies(
+        self, thread_id: str, sites: list[str] | None = None,
+    ) -> dict[str, Any]:
         run = self.runs.get(thread_id)
         if not run or not run.session:
-            await self.cookies.sync()
+            await self.cookies.sync(sites=sites)
             return self.cookies.state()
         async with run.lock:
             if run.owner != "user" or run.transferring or run.unresolved:
                 raise ValueError("Take control and resolve pending actions before syncing cookies")
-            await self.cookies.sync(run)
+            await self.cookies.sync(run, sites)
             run.generation += 1
             run.latest_observation = None
             run.scene = None
@@ -513,7 +524,7 @@ class BrowserService:
                         try:
                             await asyncio.wait_for(self.cookies.restore(run), timeout=5)
                         except Exception:
-                            self.cookies.status = "save_failed"
+                            self.cookies.save_error = True
                 except BaseException:
                     from octop_browser.cdp.launcher import terminate_browser
 
@@ -557,6 +568,8 @@ class BrowserService:
                 **saved,
                 "unresolved": list(saved.get("unresolved", {}).values()),
                 "cookie_sync": self.cookies.state(),
+                "skill_suggestion": self.suggestions.pending.get(thread_id),
+                "skill_suggestions_enabled": self.suggestions.enabled,
             }
         return {
             "active": run.session is not None
@@ -580,7 +593,7 @@ class BrowserService:
             "artifacts": run.artifacts[-12:],
             "demo_status": run.demo_status,
             "activity": run.activity,
-            "workflow_recording": run.recorder is not None,
+            "workflow_recording": self._demonstrating(run),
             "demo_step": run.demo_step,
             "demo_total": run.demo_total,
             "error": run.error,
@@ -590,6 +603,8 @@ class BrowserService:
             "capabilities": browser_capabilities(video_ready=bool(shutil.which("ffmpeg"))),
             "metrics": run.metrics[-40:],
             "cookie_sync": self.cookies.state(),
+            "skill_suggestion": self.suggestions.pending.get(thread_id),
+            "skill_suggestions_enabled": self.suggestions.enabled,
             **(run.native_events.state() if run.native_events else {"dialog": None, "file_chooser": None, "downloads": []}),
         }
 
@@ -767,28 +782,45 @@ class BrowserService:
         image = None
         frame_status = "busy"
         if run:
-            run.last_used = time.monotonic()  # A visible panel keeps its session.
+            # A visible panel keeps its session and its screencast.
+            run.last_used = run.last_view_at = time.monotonic()
         if run and run.native_events and run.native_events.dialog:
             run.view_sequence += 1
             return {**self.state(thread_id), "image": None}
         if run and run.session and not run.lock.locked() and not run.transferring:
             async with run.lock:
                 try:
+                    await self._stream(run)
                     scene = await self._scene(run)
+                    # Frames received by now were painted no later than this scene read.
+                    streaming = run.screencast_client is run.session._internal.client
+                    frame, sequence = run.screencast_frame, run.screencast_seq
                     run.view_sequence += 1
                     run.url = scene["url"]
-                    await self.save_cookies(run)
+                    if run.owner == "user":
+                        # Agent actions save after each step; manual browsing saves here.
+                        await self.save_cookies(run)
                     await self._refresh_tabs(run)
-                    image = (
-                        "data:image/jpeg;base64,"
-                        + base64.b64encode(await self._capture(run)).decode()
-                    )
-                    if scene != await self._scene(run):
-                        image = None
-                        frame_status = "changed"
-                    else:
+                    mark = run.view_mark
+                    if streaming and mark and mark[0] == scene:
+                        # Same scene as the last bound image: a newer streamed frame lies
+                        # between two equal scene reads; without one, nothing repainted.
+                        image = frame[1] if frame and frame[0] > mark[1] else mark[2]
+                        run.view_mark = (scene, sequence, image)
                         frame_status = "ready"
+                    else:
+                        image = (
+                            "data:image/jpeg;base64,"
+                            + base64.b64encode(await self._capture(run)).decode()
+                        )
+                        if scene != await self._scene(run):
+                            image, run.view_mark = None, None
+                            frame_status = "changed"
+                        else:
+                            run.view_mark = (scene, run.screencast_seq, image)
+                            frame_status = "ready"
                 except Exception as exc:
+                    run.view_mark = None
                     if type(exc).__name__ == "CDPSessionError" or isinstance(exc, ConnectionError):
                         run.healthy = False
                     run.latest_observation = None
@@ -797,6 +829,41 @@ class BrowserService:
                         + (str(exc) or type(exc).__name__)
                     ) from exc
         return {**self.state(thread_id), "image": image, "frame_status": frame_status}
+
+    async def _stream(self, run: BrowserRun) -> None:
+        """Screencast the current page while a viewer polls; Chrome sends frames on repaint."""
+        client = run.session._internal.client
+        if run.screencast_client is client:
+            return
+        run.screencast_client, run.screencast_frame, run.view_mark = client, None, None
+
+        async def send(method, params=None):
+            try:
+                await client.send(method, params)
+            except Exception:
+                pass  # The page is closing; the next view starts a new stream.
+
+        def on_frame(params):
+            if run.screencast_client is not client or time.monotonic() - run.last_view_at > 3:
+                # Nobody watches this page any more; stop encoding its frames.
+                if run.screencast_client is client:
+                    run.screencast_client = None
+                client.off("Page.screencastFrame", on_frame)
+                return send("Page.stopScreencast")
+            run.screencast_seq += 1
+            run.screencast_frame = (run.screencast_seq, "data:image/jpeg;base64," + params["data"])
+            return send("Page.screencastFrameAck", {"sessionId": params["sessionId"]})
+
+        try:
+            client.on("Page.screencastFrame", on_frame)
+            await client.send("Page.startScreencast", {"format": "jpeg", "quality": 75})
+        except Exception:
+            # Streaming is only an optimization: views fall back to direct captures.
+            run.screencast_client = None
+            try:
+                client.off("Page.screencastFrame", on_frame)
+            except Exception:
+                pass
 
     async def _release_inputs(self, run):
         if not run.pressed_keys and not run.pressed_buttons:
@@ -2113,69 +2180,77 @@ class BrowserService:
                         self._finish_recording(run)
                     if run.video:
                         await self.stop_video(run)
+                elif owner == "agent" and self._demonstrating(run):
+                    # A demonstration belongs to the user; agent actions must not join it.
+                    await self._end_demonstration(run)
         finally:
             run.transferring = False
         if owner == "stopped":
             await self.close(thread_id)
         return self.state(thread_id)
 
-    async def start_demo(self, thread_id: str) -> dict[str, Any]:
-        run = await self.ensure(thread_id)
-        if run.owner != "agent":
-            raise ValueError("Return control to the agent before running the demo")
-        if run.demo_task and not run.demo_task.done():
-            raise ValueError("Demo is already running")
-        if run.recorder:
-            raise ValueError("Finish recording the workflow before running a demo")
-        run.activity = "demo"
-        run.demo_total = 9
-        run.demo_status, run.error = "running", None
-        run.demo_step = 0
-        run.log.clear()
-        self._persist(run)
-        run.demo_task = asyncio.create_task(self._demo(run))
-        return self.state(thread_id)
+    @staticmethod
+    def _demonstrating(run: BrowserRun) -> bool:
+        """A user demonstration is open; an agent capture continues across handoffs."""
+        return run.recorder is not None and getattr(run.recorder, "actor", "user") == "user"
 
-    async def _demo(self, run: BrowserRun) -> None:
+    async def ensure_agent_capture(self, thread_id: str) -> None:
+        """Quietly capture the agent's browser task so repeated workflows can become skills."""
+        run = self.runs.get(thread_id)
+        if (not self.suggestions.enabled or not run or not run.session
+                or run.owner != "agent" or run.recorder):
+            return
+        from deepseek_tui.browser.workflows import start_recording
+
         try:
-            async with run.lock:
-                result = await run.session.navigate(
-                    (Path(__file__).parent / "browser_demo.html").as_uri()
-                )
-                if not result.success:
-                    raise ValueError(result.error)
-                if shutil.which("ffmpeg") and run.video is None:
-                    await self.start_video(run)
-            steps = [
-                {"action": "record_start"},
-                {"action": "fill", "selector": "#name", "text": "Octop × Workbench"},
-                {"action": "click", "selector": "#notifications"},
-                {"action": "click", "selector": "#save"},
-                {"action": "check_text", "text": "已保存：Octop × Workbench"},
-                {"action": "click", "selector": "#details"},
-                {"action": "check_text", "text": "通知已开启"},
-                {"action": "screenshot"},
-                {"action": "record_stop"},
-            ]
-            for index, step in enumerate(steps, 1):
-                run.demo_step = index
-                await asyncio.sleep(0.65)
-                if step["action"] == "check_text":
-                    step["timeout_ms"] = 3000
-                result = await self.action(run.thread_id, BrowserAction(**step))
-                if not result["success"]:
-                    raise ValueError(str(result["content"]))
-            run.demo_status = "passed"
-        except asyncio.CancelledError:
-            run.demo_status = "stopped"
-            raise
+            await start_recording(self, thread_id, actor="agent")
+        except Exception:
+            return  # Capture is optional; the agent's task never depends on it.
+        if run.recorder:
+            run.recorder.auto = True
+
+    async def end_agent_capture(self, thread_id: str, *, completed: bool) -> None:
+        """Finish the agent's capture with its turn; only completed automatic ones count."""
+        run = self.runs.get(thread_id)
+        recorder = run.recorder if run else None
+        if getattr(recorder, "actor", None) != "agent":
+            return
+        from deepseek_tui.browser.skills import covered_sites, site_of
+        from deepseek_tui.browser.workflows import finish_recording, read_workflow
+
+        async with run.lock:
+            try:
+                result = await finish_recording(run)
+            except Exception:
+                result = None
+        if not getattr(recorder, "auto", False):
+            return
+        recording_id = recorder.manifest.recording_id
+        discard = [(thread_id, recording_id)]
+        if completed and result and result["steps"]:
+            doc = read_workflow(self, thread_id, recording_id)
+            discard = self.suggestions.observe(
+                thread_id, recording_id, doc, site_of(doc.start_url), covered_sites()
+            )
+        for owner, recording in discard:
+            self._discard_recording(owner, recording)
+
+    def _discard_recording(self, thread_id: str, recording_id: str) -> None:
+        from deepseek_tui.browser.workflows import recording_store
+
+        if Path(thread_id).name != thread_id or not recording_id.startswith("rec_"):
+            return
+        directory = recording_store(self, thread_id).recording_dir(Path(recording_id).name)
+        shutil.rmtree(directory, ignore_errors=True)
+
+    async def _end_demonstration(self, run: BrowserRun) -> None:
+        """Save the workflow recording; an incomplete capture stays saved for review."""
+        from deepseek_tui.browser.workflows import finish_recording
+
+        try:
+            await finish_recording(run)
         except Exception as exc:
-            run.demo_status, run.error = "failed", str(exc)
-        finally:
-            await self.stop_video(run)
-            if run.recording:
-                self._finish_recording(run)
-            self._persist(run)
+            run.log.append({"action": "evidence", "success": False, "error": str(exc)})
 
     async def close(self, thread_id: str) -> None:
         run = self.runs.get(thread_id)
@@ -2207,9 +2282,11 @@ class BrowserService:
                 try:
                     await self.stop_video(run)
                     if run.recorder:
-                        from deepseek_tui.browser.workflows import finish_recording
-
-                        await finish_recording(run)
+                        automatic = (getattr(run.recorder, "auto", False)
+                                     and run.recorder.manifest.recording_id)
+                        await self._end_demonstration(run)
+                        if automatic:
+                            self._discard_recording(thread_id, automatic)
                     if run.recording:
                         self._finish_recording(run)
                     self._persist(run)

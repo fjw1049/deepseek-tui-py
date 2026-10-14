@@ -17,6 +17,10 @@ from deepseek_tui.tools.registry import (
 )
 
 
+# Page work worth capturing for repeated-workflow suggestions; reads never start one.
+CAPTURED_ACTIONS = {"open", "new_tab", "click", "fill", "type", "select", "set_checked", "press"}
+
+
 class BrowserUseTool(ToolSpec):
     def name(self) -> str:
         return "browser_use"
@@ -184,7 +188,14 @@ class BrowserUseTool(ToolSpec):
                 run = getattr(browser, "runs", {}).get(str(thread_id))
                 if run:
                     run.upload_root = getattr(context, "working_directory", None)
+                capture = (getattr(browser, "ensure_agent_capture", None)
+                           if action.action in CAPTURED_ACTIONS else None)
+                if capture and action.action not in {"open", "new_tab"}:
+                    await capture(str(thread_id))
                 result = await browser.action(str(thread_id), action, require_observation=True)
+                if capture and result.get("success"):
+                    # A first page opens before capture, so it becomes the start page.
+                    await capture(str(thread_id))
                 if action.action == "downloads" and isinstance(context, ToolContext):
                     downloads = browser.artifact_root / str(thread_id) / "downloads"
                     context.extra_read_roots = tuple(dict.fromkeys((*context.extra_read_roots, downloads)))

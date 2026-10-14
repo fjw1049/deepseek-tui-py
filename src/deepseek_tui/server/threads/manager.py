@@ -5223,6 +5223,13 @@ class RuntimeThreadManager:
         ):
             self._resync_warm_engine_from_store(thread_id)
 
+        try:
+            await self.browser_service.end_agent_capture(
+                thread_id, completed=turn_status == RuntimeTurnStatus.COMPLETED
+            )
+        except Exception:  # noqa: BLE001 — a capture must never fail turn release
+            logger.debug("browser_capture_end_failed", exc_info=True)
+
         # Clear active turn
         async with self._active_lock:
             state = self._active.get(thread_id)

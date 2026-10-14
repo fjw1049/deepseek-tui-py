@@ -333,6 +333,73 @@ async def test_view_distinguishes_busy_from_changed_frame(shared, monkeypatch):
     assert view["frame_status"] == "changed" and view["image"] is None
 
 
+async def test_view_saves_cookies_only_for_manual_browsing(shared, monkeypatch):
+    browser, run, _ = shared
+    scene = {"scene_id": "same", "url": "https://example.test"}
+    monkeypatch.setattr(browser, "_scene", AsyncMock(return_value=scene))
+    monkeypatch.setattr(browser, "_capture", AsyncMock(return_value=b"jpeg"))
+    monkeypatch.setattr(browser, "save_cookies", AsyncMock())
+    run.owner = "agent"
+    await browser.view("one")
+    browser.save_cookies.assert_not_called()
+    run.owner = "user"
+    await browser.view("one")
+    browser.save_cookies.assert_awaited_once()
+
+
+class StreamClient:
+    """CDP page client that repaints only when the test says so."""
+
+    def __init__(self, frame):
+        self.frame, self.listeners, self.sent = frame, {}, []
+
+    def on(self, event, callback):
+        self.listeners.setdefault(event, []).append(callback)
+
+    def off(self, event, callback):
+        self.listeners[event].remove(callback)
+
+    async def send(self, method, params=None):
+        self.sent.append(method)
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": self.frame}}
+        if method == "Page.captureScreenshot":
+            return {"data": "Y2FwdHVyZQ=="}
+        return {}
+
+    async def paint(self, data):
+        for callback in list(self.listeners.get("Page.screencastFrame", [])):
+            await callback({"data": data, "sessionId": 1})
+
+
+async def test_view_serves_streamed_frames_only_between_equal_scenes(tmp_path):
+    browser = BrowserService(tmp_path)
+    frame = {"id": "tab", "loaderId": "doc", "url": "https://example.test"}
+    client = StreamClient(frame)
+    run = BrowserRun("one", tmp_path / "profile", owner="user",
+                     session=SimpleNamespace(_internal=SimpleNamespace(client=client)))
+    browser.runs["one"] = run
+    captured = "data:image/jpeg;base64,Y2FwdHVyZQ=="
+    assert (await browser.view("one"))["image"] == captured
+    assert client.sent.count("Page.startScreencast") == 1
+    # Nothing repainted: the bound image is served again without a capture.
+    assert (await browser.view("one"))["image"] == captured
+    assert client.sent.count("Page.captureScreenshot") == 1
+    await client.paint("c3RyZWFt")
+    assert (await browser.view("one"))["image"].endswith(",c3RyZWFt")
+    assert "Page.screencastFrameAck" in client.sent
+    # A frame painted before a new document is never served for it.
+    await client.paint("b2xk")
+    frame["loaderId"] = "next"
+    assert (await browser.view("one"))["image"] == captured
+    assert client.sent.count("Page.captureScreenshot") == 2
+    # Once the viewer leaves, the next repaint stops the stream.
+    run.last_view_at -= 10
+    await client.paint("bGF0ZQ==")
+    assert client.sent[-1] == "Page.stopScreencast" and run.screencast_client is None
+    assert not client.listeners["Page.screencastFrame"]
+
+
 async def test_manual_text_persists_receipt_once(shared, monkeypatch):
     from unittest.mock import Mock
     browser, _, _ = shared

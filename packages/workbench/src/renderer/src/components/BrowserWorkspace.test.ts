@@ -529,3 +529,67 @@ it('prioritizes the review state and offers one next step before takeover', asyn
     expect(h.container.querySelector('.ds-browser-control')).toBeNull()
   } finally { await h.close() }
 })
+
+it('records a user demonstration and asks the agent to turn it into a skill', async () => {
+  const h = mount()
+  let demonstrating = false
+  const base = { active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] }
+  h.request.mockImplementation(async (path: string, _method: string, raw?: string) => {
+    if (path.endsWith('/workflows')) {
+      const stop = JSON.parse(raw!).action === 'stop'
+      demonstrating = !stop
+      return { ok: true, status: 200, body: JSON.stringify(stop ? { recordingId: 'rec_demo', steps: 4 } : { ok: true }) }
+    }
+    return { ok: true, status: 200, body: JSON.stringify({ ...base, workflow_recording: demonstrating }) }
+  })
+  const saved = vi.fn()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', onDemonstrationSaved: saved })))
+    await h.click('browserMore')
+    await h.click('browserDemoStart')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start"}')
+    expect(saved).not.toHaveBeenCalled()
+    await h.click('browserMore')
+    await h.click('browserDemoFinish')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"stop"}')
+    expect(saved).toHaveBeenCalledExactlyOnceWith('browserDemoMessage')
+  } finally { await h.close() }
+})
+
+it('returning control ends a demonstration with a notice instead of another query', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
+  const saved = vi.fn()
+  resume.mockClear()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', onDemonstrationSaved: saved })))
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
+    await h.click('browserReturnControl')
+    expect(h.container.textContent).toContain('browserDemoSavedNotice')
+    expect(saved).not.toHaveBeenCalled()
+    expect(resume).not.toHaveBeenCalled()
+  } finally { await h.close() }
+})
+
+it('offers a repeated workflow as a skill and remembers a dismissal', async () => {
+  const suggestion = { id: 'sig', site: 'shop.example', count: 3, recording_id: 'rec_auto' }
+  const state = { active: true, owner: 'agent', generation: 2, url: 'https://shop.example', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], skill_suggestion: suggestion, skill_suggestions_enabled: true }
+  const h = mount(state)
+  const posted: string[] = []
+  h.request.mockImplementation(async (path: string, _method: string, raw?: string) => {
+    if (!path.endsWith('/skill-suggestions')) return { ok: true, status: 200, body: JSON.stringify(state) }
+    posted.push(JSON.parse(raw!).action)
+    return { ok: true, status: 200, body: JSON.stringify(suggestion) }
+  })
+  const saved = vi.fn()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', onDemonstrationSaved: saved })))
+    expect(h.container.textContent).toContain('browserSuggestSkill')
+    await h.click('browserSuggestDismiss')
+    expect(saved).not.toHaveBeenCalled()
+    await h.click('browserSuggestAccept')
+    expect(saved).toHaveBeenCalledExactlyOnceWith('browserSuggestMessage')
+    await h.click('browserMore')
+    await h.click('browserSuggestOff')
+    expect(posted).toEqual(['dismiss', 'accept', 'disable'])
+  } finally { await h.close() }
+})

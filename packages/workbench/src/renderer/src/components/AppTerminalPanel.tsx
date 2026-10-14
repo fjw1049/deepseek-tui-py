@@ -87,7 +87,7 @@ function proposeTerminalDimensions(container: HTMLElement | null): { cols: numbe
   const terminal = new XTerm({
     fontFamily: readTerminalFontFamily(),
     fontSize: getTerminalFontSizePx(),
-    lineHeight: 1.2,
+    lineHeight: 1,
     scrollback: 1
   })
   const fitAddon = new FitAddon()
@@ -241,10 +241,9 @@ export function AppTerminalPanel({
 
       const terminal = new XTerm({
         cursorBlink: true,
-        convertEol: true,
         fontFamily: readTerminalFontFamily(),
         fontSize: getTerminalFontSizePx(),
-        lineHeight: 1.2,
+        lineHeight: 1,
         scrollback: 8_000,
         theme: readTerminalTheme()
       })
@@ -255,7 +254,8 @@ export function AppTerminalPanel({
       // "%" mark using the current column width; writing at the default 80x24
       // leaves a permanent mark when the PTY was started at the panel size.
       fitAddon.fit()
-      if (terminal.cols > 0 && terminal.rows > 0) {
+      // A hidden host can't be measured; don't shrink the PTY to xterm's 80x24 default.
+      if (host.clientWidth > 0 && terminal.cols > 0 && terminal.rows > 0) {
         void window.dsGui?.resizeTerminalSession?.({
           sessionId: session.id,
           cols: terminal.cols,

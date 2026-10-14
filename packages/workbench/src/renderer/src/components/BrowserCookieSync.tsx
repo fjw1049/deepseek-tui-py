@@ -16,9 +16,10 @@ export type CookieSyncState = {
 const inviteSeenKey = 'browser-cookie-invite-seen'
 
 type Source = { id: string; name: string }
+type Site = { site: string; count: number; sensitive: boolean }
 
-export function BrowserCookieSync({ threadId, state, generation, manage, anchor, onOpen, onClose }: {
-  threadId: string; state?: CookieSyncState; generation?: number; manage: boolean; anchor?: DOMRect | null; onOpen: (anchor?: DOMRect) => void; onClose: () => void
+export function BrowserCookieSync({ threadId, state, generation, agentBusy = false, manage, anchor, onOpen, onClose }: {
+  threadId: string; state?: CookieSyncState; generation?: number; agentBusy?: boolean; manage: boolean; anchor?: DOMRect | null; onOpen: (anchor?: DOMRect) => void; onClose: () => void
 }): ReactElement | null {
   const { t } = useTranslation('common')
   const [current, setCurrent] = useState<CookieSyncState | null>(state ?? null)
@@ -31,6 +32,14 @@ export function BrowserCookieSync({ threadId, state, generation, manage, anchor,
     try { return localStorage.getItem(inviteSeenKey) === '1' } catch { return false }
   })
   const [hasSavedCookies, setHasSavedCookies] = useState(false)
+  // Sites whose sign-ins mirror Chrome; the picker edits a draft of them.
+  const [selected, setSelected] = useState<string[]>([])
+  const [sites, setSites] = useState<Site[] | null>(null)
+  const [sitesError, setSitesError] = useState<'' | 'permission' | 'unavailable'>('')
+  const [sitesAttempt, setSitesAttempt] = useState(0)
+  const [chosen, setChosen] = useState<Set<string>>(new Set())
+  const [changing, setChanging] = useState(false)
+  const [query, setQuery] = useState('')
   const showInvite = !manage && !inviteDismissed && !hasSavedCookies && current?.consent === 'pending' && current.count === 0 && sources.length > 0 && !busy && !feedback
   useEffect(() => {
     if (showInvite) {
@@ -80,22 +89,36 @@ export function BrowserCookieSync({ threadId, state, generation, manage, anchor,
   useEffect(() => { if (state) setCurrent(state) }, [state])
   useEffect(() => {
     let disposed = false
-    void browserRequest<CookieSyncState & { profiles: Source[] }>(threadId, '/cookie-sync').then(next => {
+    void browserRequest<CookieSyncState & { profiles: Source[]; selected_sites?: string[] }>(threadId, '/cookie-sync').then(next => {
       if (disposed) return
       setCurrent(next); setSources(next.profiles ?? [])
       setHasSavedCookies(next.has_saved_cookies ?? false)
+      setSelected(next.selected_sites ?? [])
       setProfile(next.profile ?? (next.profiles?.length === 1 ? next.profiles[0].id : ''))
     }).catch(() => { if (!disposed && manage) setError('browserCookieSettingsFailed') })
     return () => { disposed = true }
   }, [threadId, manage])
 
-  async function perform(action: string): Promise<void> {
+  const picking = sources.length > 0 && (changing || current?.consent !== 'enabled' || current.profile !== profile || !selected.length)
+  useEffect(() => {
+    if (!manage || !picking || !profile) return
+    let disposed = false
+    setSites(null); setSitesError(''); setQuery('')
+    void browserRequest<{ sites: Site[]; error?: 'permission' | 'unavailable' }>(threadId, `/cookie-sync/sites?profile=${encodeURIComponent(profile)}`)
+      .then(next => { if (!disposed) { if (next.error) setSitesError(next.error); else setSites(next.sites) } })
+      .catch(() => { if (!disposed) setSitesError('unavailable') })
+    return () => { disposed = true }
+  }, [threadId, manage, picking, profile, sitesAttempt])
+  useEffect(() => { if (picking) setChosen(new Set(selected)) }, [picking, selected])
+
+  async function perform(action: string, chosenSites?: string[]): Promise<void> {
     setBusy(true); setError(''); setFeedback('')
     try {
       const next = await browserRequest<CookieSyncState>(threadId, '/cookie-sync', {
-        action, ...(action === 'enable' ? { profile } : {}), generation
+        action, ...(action === 'enable' ? { profile } : {}), ...(chosenSites ? { sites: chosenSites } : {}), generation
       })
       setCurrent(next)
+      if (chosenSites) { setSelected(chosenSites); setChanging(false) }
       if (action === 'skip') { setInviteDismissed(true); onClose() }
       else {
         setFeedback(next.status)
@@ -103,6 +126,13 @@ export function BrowserCookieSync({ threadId, state, generation, manage, anchor,
       }
     } catch { setError(action === 'clear' ? 'browserCookieClearFailed' : 'browserCookieSettingsFailed') }
     finally { setBusy(false) }
+  }
+
+  function syncChosen(): void {
+    const list = [...chosen].sort()
+    const risky = list.filter(site => sites?.some(row => row.site === site && row.sensitive))
+    if (risky.length && !window.confirm(t('browserCookieSensitiveConfirm', { sites: risky.join(', ') }))) return
+    void perform(current?.consent === 'enabled' && current.profile === profile ? 'sync' : 'enable', list)
   }
 
   if (!current) return null
@@ -139,11 +169,64 @@ export function BrowserCookieSync({ threadId, state, generation, manage, anchor,
         {sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}
       </select>
     </label> : null}
+    {picking && profile ? <div className="ds-cookie-sites">
+      {sitesError ? <div className="ds-cookie-description" role="alert">
+        <p>{t(sitesError === 'permission' ? 'browserCookieSitesPermission' : 'browserCookieSitesFailed')}</p>
+        <button type="button" className={`${button} mt-2`} onClick={() => setSitesAttempt(attempt => attempt + 1)}>{t('browserCookieSitesRetry')}</button>
+      </div> : sites === null ? <p className="ds-cookie-description">{t('browserCookieSitesLoading')}</p> : (() => {
+        const rows = [...sites, ...selected.filter(site => !sites.some(row => row.site === site)).map(site => ({ site, count: 0, sensitive: false }))]
+        if (!rows.length) return <p className="ds-cookie-description">{t('browserCookieSitesEmpty')}</p>
+        const needle = query.trim().toLowerCase()
+        const visible = rows.filter(row => row.site.includes(needle))
+        const option = (row: Site): ReactElement => <label key={row.site} className="ds-cookie-site">
+          <input type="checkbox" checked={chosen.has(row.site)} disabled={busy} onChange={() => setChosen(previous => {
+            const next = new Set(previous)
+            if (!next.delete(row.site)) next.add(row.site)
+            return next
+          })} />
+          <span>{row.site}</span><span className="ds-cookie-site-count">{row.count}</span>
+        </label>
+        const sensitive = visible.filter(row => row.sensitive)
+        // Select all covers the visible ordinary sites; sensitive ones stay an explicit choice.
+        const ordinary = visible.filter(row => !row.sensitive)
+        const allChosen = ordinary.length > 0 && ordinary.every(row => chosen.has(row.site))
+        const someChosen = ordinary.some(row => chosen.has(row.site))
+        return <>
+          {rows.length > 8 ? <input type="search" className="ds-cookie-search" aria-label={t('browserCookieSitesSearch')} placeholder={t('browserCookieSitesSearch')} value={query} onChange={event => setQuery(event.target.value)} /> : null}
+          <div className="ds-cookie-site-list" role="group" aria-label={t('browserCookieSitesLabel')}>
+            {ordinary.length > 1 ? <label className="ds-cookie-site ds-cookie-site-all">
+              <input type="checkbox" checked={allChosen} disabled={busy}
+                ref={element => { if (element) element.indeterminate = someChosen && !allChosen }}
+                onChange={() => setChosen(previous => {
+                  const next = new Set(previous)
+                  for (const row of ordinary) {
+                    if (allChosen) next.delete(row.site)
+                    else next.add(row.site)
+                  }
+                  return next
+                })} />
+              <span>{t(sensitive.length ? 'browserCookieSelectAllSafe' : 'browserCookieSelectAll')}</span>
+              <span className="ds-cookie-site-count">{ordinary.length}</span>
+            </label> : null}
+            {ordinary.map(option)}
+            {sensitive.length ? <><p className="ds-cookie-site-group">{t('browserCookieSitesSensitive')}</p>{sensitive.map(option)}</> : null}
+          </div>
+        </>
+      })()}
+    </div> : null}
+    {!picking && selected.length ? <p className="ds-cookie-description">{t('browserCookieSelected', { count: selected.length, sites: selected.slice(0, 3).join(', ') + (selected.length > 3 ? '…' : '') })}</p> : null}
+    {agentBusy && sources.length ? <p className="ds-cookie-description">{t('browserCookieAgentBusy')}</p> : null}
     <div className="flex flex-wrap gap-2">
-      {sources.length ? <button type="button" className="ds-cookie-primary" disabled={busy || current.status === 'syncing' || !profile}
-        onClick={() => void perform(current.consent === 'enabled' && current.profile === profile ? 'sync' : 'enable')}>
-        {t(busy || current.status === 'syncing' ? 'browserCookieSyncing' : current.consent === 'enabled' ? 'browserCookieResync' : 'browserCookieEnable')}
+      {sources.length && picking ? <button type="button" className="ds-cookie-primary" disabled={busy || agentBusy || current.status === 'syncing' || !profile || sites === null || (!chosen.size && !selected.length)}
+        onClick={syncChosen}>
+        {t(busy || current.status === 'syncing' ? 'browserCookieSyncing' : chosen.size ? 'browserCookieEnable' : 'browserCookieEnableEmpty', { count: chosen.size })}
       </button> : null}
+      {sources.length && !picking ? <>
+        <button type="button" className="ds-cookie-primary" disabled={busy || agentBusy || current.status === 'syncing'}
+          onClick={() => void perform('sync')}>{t(busy || current.status === 'syncing' ? 'browserCookieSyncing' : 'browserCookieResync')}</button>
+        <button type="button" className={button} disabled={busy} onClick={() => setChanging(true)}>{t('browserCookieChangeSites')}</button>
+      </> : null}
+      {changing ? <button type="button" className={button} disabled={busy} onClick={() => setChanging(false)}>{t('browserCookieKeepSites')}</button> : null}
       {current.consent === 'pending' ? <button type="button" className={button} disabled={busy}
         onClick={() => void perform('skip')}>{t(sources.length ? 'browserCookieSkip' : 'browserCookieContinue')}</button> : null}
     </div>

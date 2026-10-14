@@ -11,7 +11,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from deepseek_tui.browser.service import BrowserAction, BrowserRun, BrowserService
+from deepseek_tui.browser.service import (
+    BrowserAction,
+    BrowserActionError,
+    BrowserRun,
+    BrowserService,
+)
 
 
 def recording_store(service: BrowserService, thread_id: str):
@@ -58,16 +63,23 @@ def validate_scope(target):
     return frame_path, shadow_path
 
 
-async def start_recording(service: BrowserService, thread_id: str) -> dict[str, Any]:
+async def start_recording(
+    service: BrowserService, thread_id: str, actor: str = "user"
+) -> dict[str, Any]:
     from deepseek_tui.browser.recording import create_recording
 
     run = service.runs.get(thread_id)
     if not run or not run.session:
         raise ValueError("Open a browser page first")
+    if actor == "user" and getattr(run.recorder, "auto", False):
+        # A background capture yields to the user's demonstration.
+        await service.end_agent_capture(thread_id, completed=False)
     async with run.lock:
-        if run.owner != "user" or run.recorder or (run.demo_task and not run.demo_task.done()):
+        if run.owner != actor or run.recorder or (run.demo_task and not run.demo_task.done()):
             raise ValueError("Take control and finish the current workflow first")
-        run.recorder, result = await create_recording(run, recording_store(service, thread_id))
+        run.recorder, result = await create_recording(
+            run, recording_store(service, thread_id), actor
+        )
         return result
 
 
@@ -97,19 +109,8 @@ async def finish_recording(run: BrowserRun) -> dict[str, Any]:
         await recorder.close()
 
 
-def _demo_url(url: str) -> str:
-    directory = Path(__file__).parent
-    legacy = {
-        (directory.parent / "browser_demo.html").as_uri(),
-        (directory.parent.parent / "browser" / "browser_demo.html").as_uri(),
-    }
-    return (directory / "browser_demo.html").as_uri() if url in legacy else url
-
-
 def _url(url: str) -> str:
-    url = _demo_url(url)
-    if url != (Path(__file__).parent / "browser_demo.html").as_uri():
-        BrowserAction(action="open", url=url)
+    BrowserAction(action="open", url=url)
     return url
 
 
@@ -320,10 +321,8 @@ async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dic
             raise ValueError("Recorded task tab was not opened in this replay")
         return {"success": True, "content": "Recorded task tab selected"}
     if step.kind in {"open", "navigate", "new_tab"}:
-        # _url permits only HTTP(S) and the bundled demonstration fixture.
-        action = BrowserAction(action="new_tab" if step.kind == "new_tab" else "open", url="http://localhost").model_copy(
-            update={"url": _url(step.url or ""), "generation": generation}
-        )
+        action = BrowserAction(action="new_tab" if step.kind == "new_tab" else "open",
+                               url=_url(step.url or ""), generation=generation)
         result = await service.action(run.thread_id, action)
         if result["success"]:
             tab = next((tab["tab_id"] for tab in run.tabs if tab.get("active")), None)
@@ -438,7 +437,7 @@ async def _verify(service: BrowserService, run: BrowserRun, rule: dict[str, Any]
     if frame_path:
         args["frame_path"] = frame_path
     if kind == "url_contains":
-        args["url_contains"] = _demo_url(value)
+        args["url_contains"] = value
     elif kind == "selector_exists":
         args["selector"] = value
     elif kind == "checked_equals":
@@ -511,3 +510,80 @@ async def _replay(service: BrowserService, run: BrowserRun, doc: Any, inputs: di
             service._persist(run)
         except OSError as exc:
             run.log.append({"action": "evidence", "success": False, "error": str(exc)})
+
+
+async def run_trace(
+    service: BrowserService,
+    thread_id: str,
+    doc: Any,
+    inputs: dict[str, str],
+    *,
+    secrets: set[str],
+    from_step: str = "",
+) -> dict[str, Any]:
+    """Run a recorded site example for the agent until a step needs someone else.
+
+    It stops, without failing, before steps the user must perform (secret fields),
+    steps the agent performs itself (uploads, native dialogs), and at the first
+    target the current page no longer matches. Secrets never pass through here.
+    """
+    if set(inputs) & secrets:
+        raise ValueError("Secret parameters are entered by the user, not passed to the agent")
+    doc = doc.model_copy(deep=True)
+    for step in doc.steps:
+        # Stop points: their recorded values are placeholders and are never executed.
+        if step.kind == "upload":
+            step.value = "[]"
+        elif step.kind == "handle_dialog":
+            step.value = ""
+    placeholders = {name: "{{" + name + "}}" for name in secrets}
+    doc = compile_workflow(doc, {**inputs, **placeholders})
+    ids = [step.id for step in doc.steps]
+    if from_step and from_step not in ids:
+        raise ValueError("Unknown step to resume from")
+    start = ids.index(from_step) if from_step else 0
+    run = await service.ensure(thread_id)
+    if run.owner != "agent":
+        raise ValueError("The user controls this browser; wait until control is returned")
+    if not start:
+        run.replay_tabs.clear()
+    completed: list[str] = []
+
+    def stopped(step: Any, reason: str, detail: str = "") -> dict[str, Any]:
+        result: dict[str, Any] = {"completed": completed, "stopped_at": {
+            "id": step.id, "kind": step.kind, "description": step.description, "reason": reason}}
+        if detail:
+            result["stopped_at"]["detail"] = detail
+        if reason in {"needs_user", "manual_step"}:
+            index = ids.index(step.id) + 1
+            result["resume_from"] = ids[index] if index < len(ids) else None
+        return result
+
+    for step in doc.steps[start:]:
+        if step.kind in {"upload", "handle_dialog"}:
+            return stopped(step, "manual_step")
+        if any(placeholder in (step.value or "") for placeholder in placeholders.values()):
+            return stopped(step, "needs_user")
+        try:
+            result = await _step(service, run, step, None)
+        except BrowserActionError as exc:
+            return stopped(step, "outcome_unknown", str(exc))
+        except (ValueError, RuntimeError) as exc:
+            return stopped(step, "mismatch", str(exc) or type(exc).__name__)
+        if not result["success"]:
+            return stopped(step, "failed", str(result.get("content") or "Action failed"))
+        completed.append(step.id)
+        if step.expect and step.expect.get("urlContains"):
+            try:
+                await _verify(service, run, {"type": "url_contains",
+                                             "value": step.expect["urlContains"]})
+            except (ValueError, RuntimeError) as exc:
+                return stopped(step, "unexpected_result", str(exc))
+    for rule in doc.verification:
+        try:
+            await _verify(service, run, rule)
+        except (ValueError, RuntimeError) as exc:
+            return {"completed": completed, "stopped_at": None, "verified": False,
+                    "detail": str(exc)}
+    return {"completed": completed, "stopped_at": None,
+            "verified": True if doc.verification else None}

@@ -17,9 +17,9 @@ from octop_browser.record.models import (
     RecordingTarget,
     SemanticStep,
 )
-from octop_browser.record.privacy import redact_url
+from octop_browser.record.privacy import is_sensitive_target, redact_url
 from octop_browser.record.recorder import RecordSession
-from octop_browser.record.semantic import SemanticProcessor
+from octop_browser.record.semantic import SemanticProcessor, _stable_input_name
 
 from deepseek_tui.browser.frames import FrameContext, discover_frames
 from deepseek_tui.browser.observation import (
@@ -158,15 +158,31 @@ class ScopedSemanticProcessor(SemanticProcessor):
                     step.target["frameUrl"] = frame_url
             if index and compiled and compiled[0].kind == "open":
                 compiled.pop(0)
-            compiled = [step for step in compiled if step.kind != "new_tab"]
+            # Interactions scroll their own target into view; a recorded page offset
+            # is not a replayable step and would block the whole workflow.
+            compiled = [step for step in compiled if step.kind not in {"new_tab", "scroll_to"}]
             steps.extend(compiled)
         for index, step in enumerate(steps, 1):
             step.id = f"step_{index:03d}"
         return steps
 
     def _infer_variables(self, steps):
-        steps, inputs = super()._infer_variables(steps)
-        known = {item["name"] for item in inputs}
+        # Every value is masked, so Octop would name them all "sensitive_value";
+        # name them by field instead and flag only secret-looking fields.
+        inputs, known = [], set()
+        for step in steps:
+            if step.kind not in {"fill", "select"} or not step.value:
+                continue
+            base = _stable_input_name(step.target, "")
+            name, index = base, 2
+            while name in known:
+                name, index = f"{base}_{index}", index + 1
+            known.add(name)
+            step.value = "{{" + name + "}}"
+            target = step.target or {}
+            secret = is_sensitive_target(target) or target.get("type") == "password"
+            inputs.append({"name": name, "kind": "secret" if secret else "string",
+                           "required": True, "sensitive": secret})
         for step in steps:
             if step.kind not in {"upload", "handle_dialog"}:
                 continue
@@ -196,6 +212,8 @@ class WorkbenchRecordSession(RecordSession):
         self.frame_lock = asyncio.Lock()
         self.capture_warnings = set()
         self.navigations = set()
+        # "user" for a demonstration, "agent" for capturing the agent's own run.
+        self.actor = "user"
 
     def _append(self, event):
         event = dict(event)
@@ -242,6 +260,8 @@ class WorkbenchRecordSession(RecordSession):
             "targetId": target_id or "",
             "framePath": frame_path or [],
             "page": page,
+            # The agent reads pages and screenshots; a badge would show up in both.
+            "overlay": self.actor == "user",
         }
         source = Path(__file__).with_suffix(".js").read_text()
         source = source.replace("__VISIBLE__", VISIBLE).replace("__READ_TEXT__", READ_TEXT)
@@ -430,7 +450,7 @@ class WorkbenchRecordSession(RecordSession):
         await super().close()
 
 
-async def create_recording(run, store):
+async def create_recording(run, store, actor="user"):
     info = await evaluate(
         run.session._internal.client, "({url:location.href,title:document.title})"
     )
@@ -456,6 +476,7 @@ async def create_recording(run, store):
         cdp_port=profile.cdp_port,
         initial_target_id=target,
     )
+    session.actor = actor
     try:
         await client.connect(
             f"ws://{run.settings.cdp_host}:{profile.cdp_port}/devtools/page/{target}"

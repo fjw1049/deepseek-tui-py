@@ -2074,6 +2074,7 @@ export function Workbench(): ReactElement {
             onPreferredUrlConsumed={clearWorkspacePreviewUrl}
             onPreviewErrorConsumed={clearHtmlPreviewError}
             onPreviewPick={handlePreviewPick}
+            onDemonstrationSaved={(message) => { void sendMessage(message, mode) }}
             onTabChange={(tab) => {
               if (tab === 'changes' && rightSidebarTab !== 'changes') {
                 setChangesContext('branch')

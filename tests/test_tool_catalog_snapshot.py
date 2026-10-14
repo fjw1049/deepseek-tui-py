@@ -16,6 +16,7 @@ _AGENT_TOOLS = [
     "GetGoal",
     "UpdateGoal",
     "agent",
+    "browser_skill",
     "browser_use",
     "checklist",
     "edit_file",

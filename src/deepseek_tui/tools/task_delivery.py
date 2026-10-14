@@ -14,6 +14,7 @@ FINALIZATION_MAX_TOKENS = 4096
 CONTROL_TOOLS = {"finish_task", "request_task_tools"}
 FOCUS_TOOLS = CONTROL_TOOLS | {
     "browser_use",
+    "browser_skill",
     "request_user_input",
     "checklist",
     "CreateGoal",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -95,6 +95,10 @@ class PreferencesBody(BaseModel):
 class CookieSyncBody(BaseModel):
     action: Literal["enable", "skip", "disable", "sync", "clear"]
     profile: str | None = Field(default=None, max_length=100)
+    # Sites to mirror from Chrome; omitted keeps the saved selection.
+    sites: list[Annotated[str, Field(min_length=1, max_length=253)]] | None = Field(
+        default=None, max_length=2000,
+    )
     generation: int | None = Field(default=None, ge=0)
 
 
@@ -107,7 +111,24 @@ async def cookie_sync_state(request: Request, thread_id: str) -> dict[str, Any]:
         **browser.cookies.state(),
         "profiles": await asyncio.to_thread(profiles),
         "has_saved_cookies": await asyncio.to_thread(browser.cookies.has_saved_cookies),
+        "selected_sites": await asyncio.to_thread(browser.cookies.selected_sites),
     }
+
+
+@router.get("/cookie-sync/sites")
+async def cookie_sync_sites(request: Request, thread_id: str, profile: str) -> dict[str, Any]:
+    """Sites in a Chrome profile, from host names only; no cookie is decrypted."""
+    from deepseek_tui.browser.chrome_cookies import profiles
+
+    browser = service(request, thread_id)
+    if profile not in {p["id"] for p in await asyncio.to_thread(profiles)}:
+        raise HTTPException(409, "Choose an available Chrome profile")
+    result = await browser.cookies.list_source(profile)
+    if result.get("error"):
+        # "permission": the OS refused the read; "unavailable": anything else.
+        error = "permission" if result["error"] == "permission" else "unavailable"
+        return {"sites": [], "error": error}
+    return result
 
 
 @router.post("/cookie-sync")
@@ -119,16 +140,27 @@ async def cookie_sync(request: Request, thread_id: str, body: CookieSyncBody) ->
         elif body.action in {"skip", "disable"}:
             browser.cookies.configure("skipped" if body.action == "skip" else "disabled", None)
         else:
+            manager = request.app.state.thread_manager
             run = browser.runs.get(thread_id)
+            return_to_agent = False
             if run and run.session:
                 if run.unresolved:
                     raise ValueError("Resolve pending browser actions before syncing cookies")
-                await request.app.state.thread_manager.control_browser(
-                    thread_id, "user", generation=body.generation,
-                )
-            if body.action == "enable":
-                browser.cookies.configure("enabled", body.profile)
-            await browser.sync_cookies(thread_id)
+                if run.owner != "user":
+                    # Syncing must never silently pause a task the agent is running.
+                    if manager.browser_task_state(thread_id)["task_running"]:
+                        raise ValueError(
+                            "The agent is using the browser; take control before syncing cookies"
+                        )
+                    await manager.control_browser(thread_id, "user", generation=body.generation)
+                    return_to_agent = True
+            try:
+                if body.action == "enable":
+                    browser.cookies.configure("enabled", body.profile)
+                await browser.sync_cookies(thread_id, body.sites)
+            finally:
+                if return_to_agent:
+                    await manager.control_browser(thread_id, "agent")
         return browser.cookies.state()
     except (ValueError, OSError) as exc:
         # Never include underlying cookie/decryption failures in API errors.
@@ -226,7 +258,9 @@ async def workflows(request: Request, thread_id: str) -> dict[str, Any]:
 
     browser = service(request, thread_id)
     try:
-        manifests = recording_store(browser, thread_id).list_recordings()
+        # Recording IDs are random; the store's path order is not creation order.
+        manifests = sorted(recording_store(browser, thread_id).list_recordings(),
+                           key=lambda item: item.created_at)
         return {
             "items": [
                 {"id": item.recording_id, "steps": item.stats.steps, "status": item.status}
@@ -266,6 +300,24 @@ async def workflow(request: Request, thread_id: str, body: WorkflowBody) -> dict
             return read_workflow(browser, thread_id, body.recording_id).model_dump(by_alias=True)
         return await start_replay(browser, thread_id, body.recording_id, body.inputs)
     except (ValueError, RuntimeError, TimeoutError, FileNotFoundError, ImportError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+class SuggestionBody(BaseModel):
+    action: Literal["accept", "dismiss", "enable", "disable"]
+
+
+@router.post("/skill-suggestions")
+async def skill_suggestion(
+    request: Request, thread_id: str, body: SuggestionBody,
+) -> dict[str, Any]:
+    suggestions = service(request, thread_id).suggestions
+    try:
+        if body.action in {"enable", "disable"}:
+            suggestions.set_enabled(body.action == "enable")
+            return {"enabled": suggestions.enabled}
+        return suggestions.resolve(thread_id, accepted=body.action == "accept")
+    except (ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
 

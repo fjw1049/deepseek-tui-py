@@ -143,7 +143,7 @@
   listen(window,'pagehide',flushAll);
   listen(window,'beforeunload',flushAll);
   const overlay=document.createElement('div');
-  if(window===window.top) {
+  if(window===window.top && config.overlay !== false) {
     overlay.textContent='● Recording '+config.recordingId;
     overlay.style.cssText='position:fixed;right:12px;top:12px;z-index:2147483647;'+
       'background:#b91c1c;color:white;padding:6px 8px;font:12px sans-serif;pointer-events:none';

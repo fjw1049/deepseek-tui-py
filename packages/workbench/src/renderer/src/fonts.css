@@ -14,3 +14,11 @@
 @import '@fontsource/noto-sans-sc/chinese-simplified-500.css';
 @import '@fontsource/noto-sans-sc/chinese-simplified-600.css';
 @import '@fontsource/noto-sans-sc/chinese-simplified-700.css';
+
+/* Block elements sized to JetBrains Mono's cell so xterm's DOM renderer draws
+   them edge to edge (scripts/generate-terminal-blocks-font.py). */
+@font-face {
+  font-family: 'DS Terminal Blocks';
+  src: url('./assets/fonts/terminal-blocks.woff') format('woff');
+  unicode-range: U+2580-2590, U+2594-259F;
+}

@@ -71,6 +71,7 @@ type Props = {
   onPreferredUrlConsumed?: () => void
   onPreviewErrorConsumed?: () => void
   onPreviewPick?: (pick: PreviewElementPick) => void
+  onDemonstrationSaved?: (message: string) => void
   onTabChange: (tab: RightSidebarTab) => void
   onToggleCollapsed: () => void
   onClose: () => void
@@ -118,6 +119,7 @@ export function WorkbenchRightSidebar({
   onPreferredUrlConsumed,
   onPreviewErrorConsumed,
   onPreviewPick,
+  onDemonstrationSaved,
   onTabChange,
   onToggleCollapsed,
   onClose,
@@ -357,6 +359,7 @@ export function WorkbenchRightSidebar({
                     onPreferredUrlConsumed={active ? onPreferredUrlConsumed : undefined}
                     onExternalErrorConsumed={active ? onPreviewErrorConsumed : undefined}
                     onPreviewPick={active ? onPreviewPick : undefined}
+                    onDemonstrationSaved={active ? onDemonstrationSaved : undefined}
                     onOpenFileInEditor={active ? onOpenFileInEditor : undefined}
                     className="h-full max-h-full w-full flex-col"
                   />

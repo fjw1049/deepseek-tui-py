@@ -60,6 +60,15 @@
 .ds-cookie-close { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--ds-text-muted); }
 .ds-cookie-close:hover { background: var(--ds-surface-hover); color: var(--ds-text); }
 .ds-cookie-description { margin: 0 0 12px; color: var(--ds-text-muted); }
+.ds-cookie-sites { margin: 0 0 12px; }
+.ds-cookie-search { width: 100%; margin-bottom: 6px; padding: 5px 8px; border: 1px solid var(--ds-border); border-radius: 6px; background: transparent; color: var(--ds-text); }
+.ds-cookie-site-list { max-height: 200px; overflow: auto; border: 1px solid var(--ds-border-muted); border-radius: 8px; padding: 4px 0; }
+.ds-cookie-site { display: flex; align-items: center; gap: 8px; padding: 3px 10px; cursor: pointer; }
+.ds-cookie-site:hover { background: var(--ds-surface-hover); }
+.ds-cookie-site > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-cookie-site-all { position: sticky; top: -4px; z-index: 1; margin-top: -4px; padding-top: 7px; padding-bottom: 6px; border-bottom: 1px solid var(--ds-border-muted); background: var(--ds-bg-sidebar); font-weight: 500; }
+.ds-cookie-site-count { color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
+.ds-cookie-site-group { margin: 6px 10px 2px; padding-top: 6px; border-top: 1px solid var(--ds-border-muted); color: var(--ds-danger); font-size: 11px; }
 .ds-cookie-status { margin: 0 0 12px; color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
 .ds-cookie-primary { flex: 1; min-height: 32px; padding: 6px 12px; border-radius: 7px; background: var(--ds-accent); color: var(--ds-accent-foreground); font-weight: 500; }
 .ds-cookie-primary:active { opacity: .8; }

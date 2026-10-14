@@ -1,4 +1,4 @@
-"""Read only explicitly selected Chrome cookies, in a disposable subprocess.
+"""Read only explicitly selected Chrome sites' cookies, in a disposable subprocess.
 
 The parent receives credentials over a private pipe, never a tool result or log.
 Only a temporary SQLite snapshot is modified; Chrome's database is read-only.
@@ -12,7 +12,10 @@ import sqlite3
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+from deepseek_tui.browser.sites import is_sensitive, site_of
 
 
 def chrome_root() -> Path:
@@ -61,15 +64,41 @@ def profiles() -> list[dict[str, str]]:
     return result
 
 
-def read_chrome(profile: str) -> dict:
-    import browser_cookie3
-
+@contextmanager
+def _snapshot(profile: str):
+    """A private copy of the cookie database; Chrome may hold the original open."""
     source = cookie_file(profile)
+    # SQLite reports a refused read as a generic open failure; surface the OS refusal
+    # (macOS protects other apps' data until the user grants access).
+    with open(source, "rb"):
+        pass
     with tempfile.TemporaryDirectory(prefix="deepseek-cookie-import-") as temporary:
         snapshot = Path(temporary) / "Cookies"
         with sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=2) as original:
             with sqlite3.connect(snapshot) as copy:
                 original.backup(copy)
+        yield snapshot
+
+
+def list_sites(profile: str) -> dict:
+    """Sites with importable cookies, from host names only: nothing is decrypted."""
+    counts: dict[str, int] = {}
+    with _snapshot(profile) as snapshot, sqlite3.connect(snapshot) as copy:
+        for host, partition in copy.execute("SELECT host_key, top_frame_site_key FROM cookies"):
+            if not partition:
+                site = site_of(host)
+                counts[site] = counts.get(site, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return {"sites": [
+        {"site": site, "count": count, "sensitive": is_sensitive(site)} for site, count in ranked
+    ]}
+
+
+def read_chrome(profile: str, sites: list[str]) -> dict:
+    import browser_cookie3
+
+    selected = set(sites)
+    with _snapshot(profile) as snapshot:
         with sqlite3.connect(snapshot) as copy:
             copy.row_factory = sqlite3.Row
             rows = copy.execute("SELECT rowid AS cookie_rowid, * FROM cookies").fetchall()
@@ -79,9 +108,12 @@ def read_chrome(profile: str) -> dict:
                 # CookieJar cannot represent partition keys. Never flatten them into
                 # ordinary cookies, including when their name/path collide.
                 partitioned = bool(data.get("top_frame_site_key"))
-                if partitioned:
+                chosen = site_of(data["host_key"]) in selected
+                if partitioned or not chosen:
+                    # Unselected sites are never decrypted or sent to the parent.
                     copy.execute("DELETE FROM cookies WHERE rowid=?", (data["cookie_rowid"],))
-                    skipped += 1
+                    if partitioned and chosen:
+                        skipped += 1
                 else:
                     metadata[(data["host_key"], data["path"], data["name"])] = data
             copy.commit()
@@ -119,7 +151,16 @@ def read_chrome(profile: str) -> dict:
 
 if __name__ == "__main__":
     try:
-        result = read_chrome(sys.argv[1])
+        # Usage: list PROFILE | read PROFILE, with the selected sites as JSON on stdin.
+        mode, profile = sys.argv[1], sys.argv[2]
+        if mode == "list":
+            result = list_sites(profile)
+        elif mode == "read":
+            result = read_chrome(profile, json.load(sys.stdin)["sites"])
+        else:
+            raise ValueError("Unknown mode")
+    except PermissionError:
+        result = {"error": "permission"}
     except Exception:
         # Keychain denial, locked database, unsupported encryption and missing
         # dependencies must never echo a credential or database content.

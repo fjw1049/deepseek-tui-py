@@ -163,7 +163,10 @@ export function createTerminalService() {
       const env = {
         ...process.env,
         TERM: shellConfig.name,
-        COLORTERM: 'truecolor'
+        COLORTERM: 'truecolor',
+        // Apps launched from Finder/Dock get no locale; without it the shell
+        // falls back to C and mangles CJK/Unicode output.
+        ...(process.env.LANG || process.env.LC_ALL || process.env.LC_CTYPE ? {} : { LANG: 'en_US.UTF-8' })
       }
 
       const pty = spawnPty(shellConfig.file, shellConfig.args, {

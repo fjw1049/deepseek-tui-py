@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
 import { parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
@@ -25,6 +25,8 @@ type BrowserState = {
   image?: string | null; video_recording?: boolean; video_error?: string | null
   owner: 'agent' | 'user' | 'stopped'; recording: boolean
   activity?: string; workflow_recording?: boolean
+  skill_suggestion?: { id: string; site: string; count: number; recording_id: string } | null
+  skill_suggestions_enabled?: boolean
   error: string | null; log: { action: string; success: boolean }[]
   artifacts: { id: string; label: string; path: string }[]
   scene?: { scene_id: string; tab_id: string; document_id: string; viewport_epoch: number }
@@ -64,6 +66,7 @@ type BrowserWorkspaceProps = {
   onPreferredUrlConsumed?: () => void; onExternalErrorConsumed?: () => void
   onPreviewPick?: (pick: PreviewElementPick) => void
   onOpenFileInEditor?: (path: string) => void
+  onDemonstrationSaved?: (message: string) => void
 }
 
 export function BrowserWorkspace({ agentRequest = 0, ...props }: BrowserWorkspaceProps): ReactElement {
@@ -92,7 +95,7 @@ export function BrowserWorkspace({ agentRequest = 0, ...props }: BrowserWorkspac
 
 export function AgentBrowserPanel({ threadId, visible = true, blocks = [], preferredUrl, preferredFilePath,
   onPreferredUrlConsumed, externalError, onExternalErrorConsumed, onPreviewPick, onOpenFileInEditor,
-  onReturnToPages }: BrowserWorkspaceProps & {
+  onReturnToPages, onDemonstrationSaved }: BrowserWorkspaceProps & {
     threadId: string; onReturnToPages?: () => void
   }): ReactElement {
   const [dialogAnswer, setDialogAnswer] = useState('')
@@ -179,7 +182,8 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
         const next = await browserRequest<BrowserState>(threadId, '/view')
         if (!disposed) {
           apply(next); setConnectionError('')
-          delay = next.active ? (next.owner === 'user' ? Math.max(16, 50 - (performance.now() - started)) : 300) : 600
+          // Streamed frames make an unchanged view cheap, so the human view polls near 30 fps.
+          delay = next.active ? (next.owner === 'user' ? Math.max(16, 33 - (performance.now() - started)) : 300) : 600
         }
       } catch (e) { if (!disposed) { setFresh(false); setFrameFresh(false); setConnectionError(e instanceof Error ? e.message : String(e)) } }
       finally { if (!disposed) timer = setTimeout(() => void poll(), delay) }
@@ -223,7 +227,34 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     } catch (e) { setConnectionError(e instanceof Error ? e.message : String(e)) }
     finally { setPending(false) }
   }
+  async function demonstrate(): Promise<void> {
+    setError(''); setPending(true)
+    try {
+      if (state?.workflow_recording) {
+        const saved = await browserRequest<{ recordingId: string; steps: number }>(threadId, '/workflows', { action: 'stop' })
+        if (!alive.current) return
+        if (onDemonstrationSaved) onDemonstrationSaved(t('browserDemoMessage', { id: saved.recordingId, steps: saved.steps }))
+        else setNotice(t('browserDemoSavedNotice'))
+      } else await browserRequest(threadId, '/workflows', { action: 'start' })
+      if (alive.current) apply(await browserRequest<BrowserState>(threadId, '/view'))
+    } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
+    finally { if (alive.current) setPending(false) }
+  }
+  async function suggestion(action: 'accept' | 'dismiss' | 'enable' | 'disable'): Promise<void> {
+    setError(''); setPending(true)
+    try {
+      const result = await browserRequest<{ site: string; count: number; recording_id: string }>(threadId, '/skill-suggestions', { action })
+      if (action === 'accept' && alive.current) {
+        if (onDemonstrationSaved) onDemonstrationSaved(t('browserSuggestMessage', { id: result.recording_id, site: result.site, count: result.count }))
+        else setNotice(t('browserDemoSavedNotice'))
+      }
+      if (alive.current) apply(await browserRequest<BrowserState>(threadId, '/view'))
+    } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
+    finally { if (alive.current) setPending(false) }
+  }
   async function control(owner: 'agent' | 'user' | 'stopped'): Promise<void> {
+    // Returning control saves an open demonstration without sending another query.
+    const demonstrating = owner === 'agent' && !!state?.workflow_recording
     setPending(true); setControlTarget(owner); setError(''); transferring.current = true
     try {
       if (state?.assistance && owner !== 'stopped') {
@@ -236,6 +267,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       transferring.current = false
       if (!alive.current) return
       apply(next)
+      if (demonstrating) setNotice(t('browserDemoSavedNotice'))
       if (owner === 'user' && next.unresolved?.length) {
         await browserRequest(threadId, '/action', { action: 'observe', generation: next.generation })
         apply(await browserRequest<BrowserState>(threadId, '/view'))
@@ -307,6 +339,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     : state?.active && state.task_running ? 'browserAgentHint' : 'browserControlReadyHint'
   return <div className={`ds-shared-browser${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
     {visible ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
+      agentBusy={!!state?.active && state.owner !== 'user' && !!state.task_running}
       manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
     <div className="ds-dev-browser__chrome ds-browser-chrome">
       <div className="ds-dev-browser__tabs">
@@ -350,6 +383,8 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void demonstrate()}><GraduationCap size={15} />{t(state?.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={pending} onClick={() => void suggestion(state?.skill_suggestions_enabled === false ? 'enable' : 'disable')}><Lightbulb size={15} />{t(state?.skill_suggestions_enabled === false ? 'browserSuggestOn' : 'browserSuggestOff')}</button>
             <div className="ds-browser-menu-divider" role="separator" />
             {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
@@ -364,6 +399,9 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     </div>
     <div className="ds-browser-content">
     {inspect || notice ? <div className="ds-browser-feedback" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
+    {!inspect && !notice && state?.skill_suggestion ? <div className="ds-browser-feedback" role="status"><span>{t('browserSuggestSkill', { site: state.skill_suggestion.site, count: state.skill_suggestion.count })}</span>
+      <button disabled={pending} onClick={() => void suggestion('accept')}>{t('browserSuggestAccept')}</button>
+      <button disabled={pending} onClick={() => void suggestion('dismiss')}>{t('browserSuggestDismiss')}</button></div> : null}
 
     <header ref={controlRoot} className={`ds-browser-status is-${controlTone}`} style={{
       left: `calc(${controlPosition.x * 100}% + ${8 - controlPosition.x * 16}px)`,

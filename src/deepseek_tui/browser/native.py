@@ -170,16 +170,18 @@ class NativeBrowserEvents:
             "Page.handleJavaScriptDialog", {"accept": action.accept, "promptText": action.text}
         )
         if self.run.recorder:
-            self.run.recorder._append(
-                {
-                    "kind": "native_dialog",
-                    "accept": action.accept,
-                    "value": "{{dialog_answer}}" if dialog["type"] == "prompt" else "",
-                    "targetId": next(
-                        (tab["tab_id"] for tab in self.run.tabs if tab.get("active")), ""
-                    ),
-                }
-            )
+            event = {
+                "kind": "native_dialog",
+                "accept": action.accept,
+                "targetId": next(
+                    (tab["tab_id"] for tab in self.run.tabs if tab.get("active")), ""
+                ),
+            }
+            # Masking turns any "value" key into a placeholder, so only a prompt
+            # (which has an answer to supply) may carry one.
+            if dialog["type"] == "prompt":
+                event["value"] = "{{dialog_answer}}"
+            self.run.recorder._append(event)
         self.dialog = None
 
     async def upload(self, action, *, user_selected=False):

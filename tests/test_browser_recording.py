@@ -319,3 +319,63 @@ def test_failed_manifest_without_warning_event_still_blocks_reuse(tmp_path):
     store.create(RecordingManifest(recordingId="rec_failed", createdAt="2026-10-13", status="failed"))
     with pytest.raises(ValueError, match="incomplete browser capture"):
         assert_capture_complete(service, "one", "rec_failed")
+
+
+def _page_event(seq, kind, **extra):
+    return {"seq": seq, "kind": kind, "targetId": "tab",
+            "page": {"url": "https://shop.example/login"}, **extra}
+
+
+def test_page_scroll_does_not_block_replay_or_skills():
+    from deepseek_tui.browser.workflows import compile_workflow
+
+    button = {"tag": "button", "role": "button", "name": "Login", "id": "go",
+              "selectorCandidates": ['[id="go"]']}
+    doc = ScopedSemanticProcessor("rec_scroll", [
+        _page_event(1, "recorder_installed"),
+        _page_event(2, "scroll", scroll={"x": 0, "y": 640}),
+        _page_event(3, "click", target=button),
+    ]).process()
+    assert [step.kind for step in doc.steps] == ["open", "click"]
+    compile_workflow(doc, {})
+
+
+def test_masked_inputs_are_named_by_field_and_only_secrets_are_sensitive():
+    account = {"tag": "input", "type": "text", "role": "textbox", "id": "fm-login-id",
+               "nameAttr": "loginId", "selectorCandidates": ['[name="loginId"]']}
+    password = {**account, "type": "password", "id": "fm-login-password",
+                "nameAttr": "password", "selectorCandidates": ['[name="password"]']}
+    doc = ScopedSemanticProcessor("rec_login", [
+        _page_event(1, "recorder_installed"),
+        _page_event(2, "input", target=account, value="{{sensitive_value}}", redacted=True),
+        _page_event(3, "input", target=password, value="{{sensitive_value}}", redacted=True),
+    ]).process()
+    assert [(item["name"], item["sensitive"]) for item in doc.inputs] == [
+        ("loginid", False), ("password", True)]
+    assert [step.value for step in doc.steps if step.kind == "fill"] == [
+        "{{loginid}}", "{{password}}"]
+    assert all("example" not in item for item in doc.inputs)
+
+
+@pytest.mark.parametrize(("kind", "inputs"), [("confirm", 0), ("prompt", 1)])
+async def test_only_prompt_dialogs_require_a_replay_answer(tmp_path, kind, inputs):
+    from unittest.mock import Mock
+
+    from octop_browser.record.models import PrivacySettings
+    from octop_browser.record.privacy import redact_event
+
+    from deepseek_tui.browser.native import NativeBrowserEvents
+    from deepseek_tui.browser.service import BrowserAction, BrowserService
+
+    run = SimpleNamespace(thread_id="one", generation=0, tabs=[], recorder=Mock())
+    native = NativeBrowserEvents(run, BrowserService(tmp_path))
+    native.dialog = {"id": "d", "generation": 0, "type": kind,
+                     "client": SimpleNamespace(send=AsyncMock())}
+    await native.handle_dialog(
+        BrowserAction(action="handle_dialog", dialog_id="d", accept=True, text="x"))
+    event = redact_event({"seq": 2, **run.recorder._append.call_args.args[0]},
+                         PrivacySettings(input_policy="mask-all"))
+    doc = ScopedSemanticProcessor(
+        "rec_dialog", [_page_event(1, "recorder_installed"), event]).process()
+    assert [step.kind for step in doc.steps] == ["open", "handle_dialog"]
+    assert len(doc.inputs) == inputs

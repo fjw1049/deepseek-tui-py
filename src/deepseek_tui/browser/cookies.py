@@ -1,4 +1,4 @@
-"""App-owned cookie persistence and opt-in, one-way Chrome synchronization."""
+"""App-owned cookie persistence and opt-in, per-site, one-way Chrome synchronization."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from cryptography.fernet import Fernet, InvalidToken
 
 from deepseek_tui.browser.chrome_cookies import profiles
+from deepseek_tui.browser.sites import site_of
 from deepseek_tui.utils import write_text_atomic
 from deepseek_tui.workspace.project_lease import FileLease
 
@@ -55,6 +56,25 @@ def cookie_params(cookie: dict) -> dict:
     return result
 
 
+async def set_cookies(client, cookies: list[dict]) -> int:
+    """Apply cookies and return how many Chrome rejected.
+
+    One cookie with invalid fields makes Chrome reject the whole batch, so split it.
+    """
+    if not cookies:
+        return 0
+    try:
+        await client.send("Network.setCookies", {"cookies": cookies})
+        return 0
+    except Exception as exc:
+        if "Invalid cookie fields" not in str(exc):
+            raise
+        if len(cookies) == 1:
+            return 1
+    middle = len(cookies) // 2
+    return await set_cookies(client, cookies[:middle]) + await set_cookies(client, cookies[middle:])
+
+
 class CookieStore:
     def __init__(self, root: Path):
         self.root = root
@@ -65,6 +85,8 @@ class CookieStore:
         self.count = saved.get("count", 0)
         self.skipped = saved.get("skipped", 0)
         self.domains = saved.get("domains", 0)
+        # Background saves report separately so one transient failure does not stick.
+        self.save_error = False
 
     def settings(self) -> dict:
         try:
@@ -75,7 +97,7 @@ class CookieStore:
     def state(self) -> dict:
         return {
             **self.settings(),
-            "status": self.status,
+            "status": "save_failed" if self.save_error else self.status,
             "count": self.count,
             "skipped": self.skipped,
             "domains": self.domains,
@@ -99,6 +121,7 @@ class CookieStore:
         )
         self.status = "idle"
         self.count = self.skipped = self.domains = 0
+        self.save_error = False
 
     async def clear(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -115,6 +138,7 @@ class CookieStore:
                 # Keep visited sites so clearing cannot silently import old logins.
                 self._write(data)
         self.status, self.count, self.skipped, self.domains = "cleared", 0, 0, 0
+        self.save_error = False
         write_text_atomic(self.root / "sync.json", json.dumps(self.state()))
 
     def _read(self) -> dict:
@@ -136,7 +160,15 @@ class CookieStore:
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
             async with FileLease(self.root / "cookies.lock"):
                 data = self._read()
-                if change(data):
+                changed = change(data)
+                now = time.time()
+                expired = [
+                    key for key, cookie in data["cookies"].items()
+                    if 0 < cookie.get("expires", -1) <= now
+                ]
+                for key in expired:
+                    del data["cookies"][key]
+                if changed or expired:
                     self._write(data)
                 return data
 
@@ -164,8 +196,7 @@ class CookieStore:
             if not c.get("partitionKeyOpaque")
             and (c.get("expires", -1) <= 0 or c["expires"] > time.time())
         ]
-        if cookies:
-            await client.send("Network.setCookies", {"cookies": cookies})
+        await set_cookies(client, cookies)
         write_text_atomic(marker, "1")
         run.cookie_baseline = {
             cookie_key(c): c for c in (await client.send("Storage.getCookies"))["cookies"]
@@ -208,18 +239,28 @@ class CookieStore:
         await self._edit(merge)
         run.cookie_baseline = current
 
-    async def read_source(self, profile: str) -> dict:
+    def selected_sites(self) -> list[str]:
+        """Sites whose cookies mirror Chrome; every other site's cookies belong to the app."""
+        try:
+            return self._read().get("chrome_sites", [])
+        except (InvalidToken, ValueError, OSError):
+            return []
+
+    async def _worker(self, *args: str, payload: dict | None = None) -> dict:
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
             "deepseek_tui.browser.chrome_cookies",
-            profile,
+            *args,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             start_new_session=os.name != "nt",
         )
         try:
-            output, _ = await asyncio.wait_for(process.communicate(), timeout=15)
+            output, _ = await asyncio.wait_for(
+                process.communicate(json.dumps(payload or {}).encode()), timeout=15
+            )
             return json.loads(output) if process.returncode == 0 else {"error": "unavailable"}
         finally:
             if process.returncode is None:
@@ -232,7 +273,14 @@ class CookieStore:
                     pass
                 await process.communicate()
 
-    async def sync(self, run=None) -> None:
+    async def list_source(self, profile: str) -> dict:
+        return await self._worker("list", profile)
+
+    async def read_source(self, profile: str, sites: list[str]) -> dict:
+        return await self._worker("read", profile, payload={"sites": sites})
+
+    async def sync(self, run=None, sites: list[str] | None = None) -> None:
+        """Mirror the selected sites from Chrome; ``sites`` replaces the saved selection."""
         async with self.source_lock:
             settings = self.settings()
             if settings["consent"] != "enabled":
@@ -243,10 +291,17 @@ class CookieStore:
                 # Capture app changes before an explicit import overwrites matching cookies.
                 if run:
                     await self.capture(run)
-                self._read()
-                result = await self.read_source(settings["profile"])
+                previous = set(self._read().get("chrome_sites", []))
+                selected = previous if sites is None else {site_of(site) for site in sites}
+                result = (
+                    await self.read_source(settings["profile"], sorted(selected))
+                    if selected else {"cookies": [], "skipped": 0}
+                )
                 if self.settings() != settings:
                     self.status = "idle"
+                    return
+                if result.get("error") == "permission":
+                    self.status = "permission_denied"
                     return
                 if result.get("error"):
                     raise RuntimeError("Cookie source unavailable")
@@ -256,16 +311,32 @@ class CookieStore:
                     if "url" in cookie:
                         cookie["domain"] = urlsplit(cookie.pop("url")).hostname
                     cookie.setdefault("expires", -1)
-                    if cookie["expires"] <= 0 or cookie["expires"] > time.time():
+                    if site_of(cookie["domain"]) in selected and (
+                        cookie["expires"] <= 0 or cookie["expires"] > time.time()
+                    ):
                         cookies.append(cookie)
             except Exception:
                 self.status = "unavailable"
                 return
+            imported = {cookie_key(cookie) for cookie in cookies}
+            removed = []
 
             def merge(data):
+                # Deselected sites lose what Chrome brought. Selected sites follow Chrome,
+                # including sign-outs, unless the read found nothing at all, which is
+                # more likely a failed read than signing out everywhere.
+                managed = set(data.get("chrome_sites", [])) - selected
+                if cookies:
+                    managed |= selected
+                for key, cookie in list(data["cookies"].items()):
+                    if site_of(cookie["domain"]) in managed:
+                        del data["cookies"][key]
+                        if key not in imported:
+                            removed.append(cookie)
                 for cookie in cookies:
                     data["cookies"][cookie_key(cookie)] = cookie
-                return bool(cookies)
+                data["chrome_sites"] = sorted(selected)
+                return True
 
             try:
                 # Save first, including when there is no browser session yet.
@@ -274,18 +345,27 @@ class CookieStore:
                 self.status = "save_failed"
                 return
             self.count = len(cookies)
-            self.domains = len({cookie["domain"].lstrip(".") for cookie in cookies})
+            self.domains = len({site_of(cookie["domain"]) for cookie in cookies})
             self.skipped = result.get("skipped", 0)
             self.status = "partial" if self.skipped else "synced" if cookies else "empty"
             try:
-                if run and cookies:
-                    await run.session._internal.client.send(
-                        "Network.setCookies", {"cookies": [cookie_params(c) for c in cookies]}
-                    )
+                if run:
+                    client = run.session._internal.client
+                    for cookie in removed:
+                        await client.send("Network.deleteCookies", {
+                            key: cookie[key]
+                            for key in ("name", "domain", "path", "partitionKey") if key in cookie
+                        })
+                    rejected = await set_cookies(client, [cookie_params(c) for c in cookies])
+                    if rejected:
+                        self.skipped += rejected
+                        self.status = "partial"
                     await self.capture(run)
             except Exception:
                 self.status = "apply_failed"
             try:
-                write_text_atomic(self.root / "sync.json", json.dumps(self.state()))
+                write_text_atomic(
+                    self.root / "sync.json", json.dumps({**self.state(), "status": self.status})
+                )
             except OSError:
                 self.status = "save_failed"

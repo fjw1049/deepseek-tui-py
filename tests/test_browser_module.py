@@ -252,21 +252,12 @@ async def test_skill_form_actions_are_idempotent_and_use_the_owned_session(brows
     session.select.assert_awaited_once_with(value="pro", selector="#plan", ref=None)
 
 
-def test_replay_resolves_moved_demo_and_rejects_other_local_files():
+def test_replay_opens_only_web_pages():
     from deepseek_tui.browser import workflows
 
-    directory = Path(workflows.__file__).parent
-    url = (directory / "browser_demo.html").as_uri()
-    assert workflows._url(url) == url
-    for legacy in (
-        directory.parent / "browser_demo.html",
-        directory.parent.parent / "browser" / "browser_demo.html",
-    ):
-        assert workflows._url(legacy.as_uri()) == url
-        assert workflows._demo_url(legacy.as_uri()) == url
     assert workflows._url("https://example.com") == "https://example.com"
     with pytest.raises(ValidationError):
-        workflows._url((directory / "other.html").as_uri())
+        workflows._url((Path(workflows.__file__).parent / "page.html").as_uri())
 
 
 @pytest.mark.asyncio
@@ -404,56 +395,37 @@ async def test_tool_uses_thread_session_and_scoped_approval(browser, tmp_path):
     assert not (await tool.execute({"action": "click", "selector": "#save"}, context)).success
 
 
-@pytest.mark.asyncio
-@pytest.mark.e2e
-async def test_real_octop_demo(tmp_path):
-    """Explicit opt-in; runs real local Chromium, never a model or external website."""
-    import os
-
-    if os.environ.get("DEEPSEEK_BROWSER_E2E") != "1":
-        pytest.skip("Set DEEPSEEK_BROWSER_E2E=1 to run real Chromium")
-    service = BrowserService(tmp_path / "artifacts")
-    try:
-        await service.start_demo("demo")
-        await asyncio.wait_for(service.runs["demo"].demo_task, timeout=60)
-        state = service.state("demo")
-        assert state["demo_status"] == "passed", state
-        assert state["demo_step"] == state["demo_total"] == 9
-        assert {".jpg", ".gif"} <= {Path(a["id"]).suffix for a in state["artifacts"]}
-        if service.environment()["video_ready"]:
-            assert any(a["id"].endswith(".webm") for a in state["artifacts"])
-            assert not state["video_error"]
-        assert (await service.frame("demo")).startswith("data:image/jpeg;base64,")
-        assert service.state("demo")["url"].endswith("browser_demo.html")
-        await service.control("demo", "user")
-        result = await service.action(
-            "demo", BrowserAction(action="fill", selector="#name", text="人工接管"), actor="user"
-        )
-        assert result["success"]
-    finally:
-        await service.close_all()
+SETTINGS_PAGE = """<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Settings</title>
+<input id="name" type="text"><label><input id="notifications" type="checkbox"> Notify</label>
+<button id="save">Save</button><div id="status" role="status"></div>
+<script>document.querySelector('#save').onclick=()=>{document.querySelector('#status')
+.textContent='已保存：'+document.querySelector('#name').value}</script></html>"""
 
 
 @pytest.mark.asyncio
 @pytest.mark.e2e
 async def test_real_record_replay_and_persistent_profile(tmp_path):
+    import functools
+    import http.server
     import json
     import os
-    from pathlib import Path
+    import threading
 
-    from deepseek_tui import browser as browser_module
     from deepseek_tui.browser.workflows import (
         finish_recording,
         read_workflow,
-        recording_store,
         start_recording,
         start_replay,
     )
 
     if os.environ.get("DEEPSEEK_BROWSER_E2E") != "1":
         pytest.skip("Set DEEPSEEK_BROWSER_E2E=1 to run real Chromium")
+    (tmp_path / "settings.html").write_text(SETTINGS_PAGE, encoding="utf-8")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=tmp_path)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/settings.html"
     service = BrowserService(tmp_path / "artifacts")
-    url = (Path(browser_module.__file__).parent / "browser_demo.html").as_uri()
     service.configure("flow", True)
     assert service.environment()["ready"]
     try:
@@ -461,7 +433,6 @@ async def test_real_record_replay_and_persistent_profile(tmp_path):
         await run.session.navigate(url)
         await service.control("flow", "user")
         await start_recording(service, "flow")
-        await run.session.navigate(url)
         await service.action(
             "flow", BrowserAction(action="fill", selector="#name", text="first"), actor="user"
         )
@@ -474,15 +445,6 @@ async def test_real_record_replay_and_persistent_profile(tmp_path):
         doc = read_workflow(service, "flow", result["recordingId"])
         assert any(step.kind == "fill" for step in doc.steps)
         assert all("example" not in item for item in doc.inputs)
-        legacy_url = (
-            Path(browser_module.__file__).parent.parent / "browser_demo.html"
-        ).as_uri()
-        for step in doc.steps:
-            if step.url == url:
-                step.url = legacy_url
-                step.expect = {"urlContains": legacy_url}
-        doc.verification = [{"type": "url_contains", "value": legacy_url}]
-        recording_store(service, "flow").write_steps(result["recordingId"], doc)
         await start_replay(
             service,
             "flow",
@@ -510,6 +472,7 @@ async def test_real_record_replay_and_persistent_profile(tmp_path):
         assert json.loads(cleared.content) is None
     finally:
         await service.close_all()
+        httpd.shutdown()
 
 
 async def test_status_without_start_and_during_takeover(browser):
@@ -826,3 +789,56 @@ async def test_fresh_observation_only_resolves_visible_navigation_target(browser
     if resolved:
         assert run.operations['pending']['receipt']['execution'] == 'unknown'
         assert run.operations['pending']['receipt']['reconciliation']['outcome'] == 'target_visible'
+
+
+@pytest.mark.parametrize("incomplete", [False, True])
+async def test_returning_control_ends_the_user_demonstration(browser, monkeypatch, incomplete):
+    from deepseek_tui.browser import workflows
+
+    async def finish(run):
+        run.recorder = None
+        if incomplete:
+            raise ValueError("Recording contains incomplete browser capture")
+        return {"recordingId": "rec_demo", "steps": 1}
+
+    monkeypatch.setattr(workflows, "finish_recording", finish)
+    run = browser.runs["one"]
+    run.owner, run.recorder = "user", object()
+    await browser.control("one", "agent")
+    assert run.owner == "agent" and run.recorder is None
+    assert any(entry.get("error") for entry in run.log) == incomplete
+
+
+async def test_close_keeps_gif_evidence_when_demonstration_capture_is_incomplete(
+    browser, monkeypatch
+):
+    from deepseek_tui.browser import workflows
+
+    async def finish(run):
+        run.recorder = None
+        raise ValueError("Recording contains incomplete browser capture")
+
+    monkeypatch.setattr(workflows, "finish_recording", finish)
+    run = browser.runs["one"]
+    output = io.BytesIO()
+    Image.new("RGB", (40, 30), "white").save(output, format="JPEG")
+    run.recorder, run.recording, run.frames = object(), True, [output.getvalue()]
+    await browser.close("one")
+    assert "one" not in browser.runs
+    assert [item["label"] for item in browser.state("one")["artifacts"]] == ["步骤动图"]
+
+
+@pytest.mark.parametrize("owner", ["user", "agent"])
+async def test_agent_capture_survives_handoffs_and_is_not_a_user_demonstration(
+    browser, monkeypatch, owner
+):
+    from deepseek_tui.browser import workflows
+
+    finish = AsyncMock()
+    monkeypatch.setattr(workflows, "finish_recording", finish)
+    run = browser.runs["one"]
+    run.owner = "user" if owner == "agent" else "agent"
+    run.recorder = SimpleNamespace(actor="agent")
+    assert browser.state("one")["workflow_recording"] is False
+    await browser.control("one", owner)
+    assert run.recorder is not None and not finish.called

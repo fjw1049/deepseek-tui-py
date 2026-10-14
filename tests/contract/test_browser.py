@@ -27,14 +27,71 @@ async def test_cookie_sync_consent_auth_and_private_results(authed_client, monke
     state = (await client.get(path)).json()
     assert state["consent"] == "pending" and state["profiles"][0]["id"] == "Default"
     assert (await client.post(path, json={"action": "enable", "profile": "../../other"})).status_code == 409
-    state = (await client.post(path, json={"action": "enable", "profile": "Default"})).json()
+    listing = AsyncMock(return_value={"sites": [
+        {"site": "example.test", "count": 1, "sensitive": False}]})
+    monkeypatch.setattr("deepseek_tui.browser.cookies.CookieStore.list_source", listing)
+    sites = await client.get(path + "/sites", params={"profile": "Default"})
+    assert sites.json()["sites"][0]["site"] == "example.test"
+    assert (await client.get(path + "/sites", params={"profile": "../x"})).status_code == 409
+    listing.return_value = {"error": "permission"}
+    refused = (await client.get(path + "/sites", params={"profile": "Default"})).json()
+    assert refused == {"sites": [], "error": "permission"}
+    listing.return_value = {"sites": [{"site": "example.test", "count": 1, "sensitive": False}]}
+    state = (await client.post(path, json={
+        "action": "enable", "profile": "Default", "sites": ["example.test"],
+    })).json()
     assert state["consent"] == "enabled"
     assert (state["status"], state["count"], state["domains"]) == ("synced", 1, 1)
-    source.assert_awaited_once_with("Default")
+    source.assert_awaited_once_with("Default", ["example.test"])
+    assert (await client.get(path)).json()["selected_sites"] == ["example.test"]
     assert "PRIVATE_SENTINEL" not in str(state)
     assert not {"cookies", "values", "path"} & state.keys()
     assert (await client.post(path, json={"action": "disable"})).json()["consent"] == "disabled"
     assert (await client.post(path, json={"action": "clear"})).json()["status"] == "cleared"
+
+
+async def test_cookie_sync_never_pauses_a_running_task(
+    authed_client, authed_runtime_app, tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserRun
+    from deepseek_tui.engine.handle import EngineHandle
+
+    monkeypatch.setattr("deepseek_tui.browser.cookies.CookieStore.read_source", AsyncMock(
+        return_value={"cookies": [{"name": "synthetic", "value": "v", "domain": ".example.test",
+                                   "path": "/", "secure": True}], "skipped": 0}))
+    monkeypatch.setattr("deepseek_tui.browser.cookies.profiles", lambda: [{"id": "Default"}])
+    client, _ = authed_client
+    app, _ = authed_runtime_app
+    manager = app.state.thread_manager
+    thread_id = (await client.post("/v1/threads", json={"title": "Cookies"})).json()["id"]
+    path = f"/v1/threads/{thread_id}/browser/cookie-sync"
+    manager.browser_service.cookies.configure("enabled", "Default")
+    handle = EngineHandle()
+    handle._mark_turn_active()
+    turn = SimpleNamespace(turn_id="t")
+    manager._active[thread_id] = SimpleNamespace(handle=handle, active_turn=turn)
+    run = BrowserRun(thread_id, tmp_path / "page", session=SimpleNamespace(
+        _internal=SimpleNamespace(client=SimpleNamespace(send=AsyncMock(return_value={})))))
+    manager.browser_service.runs[thread_id] = run
+    try:
+        response = await client.post(
+            path, json={"action": "sync", "generation": 0, "sites": ["example.test"]},
+        )
+        assert response.status_code == 409 and "agent is using" in response.text
+        assert not handle.pause.paused and run.owner == "agent"
+        # Without a running task, sync borrows control briefly and hands it back.
+        manager._active.pop(thread_id)
+        response = await client.post(path, json={
+            "action": "sync", "generation": run.generation, "sites": ["example.test"],
+        })
+        assert response.status_code == 200 and response.json()["status"] == "synced"
+        assert run.owner == "agent"
+    finally:
+        manager._active.pop(thread_id, None)
+        manager.browser_service.runs.pop(thread_id, None)
 
 
 async def test_browser_routes_require_auth_and_existing_thread(authed_client):
@@ -626,3 +683,38 @@ async def test_persisted_browser_result_is_the_bounded_projection(authed_runtime
     persisted = json.loads(detail)
     assert persisted["receipt"]["execution"] == "executed"
     assert persisted["observation"]["observation_id"] == "obs"
+
+
+async def test_workflow_list_is_newest_first(authed_client, authed_runtime_app):
+    from octop_browser.record.models import RecordingManifest
+
+    from deepseek_tui.browser.workflows import recording_store
+
+    client, _ = authed_client
+    manager = authed_runtime_app[0].state.thread_manager
+    thread_id = (await client.post("/v1/threads", json={"title": "Flows"})).json()["id"]
+    store = recording_store(manager.browser_service, thread_id)
+    # IDs are random, so their path order must not decide recency.
+    for index, recording_id in enumerate(["rec_c", "rec_a", "rec_b"]):
+        store.create(RecordingManifest(recordingId=recording_id,
+                                       createdAt=f"2026-10-15T00:00:0{index}+00:00"))
+    response = await client.get(f"/v1/threads/{thread_id}/browser/workflows")
+    assert [item["id"] for item in response.json()["items"]] == ["rec_b", "rec_a", "rec_c"]
+
+
+async def test_skill_suggestions_can_be_turned_off_and_resolved(authed_client, authed_runtime_app):
+    client, _ = authed_client
+    browser = authed_runtime_app[0].state.thread_manager.browser_service
+    thread_id = (await client.post("/v1/threads", json={"title": "Suggest"})).json()["id"]
+    path = f"/v1/threads/{thread_id}/browser/skill-suggestions"
+    assert (await client.post(path, json={"action": "dismiss"})).status_code == 409
+    browser.suggestions.pending[thread_id] = {"id": "sig", "site": "shop.example", "count": 3,
+                                             "recording_id": "rec_auto"}
+    state = (await client.get(f"/v1/threads/{thread_id}/browser")).json()
+    assert state["skill_suggestion"]["recording_id"] == "rec_auto"
+    accepted = await client.post(path, json={"action": "accept"})
+    assert accepted.json()["recording_id"] == "rec_auto"
+    assert (await client.post(path, json={"action": "disable"})).json() == {"enabled": False}
+    assert (await client.get(f"/v1/threads/{thread_id}/browser")).json()[
+        "skill_suggestions_enabled"] is False
+    assert (await client.post(path, json={"action": "enable"})).json() == {"enabled": True}
