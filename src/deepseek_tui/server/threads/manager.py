@@ -6,6 +6,7 @@ Manages active engines, turn monitoring, LRU eviction, and restart recovery.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import threading
@@ -3499,6 +3500,15 @@ class RuntimeThreadManager:
             remaining = self.store.list_turns_for_thread(thread_id)
             thread.latest_turn_id = remaining[-1].id if remaining else None
             self._touch(thread)
+            # Access the user granted in dropped turns goes with them.
+            dropped_turn_ids = {t.id for t in turns} - {t.id for t in remaining}
+            if state is not None:
+                state.engine.tool_context.path_grants.drop_turns(dropped_turn_ids)
+            else:
+                self.store.save_path_grants(thread_id, [
+                    g for g in self.store.load_path_grants(thread_id)
+                    if g.get("turn_id") not in dropped_turn_ids
+                ])
 
             # A warm engine still holds the dropped turns in session_messages;
             # replace them so regeneration truly starts from the rewound state.
@@ -4779,6 +4789,9 @@ class RuntimeThreadManager:
         engine.tool_context.metadata["browser_service"] = self.browser_service
         engine.tool_context.metadata["request_browser_assistance"] = self.request_browser_assistance
         engine.tool_context.metadata["approved_plan"] = bool(thread.approved_plan)
+        path_grants = engine.tool_context.path_grants
+        path_grants.load(self.store.load_path_grants(thread.id))
+        path_grants.on_change = functools.partial(self.store.save_path_grants, thread.id)
         goal_service = getattr(engine, "goal_service", None)
         if goal_service is not None:
             goal_service.restore(thread.goal, thread.goal_queue)

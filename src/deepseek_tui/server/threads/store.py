@@ -70,6 +70,7 @@ class RuntimeThreadStore:
         self._items_dir = root / "items"
         self._events_dir = root / "events"
         self._worktree_baselines_dir = root / "worktree_baselines"
+        self._path_grants_dir = root / "path_grants"
         self._rewind_audit_dir = root / "rewind_audit"
         self._state_path = root / "state.json"
 
@@ -79,6 +80,7 @@ class RuntimeThreadStore:
             self._items_dir,
             self._events_dir,
             self._worktree_baselines_dir,
+            self._path_grants_dir,
             self._rewind_audit_dir,
         ):
             if d.is_symlink():
@@ -145,6 +147,9 @@ class RuntimeThreadStore:
     def _worktree_baseline_path(self, thread_id: str) -> Path:
         return self._record_path(self._worktree_baselines_dir, thread_id, "json")
 
+    def _path_grants_path(self, thread_id: str) -> Path:
+        return self._record_path(self._path_grants_dir, thread_id, "json")
+
     def _rewind_audit_path(self, thread_id: str) -> Path:
         return self._record_path(self._rewind_audit_dir, thread_id, "jsonl")
 
@@ -180,6 +185,7 @@ class RuntimeThreadStore:
     def delete_thread(self, thread_id: str) -> None:
         self._thread_path(thread_id).unlink(missing_ok=True)
         self.delete_worktree_baseline(thread_id)
+        self.delete_path_grants(thread_id)
         self.delete_rewind_audit(thread_id)
 
     @_serialized
@@ -204,6 +210,29 @@ class RuntimeThreadStore:
     @_serialized
     def delete_worktree_baseline(self, thread_id: str) -> None:
         self._worktree_baseline_path(thread_id).unlink(missing_ok=True)
+
+    # --- path grants (tools/path_access.py) ----------------------------------
+    # A sidecar, not a ThreadRecord field: grants change mid-turn while the
+    # manager may still hold (and later save) an older ThreadRecord copy.
+
+    @_serialized
+    def save_path_grants(self, thread_id: str, grants: list[dict[str, Any]]) -> None:
+        write_json_atomic(self._path_grants_path(thread_id), grants)
+
+    def load_path_grants(self, thread_id: str) -> list[dict[str, Any]]:
+        path = self._path_grants_path(thread_id)
+        if not path.is_file():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("invalid_path_grants thread=%s", thread_id)
+            return []
+        return [g for g in raw if isinstance(g, dict)] if isinstance(raw, list) else []
+
+    @_serialized
+    def delete_path_grants(self, thread_id: str) -> None:
+        self._path_grants_path(thread_id).unlink(missing_ok=True)
 
     # --- rewind audit (JSONL append) -----------------------------------------
 

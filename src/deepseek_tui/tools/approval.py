@@ -29,6 +29,8 @@ from deepseek_tui.tools.registry import ApprovalRequirement, ToolCapability, Too
 
 if TYPE_CHECKING:
     from deepseek_tui.config.models import Config
+    from deepseek_tui.tools.path_access import PathAccess, PathGrant, PathGrants
+    from deepseek_tui.tools.registry import ToolContext
     from deepseek_tui.engine.events import ElevationRequiredEvent
 
 
@@ -65,6 +67,11 @@ class ApprovalRequest:
     approval_id: str = ""
     tool_call_id: str = ""
     turn_id: str | None = None
+    # Must reach a human even under auto-approve (path grants); handlers
+    # that cannot ask deny it instead.
+    force_prompt: bool = False
+    # Set by the engine gate when the user chose "approve for session".
+    remembered: bool = False
 
 
 class ApprovalDecision(Enum):
@@ -105,6 +112,7 @@ _SHELL_TOOLS = {
 }
 _FETCH_TOOLS = {"fetch_url", "web.fetch", "web_fetch"}
 _FILE_WRITE_TOOLS = {"write_file", "edit_file"}
+PATH_ACCESS_FINGERPRINT = "path_access"
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +210,10 @@ def build_approval_key(
         return ApprovalKey(f"net:{_parse_host(tool_input)}")
     if tool_name in _FILE_WRITE_TOOLS:
         return ApprovalKey(f"file:{tool_name}:{_file_path_key(tool_input)}")
+    if tool_name == PATH_ACCESS_FINGERPRINT:
+        # One grant per exact path set and operation — never per tool.
+        payload = json.dumps(tool_input, sort_keys=True, ensure_ascii=True)
+        return ApprovalKey("path:" + hashlib.sha256(payload.encode()).hexdigest())
     if tool_name == "agent":
         # The merged ``agent`` tool dispatches by ``action`` — approving a
         # spawn for the session must not bleed into send_input/cancel, and
@@ -534,6 +546,80 @@ def approval_request_for_tool(
     return None
 
 
+@dataclass(slots=True)
+class PathAccessPrompt:
+    """Approval a tool call needs for paths the user has not granted."""
+
+    request: ApprovalRequest
+    accesses: list[PathAccess]
+    fingerprint: dict[str, Any]
+
+    def denial_message(self) -> str:
+        paths = ", ".join(str(a.path) for a in self.accesses)
+        if self.request.reason.startswith(NEVER_BLOCKED_PREFIX):
+            return f"Access to {paths} {self.request.reason}."
+        return (
+            f"The user did not authorize access to {paths}. Do not retry or work "
+            "around it (e.g. with shell); ask the user to @-mention the path if needed."
+        )
+
+    def grant(self, grants: PathGrants) -> list[PathGrant]:
+        """Record the approval. Returns grants to revoke after a one-shot call."""
+        added = [
+            grants.add(a.path, recursive=a.path.is_dir() and not a.sensitive, write=a.write)
+            for a in self.accesses
+        ]
+        return [] if self.request.remembered else added
+
+
+def path_access_prompt(
+    tool: ToolSpec,
+    input_data: dict[str, Any] | None,
+    context: ToolContext,
+    policy: str | None,
+) -> PathAccessPrompt | None:
+    """Ask before a tool touches paths outside its boundary, or None to proceed.
+
+    Uses the same :meth:`ToolContext.check_path` rule as execution, so "no
+    prompt" and "allowed" can never disagree. A path grant widens the
+    boundary, so only a human may give it (``force_prompt``): auto-approve
+    handlers never rubber-stamp it, and handlers that cannot ask deny it.
+    Under the auto policy ordinary paths are not prompted at all — trust
+    mode already allows them, and without trust execution reports the
+    missing grant. Sensitive files always reach a human.
+    """
+    pending: list[PathAccess] = []
+    for raw, write in tool.path_accesses(input_data or {}):
+        try:
+            access = context.check_path(raw, write=write, allow_read_roots=not write)
+        except (OSError, RuntimeError, ValueError):
+            continue  # unresolvable: the tool reports it
+        if not access.allowed:
+            pending.append(access)
+    if not pending:
+        return None
+    sensitive = any(a.sensitive for a in pending)
+    action = _gate_action(ApprovalRequirement.REQUIRED, policy)
+    if action is GateAction.SKIP and not sensitive:
+        return None
+    write = any(a.write for a in pending)
+    kind = "a sensitive file" if sensitive else "outside the workspace"
+    paths = ", ".join(str(a.path) for a in pending)
+    request = build_approval_request(
+        tool.name(),
+        [ToolCapability.WRITES_FILES if write else ToolCapability.READ_ONLY],
+        reason=f"{tool.name()} wants to {'write' if write else 'read'} {kind}: {paths}",
+        blocked_never=action is GateAction.BLOCK_NEVER,
+    )
+    request.force_prompt = True
+    fingerprint = {
+        "read": sorted(str(a.path) for a in pending if not a.write),
+        "write": sorted(str(a.path) for a in pending if a.write),
+        "sensitive": sensitive,
+    }
+    return PathAccessPrompt(request, pending, fingerprint)
+
+
 def approval_request_for_mcp(
     tool_name: str,
     policy: str | None,
@@ -643,6 +729,8 @@ def classify_tool_category(tool_name: str) -> str:
     # Lazy import of engine.dispatch: see _mcp_requirement.
     from deepseek_tui.engine.dispatch import is_mcp_tool
 
+    if tool_name == PATH_ACCESS_FINGERPRINT:
+        return "path_access"
     if tool_name in ("write_file", "edit_file"):
         return "file_write"
     if tool_name in ("web_search", "fetch_url"):
@@ -685,10 +773,21 @@ def classify_presentation_risk(
     """
     if category in ("safe", "mcp_read", "network"):
         return "benign"
+    if category == "path_access" and not args.get("write") and not args.get("sensitive"):
+        return "benign"
     return "destructive"
 
 
 def build_impacts(tool_name: str, category: str, args: dict[str, Any]) -> list[str]:
+    if category == "path_access":
+        lines = [
+            "Sensitive file: only exact-file approval or an @-mention grants it."
+            if args.get("sensitive")
+            else "Outside the workspace and not granted earlier."
+        ]
+        lines += [f"Reads: {p}" for p in args.get("read", [])]
+        lines += [f"Writes: {p}" for p in args.get("write", [])]
+        return lines
     if category == "safe":
         lines = ["Read-only operation."]
         if path := _param_preview(args, ("path", "ref_id", "uri"), 72):
@@ -766,6 +865,8 @@ def build_primary_preview(
         return "\n".join(parts)
     if category == "network":
         return _param_preview(args, ("url", "q", "query"), _LINE_MAX) or ""
+    if category == "path_access":
+        return "\n".join([*args.get("read", []), *args.get("write", [])])
     if category == "subagent":
         return _param_preview(args, ("prompt", "message", "objective"), _PREVIEW_MAX) or ""
     if category == "file_write":
@@ -794,6 +895,7 @@ def localized_title(category: str, tool_name: str) -> str:
         "subagent": "Sub-agent requested",
         "task": "Task operation requested",
         "automation": "Automation change requested",
+        "path_access": "File access requested",
         "unknown": f"Approval required for {tool_name}",
     }
     return titles.get(category, f"Approval required for {tool_name}")

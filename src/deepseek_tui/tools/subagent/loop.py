@@ -139,7 +139,7 @@ async def _execute_subagent_tool(
         approval_request_for_tool,
         enrich_approval_request,
     )
-    from deepseek_tui.tools.registry import ToolError
+    from deepseek_tui.tools.registry import ToolContext, ToolError
     from deepseek_tui.tools.registry import ToolRegistry
 
     assert isinstance(registry, ToolRegistry)
@@ -164,11 +164,22 @@ async def _execute_subagent_tool(
         policy = (context.metadata or {}).get("approval_policy")  # type: ignore[union-attr]
     # Live parent-session flag (YOLO / turn auto_approve), not Engine.create snapshot.
     effective_auto = await _subagent_auto_approve_enabled(auto_approve, runtime)
-    from deepseek_tui.tools.approval import NEVER_BLOCKED_PREFIX
+    from deepseek_tui.tools.approval import NEVER_BLOCKED_PREFIX, path_access_prompt
 
-    required = approval_request_for_tool(tool, policy, tool_input if isinstance(tool_input, dict) else None)
+    args_or_none = tool_input if isinstance(tool_input, dict) else None
+    # Same path rule as the parent gate; grants are shared with the parent.
+    path_prompt = (
+        path_access_prompt(tool, args_or_none, context, policy)
+        if isinstance(context, ToolContext)
+        else None
+    )
+    required = (
+        path_prompt.request
+        if path_prompt is not None
+        else approval_request_for_tool(tool, policy, args_or_none)
+    )
     if required is not None and (required.reason or "").startswith(NEVER_BLOCKED_PREFIX):
-        return f"Error: {required.reason}"
+        return f"Error: {path_prompt.denial_message() if path_prompt else required.reason}"
     from deepseek_tui.integrations.hooks import HookContext, aggregate_hook_decision
 
     hook_executor = getattr(runtime, "hook_executor", None)
@@ -178,13 +189,9 @@ async def _execute_subagent_tool(
     hook_decision = aggregate_hook_decision(hook_results)
     if hook_decision.blocked:
         return f"Error: Tool call blocked by hook: {hook_decision.reason}"
-    approval_request = (
-        None
-        if effective_auto
-        else approval_request_for_tool(
-            tool, policy, tool_input if isinstance(tool_input, dict) else None
-        )
-    )
+    path_approved = False
+    forced = required is not None and required.force_prompt
+    approval_request = None if effective_auto and not forced else required
     if hook_decision.ask:
         from deepseek_tui.tools.approval import build_approval_request
 
@@ -210,7 +217,7 @@ async def _execute_subagent_tool(
         # ApprovalRequiredEvent in that case races the UI (ghost card / 404).
         still_needs_prompt = True
         check = getattr(handler, "auto_approve_enabled", None)
-        if callable(check):
+        if callable(check) and not approval_request.force_prompt:
             still_needs_prompt = not bool(await check())
         emit = getattr(runtime, "emit_event", None) if runtime else None
         from deepseek_tui.engine.handle import ApprovalHandler
@@ -242,12 +249,22 @@ async def _execute_subagent_tool(
             ApprovalDecision.APPROVED,
             ApprovalDecision.APPROVED_SESSION,
         ):
+            if path_prompt is not None and approval_request is path_prompt.request:
+                return f"Error: {path_prompt.denial_message()}"
             return f"Error: Tool {tool_name} denied by approval policy"
+        if path_prompt is not None and approval_request is path_prompt.request:
+            approval_request.remembered = decision is ApprovalDecision.APPROVED_SESSION
+            path_approved = True
     pause = getattr(getattr(runtime, "manager", None), "parent_pause", None)
     if pause is not None and (pause.paused or (
         pause_generation is not None and pause.generation != pause_generation
     )):
         return "Error: Not executed: human intervention invalidated this operation."
+    one_shot_grants = (
+        path_prompt.grant(context.path_grants)  # type: ignore[union-attr]
+        if path_approved and path_prompt is not None
+        else []
+    )
     try:
         with pause.tool_execution() if pause is not None else nullcontext():
             result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
@@ -285,6 +302,9 @@ async def _execute_subagent_tool(
         return f"Error: {exc}"
     except Exception as exc:  # noqa: BLE001
         return f"Error: {exc}"
+    finally:
+        for grant in one_shot_grants:
+            context.path_grants.remove(grant)  # type: ignore[union-attr]
 
 
 def _structured_output_contract() -> str:
@@ -529,6 +549,8 @@ async def run_subagent_loop(
         policy=getattr(runtime, "policy", None),
         network_policy=getattr(runtime, "network_policy", None),
     )
+    if getattr(runtime, "path_grants", None) is not None:
+        context.path_grants = runtime.path_grants
     context.metadata["hook_executor"] = runtime.hook_executor
     from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 

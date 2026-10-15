@@ -202,7 +202,7 @@ class HttpApprovalHandler(ApprovalHandler):
         tool_call_id: str,
         request: ApprovalRequest,
     ) -> ApprovalDecision:
-        if await self.auto_approve_enabled():
+        if not request.force_prompt and await self.auto_approve_enabled():
             return ApprovalDecision.APPROVED
         with self.approval_scope(tool_call_id, request) as fut:
             approved = await fut

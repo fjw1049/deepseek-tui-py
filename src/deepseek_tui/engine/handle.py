@@ -71,6 +71,9 @@ class AutoApprovalHandler(ApprovalHandler):
         tool_call_id: str,
         request: ApprovalRequest,
     ) -> ApprovalDecision:
+        # No human to ask: requests that must reach one are denied.
+        if request.force_prompt:
+            return ApprovalDecision.DENIED
         return ApprovalDecision.APPROVED
 
 

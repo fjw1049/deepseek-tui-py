@@ -31,9 +31,11 @@ if TYPE_CHECKING:
 
 
 class FixtureContext(ToolContext):
-    def resolve_path(self, path: str, *, allow_read_roots: bool = False) -> Path:
+    def resolve_path(
+        self, path: str, *, allow_read_roots: bool = False, write: bool = False
+    ) -> Path:
         # Even read-only spillover/user-data exceptions are inappropriate here.
-        resolved = super().resolve_path(path, allow_read_roots=False)
+        resolved = super().resolve_path(path, allow_read_roots=False, write=write)
         if not resolved.is_relative_to(self.working_directory.resolve()):
             raise ValueError("eval tools may only access the trial workspace")
         return resolved

@@ -338,13 +338,12 @@ async def create_tool_runtime(
         # Three-tier dial: auto ⇒ full trust. Keep sandbox danger-full-access as a
         # backward-compatible trust signal for older configs.
         #
-        # NOTE (A2 deferred, pending product decision): the subagent loop no
-        # longer derives trust from auto_approve (tools/subagent/loop.py), but
-        # this main path still maps approval_policy=auto/never-ask/yolo to
-        # trust_mode=True — meaning workspace path confinement is lifted and the
-        # sandbox gets danger-full-access. Whether "auto" means "fewer prompts"
-        # or "I trust this machine" is a product call; until it is made, keep
-        # this derivation and this note in sync. See docs/SECURITY_FIX_PLAN_2026-08-14.md
+        # A2 decided: approval_policy=auto/never-ask/yolo means "I trust this
+        # machine" — trust_mode=True lifts workspace path confinement and the
+        # sandbox gets danger-full-access, as the Workbench tier promises.
+        # Credential files still force a human prompt (tools/path_access.py).
+        # The subagent loop does not derive trust from auto_approve
+        # (tools/subagent/loop.py). See docs/SECURITY_FIX_PLAN_2026-08-14.md
         # (A2) — project-level config can no longer set these keys (A1), so only
         # an explicit user-level choice reaches this code.
         if not trust_mode and isinstance(approval_policy, str):

@@ -742,6 +742,7 @@ async def test_external_image_reaches_model_and_can_be_reread(tmp_path, attachme
     assert anthropic[0]["content"][1]["source"]["data"]
     chat = build_chat_messages([message], model="kimi-k3")
     assert chat[0]["content"][1]["type"] == "image_url"
-    context = ToolContext(working_directory=workspace, user_read_paths=prepared.read_paths)
+    context = ToolContext(working_directory=workspace)
+    context.path_grants.add_mentions(prepared.read_paths)
     result = await ReadFileTool().execute({"path": str(path)}, context)
     assert result.images[0].asset_id == prepared.images[0].asset_id

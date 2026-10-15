@@ -9,6 +9,7 @@ import re
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 import regex
 
@@ -146,6 +147,10 @@ class GrepFilesTool(ToolSpec):
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
+
+    def path_accesses(self, input_data: dict[str, Any]) -> list[tuple[str, bool]]:
+        path = input_data.get("path")
+        return [(path, False)] if isinstance(path, str) else []
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         pattern = _require_string(input_data, "pattern")
@@ -319,6 +324,10 @@ class FileSearchTool(ToolSpec):
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
+
+    def path_accesses(self, input_data: dict[str, Any]) -> list[tuple[str, bool]]:
+        path = input_data.get("path")
+        return [(path, False)] if isinstance(path, str) else []
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         pattern = _require_string(input_data, "pattern")

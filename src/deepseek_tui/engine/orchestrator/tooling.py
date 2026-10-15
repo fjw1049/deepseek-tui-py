@@ -190,6 +190,7 @@ class ToolExecutionMixin:
                         else None
                     )
                     from deepseek_tui.tools.approval import (
+                        path_access_prompt,
                         plan_requires_approval,
                         plan_requires_mcp_approval,
                     )
@@ -206,7 +207,11 @@ class ToolExecutionMixin:
                                 input=args,
                                 read_only=read_only,
                                 supports_parallel=read_only and tool.supports_parallel(),
-                                approval_required=plan_requires_approval(tool, policy, args),
+                                approval_required=(
+                                    plan_requires_approval(tool, policy, args)
+                                    or path_access_prompt(tool, args, self.tool_context, policy)
+                                    is not None
+                                ),
                             )
                         )
                     elif is_mcp_tool(tc.name):
@@ -918,13 +923,34 @@ class ToolExecutionMixin:
 
         tool = self.tool_registry.get(tool_name)
 
-        from deepseek_tui.tools.approval import approval_request_for_tool
-
-        approval_request = approval_request_for_tool(
-            tool,
-            self.exec_policy.approval_policy,
-            arguments if isinstance(arguments, dict) else None,
+        from deepseek_tui.tools.approval import (
+            PATH_ACCESS_FINGERPRINT,
+            approval_request_for_tool,
+            path_access_prompt,
         )
+
+        args = arguments if isinstance(arguments, dict) else None
+        path_prompt = path_access_prompt(
+            tool, args, self.tool_context, self.exec_policy.approval_policy
+        )
+        one_shot_grants = []
+        if path_prompt is not None:
+            # Approving the paths approves this call: one prompt, not two.
+            denied = await self._handle_approval_flow(
+                tool_call,
+                path_prompt.request,
+                fingerprint_name=PATH_ACCESS_FINGERPRINT,
+                fingerprint_arguments=path_prompt.fingerprint,
+                use_cache=False,
+            )
+            if denied:
+                return ToolResult(success=False, content=path_prompt.denial_message())
+            one_shot_grants = path_prompt.grant(self.tool_context.path_grants)
+            approval_request = None
+        else:
+            approval_request = approval_request_for_tool(
+                tool, self.exec_policy.approval_policy, args
+            )
         if approval_request is not None:
             # Fingerprint the *normalized* call so legacy names share the
             # same cache entry as their merged successors (and so
@@ -938,9 +964,13 @@ class ToolExecutionMixin:
             if denied:
                 return None
 
-        self._check_human_intervention()
-        with self.handle.pause.tool_execution():
-            return await self.tool_registry.execute(tool_name, arguments, self.tool_context)
+        try:
+            self._check_human_intervention()
+            with self.handle.pause.tool_execution():
+                return await self.tool_registry.execute(tool_name, arguments, self.tool_context)
+        finally:
+            for grant in one_shot_grants:
+                self.tool_context.path_grants.remove(grant)
 
     async def _handle_approval_flow(
         self,
@@ -949,13 +979,16 @@ class ToolExecutionMixin:
         *,
         fingerprint_name: str | None = None,
         fingerprint_arguments: Any = None,
+        use_cache: bool = True,
     ) -> bool:
         """Run the approval gate. Returns True if denied.
 
         ``fingerprint_name`` / ``fingerprint_arguments`` should be the
         post-normalization pair (what will actually execute). UI / audit
         events still use the original ``tool_call`` name so the user sees
-        what the model invoked.
+        what the model invoked. ``use_cache=False`` skips the session
+        approval cache (path grants keep their own, rewindable store);
+        ``approval_request.remembered`` still reports "approve for session".
         """
         from deepseek_tui.tools.approval import NEVER_BLOCKED_PREFIX
         from deepseek_tui.tools.approval import enrich_approval_request
@@ -973,9 +1006,12 @@ class ToolExecutionMixin:
         cache_key = build_approval_key(
             fp_name, fp_args, working_directory=self.tool_context.working_directory
         )
-        cache_status = self.approval_cache.check(cache_key)
+        cache_status = (
+            self.approval_cache.check(cache_key) if use_cache else ApprovalCacheStatus.UNKNOWN
+        )
 
         if cache_status is ApprovalCacheStatus.APPROVED and not (approval_request.reason or "").startswith(NEVER_BLOCKED_PREFIX):
+            approval_request.remembered = True
             logger.info("approval_cache_hit tool=%s reason=cached_session", tool_call.name)
             await self.handle.emit(
                 ApprovalResolvedEvent(
@@ -1034,7 +1070,10 @@ class ToolExecutionMixin:
         # Only surface the approval request when someone can actually answer.
         from deepseek_tui.engine.handle import ApprovalHandler
 
-        auto_approved = await self.approval_handler.auto_approve_enabled()
+        auto_approved = (
+            not approval_request.force_prompt
+            and await self.approval_handler.auto_approve_enabled()
+        )
         scope = (
             self.approval_handler.approval_scope(tool_call.id, approval_request)
             if not auto_approved and isinstance(self.approval_handler, ApprovalHandler)
@@ -1087,10 +1126,9 @@ class ToolExecutionMixin:
             )
             return True
 
-        self.approval_cache.insert(
-            cache_key,
-            approved_for_session=(decision is ApprovalDecision.APPROVED_SESSION),
-        )
+        approval_request.remembered = decision is ApprovalDecision.APPROVED_SESSION
+        if use_cache:
+            self.approval_cache.insert(cache_key, approved_for_session=approval_request.remembered)
         return False
 
     @staticmethod

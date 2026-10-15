@@ -7,11 +7,11 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.utils.edit_diagnostics import build_edit_no_match_message
 from deepseek_tui.tools.utils.path_suggestions import format_not_found_error
-from deepseek_tui.tools.utils.sensitive import is_sensitive_path, is_sensitive_write_path
 from deepseek_tui.tools.utils.validation import (
     optional_non_negative_int as _optional_non_negative_int,
 )
@@ -90,6 +90,12 @@ class ReadFileTool(ToolSpec):
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
 
+    def path_accesses(self, input_data: dict[str, Any]) -> list[tuple[str, bool]]:
+        path = input_data.get("path")
+        if not isinstance(path, str) or path.startswith("media:"):
+            return []
+        return [(path, False)]
+
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         rel = _require_string(input_data, "path")
         from deepseek_tui.media import IMAGE_EXTENSIONS, import_image_path
@@ -107,8 +113,6 @@ class ReadFileTool(ToolSpec):
             path = None
         else:
             path = context.resolve_path(rel, allow_read_roots=True)
-            if is_sensitive_path(path):
-                raise ToolError(f"refusing to read sensitive file: {path}")
             if path.suffix.lower() in IMAGE_EXTENSIONS:
                 try:
                     image = await asyncio.to_thread(import_image_path, path)
@@ -137,11 +141,6 @@ class ReadFileTool(ToolSpec):
                 images=[image],
             )
         path = context.resolve_path(rel, allow_read_roots=True)
-        if is_sensitive_path(path):
-            raise ToolError(
-                f"refusing to read sensitive file: {path} "
-                "(matched the credential-file blocklist)"
-            )
         offset = _optional_non_negative_int(input_data, "offset")
         limit = _optional_non_negative_int(input_data, "limit")
         start = max((offset or 0) - 1, 0)
@@ -229,18 +228,17 @@ class WriteFileTool(ToolSpec):
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.WRITES_FILES]
 
+    def path_accesses(self, input_data: dict[str, Any]) -> list[tuple[str, bool]]:
+        path = input_data.get("path")
+        return [(path, True)] if isinstance(path, str) else []
+
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         from deepseek_tui.workspace.diff_synth import synthesize_unified_diff
         from deepseek_tui.workspace.mutation_ledger import build_mutation_metadata
 
         rel = _require_string(input_data, "path")
-        path = context.resolve_path(rel)
+        path = context.resolve_path(rel, write=True)
         content = _require_string(input_data, "content")
-        if is_sensitive_write_path(path):
-            raise ToolError(
-                f"refusing to write sensitive file: {path} "
-                "(matched the credential-file blocklist)"
-            )
         if context.changed_since_last_seen(path):
             raise ToolError(_stale_write_message(path))
         expected = _file_stamp(path)
@@ -332,19 +330,18 @@ class EditFileTool(ToolSpec):
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.WRITES_FILES]
 
+    def path_accesses(self, input_data: dict[str, Any]) -> list[tuple[str, bool]]:
+        path = input_data.get("path")
+        return [(path, True)] if isinstance(path, str) else []
+
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         from deepseek_tui.workspace.diff_synth import synthesize_unified_diff
         from deepseek_tui.workspace.mutation_ledger import build_mutation_metadata
 
         rel = _require_string(input_data, "path")
-        path = context.resolve_path(rel)
+        path = context.resolve_path(rel, write=True)
         old_string = _require_string_with_alias(input_data, "old_string", "search")
         new_string = _require_string_with_alias(input_data, "new_string", "replace")
-        if is_sensitive_write_path(path):
-            raise ToolError(
-                f"refusing to write sensitive file: {path} "
-                "(matched the credential-file blocklist)"
-            )
         replace_all = input_data.get("replace_all", False)
         if not isinstance(replace_all, bool):
             raise ToolError("replace_all must be a boolean")

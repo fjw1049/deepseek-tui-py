@@ -1439,6 +1439,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     hook_executor=engine.hook_executor,
                     policy=engine.tool_context.policy,
                     network_policy=engine.tool_context.network_policy,
+                    path_grants=engine.tool_context.path_grants,
                 )
                 subagent_manager.attach_loop_runtime(loop_runtime)
 
@@ -2029,6 +2030,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # PluginMountEvent（composer 底部徽章），不再发带 [plugin] 前缀的
         # StatusEvent，避免时间线重复系统气泡。
         focus_mcp_ahead = None
+        # Server turns: stamp new path grants with the thread's turn id so a
+        # rewind past this turn revokes them.
+        self.tool_context.path_grants.turn_id = self.tool_context.metadata.get(
+            "turn_latency_turn_id"
+        )
         if internal_turn:
             from deepseek_tui.state.context import ProcessedTurnInput
 
@@ -2052,7 +2058,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 turn_id=turn_id,
                 allow_external_files=True,
             )
-            self.tool_context.user_read_paths.update(processed.read_paths)
+            self.tool_context.path_grants.add_mentions(processed.read_paths)
             if focus_mcp_ahead is not None:
                 # Re-prepend `@<name> ` so the model still sees the connector cue
                 # in the user message — only file-mention expansion was suppressed.
@@ -3249,7 +3255,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     session_id=self._cycle_session_id,
                     allow_external_files=True,
                 )
-                self.tool_context.user_read_paths.update(processed.read_paths)
+                self.tool_context.path_grants.add_mentions(processed.read_paths)
                 logger.info(
                     "steer_injected display_len=%d model_len=%d",
                     len(processed.display_text),

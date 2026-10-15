@@ -31,6 +31,7 @@ from deepseek_tui.server.threads import (
     reconstruct_messages_from_turns,
 )
 from deepseek_tui.tools.file import WriteFileTool
+from deepseek_tui.tools.path_access import PathGrants
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.workspace.execution import execution_root
 from deepseek_tui.workspace.git_reconcile import capture_baseline
@@ -193,8 +194,14 @@ async def test_rewind_resyncs_warm_engine_session(runtime_app) -> None:
 
     synced: list[list] = []
     prepared: list[bool] = []
+    grants = PathGrants(turn_id="turn_a")
+    grants.add(Path("/outside/a.txt"))
+    grants.turn_id = "turn_b"
+    grants.add(Path("/outside/b.txt"))
 
     class FakeEngine:
+        tool_context = SimpleNamespace(path_grants=grants)
+
         async def prepare_session_rewind(self):
             assert manager.store.load_turn("turn_b") is not None
             prepared.append(True)
@@ -214,6 +221,24 @@ async def test_rewind_resyncs_warm_engine_session(runtime_app) -> None:
 
     assert len(synced) == 1
     assert [m.content[0].text for m in synced[0]] == ["Q1", "A1"]
+    # Access granted in the dropped turn is revoked with it.
+    assert [g.path for g in grants.grants] == [Path("/outside/a.txt")]
+
+
+@pytest.mark.asyncio
+async def test_rewind_revokes_persisted_path_grants_of_dropped_turns(runtime_app) -> None:
+    manager = runtime_app.state.thread_manager
+    thread_id = await _seed(manager)
+    manager.store.save_path_grants(thread_id, [
+        {"path": "/outside/a.txt", "turn_id": "turn_a"},
+        {"path": "/outside/b.txt", "turn_id": "turn_b"},
+        {"path": "/outside/c.txt", "turn_id": None},
+    ])
+
+    await manager.rewind_thread(thread_id, before_item_id="item_u2")
+
+    kept = [g["path"] for g in manager.store.load_path_grants(thread_id)]
+    assert kept == ["/outside/a.txt", "/outside/c.txt"]
 
 
 @pytest.mark.asyncio

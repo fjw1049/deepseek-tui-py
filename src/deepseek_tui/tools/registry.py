@@ -101,6 +101,14 @@ class ToolSpec(ABC):
         """
         return self.approval_requirement()
 
+    def path_accesses(self, input_data: dict[str, Any]) -> list[tuple[str, bool]]:
+        """Filesystem paths this call touches, as ``(path, write)`` pairs.
+
+        The engine checks them before execution and asks the user for any
+        path outside the tool boundary. Tools without file paths return [].
+        """
+        return []
+
     def is_read_only(self) -> bool:
         """True iff the tool's capabilities include READ_ONLY."""
         return ToolCapability.READ_ONLY in self.capabilities()
@@ -121,11 +129,19 @@ class ToolSpec(ABC):
 
 
 if TYPE_CHECKING:
+    from deepseek_tui.tools.path_access import PathAccess, PathGrants
     from deepseek_tui.policy.exec_policy import TomlBackedPolicy
     from deepseek_tui.policy.sandbox import ExecutionSandboxPolicy
     from deepseek_tui.policy.network import NetworkPolicyDecider
     from deepseek_tui.tools.subagent import SubAgentManager
     from deepseek_tui.tools.task import TaskManager
+
+
+def _new_path_grants() -> PathGrants:
+    # Lazy: tools.utils imports this module, and path_access imports tools.utils.
+    from deepseek_tui.tools.path_access import PathGrants
+
+    return PathGrants()
 
 
 @dataclass(slots=True)
@@ -139,8 +155,9 @@ class ToolContext:
     # stay confined to the workspace. Skills' companion-file roots can be
     # appended here later with no API change.
     extra_read_roots: tuple[Path, ...] = ()
-    # Exact files explicitly supplied by the user; read-only, without directory access.
-    user_read_paths: set[Path] = field(default_factory=set)
+    # Paths the user authorized (mentions, attachments, approvals). Shared
+    # with sub-agents; see tools/path_access.py.
+    path_grants: PathGrants = field(default_factory=_new_path_grants)
     # This session's cycle-archive directory. Kept separate from
     # ``extra_read_roots`` because a plugin mount reassigns that tuple
     # wholesale; a cycle seed that names an unreadable archive would only
@@ -245,47 +262,62 @@ class ToolContext:
             return False
         return True
 
-    def resolve_path(self, path: str, *, allow_read_roots: bool = False) -> Path:
-        """Resolve ``path`` against the workspace, refusing escapes.
+    def check_path(
+        self, path: str, *, write: bool = False, allow_read_roots: bool = False
+    ) -> PathAccess:
+        """Decide whether a tool may touch ``path`` without asking the user.
 
-        When the resolved path falls outside ``working_directory``, raise
-        ``ValueError`` instead of silently rewriting it. The negative
-        signal lets the LLM self-correct on the next turn — without it,
-        absolute-path hallucinations (``/home/user/foo.py``) keep
-        succeeding and the model never learns.
+        The single rule shared by the approval preflight and execution:
 
-        ``trust_mode`` bypasses the check (used for system-initiated
-        operations that must touch e.g. ``~/.deepseek``).
-
-        Read-only callers pass ``allow_read_roots=True`` to also accept
-        paths under ``extra_read_roots`` (and their subdirs) — e.g. a
-        mounted plugin's own directory — plus two agent-data roots the model
-        is pointed at by name: the spillover root
-        (``~/.deepseek/tool_outputs/``) for spilled tool results, and this
-        session's ``cycle_archive_root`` for pre-cycle history. Write callers
-        leave it False so writes stay confined to the workspace.
+        1. A user grant covering the path (and operation) allows it.
+        2. Sensitive files need such a grant — even in trust mode.
+        3. Inside the workspace is allowed; ``trust_mode`` allows anywhere.
+        4. Reads with ``allow_read_roots`` also accept ``extra_read_roots``
+           (e.g. a mounted plugin's dir), the spillover root
+           (``~/.deepseek/tool_outputs/``) and this session's
+           ``cycle_archive_root``.
+        5. Everything else needs the user's approval.
         """
+        from deepseek_tui.tools.path_access import PathAccess, is_sensitive
+
         workspace = self.working_directory.expanduser().resolve()
         candidate = Path(path).expanduser()
         if candidate.is_absolute():
             resolved = candidate.resolve()
         else:
             resolved = (workspace / candidate).resolve()
-        if not self.trust_mode and not self._within(resolved, workspace):
-            allowed = allow_read_roots and (
-                any(
-                    self._within(resolved, root) for root in self.extra_read_roots
-                )
-                or resolved in self.user_read_paths
-                or self._within_spillover_root(resolved)
-                or self._within_cycle_archive_root(resolved)
-            )
-            if not allowed:
-                raise ValueError(
-                    f"path escapes workspace: {path!r} "
-                    f"(workspace: {workspace}). Use a relative path."
-                )
-        return resolved
+        if self.path_grants.allows(resolved, write=write):
+            return PathAccess(resolved, write, allowed=True)
+        if is_sensitive(resolved, write=write):
+            return PathAccess(resolved, write, allowed=False, sensitive=True)
+        if self.trust_mode or self._within(resolved, workspace):
+            return PathAccess(resolved, write, allowed=True)
+        if not write and allow_read_roots and (
+            any(self._within(resolved, root) for root in self.extra_read_roots)
+            or self._within_spillover_root(resolved)
+            or self._within_cycle_archive_root(resolved)
+        ):
+            return PathAccess(resolved, write, allowed=True)
+        return PathAccess(resolved, write, allowed=False, outside=True)
+
+    def resolve_path(
+        self, path: str, *, allow_read_roots: bool = False, write: bool = False
+    ) -> Path:
+        """Resolve ``path`` per :meth:`check_path`, refusing what needs approval.
+
+        An unauthorized path raises instead of being silently rewritten, so
+        the model sees a negative signal (absolute-path hallucinations like
+        ``/home/user/foo.py`` otherwise keep succeeding). Outside paths raise
+        ``ValueError``; sensitive files raise :class:`ToolError`. The engine
+        asks the user before execution, so reaching here means no approval.
+        """
+        access = self.check_path(path, write=write, allow_read_roots=allow_read_roots)
+        if access.allowed:
+            return access.path
+        message = access.denial_message(path, self.working_directory.expanduser().resolve())
+        if access.sensitive:
+            raise ToolError(message)
+        raise ValueError(message)
 
     @staticmethod
     def _within_spillover_root(resolved: Path) -> bool:
@@ -507,6 +539,10 @@ class ToolRegistry:
             raise ToolError(f"Tool {name} timed out after {timeout_seconds}s") from exc
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
+        except PermissionError as exc:
+            from deepseek_tui.tools.path_access import os_denied_message
+
+            raise ToolError(os_denied_message(exc)) from exc
 
     # ------------------------------------------------------------------
     # API serialisation

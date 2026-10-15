@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from deepseek_tui.protocol.messages import ImageBlock
+from deepseek_tui.tools.utils.sensitive import is_sensitive_path
 
 # ============================================================================
 # Types (formerly context/types.py)
@@ -85,9 +86,12 @@ def process_turn_input(
 ) -> ProcessedTurnInput:
     """Parse ``@mentions``, expand file context, return display vs model text.
 
-    ``allow_external_files`` lets absolute mentions name files outside the
-    workspace. Only text typed by the user may set it: model-authored text
-    (sub-agent prompts, agent_send) must stay inside the workspace.
+    ``allow_external_files`` marks the text as typed by the user: mentions
+    may then name any existing file or directory, and ``read_paths`` lists
+    what they authorize (outside paths and sensitive files) for later tool
+    reads. Model-authored text (sub-agent prompts, agent_send) leaves it
+    False: it stays inside the workspace, grants nothing, and cannot inline
+    sensitive files.
     """
     cfg = config or ContextConfig()
     raw = inp.raw_text or ""
@@ -135,8 +139,21 @@ def process_turn_input(
                 continue
 
             path, display_path = resolved
+            sensitive = is_sensitive_path(path)
+            if sensitive and not allow_external_files:
+                ref = ContextReference(
+                    kind="missing", source=source, label=token, target=display_path,
+                    included=False, expanded=False, detail="sensitive file",
+                )
+                references.append(ref)
+                blocks.append(_render_missing_block(
+                    token, display_path, "sensitive file; only the user can reference it"
+                ))
+                continue
             kind = _classify_path(path)
-            if path.is_file() and not path.is_relative_to(ws):
+            if allow_external_files and path.exists() and (
+                sensitive or not path.is_relative_to(ws)
+            ):
                 read_paths.add(path)
 
             if kind == "missing":
@@ -434,9 +451,10 @@ def _resolve_mention(
                 resolved = (workspace / candidate).resolve()
     except OSError:
         return None
-    # Explicit absolute file mentions authorize that file, never its parent directory.
+    # The user's explicit mention authorizes exactly what it names, however
+    # it is spelled (absolute, ~, ../, or a symlink); model text never escapes.
     if not resolved.is_relative_to(workspace):
-        if not allow_external or not candidate.is_absolute() or not resolved.is_file():
+        if not allow_external or not resolved.exists():
             return None
     display = _display_path(resolved, workspace)
     return resolved, display

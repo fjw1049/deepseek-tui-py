@@ -242,28 +242,69 @@ def test_external_text_grants_only_the_named_file(tmp_path, monkeypatch, form):
     assert "hello" in out.model_text
     assert "private sibling" not in out.model_text
     assert out.read_paths == {path.resolve()}
-    context = ToolContext(working_directory=workspace, user_read_paths=out.read_paths)
+    context = ToolContext(working_directory=workspace)
+    context.path_grants.add_mentions(out.read_paths)
     assert context.resolve_path(str(path), allow_read_roots=True) == path.resolve()
     for denied in (other, tmp_path):
         with pytest.raises(ValueError, match="escapes workspace"):
             context.resolve_path(str(denied), allow_read_roots=True)
     with pytest.raises(ValueError, match="escapes workspace"):
-        context.resolve_path(str(path))  # A read grant never grants writes.
+        context.resolve_path(str(path), write=True)  # A read grant never grants writes.
 
 
-def test_external_directory_and_relative_escape_are_not_granted(tmp_path):
+def test_user_mentions_grant_directories_relative_paths_and_symlinks(tmp_path):
+    from deepseek_tui.tools.registry import ToolContext
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    outside = tmp_path / "notes.txt"
+    outside.write_text("outside content")
+    (workspace / "link.txt").symlink_to(outside)
+    cases = {
+        f"@{tmp_path}": tmp_path.resolve(),
+        "@../notes.txt": outside.resolve(),
+        "@link.txt": outside.resolve(),
+    }
+    for raw, granted in cases.items():
+        out = process_turn_input(
+            UserTurnInput(raw), workspace=workspace, cwd=workspace, allow_external_files=True
+        )
+        assert out.read_paths == {granted}
+        assert out.references[0].included
+        context = ToolContext(working_directory=workspace)
+        context.path_grants.add_mentions(out.read_paths)
+        assert context.resolve_path(str(outside), allow_read_roots=True) == outside.resolve()
+
+
+def test_model_authored_mentions_grant_nothing(tmp_path):
     workspace = tmp_path / "project"
     workspace.mkdir()
     outside = tmp_path / "secret.txt"
     outside.write_text("private content")
     (workspace / "link.txt").symlink_to(outside)
-    for raw in (f"@{tmp_path}", "@../secret.txt", "@link.txt"):
-        out = process_turn_input(
-            UserTurnInput(raw), workspace=workspace, cwd=workspace, allow_external_files=True
-        )
+    (workspace / ".env").write_text("TOKEN=private content")
+    for raw in (f"@{tmp_path}", f"@{outside}", "@../secret.txt", "@link.txt", "@.env"):
+        out = process_turn_input(UserTurnInput(raw), workspace=workspace, cwd=workspace)
         assert not out.read_paths
         assert "private content" not in out.model_text
         assert not out.references[0].included
+
+
+def test_user_mention_of_sensitive_file_grants_exactly_that_file(tmp_path):
+    from deepseek_tui.tools.registry import ToolContext, ToolError
+
+    (tmp_path / ".env").write_text("TOKEN=1")
+    (tmp_path / ".env.local").write_text("TOKEN=2")
+    out = process_turn_input(
+        UserTurnInput("@.env"), workspace=tmp_path, cwd=tmp_path, allow_external_files=True
+    )
+    assert "TOKEN=1" in out.model_text
+    assert out.read_paths == {(tmp_path / ".env").resolve()}
+    context = ToolContext(working_directory=tmp_path)
+    context.path_grants.add_mentions(out.read_paths)
+    assert context.resolve_path(".env", allow_read_roots=True).name == ".env"
+    with pytest.raises(ToolError, match="sensitive"):
+        context.resolve_path(".env.local", allow_read_roots=True)
 
 
 def test_external_large_text_can_be_read_after_reference_only_expansion(tmp_path):
@@ -279,5 +320,6 @@ def test_external_large_text_can_be_read_after_reference_only_expansion(tmp_path
         allow_external_files=True,
     )
     assert not out.references[0].expanded
-    context = ToolContext(working_directory=workspace, user_read_paths=out.read_paths)
+    context = ToolContext(working_directory=workspace)
+    context.path_grants.add_mentions(out.read_paths)
     assert context.resolve_path(str(path), allow_read_roots=True).read_text() == "large content"

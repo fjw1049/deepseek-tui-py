@@ -664,6 +664,9 @@ class SubAgentRuntime:
 
     policy: Any | None = None
     network_policy: Any | None = None
+    # Parent's PathGrants: children read what the user granted and their
+    # approvals land in the same session store.
+    path_grants: Any | None = None
 
     def with_spawn_depth(self, depth: int) -> SubAgentRuntime:
         return SubAgentRuntime(
@@ -686,4 +689,5 @@ class SubAgentRuntime:
             trust_mode=self.trust_mode,
             policy=self.policy,
             network_policy=self.network_policy,
+            path_grants=self.path_grants,
         )
