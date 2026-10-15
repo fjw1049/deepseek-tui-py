@@ -1,5 +1,6 @@
 {
   "turnActivityWaiting": "等待响应",
+  "turnActivitySubagent": "等待子代理完成",
   "turnActivityThinking": "思考中",
   "turnActivityResponding": "生成回复",
   "turnActivityBrowser": "执行工具",

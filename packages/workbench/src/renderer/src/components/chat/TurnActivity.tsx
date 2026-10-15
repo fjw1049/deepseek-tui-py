@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { SquareGrid } from './SquareGrid'
 
-export type TurnActivityKind = 'Waiting' | 'Thinking' | 'Responding' | 'Browser' | 'Tool' | 'User'
+export type TurnActivityKind = 'Waiting' | 'Thinking' | 'Responding' | 'Browser' | 'Tool' | 'User' | 'Subagent'
 
 /** Inputs are projections of runtime events, independent of disclosure/content layout. */
 export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUser = false }: {
@@ -17,6 +17,10 @@ export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUse
       block.kind === 'evolution') && block.status === 'pending')) return 'User'
   if (stream === 'thinking') return 'Thinking'
   if (stream === 'responding') return 'Responding'
+  const latest = blocks.at(-1)
+  if (latest?.kind === 'system' && /^Waiting on \d+ sub-agent\(s\) to complete\.\.\.$/.test(latest.text)) {
+    return 'Subagent'
+  }
   const running = blocks.filter((block) => block.kind === 'tool' && block.status === 'running')
   if (running.some((block) => block.kind === 'tool' && block.meta?.tool_name === 'browser_use')) {
     return 'Browser'

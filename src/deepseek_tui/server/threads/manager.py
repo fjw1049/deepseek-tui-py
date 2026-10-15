@@ -2874,6 +2874,7 @@ class RuntimeThreadManager:
         if manager is None:
             raise RuntimeError("subagent manager not configured")
         snapshot = await manager.resume(agent_id)
+        state.engine._consumed_subagent_completions.discard(agent_id)
         return _result_to_json(snapshot)
 
     async def threads_summary(self) -> dict[str, Any]:
@@ -3381,6 +3382,9 @@ class RuntimeThreadManager:
                 raise ValueError("cannot rewind thread while a turn is active")
 
             turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
+
+            if state is not None:
+                await state.engine.prepare_session_rewind()
 
             restored_files: list[str] = []
             merged_files: list[str] = []

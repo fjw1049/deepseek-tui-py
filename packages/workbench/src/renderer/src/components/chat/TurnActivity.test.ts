@@ -19,3 +19,13 @@ it('uses event states for waiting, model, tools and human gates, never history t
   expect(resolveTurnActivity({ ...base, blocks: [{ ...question, status: 'submitted' }] })).toBe('Waiting')
   expect(resolveTurnActivity({ ...base, active: false, awaitingBrowserUser: true, stream: 'thinking' })).toBeNull()
 })
+
+it('shows the current subagent handoff without reusing an old wait status', () => {
+  const waiting: ChatBlock = { kind: 'system', id: 'wait', text: 'Waiting on 1 sub-agent(s) to complete...' }
+  const base = { active: true, blocks: [waiting], stream: null }
+  expect(resolveTurnActivity(base)).toBe('Subagent')
+  expect(resolveTurnActivity({ ...base, stream: 'responding' })).toBe('Responding')
+  expect(resolveTurnActivity({ ...base, active: false })).toBeNull()
+  expect(resolveTurnActivity({ ...base, blocks: [waiting,
+    { kind: 'system', id: 'resume', text: 'Resuming turn with 1 sub-agent completion(s)' }] })).toBe('Waiting')
+})

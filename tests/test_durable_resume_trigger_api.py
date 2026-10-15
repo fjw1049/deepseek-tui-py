@@ -149,11 +149,14 @@ async def test_resume_subagent_via_thread_manager(
     cancelled = await sub_mgr.get_result(snap.agent_id)
     assert cancelled.status.kind is SubAgentStatusKind.CANCELLED
 
+    consumed = {snap.agent_id}
+
     async def fake_create(**kwargs: object) -> SimpleNamespace:
         wd = kwargs.get("working_directory", resume_data_dir)
         ctx = ToolContext(working_directory=Path(wd))  # type: ignore[arg-type]
         ctx.subagent_manager = sub_mgr
         return SimpleNamespace(
+            _consumed_subagent_completions=consumed,
             tool_context=ctx,
             run=AsyncMock(),
             session_messages=[],
@@ -181,6 +184,7 @@ async def test_resume_subagent_via_thread_manager(
     payload = await mgr.resume_subagent(thread.id, snap.agent_id)
     assert payload["agent_id"] == snap.agent_id
     assert payload["status"]["kind"] == "running"
+    assert snap.agent_id not in consumed
 
     with pytest.raises(RuntimeError, match="already running"):
         await mgr.resume_subagent(thread.id, snap.agent_id)

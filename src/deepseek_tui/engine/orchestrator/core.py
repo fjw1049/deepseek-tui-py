@@ -82,7 +82,7 @@ from deepseek_tui.integrations.lsp import DiagnosticBlock
 from deepseek_tui.protocol.messages import Message, MessageOrigin, MessageRequest
 from deepseek_tui.tools.approval import ApprovalCache, ExecPolicyEngine
 from deepseek_tui.tools.registry import ToolContext, ToolRegistry
-from deepseek_tui.tools.subagent import SubAgentCompletion
+from deepseek_tui.tools.subagent import SubAgentCompletion, SubAgentStatusKind
 from deepseek_tui.utils import bind_turn
 
 if TYPE_CHECKING:
@@ -608,6 +608,22 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 return
         if decision.should_continue:
             await self.launch_goal_continuation()
+
+    async def prepare_session_rewind(self) -> None:
+        """Join foreground children before restoring files or replacing history."""
+        manager = self.tool_context.subagent_manager
+        if manager is None:
+            return
+        agents = [agent for agent in manager.list_filtered() if not agent.background]
+        # Suppress cancellation callbacks and already queued results from the
+        # discarded execution; explicit resume makes an agent eligible again.
+        self._consumed_subagent_completions.update(agent.agent_id for agent in agents)
+        for agent in agents:
+            if agent.status.kind is SubAgentStatusKind.RUNNING:
+                await manager.cancel(agent.agent_id)
+        # Remove stale entries now, before a later resume clears suppression.
+        for completion in self._drain_subagent_completions():
+            self._subagent_completions.put_nowait(completion)
 
     def sync_session(
         self,

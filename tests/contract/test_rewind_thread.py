@@ -192,9 +192,15 @@ async def test_rewind_resyncs_warm_engine_session(runtime_app) -> None:
     thread_id = await _seed(manager)
 
     synced: list[list] = []
+    prepared: list[bool] = []
 
     class FakeEngine:
+        async def prepare_session_rewind(self):
+            assert manager.store.load_turn("turn_b") is not None
+            prepared.append(True)
+
         def sync_session(self, messages, *, model=None):
+            assert prepared == [True]
             synced.append(list(messages))
 
     manager._active[thread_id] = SimpleNamespace(

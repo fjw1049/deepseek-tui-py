@@ -213,3 +213,34 @@ async def test_idle_delivery_includes_ledger_when_idle(engine_ctx: tuple) -> Non
     assert "empty: 1" in body
     assert "payload-agent_idle_ok" in body
     assert "payload-agent_idle_empty" in body
+
+
+@pytest.mark.asyncio
+async def test_rewind_stops_foreground_and_discards_old_completions(engine_ctx):
+    engine, _handle = engine_ctx
+    mgr = engine.tool_context.subagent_manager
+
+    async def executor(agent, cancel):
+        await asyncio.Event().wait()
+
+    mgr._executor = executor
+    foreground = await mgr.spawn(SpawnRequest(
+        prompt="old foreground", agent_type=SubAgentType.EXPLORE,
+        assignment=SubAgentAssignment(objective="old foreground"),
+    ))
+    background = await mgr.spawn(SpawnRequest(
+        prompt="detached", agent_type=SubAgentType.EXPLORE,
+        assignment=SubAgentAssignment(objective="detached"), background=True,
+    ))
+    engine._enqueue_subagent_completion(
+        SubAgentCompletion(agent_id=foreground.agent_id, payload="stale result")
+    )
+    await engine.prepare_session_rewind()
+
+    assert (await mgr.get_result(foreground.agent_id)).status.kind is SubAgentStatusKind.CANCELLED
+    assert (await mgr.get_result(background.agent_id)).status.kind is SubAgentStatusKind.RUNNING
+    assert mgr.running_foreground_count() == 0
+    engine._consumed_subagent_completions.discard(foreground.agent_id)
+    assert engine._drain_subagent_completions() == []
+    assert await engine._handle_subagent_turn_handoff([]) is False
+    await mgr.cancel(background.agent_id)

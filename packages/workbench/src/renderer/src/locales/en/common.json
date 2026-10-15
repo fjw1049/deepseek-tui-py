@@ -1,5 +1,6 @@
 {
   "turnActivityWaiting": "Waiting for model response",
+  "turnActivitySubagent": "Waiting for sub-agents to finish",
   "turnActivityThinking": "Thinking",
   "turnActivityResponding": "Generating response",
   "turnActivityBrowser": "Using browser",
