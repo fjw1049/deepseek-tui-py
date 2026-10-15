@@ -66,3 +66,43 @@ describe('assistant reading structure', () => {
     expect(container.querySelector('code')?.textContent).toBe('<details><summary>内容</summary></details>')
   })
 })
+
+describe('Chinese bare URL boundaries', () => {
+  it.each([false, true])('keeps trailing prose outside links (streaming=%s)', (streaming) => {
+    for (const punctuation of ['），', '，', '。', '！', '？', '；', '：', '、', '】', '》', '”']) {
+      const url = 'https://www.google.com/'
+      const text = `首页（${url}${punctuation}页面加载正常。`
+      const container = render(text, streaming)
+      expect(container.querySelector('a')?.textContent).toBe(url)
+      expect(container.querySelector('a')?.getAttribute('href')).toBe(url)
+      expect(container.textContent).toBe(text)
+    }
+  })
+
+  it.each([false, true])('handles www links and encoded punctuation (streaming=%s)', (streaming) => {
+    const container = render('访问 www.example.com/中文，正文。', streaming)
+    expect(container.querySelector('a')?.textContent).toBe('www.example.com/中文')
+    expect(decodeURI(container.querySelector('a')!.getAttribute('href')!)).toBe('http://www.example.com/中文')
+    const url = 'https://example.com/%EF%BC%8C?q=中文'
+    const encoded = render(`${url}，正文。`, streaming)
+    expect(encoded.querySelector('a')?.textContent).toBe(url)
+    expect(decodeURI(encoded.querySelector('a')!.getAttribute('href')!)).toBe(decodeURI(url))
+  })
+
+  it.each([false, true])('preserves authored URLs and Chinese paths (streaming=%s)', (streaming) => {
+    for (const source of [
+      'https://example.com/中文路径?q=中文',
+      '[中文链接](https://example.com/中文，路径)',
+      '<https://example.com/中文，路径>',
+      '[https://example.com/中文，路径](https://example.com/中文，路径)'
+    ]) {
+      const a = render(source, streaming).querySelector('a')!
+      expect(decodeURI(a.getAttribute('href')!)).toBe(
+        source.startsWith('https:') ? source : 'https://example.com/中文，路径'
+      )
+    }
+    const code = render('`https://example.com/，正文`', streaming)
+    expect(code.querySelector('a')).toBeNull()
+    expect(code.querySelector('code')?.textContent).toBe('https://example.com/，正文')
+  })
+})

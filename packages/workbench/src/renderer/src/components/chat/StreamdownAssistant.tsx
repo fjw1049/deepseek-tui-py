@@ -1,6 +1,7 @@
 import type { ComponentPropsWithRef, MouseEvent, ReactElement } from 'react'
 import { Streamdown, defaultRehypePlugins, type AnimateOptions, type StreamdownProps } from 'streamdown'
 import remarkGfm from 'remark-gfm'
+import { remarkCjkAutolinks } from '../../lib/remark-cjk-autolinks'
 import { harden } from 'rehype-harden'
 import 'streamdown/styles.css'
 import {
@@ -179,7 +180,7 @@ export function StreamdownAssistant({ text, streaming, className }: Props): Reac
       isAnimating={isAnimating}
       animated={animated}
       controls={{ table: true }}
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkCjkAutolinks]}
       rehypePlugins={rehypePlugins}
       components={components}
     >

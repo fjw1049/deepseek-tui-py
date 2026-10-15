@@ -20,6 +20,7 @@ import {
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkCjkAutolinks } from '../../lib/remark-cjk-autolinks'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -251,7 +252,7 @@ function BoundedReasoningMarkdown({ text }: { text: string }): ReactElement {
   const { shown, overLimit, expanded, remaining, toggle } = useBoundedText(text, false)
   return (
     <>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{shown}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkAutolinks]}>{shown}</ReactMarkdown>
       {overLimit ? (
         <ShowFullToggle expanded={expanded} remaining={remaining} onToggle={toggle} />
       ) : null}
