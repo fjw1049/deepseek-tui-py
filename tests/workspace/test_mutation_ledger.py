@@ -311,3 +311,19 @@ def test_ledger_throttle_and_flush() -> None:
     assert len(emitted) == 1
     ledger.flush()
     assert len(emitted) == 2
+
+
+def test_interleaved_external_changes_are_not_counted_in_receipt():
+    ledger = TurnMutationLedger("turn")
+    for index, (before, after) in enumerate([
+        ("system=0\nexternal=0\n", "system=1\nexternal=0\n"),
+        ("system=1\nexternal=CODEX\n", "system=2\nexternal=CODEX\n"),
+    ]):
+        ledger.commit(FileMutation(
+            mutation_id=str(index), turn_id="turn", path="shared.txt",
+            op="update", unified_diff="", additions=0, deletions=0, source="write_file",
+        ), before_content=before, after_content=after)
+    snapshot = ledger.mark_complete()
+    assert "+external=CODEX" not in snapshot.merged_unified_diff
+    assert "-external=0" not in snapshot.merged_unified_diff
+    assert snapshot.totals == {"files": 1, "additions": 2, "deletions": 2}

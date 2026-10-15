@@ -25,19 +25,15 @@ turn left behind (the post-image):
 - otherwise a third party changed the file after the turn. A three-way
   merge (base = post-image, ours = current, theirs = pre-image) reverts
   only this turn's hunks while keeping the third-party edits; if the merge
-  conflicts — or the path was only attributed by turn-end git reconcile
-  (``uncertain``), where ownership is a guess — the file is left untouched
+  conflicts, the file is left untouched
   and reported in :attr:`RestoreReport.conflicted` (``force=True``
   overrides and writes the pre-image anyway).
 
-Checkpoints written before post-images existed (JSON lacks a
-``post_contents`` field) keep the historical unconditional-write
-behaviour for tool-written paths (``pre_contents`` present). On
-post-image-aware checkpoints, a missing per-path post-image — binary,
-oversized, or capture failure — is treated as a conflict, never as a
-legacy blind write. Out-of-band paths without a post-image are always
-conflicts so a restore can never delete or revert a file it cannot
-prove it owns.
+Uncertain ownership and detected interleaved writes are always conflicts,
+even with force enabled.
+
+Legacy checkpoints without tool ownership evidence are conflicts for text
+restoration. A matching end-of-turn disk image alone cannot prove ownership.
 """
 
 from __future__ import annotations
@@ -153,8 +149,11 @@ class TurnCheckpoint:
     mutated: list[str] = field(default_factory=list)
     # Paths attributed only by turn-end git reconcile: ownership is a guess
     # (a concurrent session or external editor may have written them), so
-    # restore never merges them and requires an exact post-image match.
+    # restore refuses them even when disk bytes match the old post-image.
     uncertain: list[str] = field(default_factory=list)
+    tool_writes_only: bool = False
+    tool_post_contents: dict[str, str | None] = field(default_factory=dict)
+    ownership_conflicts: list[str] = field(default_factory=list)
     # Owning thread (one directory is shared across threads) and creation
     # time (epoch seconds) for newest-first restore ordering. Both default
     # for checkpoints written before these fields existed.
@@ -186,6 +185,9 @@ class TurnCheckpoint:
             "raw_post_images": self.raw_post_images,
             "mutated": self.mutated,
             "uncertain": self.uncertain,
+            "tool_writes_only": self.tool_writes_only,
+            "tool_post_contents": self.tool_post_contents,
+            "ownership_conflicts": self.ownership_conflicts,
             "thread_id": self.thread_id,
             "created_at": self.created_at,
             "execution_root": self.execution_root,
@@ -220,6 +222,9 @@ class TurnCheckpoint:
             raw_post_images=_load_raw_images(raw.get("raw_post_images")),
             mutated=[str(p) for p in raw.get("mutated") or []],
             uncertain=[str(p) for p in raw.get("uncertain") or []],
+            tool_writes_only=bool(raw.get("tool_writes_only", True)),
+            tool_post_contents=dict(raw.get("tool_post_contents") or {}),
+            ownership_conflicts=[str(p) for p in raw.get("ownership_conflicts") or []],
             thread_id=str(raw.get("thread_id") or ""),
             created_at=float(raw.get("created_at") or 0.0),
             execution_root=str(raw.get("execution_root") or ""),
@@ -350,6 +355,7 @@ class TurnCheckpointStore:
         is_git: bool,
         thread_id: str = "",
         execution_root: str = "",
+        tool_writes_only: bool = False,
     ) -> TurnCheckpoint:
         """Create the checkpoint for a turn, seeded with the snapshot bytes."""
         pre_contents = dict(snapshot.contents) if snapshot is not None else {}
@@ -358,6 +364,7 @@ class TurnCheckpointStore:
             is_git=is_git,
             head=head,
             pre_contents=pre_contents,
+            tool_writes_only=tool_writes_only,
             post_signatures_captured=False,
             thread_id=thread_id,
             created_at=time.time(),
@@ -385,14 +392,32 @@ class TurnCheckpointStore:
             checkpoint.mutated.append(norm)
             self._save(checkpoint)
 
+    def record_tool_write(
+        self, turn_id: str, path: str, before: str | None, after: str | None
+    ) -> None:
+        """Keep tool-authored post-images separate from end-of-turn disk state."""
+        norm = _normalize_relative_path(path)
+        self.record_pre_write(turn_id, norm, before)
+        with self._lock:
+            checkpoint = self.load(turn_id)
+            if checkpoint is None:
+                return
+            if (
+                norm in checkpoint.tool_post_contents
+                and checkpoint.tool_post_contents[norm] != before
+                and norm not in checkpoint.ownership_conflicts
+            ):
+                checkpoint.ownership_conflicts.append(norm)
+            checkpoint.tool_post_contents[norm] = after
+            self._save(checkpoint)
+
     def record_out_of_band(
         self, turn_id: str, path: str, *, uncertain: bool = False
     ) -> None:
         """Note a shell/git-side mutation; pre-image resolved at restore time.
 
         ``uncertain=True`` marks paths attributed only by turn-end git
-        reconcile — ownership is a guess, so restore holds them to a
-        stricter standard (exact post-image match, no merging).
+        reconcile — ownership is a guess, so restore refuses these paths.
         """
         norm = _normalize_relative_path(path)
         with self._lock:
@@ -426,6 +451,12 @@ class TurnCheckpointStore:
             checkpoint.post_modes.clear()
             for path in checkpoint.mutated:
                 value = _read_disk(root, path)
+                if (
+                    path in checkpoint.tool_post_contents
+                    and value != checkpoint.tool_post_contents[path]
+                    and path not in checkpoint.ownership_conflicts
+                ):
+                    checkpoint.ownership_conflicts.append(path)
                 if isinstance(value, _Unreadable):
                     continue
                 checkpoint.post_contents[path] = value
@@ -1253,6 +1284,15 @@ class TurnCheckpointStore:
                     )
                     states[key] = state
                 if state.done:
+                    continue
+                # A force flag cannot establish ownership of another writer's work.
+                if (
+                    path in checkpoint.ownership_conflicts
+                    or path in checkpoint.uncertain
+                    or (checkpoint.tool_writes_only and path not in checkpoint.tool_post_contents)
+                ):
+                    state.status = STATUS_CONFLICTED
+                    state.done = True
                     continue
                 pre = await self._resolve_pre_image(root, checkpoint, path)
                 if isinstance(pre, _Unresolvable):

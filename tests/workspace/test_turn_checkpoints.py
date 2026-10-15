@@ -613,10 +613,12 @@ def test_begin_turn_is_post_image_aware(store: TurnCheckpointStore) -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_checkpoint_still_unconditionally_restores_tool_write(
-    store: TurnCheckpointStore, tmp_path: Path
+@pytest.mark.parametrize("with_post", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+async def test_legacy_checkpoint_without_ownership_evidence_is_preserved(
+    store: TurnCheckpointStore, tmp_path: Path, with_post: bool, force: bool
 ) -> None:
-    """JSON without a ``post_contents`` field keeps the historical write."""
+    """Old disk snapshots cannot prove which tool wrote their contents."""
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "f.py").write_text("new\n", encoding="utf-8")
@@ -628,16 +630,17 @@ async def test_legacy_checkpoint_still_unconditionally_restores_tool_write(
                 "head": None,
                 "pre_contents": {"f.py": "old\n"},
                 "mutated": ["f.py"],
+                **({"post_contents": {"f.py": "new\n"}} if with_post else {}),
             }
         ),
         encoding="utf-8",
     )
 
-    report = await store.restore(["turn_legacy"], ws)
+    report = await store.restore(["turn_legacy"], ws, force=force)
 
-    assert report.restored == ["f.py"]
-    assert report.conflicted == []
-    assert (ws / "f.py").read_text(encoding="utf-8") == "old\n"
+    assert report.restored == []
+    assert report.conflicted == ["f.py"]
+    assert (ws / "f.py").read_text(encoding="utf-8") == "new\n"
 
 
 @pytest.mark.asyncio
@@ -1204,3 +1207,72 @@ async def test_keep_project_retires_only_rejected_checkpoint_paths(
     assert (project / "published.py").read_text(encoding="utf-8") == "before\n"
     assert (project / "rejected.py").read_text(encoding="utf-8") == "task\n"
     assert (project / "rejected.bin").read_bytes() == b"\0task"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_write", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+async def test_interleaved_external_write_is_never_rewound(tmp_path, store, second_write, force):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    path = ws / "shared.txt"
+    path.write_text("system=0\nexternal=0\n")
+    store.begin_turn("turn", None, head=None, is_git=False, execution_root=str(ws))
+    store.record_pre_write("turn", "shared.txt", path.read_text())
+    path.write_text("system=1\nexternal=0\n")
+    store.record_tool_write("turn", "shared.txt", "system=0\nexternal=0\n", path.read_text())
+    path.write_text("system=1\nexternal=CODEX\n")
+    if second_write:
+        before = path.read_text()
+        path.write_text("system=2\nexternal=CODEX\n")
+        store.record_tool_write("turn", "shared.txt", before, path.read_text())
+    expected = path.read_text()
+    store.record_post_images("turn", ws)
+    # Reload to exercise durable ownership evidence.
+    reloaded = TurnCheckpointStore(store._root)
+    report = await reloaded.restore(["turn"], ws, force=force)
+    assert report.conflicted == ["shared.txt"]
+    assert path.read_text() == expected
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force", [False, True])
+async def test_unreported_or_historically_uncertain_write_cannot_be_restored(tmp_path, force):
+    for uncertain in (False, True):
+        ws = tmp_path / str(uncertain)
+        ws.mkdir()
+        path = ws / "file.txt"
+        path.write_text("original\n")
+        store = TurnCheckpointStore(ws / "checkpoints")
+        snapshot = ShellMutationSnapshot(
+            workspace=ws, is_git=False, contents={"file.txt": "original\n"}
+        )
+        store.begin_turn("turn", snapshot, head=None, is_git=False,
+                         execution_root=str(ws), tool_writes_only=not uncertain)
+        if uncertain:
+            store.record_out_of_band("turn", "file.txt", uncertain=True)
+        else:
+            # Pre-write capture succeeded, but no successful tool write was reported.
+            store.record_pre_write("turn", "file.txt", "original\n")
+        path.write_text("external edit\n")
+        store.record_post_images("turn", ws)
+        report = await store.restore(["turn"], ws, force=force)
+        assert report.conflicted == ["file.txt"]
+        assert path.read_text() == "external edit\n"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before,after", [(None, "created\n"), ("original\n", None)])
+async def test_external_replacement_after_create_or_delete_is_preserved(
+    tmp_path, store, before, after
+):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    path = ws / "shared.txt"
+    store.begin_turn("turn", None, head=None, is_git=False,
+                     execution_root=str(ws), tool_writes_only=True)
+    store.record_tool_write("turn", "shared.txt", before, after)
+    path.write_text("external replacement\n")
+    store.record_post_images("turn", ws)
+    statuses, _ = await store.preview_report(["turn"], ws)
+    assert statuses == {"shared.txt": "conflicted"}
+    report = await store.restore(["turn"], ws, force=True)
+    assert report.conflicted == ["shared.txt"]
+    assert path.read_text() == "external replacement\n"

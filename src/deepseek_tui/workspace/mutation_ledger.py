@@ -227,7 +227,7 @@ class TurnMutationLedger:
         self._on_snapshot = on_snapshot
         self._throttle_ms = max(0, throttle_ms)
         self._history: list[FileMutation] = []
-        self._net_by_path: dict[str, _NetFileState] = {}
+        self._net_by_path: dict[str, list[_NetFileState]] = {}
         self._latest: dict[str, FileMutation] = {}
         self._fold_cache: dict[str, TurnFileFold] = {}
         self._dirty_paths: set[str] = set()
@@ -274,15 +274,12 @@ class TurnMutationLedger:
             and (after_content is None or isinstance(after_content, str))
         ):
             key = (mutation.path.replace("\\", "/") if os.name == "nt" else mutation.path)
-            previous = self._net_by_path.get(key)
-            self._net_by_path[key] = _NetFileState(
-                before_content=(
-                    previous.before_content
-                    if previous is not None
-                    else before_content
-                ),
-                after_content=after_content,
-            )
+            segments = self._net_by_path.setdefault(key, [])
+            if segments and segments[-1].after_content == before_content:
+                segments[-1].after_content = after_content
+            else:
+                # An intervening writer starts a separate attributable delta.
+                segments.append(_NetFileState(before_content, after_content))
         if mutation.status == "applied":
             key = mutation.path.replace("\\", "/") if os.name == "nt" else mutation.path
             self._latest[key] = mutation
@@ -334,36 +331,35 @@ class TurnMutationLedger:
         for path in sorted(self._dirty_paths):
             self._fold_cache.pop(path, None)
             m = self._latest[path]
-            net = self._net_by_path.get(path)
-            if net is not None:
-                if net.before_content == net.after_content:
-                    continue
-                if net.before_content is None:
-                    op: MutationOp = "create"
-                elif net.after_content is None:
-                    op = "delete"
-                else:
-                    op = "update"
-                unified, stats, _ = synthesize_unified_diff(
-                    path,
-                    net.before_content or "",
-                    net.after_content or "",
-                    op=op,
-                )
-                detail, truncated = truncate_unified_diff(unified, self._diff_max_chars)
-                folds.append(
-                    TurnFileFold(
-                        path=path,
-                        op=op,
-                        additions=stats.additions,
-                        deletions=stats.deletions,
-                        unified_diff=detail,
-                        detail_truncated=truncated,
-                        line_start=(
-                            1 if op == "create" else None if op == "delete" else m.line_start
-                        ),
+            segments = self._net_by_path.get(path)
+            if segments is not None:
+                parts: list[str] = []
+                additions = deletions = 0
+                op: MutationOp = "update"
+                for net in segments:
+                    if net.before_content == net.after_content:
+                        continue
+                    op = (
+                        "create" if net.before_content is None
+                        else "delete" if net.after_content is None else "update"
                     )
+                    unified, stats, _ = synthesize_unified_diff(
+                        path, net.before_content or "", net.after_content or "", op=op,
+                    )
+                    parts.append(unified)
+                    additions += stats.additions
+                    deletions += stats.deletions
+                if not parts:
+                    continue
+                detail, truncated = truncate_unified_diff(
+                    "\n".join(parts), self._diff_max_chars
                 )
+                folds.append(TurnFileFold(
+                    path=path, op=op if len(segments) == 1 else "update",
+                    additions=additions, deletions=deletions,
+                    unified_diff=detail, detail_truncated=truncated,
+                    line_start=1 if op == "create" else None if op == "delete" else m.line_start,
+                ))
                 continue
             detail, truncated = truncate_unified_diff(m.unified_diff, self._diff_max_chars)
             folds.append(

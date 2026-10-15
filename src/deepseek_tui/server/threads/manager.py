@@ -1278,7 +1278,13 @@ class RuntimeThreadManager:
             recorded = checkpoint.post_signatures
             for raw in checkpoint.mutated:
                 path = _normalize_relative_path(raw)
-                if not checkpoint.post_signatures_captured:
+                if (
+                    path in checkpoint.ownership_conflicts
+                    or path in checkpoint.uncertain
+                    or (checkpoint.tool_writes_only and path not in checkpoint.tool_post_contents)
+                ):
+                    latest[path] = "uncaptured"
+                elif not checkpoint.post_signatures_captured:
                     content_available = path in checkpoint.post_contents
                     mode_available = path in checkpoint.post_modes
                     expected = (
@@ -5534,7 +5540,7 @@ class RuntimeThreadManager:
                     source_fallback=source_fallback,
                 ):
                     if m.status == "applied" and has_contents:
-                        self.checkpoints.record_pre_write(turn_id, m.path, before)
+                        self.checkpoints.record_tool_write(turn_id, m.path, before, after)
                     snap = (
                         mutation_ledger.commit(
                             m,
@@ -5594,6 +5600,7 @@ class RuntimeThreadManager:
                 is_git=bool(git_baseline is not None and git_baseline.is_git),
                 thread_id=thread_id,
                 execution_root=str(turn_workspace) if turn_workspace is not None else "",
+                tool_writes_only=True,
             )
         except Exception as exc:
             raise RuntimeError("Turn checkpoint initialization failed") from exc

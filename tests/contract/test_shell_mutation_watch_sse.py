@@ -26,7 +26,7 @@ from deepseek_tui.server.threads import (
     TurnRecord,
     _ActiveThreadState,
 )
-from deepseek_tui.tools.file import WriteFileTool
+from deepseek_tui.tools.file import ReadFileTool, WriteFileTool
 from deepseek_tui.tools.registry import ToolContext
 
 
@@ -127,6 +127,7 @@ async def test_monitor_signals_ready_only_after_checkpoint_exists(
             manager._active.pop(thread.id, None)
 
 
+@pytest.mark.parametrize("interference", ["none", "after", "between"])
 @pytest.mark.parametrize("writer", ["file_tool", "subagent", "shell", "external"])
 @pytest.mark.asyncio
 async def test_only_reported_writes_enter_turn_receipt_and_restore(
@@ -134,6 +135,7 @@ async def test_only_reported_writes_enter_turn_receipt_and_restore(
     git_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
     writer: str,
+    interference: str,
 ) -> None:
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
     # The turn completes with tool evidence but no final answer; skip the
@@ -194,6 +196,14 @@ async def test_only_reported_writes_enter_turn_receipt_and_restore(
             metadata = result.metadata
         else:
             (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
+        if reported and interference != "none":
+            (git_repo / "tracked.py").write_text("v2\nCODEX edit\n", encoding="utf-8")
+            if interference == "between":
+                await ReadFileTool().execute({"path": "tracked.py"}, context)
+                result = await WriteFileTool().execute(
+                    {"path": "tracked.py", "content": "v3\nCODEX edit\n"}, context
+                )
+                metadata = result.metadata
         # Another editor changes tracked and untracked files during this turn.
         (git_repo / "other.py").write_text("external edit\n", encoding="utf-8")
         (git_repo / "external.py").write_text("external creation\n", encoding="utf-8")
@@ -233,7 +243,29 @@ async def test_only_reported_writes_enter_turn_receipt_and_restore(
     assert persisted == final_diffs[0]
     assert manager.checkpoints.load(turn_id).mutated == expected
     restored = await manager.checkpoints.restore([turn_id], git_repo)
-    assert restored.restored == expected
-    assert (git_repo / "tracked.py").read_text() == ("v1\n" if reported else "v2\n")
+    if reported and interference != "none":
+        assert restored.conflicted == ["tracked.py"]
+        assert restored.restored == []
+        assert "+CODEX edit" not in final_diffs[0]["merged_unified_diff"]
+        assert (git_repo / "tracked.py").read_text() == (
+            "v3\nCODEX edit\n" if interference == "between" else "v2\nCODEX edit\n"
+        )
+    else:
+        assert restored.restored == expected
+        assert (git_repo / "tracked.py").read_text() == ("v1\n" if reported else "v2\n")
     assert (git_repo / "other.py").read_text() == "external edit\n"
     assert (git_repo / "external.py").read_text() == "external creation\n"
+
+
+@pytest.mark.asyncio
+async def test_publish_does_not_claim_interleaved_external_write(runtime_app, git_repo):
+    manager = runtime_app.state.thread_manager
+    store = manager.checkpoints
+    store.begin_turn("turn_publish_ownership", None, head=None, is_git=True,
+                     execution_root=str(git_repo), tool_writes_only=True)
+    store.record_tool_write("turn_publish_ownership", "tracked.py", "v1\n", "v2\n")
+    (git_repo / "tracked.py").write_text("v2\nCODEX edit\n")
+    store.record_post_images("turn_publish_ownership", git_repo)
+    checkpoint = store.load("turn_publish_ownership")
+    drifted, _ = await manager._checkpoint_post_state(git_repo, [checkpoint])
+    assert drifted == ["tracked.py"]
