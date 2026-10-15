@@ -2127,9 +2127,11 @@ const USER_MESSAGE_MAX_HEIGHT = 360
  * asks whether to restore code or keep workspace edits.
  */
 function UserMessageBubble({
-  block
+  block,
+  readOnly = false
 }: {
   block: Extract<ChatBlock, { kind: 'user' }>
+  readOnly?: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
   const busy = useChatStore((s) => s.busy)
@@ -2570,7 +2572,7 @@ function UserMessageBubble({
           </button>
         ) : null}
       </div>
-      <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-ds-faint opacity-90 transition group-hover:opacity-100">
+      {!readOnly ? <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-ds-faint opacity-90 transition group-hover:opacity-100">
         <ModelMetaTag label={block.modelLabel} className="flex-1 justify-start text-left" />
         <div className="ds-user-message-actions flex items-center justify-end gap-3">
           <CopyFeedbackButton text={displayBody || block.text} iconOnly />
@@ -2585,7 +2587,7 @@ function UserMessageBubble({
             <PencilLine className="h-4 w-4" strokeWidth={1.8} />
           </button>
         </div>
-      </div>
+      </div> : null}
     </div>
   )
 }
@@ -2822,7 +2824,7 @@ function MessageBubble({
   const timestampFormat = useSyncExternalStore(subscribeAppearance, getTimestampFormat)
   const scope = useConversationScope()
   if (block.kind === 'user' && scope) {
-    return <div className="ds-user-message"><div className="ds-user-message-bubble min-w-0 whitespace-pre-wrap break-words"><UserMessageRichText text={block.text} /></div></div>
+    return <UserMessageBubble block={block} readOnly />
   }
   if (block.kind === 'user') {
     return <UserMessageBubble block={block} />

@@ -20,7 +20,7 @@ vi.mock('../chat/tool/primitives', async (importOriginal) => ({ ...await importO
 vi.mock('../chat/StreamdownAssistant', () => ({
   StreamdownAssistant: ({ text }: { text: string }) => createElement('p', null, text)
 }))
-const agent = (id: string, summary?: string): ChatBlock => ({
+const agent = (id: string, summary?: string): Extract<ChatBlock, { kind: 'subagent' }> => ({
   kind: 'subagent', id, agentId: id, agentType: 'code', cardKind: 'delegate',
   status: summary ? 'completed' : 'running', summary, prompt: `Assignment ${id}`,
   steps: [{ id: `${id}-progress`, kind: 'progress', label: `Working on ${id}` }]
@@ -124,4 +124,69 @@ it('opens the task menu on mouse hover without stealing focus', async () => {
   expect(document.activeElement).toBe(focusBefore)
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
   expect(container.querySelector('[role="menu"]')).not.toBeNull()
+})
+
+it('folds long queries at the main conversation limit without exposing resend actions', async () => {
+  const prompt = '很长的任务内容。'.repeat(300)
+  const block = { ...agent('a'), prompt }
+  const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(720)
+  try {
+    useChatStore.setState({ blocks: [block] })
+    await act(async () => root.render(createElement(RunPanel)))
+    const content = container.querySelector<HTMLElement>('[id^="user-message-content-"]')!
+    const toggle = container.querySelector<HTMLButtonElement>('.ds-user-message-bubble [aria-expanded]')!
+    expect(content.textContent).toBe(prompt)
+    expect(content.style.maxHeight).toBe('360px')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.ds-rewind-trigger')).toBeNull()
+    await act(async () => toggle.click())
+    expect(content.style.maxHeight).toBe('')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => toggle.click())
+    expect(content.style.maxHeight).toBe('360px')
+    expect(content.textContent).toBe(prompt)
+  } finally {
+    height.mockRestore()
+  }
+})
+
+it('scrolls complete run titles on hover in both the header and task menu', async () => {
+  vi.useFakeTimers()
+  const prompt = '这是超过原有九十字限制的任务标题。'.repeat(10)
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(100)
+  const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(300)
+  const style = vi.spyOn(window, 'getComputedStyle').mockReturnValue({ transform: 'none' } as CSSStyleDeclaration)
+  const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate')
+  const animate = vi.fn().mockReturnValue({ cancel: vi.fn(), onfinish: null })
+  Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate })
+  try {
+    useChatStore.setState({ blocks: [{ ...agent('a'), prompt }] })
+    await act(async () => root.render(createElement(RunPanel)))
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
+    const titles = [
+      container.querySelector<HTMLElement>('.ds-run-title')!,
+      container.querySelector<HTMLElement>('.ds-run-menu-item-text > span')!
+    ]
+    for (const title of titles) {
+      expect(title.textContent).toBe(prompt)
+      expect(title.classList.contains('ds-sidebar-title-fade')).toBe(true)
+      animate.mockClear()
+      await act(async () => title.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+      await act(async () => vi.advanceTimersByTimeAsync(350))
+      expect(animate).toHaveBeenCalledWith(
+        [{ transform: 'translateX(0)' }, { transform: 'translateX(-200px)' }],
+        { duration: 200 / 42 * 1000, easing: 'linear', fill: 'forwards' }
+      )
+      expect(title.classList.contains('ds-sidebar-title-fade')).toBe(false)
+      await act(async () => title.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body })))
+      expect(title.classList.contains('ds-sidebar-title-fade')).toBe(true)
+    }
+  } finally {
+    width.mockRestore()
+    scrollWidth.mockRestore()
+    style.mockRestore()
+    vi.useRealTimers()
+    if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate)
+    else Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+  }
 })

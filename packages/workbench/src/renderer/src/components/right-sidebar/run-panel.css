@@ -36,7 +36,7 @@
 .ds-run-state-icon.is-error { color: var(--ds-danger); }
 svg.ds-run-state-icon.lucide-loader-circle { animation: ds-run-spin 1s linear infinite; }
 @keyframes ds-run-spin { to { transform: rotate(360deg); } }
-.ds-run-switcher { position: relative; flex: 1; min-width: 0; }
+.ds-run-switcher { position: relative; flex: 1; min-width: 0; max-width: 50cqw; margin-right: auto; }
 .ds-run-title-button {
   display: flex;
   align-items: center;

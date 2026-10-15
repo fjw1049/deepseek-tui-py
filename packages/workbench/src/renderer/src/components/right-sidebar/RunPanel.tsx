@@ -29,8 +29,8 @@ export function RunPanel(): ReactElement {
   const agents = useMemo(() => extractSubagentsFromBlocks(blocks), [blocks])
   const current = target?.threadId === threadId ? target : null
   const options: RunOption[] = [
-    ...tasks.map((task) => ({ kind: 'task' as const, id: task.id, label: runDisplayTitle(taskListTitle(task)), status: task.status })),
-    ...agents.map((agent) => ({ kind: 'subagent' as const, id: agent.agentId, label: runDisplayTitle(subagentListTitle(agent, 90)), status: agent.status }))
+    ...tasks.map((task) => ({ kind: 'task' as const, id: task.id, label: runDisplayTitle(taskListTitle(task, Infinity)), status: task.status })),
+    ...agents.map((agent) => ({ kind: 'subagent' as const, id: agent.agentId, label: runDisplayTitle(subagentListTitle(agent, Infinity)), status: agent.status }))
   ]
   const select = (option: RunOption): void => {
     if (threadId) open({ threadId, kind: option.kind, id: option.id })

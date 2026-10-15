@@ -5,6 +5,7 @@ import type { RunTarget } from '../../store/run-panel-store'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { isRunActive, runStatusKey } from '../../lib/run-activity'
 import { RunStateIcon } from './RunActivity'
+import { HoverMarqueeText } from '../HoverMarqueeText'
 
 export type RunOption = Omit<RunTarget, 'threadId'> & { label: string; status?: string }
 
@@ -59,7 +60,7 @@ export function RunSwitcher({ current, options, onSelect }: {
         }}
       >
         <span className="ds-run-agent-mark"><Icon aria-hidden /></span>
-        <span className="ds-run-title">{current?.label || t('runPanelSelect')}</span>
+        <HoverMarqueeText className="ds-run-title" text={current?.label || t('runPanelSelect')} title={current?.label || t('runPanelSelect')} />
         <ChevronDown className="ds-run-switch-chevron" aria-hidden />
       </button>
       {open ? (
@@ -97,7 +98,7 @@ export function RunSwitcher({ current, options, onSelect }: {
                           ? <CircleCheck className="ds-run-state-icon ds-run-menu-completed" aria-hidden />
                           : <RunStateIcon status={option.status} />}
                       </span>
-                      <span className="ds-run-menu-item-text"><span>{option.label}</span></span>
+                      <span className="ds-run-menu-item-text"><HoverMarqueeText className="block" text={option.label} title={option.label} /></span>
                       {selected ? <Check className="ds-run-menu-check" aria-hidden /> : null}
                     </button>
                   )
