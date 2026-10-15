@@ -722,3 +722,24 @@ async def test_anthropic_413_does_not_retry_identical_request():
         await client.close()
     assert len(calls) == 1
     assert isinstance(events[-1], StreamError) and not events[-1].retryable
+
+
+@pytest.mark.parametrize("attachment", [False, True])
+async def test_external_image_reaches_model_and_can_be_reread(tmp_path, attachment):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    path = tmp_path / "截图 example.png"
+    path.write_bytes(image_bytes())
+    text = f"[Attached image: screenshot at {path}]" if attachment else f'@"{path}"'
+    prepared = prepare_turn_for_model(text + "\n审核界面", workspace=workspace)
+    assert len(prepared.images) == 1
+    assert "missing-file" not in prepared.model_text
+    message = Message.user(prepared.model_text, images=prepared.images)
+    _, anthropic = _build_anthropic_messages([message], system_prompt=None)
+    assert anthropic[0]["content"][1]["type"] == "image"
+    assert anthropic[0]["content"][1]["source"]["data"]
+    chat = build_chat_messages([message], model="kimi-k3")
+    assert chat[0]["content"][1]["type"] == "image_url"
+    context = ToolContext(working_directory=workspace, user_read_paths=prepared.read_paths)
+    result = await ReadFileTool().execute({"path": str(path)}, context)
+    assert result.images[0].asset_id == prepared.images[0].asset_id

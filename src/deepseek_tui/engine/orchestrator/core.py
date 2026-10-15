@@ -2051,6 +2051,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 session_id=self._cycle_session_id,
                 turn_id=turn_id,
             )
+            self.tool_context.user_read_paths.update(processed.read_paths)
             if focus_mcp_ahead is not None:
                 # Re-prepend `@<name> ` so the model still sees the connector cue
                 # in the user message — only file-mention expansion was suppressed.
@@ -3246,6 +3247,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     workspace=self.tool_context.working_directory,
                     session_id=self._cycle_session_id,
                 )
+                self.tool_context.user_read_paths.update(processed.read_paths)
                 logger.info(
                     "steer_injected display_len=%d model_len=%d",
                     len(processed.display_text),

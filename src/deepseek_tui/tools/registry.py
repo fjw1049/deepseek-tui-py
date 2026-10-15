@@ -139,6 +139,8 @@ class ToolContext:
     # stay confined to the workspace. Skills' companion-file roots can be
     # appended here later with no API change.
     extra_read_roots: tuple[Path, ...] = ()
+    # Exact files explicitly supplied by the user; read-only, without directory access.
+    user_read_paths: set[Path] = field(default_factory=set)
     # This session's cycle-archive directory. Kept separate from
     # ``extra_read_roots`` because a plugin mount reassigns that tuple
     # wholesale; a cycle seed that names an unreadable archive would only
@@ -274,6 +276,7 @@ class ToolContext:
                 any(
                     self._within(resolved, root) for root in self.extra_read_roots
                 )
+                or resolved in self.user_read_paths
                 or self._within_spillover_root(resolved)
                 or self._within_cycle_archive_root(resolved)
             )

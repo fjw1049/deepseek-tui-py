@@ -50,6 +50,8 @@ class TestResolve:
     def test_absolute_path_outside_workspace(self, workspace: Path, tmp_path: Path) -> None:
         outside = tmp_path / "outside.txt"
         outside.write_text("outside content", encoding="utf-8")
+        workspace = tmp_path / "project"
+        workspace.mkdir()
         raw = f"@{outside}\nread"
         out = process_turn_input(
             UserTurnInput(raw_text=raw),
@@ -200,3 +202,61 @@ class TestLimits:
         )
         assert len(out.references) == 3
         assert any("first 3" in w for w in out.warnings)
+
+
+@pytest.mark.parametrize("form", ["absolute", "home", "attachment"])
+def test_external_text_grants_only_the_named_file(tmp_path, monkeypatch, form):
+    from deepseek_tui.tools.registry import ToolContext
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    other = tmp_path / "other.txt"
+    other.write_text("private sibling")
+    path = tmp_path / "my notes.txt"
+    path.write_text(f"hello\n@{other}")
+    raw = {
+        "absolute": f'@"{path}"',
+        "home": '@"~/my notes.txt"',
+        "attachment": f"[Attached file: my notes.txt at {path}]",
+    }[form]
+    out = process_turn_input(UserTurnInput(raw), workspace=workspace)
+    assert "hello" in out.model_text
+    assert "private sibling" not in out.model_text
+    assert out.read_paths == {path.resolve()}
+    context = ToolContext(working_directory=workspace, user_read_paths=out.read_paths)
+    assert context.resolve_path(str(path), allow_read_roots=True) == path.resolve()
+    for denied in (other, tmp_path):
+        with pytest.raises(ValueError, match="escapes workspace"):
+            context.resolve_path(str(denied), allow_read_roots=True)
+    with pytest.raises(ValueError, match="escapes workspace"):
+        context.resolve_path(str(path))  # A read grant never grants writes.
+
+
+def test_external_directory_and_relative_escape_are_not_granted(tmp_path):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("private content")
+    (workspace / "link.txt").symlink_to(outside)
+    for raw in (f"@{tmp_path}", "@../secret.txt", "@link.txt"):
+        out = process_turn_input(UserTurnInput(raw), workspace=workspace, cwd=workspace)
+        assert not out.read_paths
+        assert "private content" not in out.model_text
+        assert not out.references[0].included
+
+
+def test_external_large_text_can_be_read_after_reference_only_expansion(tmp_path):
+    from deepseek_tui.tools.registry import ToolContext
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    path = tmp_path / "large.txt"
+    path.write_text("large content")
+    out = process_turn_input(
+        UserTurnInput(f"@{path}"), workspace=workspace,
+        config=ContextConfig(max_inline_bytes=2, large_file_mode="reference"),
+    )
+    assert not out.references[0].expanded
+    context = ToolContext(working_directory=workspace, user_read_paths=out.read_paths)
+    assert context.resolve_path(str(path), allow_read_roots=True).read_text() == "large content"

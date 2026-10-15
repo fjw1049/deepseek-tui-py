@@ -54,6 +54,7 @@ class ProcessedTurnInput:
     references: list[ContextReference] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     images: list[ImageBlock] = field(default_factory=list)
+    read_paths: set[Path] = field(default_factory=set)
 
 
 # ============================================================================
@@ -104,6 +105,7 @@ def process_turn_input(
     warnings: list[str] = []
     total_inlined = 0
     images: list[ImageBlock] = []
+    read_paths: set[Path] = set()
 
     for idx, (token, source) in enumerate(tokens):
         try:
@@ -126,6 +128,8 @@ def process_turn_input(
 
             path, display_path = resolved
             kind = _classify_path(path)
+            if path.is_file() and not path.is_relative_to(ws):
+                read_paths.add(path)
 
             if kind == "missing":
                 ref = ContextReference(
@@ -285,6 +289,7 @@ def process_turn_input(
         references=references,
         warnings=warnings,
         images=images,
+        read_paths=read_paths,
     )
 
 
@@ -419,13 +424,10 @@ def _resolve_mention(token: str, workspace: Path, cwd: Path) -> tuple[Path, str]
                 resolved = (workspace / candidate).resolve()
     except OSError:
         return None
-    # Workspace boundary check applies to every mention, including
-    # absolute paths and ``~``-expanded ones — otherwise ``@/etc/passwd``
-    # would silently pull out-of-workspace files into the model context.
-    try:
-        resolved.relative_to(workspace)
-    except ValueError:
-        return None
+    # Explicit absolute file mentions authorize that file, never its parent directory.
+    if not resolved.is_relative_to(workspace):
+        if not candidate.is_absolute() or not resolved.is_file():
+            return None
     display = _display_path(resolved, workspace)
     return resolved, display
 
