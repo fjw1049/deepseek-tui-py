@@ -304,10 +304,30 @@ export function OperationContextDock({
     [clearMotionTimer, compact, motion, widthCompact]
   )
 
-  // Auto-expand a section when it gains content and auto-collapse when it
-  // empties. Each effect keys on a single boolean edge so manually toggling
-  // one section never overrides another.
   const hasTodos = totalCount > 0
+  const seenActivity = useRef(new Map<string, Set<string>>())
+  useEffect(() => {
+    if (!visibleRoot) return
+    const scope = JSON.stringify([activeThreadId, visibleRoot])
+    const seen = seenActivity.current.get(scope) ?? new Set<string>()
+    const keys = [
+      ...tasks.map((task) => `task:${task.id}`),
+      ...dockSubagents.map((agent) => `agent:${agent.agentId}`),
+      ...todos.map((todo) => `todo:${JSON.stringify([todo.id, todo.content])}`),
+      ...(hasChanges ? ['changes'] : [])
+    ]
+    const added = keys.filter((key) => !seen.has(key))
+    keys.forEach((key) => seen.add(key))
+    seenActivity.current.set(scope, seen)
+    if (!added.length) return
+    // Remember activity even while open, so dismissing it survives progress updates.
+    setCompactMode(false)
+    setCollapsed((prev) => ({
+      git: added.includes('changes') ? false : prev.git,
+      process: added.some((key) => key.startsWith('todo:')) ? false : prev.process
+    }))
+  }, [activeThreadId, visibleRoot, tasks, dockSubagents, todos, hasChanges, setCompactMode])
+  // Follow content availability without overriding manual toggles on progress updates.
   useEffect(() => {
     setCollapsed((prev) => (prev.process === !hasTodos ? prev : { ...prev, process: !hasTodos }))
   }, [hasTodos])
