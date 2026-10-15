@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.config.models import Config, FeatureConfig
+from deepseek_tui.config.paths import user_config_path
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
 
@@ -19,6 +20,19 @@ def _isolate_claude_plugins(
 ) -> None:
     """Keep plugin discovery off the developer's real ~/.claude/plugins."""
     monkeypatch.setenv("CLAUDE_PLUGINS_DIR", str(tmp_path / "_claude-plugins"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_deepseek_home(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep threads, run records, agent registries and logs off the real ~/.deepseek.
+
+    ``live`` tests still read the real config (credentials), nothing else.
+    """
+    if request.node.get_closest_marker("live") is not None:
+        monkeypatch.setenv("DEEPSEEK_CONFIG_PATH", str(user_config_path()))
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "_deepseek-home"))
 
 
 @pytest.fixture

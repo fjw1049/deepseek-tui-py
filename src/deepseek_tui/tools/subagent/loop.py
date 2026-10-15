@@ -364,6 +364,10 @@ MAX_SUBAGENT_EMPTY_ROUNDS = 2
 # is the fifth identical failure rather than the first; without a marker a child
 # can spend its whole step budget re-issuing one broken call.
 MAX_CONSECUTIVE_TOOL_FAILURES = 5
+# Long runs keep taking "one last check" after announcing the report. Every this
+# many rounds the child hears how much budget it has spent. The reminder is soft
+# — tools stay — and DEFAULT_MAX_STEPS remains the only hard bound.
+SUBAGENT_ROUND_NUDGE_INTERVAL = 40
 
 _SUBAGENT_STALLED_ROUND_NUDGE = (
     "That round produced no tool call and no report, so it reads as a stall "
@@ -380,6 +384,12 @@ _SUBAGENT_TOOL_FAILURE_NUDGE = (
     "then change something concrete: a different path, a different tool, or a "
     "smaller step you can verify. If the assignment cannot be done this way, say "
     "so in your report rather than retrying."
+)
+
+_SUBAGENT_ROUND_BUDGET_NUDGE = (
+    "You have used {used} of {budget} rounds. If the assignment is answered, "
+    "stop exploring and {deliver} now. Keep going only for a specific gap the "
+    "result cannot do without — name it and close just that."
 )
 
 _SUBAGENT_TRUNCATED_NUDGE = (
@@ -876,6 +886,7 @@ async def run_subagent_loop(
                     steps -= 1
                 # No tools from a discarded generation have run. The next
                 # iteration consumes the queued input at the normal boundary.
+                history.discard()
                 continue
 
             if result.usage is not None:
@@ -909,6 +920,7 @@ async def run_subagent_loop(
                         "sub-agent LLM round failed: "
                         f"{result.error_message or 'unknown error'}"
                     )
+                history.discard()
                 continue
 
             # Truncation is deterministic too — the same request hits the same
@@ -927,6 +939,7 @@ async def run_subagent_loop(
                         reminders.SUBAGENT_OUTPUT_NUDGE, _SUBAGENT_TRUNCATED_NUDGE
                     )
                 )
+                history.discard("本轮输出超出长度上限，已丢弃并重新生成")
                 continue
 
             round_failures = 0
@@ -1130,6 +1143,22 @@ async def run_subagent_loop(
                 # Cleared so a child that keeps failing gets told again rather
                 # than once; the step budget stays the hard bound.
                 tool_failures = 0
+            used = steps - attempt_start_steps
+            if used % SUBAGENT_ROUND_NUDGE_INTERVAL == 0:
+                messages.append(
+                    reminders.reminder_message(
+                        reminders.SUBAGENT_OUTPUT_NUDGE,
+                        _SUBAGENT_ROUND_BUDGET_NUDGE.format(
+                            used=used,
+                            budget=DEFAULT_MAX_STEPS,
+                            deliver=(
+                                "make your structured_output call"
+                                if use_structured_output
+                                else "write your final report"
+                            ),
+                        ),
+                    )
+                )
             _save_complete_checkpoint("round")
             if agent.interrupt_event.is_set():
                 structured_value = None

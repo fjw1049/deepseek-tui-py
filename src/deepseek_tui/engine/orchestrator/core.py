@@ -511,6 +511,21 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         )
         return True
 
+    async def _launch_internal_turn(self, content: str, internal_kind: str) -> bool:
+        """Host-specific like goal continuation: TUI send_op, Workbench start_turn.
+
+        Under the Workbench runtime an op queued here would run with no turn
+        record or monitor, and its events would surface in the next user turn.
+        False when the runtime could not open the turn (one is already running).
+        """
+        start = self.tool_context.metadata.get("start_internal_turn")
+        if callable(start):
+            return bool(await start(content, internal_kind))
+        await self.handle.send_op(
+            SendMessageOp(content=content, hidden=True, internal_kind=internal_kind)
+        )
+        return True
+
     async def launch_promoted_goal(self, objective: str, item_id: str) -> bool:
         if self.tool_context.metadata.get("runtime_thread_id"):
             self.tool_context.metadata["goal_promote_pending"] = {
@@ -2588,13 +2603,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             "subagent_idle_delivery count=%d",
             len(completions),
         )
-        await self.handle.send_op(
-            SendMessageOp(
-                content=body,
-                hidden=True,
-                internal_kind=SUBAGENT_BACKGROUND_DONE_KIND,
-            )
-        )
+        if not await self._launch_internal_turn(body, SUBAGENT_BACKGROUND_DONE_KIND):
+            # A turn won the race; its end-of-turn handoff drains these instead.
+            for item in completions:
+                self._consumed_subagent_completions.discard(item.agent_id)
+                self._subagent_completions.put_nowait(item)
 
     async def _subagent_handoff_ledger(self, completions: list[SubAgentCompletion]) -> str | None:
         """Batch scorecard for the parent. ``None`` when a ledger would be noise."""
@@ -2680,13 +2693,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             for item in completions
         )
         logger.info("process_idle_delivery count=%d", len(completions))
-        await self.handle.send_op(
-            SendMessageOp(
-                content=body,
-                hidden=True,
-                internal_kind=PROCESS_BACKGROUND_DONE_KIND,
-            )
-        )
+        if not await self._launch_internal_turn(body, PROCESS_BACKGROUND_DONE_KIND):
+            # A turn won the race; its end-of-turn handoff drains these instead.
+            for item in completions:
+                process_id = item.get("process_id")
+                if isinstance(process_id, str):
+                    self._consumed_process_completions.discard(process_id)
+                self._process_completions.put_nowait(item)
 
     def _drain_process_completions(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []

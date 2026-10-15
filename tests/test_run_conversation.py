@@ -116,3 +116,18 @@ def test_display_write_failure_does_not_fail_execution(tmp_path, monkeypatch):
     history.settle("Answer", final=True)
     history.finish("completed")
     assert history.blocks[-1]["text"] == "Answer"
+
+
+def test_discarded_round_leaves_no_trace_and_ids_stay_unique(tmp_path):
+    history = RunConversation("subagent", "agent_1", "Work", tmp_path)
+    history.thinking("half a thought")
+    history.delta("half an answer")
+    dropped = {b["id"] for b in history.blocks[1:]}
+    history.discard()
+    history.delta("Retry")
+    history.settle("Retry", final=True)
+    loaded = load_run_conversation("subagent", "agent_1")
+    assert [b["kind"] for b in loaded["blocks"]] == ["user", "assistant"]
+    assert loaded["blocks"][-1]["text"] == "Retry"
+    assert loaded["liveId"] is None
+    assert not dropped & {b["id"] for b in loaded["blocks"]}

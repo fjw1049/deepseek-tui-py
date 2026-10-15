@@ -50,6 +50,8 @@ class RunConversation:
         self.prefix = f"{kind}:{owner_id}:{self.attempt}"
         self.live: dict[str, Any] | None = None
         self.thinking_live: dict[str, Any] | None = None
+        # Monotonic: a discarded block's id must never come back on new content.
+        self.next_index = len(self.blocks)
         self.last_write = 0.0
         self.data["status"] = "running"
         self.data["liveId"] = None
@@ -76,10 +78,11 @@ class RunConversation:
     def append(self, kind: str, text: str) -> dict[str, Any]:
         block = {
             "kind": kind,
-            "id": f"{self.prefix}:{len(self.blocks)}",
+            "id": f"{self.prefix}:{self.next_index}",
             "text": text,
             "createdAt": utc_now_iso(),
         }
+        self.next_index += 1
         self.blocks.append(block)
         return block
 
@@ -126,6 +129,18 @@ class RunConversation:
         self.live = None
         self.thinking_live = None
         self.data["liveId"] = None
+        self.save()
+
+    def discard(self, note: str | None = None) -> None:
+        """Drop this round's streamed text and reasoning; the round is re-run."""
+        for block in (self.live, self.thinking_live):
+            if block is not None:
+                self.blocks.remove(block)
+        self.live = None
+        self.thinking_live = None
+        self.data["liveId"] = None
+        if note:
+            self.append("system", note)
         self.save()
 
     def tool(

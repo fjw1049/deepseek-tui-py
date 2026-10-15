@@ -4139,6 +4139,36 @@ class RuntimeThreadManager:
             "started_turn": started_turn,
         }
 
+    async def _start_internal_turn(
+        self, thread_id: str, prompt: str, internal_kind: str
+    ) -> bool:
+        """Open a monitored hidden turn for an engine-initiated delivery.
+
+        Background sub-agent / shell results that land while the thread is idle
+        come through here. False when a turn is already running — the engine
+        then leaves the payload for that turn's handoff.
+        """
+        state = self._active.get(thread_id)
+        if state is None:
+            return False
+        try:
+            await self.start_turn(
+                thread_id,
+                StartTurnRequest(
+                    prompt=prompt,
+                    hidden=True,
+                    internal_kind=internal_kind,
+                    input_summary=internal_kind,
+                    mode=state.engine.mode,
+                ),
+            )
+        except TurnConflictError:
+            return False
+        except Exception:
+            logger.exception("internal_turn_start_failed kind=%s", internal_kind)
+            return False
+        return True
+
     async def _maybe_continue_goal(self, thread_id: str) -> None:
         from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
 
@@ -4786,6 +4816,9 @@ class RuntimeThreadManager:
         result_ids = {item.id for item in automation_result_items(self.store, thread.id)}
         self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        engine.tool_context.metadata["start_internal_turn"] = functools.partial(
+            self._start_internal_turn, thread.id
+        )
         engine.tool_context.metadata["browser_service"] = self.browser_service
         engine.tool_context.metadata["request_browser_assistance"] = self.request_browser_assistance
         engine.tool_context.metadata["approved_plan"] = bool(thread.approved_plan)
