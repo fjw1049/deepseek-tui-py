@@ -937,15 +937,17 @@ async def run_subagent_loop(
             round_text, round_thinking = _assistant_text_and_thinking(
                 result.assistant_message
             )
-            history.settle(round_text, final=not result.tool_calls)
+            # Knowledge line for the Workbench step rail (before tools of this
+            # round). Prefer model preface; fall back to thinking. Skip when empty.
+            narration = _mailbox_round_narration(round_text, round_thinking)
+            # Not final here: stall nudges and summary recovery may still run
+            # more rounds. The executor marks the delivered text final.
+            history.settle(round_text, narration=None if round_text else narration)
             if round_text:
                 final_text = round_text
             if round_thinking:
                 last_thinking = round_thinking
 
-            # Knowledge line for the Workbench step rail (before tools of this
-            # round). Prefer model preface; fall back to thinking. Skip when empty.
-            narration = _mailbox_round_narration(round_text, round_thinking)
             if narration and runtime.mailbox is not None:
                 runtime.mailbox.send(MailboxMessage.progress(agent.id, narration))
 

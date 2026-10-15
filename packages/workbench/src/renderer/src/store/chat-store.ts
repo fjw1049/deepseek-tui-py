@@ -1341,22 +1341,23 @@ function buildThreadEventSink(
         composerMode: composerModeFromGoal(goal, s.composerMode)
       })),
     onSubagentMailbox: (ev: SubagentMailboxPayload) => {
-      const mailboxStatus = ev.message.status
-      if (mailboxStatus === 'running' || mailboxStatus === 'pending') {
+      // Lifecycle lives in `kind`; `status` only carries progress narration.
+      const mailboxKind = ev.message.kind
+      if (mailboxKind === 'started') {
         emitPetEvent(threadId, {
           type: 'subagent_started',
           itemId: `subagent-${ev.message.agent_id}`,
           agentType: ev.message.agent_type ?? 'subagent'
         })
       } else if (
-        mailboxStatus === 'completed' ||
-        mailboxStatus === 'failed' ||
-        mailboxStatus === 'cancelled'
+        mailboxKind === 'completed' ||
+        mailboxKind === 'failed' ||
+        mailboxKind === 'cancelled'
       ) {
         emitPetEvent(threadId, {
           type: 'subagent_completed',
           itemId: `subagent-${ev.message.agent_id}`,
-          status: mailboxStatus
+          status: mailboxKind
         })
       }
       set((s) => {

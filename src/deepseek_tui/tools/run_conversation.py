@@ -102,7 +102,12 @@ class RunConversation:
         self.thinking_live["text"] += text
         self.save(streaming=True)
 
-    def settle(self, text: str | None = None, *, final: bool = False) -> None:
+    def settle(
+        self, text: str | None = None, *, final: bool = False, narration: str | None = None
+    ) -> None:
+        # A round that only reasoned still needs a visible line between its tools.
+        if narration and self.thinking_live is not None:
+            self.thinking_live["narration"] = narration
         if self.live is None and text:
             previous = self.blocks[-1] if self.blocks else None
             if (
