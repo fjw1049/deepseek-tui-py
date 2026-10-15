@@ -731,7 +731,9 @@ async def test_external_image_reaches_model_and_can_be_reread(tmp_path, attachme
     path = tmp_path / "截图 example.png"
     path.write_bytes(image_bytes())
     text = f"[Attached image: screenshot at {path}]" if attachment else f'@"{path}"'
-    prepared = prepare_turn_for_model(text + "\n审核界面", workspace=workspace)
+    prepared = prepare_turn_for_model(
+        text + "\n审核界面", workspace=workspace, allow_external_files=True
+    )
     assert len(prepared.images) == 1
     assert "missing-file" not in prepared.model_text
     message = Message.user(prepared.model_text, images=prepared.images)

@@ -29,11 +29,14 @@ turn left behind (the post-image):
   and reported in :attr:`RestoreReport.conflicted` (``force=True``
   overrides and writes the pre-image anyway).
 
-Uncertain ownership and detected interleaved writes are always conflicts,
-even with force enabled.
+Detected interleaved writes are always conflicts, even with force enabled.
+On ``tool_writes_only`` checkpoints a path needs ownership evidence: a tool
+write (``tool_post_contents``) or shell detection (``uncertain``). Uncertain
+paths are never merged: they restore only on an exact post-image match, and
+otherwise conflict unless forced.
 
-Legacy checkpoints without tool ownership evidence are conflicts for text
-restoration. A matching end-of-turn disk image alone cannot prove ownership.
+Checkpoints written before ownership tracking existed (no
+``tool_writes_only`` field) keep the earlier restore rules.
 """
 
 from __future__ import annotations
@@ -170,6 +173,16 @@ class TurnCheckpoint:
     publish_pending_sync: bool = False
     publish_apply_complete: bool = False
 
+    def ownership_unproven(self, path: str) -> bool:
+        """True when this turn cannot claim ``path``, so not even force restores it."""
+        if path in self.ownership_conflicts:
+            return True
+        return (
+            self.tool_writes_only
+            and path not in self.tool_post_contents
+            and path not in self.uncertain
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
@@ -222,7 +235,8 @@ class TurnCheckpoint:
             raw_post_images=_load_raw_images(raw.get("raw_post_images")),
             mutated=[str(p) for p in raw.get("mutated") or []],
             uncertain=[str(p) for p in raw.get("uncertain") or []],
-            tool_writes_only=bool(raw.get("tool_writes_only", True)),
+            # Checkpoints written before ownership tracking keep legacy restore.
+            tool_writes_only=bool(raw.get("tool_writes_only", False)),
             tool_post_contents=dict(raw.get("tool_post_contents") or {}),
             ownership_conflicts=[str(p) for p in raw.get("ownership_conflicts") or []],
             thread_id=str(raw.get("thread_id") or ""),
@@ -416,18 +430,25 @@ class TurnCheckpointStore:
     ) -> None:
         """Note a shell/git-side mutation; pre-image resolved at restore time.
 
-        ``uncertain=True`` marks paths attributed only by turn-end git
-        reconcile — ownership is a guess, so restore refuses these paths.
+        ``uncertain=True`` marks paths attributed by disk detection (an
+        external editor may have written them meanwhile), so restore never
+        merges them and requires an exact post-image match unless forced.
+        It also applies to paths a tool already wrote earlier in the turn.
         """
         norm = _normalize_relative_path(path)
         with self._lock:
             checkpoint = self.load(turn_id)
-            if checkpoint is None or norm in checkpoint.mutated:
+            if checkpoint is None:
                 return
-            checkpoint.mutated.append(norm)
-            if uncertain:
+            changed = False
+            if norm not in checkpoint.mutated:
+                checkpoint.mutated.append(norm)
+                changed = True
+            if uncertain and norm not in checkpoint.uncertain:
                 checkpoint.uncertain.append(norm)
-            self._save(checkpoint)
+                changed = True
+            if changed:
+                self._save(checkpoint)
 
     def record_post_images(self, turn_id: str, workspace: Path) -> None:
         """Capture every mutated path's end-of-turn content for restore-time
@@ -1286,11 +1307,7 @@ class TurnCheckpointStore:
                 if state.done:
                     continue
                 # A force flag cannot establish ownership of another writer's work.
-                if (
-                    path in checkpoint.ownership_conflicts
-                    or path in checkpoint.uncertain
-                    or (checkpoint.tool_writes_only and path not in checkpoint.tool_post_contents)
-                ):
+                if checkpoint.ownership_unproven(path):
                     state.status = STATUS_CONFLICTED
                     state.done = True
                     continue
@@ -1305,9 +1322,11 @@ class TurnCheckpointStore:
                     root, checkpoint, path, pre
                 )
                 post_mode = checkpoint.post_modes.get(path, _MISSING)
-                uncertain = (
-                    path in checkpoint.uncertain
-                    and path not in checkpoint.pre_contents
+                # Legacy checkpoints trust a tool-recorded pre-image; current
+                # ones also hold shell-detected paths with a pre-image strict.
+                uncertain = path in checkpoint.uncertain and (
+                    checkpoint.tool_writes_only
+                    or path not in checkpoint.pre_contents
                 )
                 current = state.current
                 mode_aware = all(

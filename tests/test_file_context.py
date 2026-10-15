@@ -57,9 +57,27 @@ class TestResolve:
             UserTurnInput(raw_text=raw),
             workspace=workspace,
             cwd=workspace,
+            allow_external_files=True,
         )
         assert out.references[0].kind == "file"
         assert "outside content" in out.model_text
+
+    def test_absolute_path_outside_workspace_blocked_by_default(
+        self, tmp_path: Path
+    ) -> None:
+        # Model-authored text (sub-agent prompts) must not reach outside files.
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside content", encoding="utf-8")
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        out = process_turn_input(
+            UserTurnInput(raw_text=f"@{outside}\nread"),
+            workspace=workspace,
+            cwd=workspace,
+        )
+        assert not out.read_paths
+        assert not out.references[0].included
+        assert "outside content" not in out.model_text
 
     def test_missing_file(self, workspace: Path) -> None:
         raw = "@missing.py\nhelp"
@@ -220,7 +238,7 @@ def test_external_text_grants_only_the_named_file(tmp_path, monkeypatch, form):
         "home": '@"~/my notes.txt"',
         "attachment": f"[Attached file: my notes.txt at {path}]",
     }[form]
-    out = process_turn_input(UserTurnInput(raw), workspace=workspace)
+    out = process_turn_input(UserTurnInput(raw), workspace=workspace, allow_external_files=True)
     assert "hello" in out.model_text
     assert "private sibling" not in out.model_text
     assert out.read_paths == {path.resolve()}
@@ -240,7 +258,9 @@ def test_external_directory_and_relative_escape_are_not_granted(tmp_path):
     outside.write_text("private content")
     (workspace / "link.txt").symlink_to(outside)
     for raw in (f"@{tmp_path}", "@../secret.txt", "@link.txt"):
-        out = process_turn_input(UserTurnInput(raw), workspace=workspace, cwd=workspace)
+        out = process_turn_input(
+            UserTurnInput(raw), workspace=workspace, cwd=workspace, allow_external_files=True
+        )
         assert not out.read_paths
         assert "private content" not in out.model_text
         assert not out.references[0].included
@@ -256,6 +276,7 @@ def test_external_large_text_can_be_read_after_reference_only_expansion(tmp_path
     out = process_turn_input(
         UserTurnInput(f"@{path}"), workspace=workspace,
         config=ContextConfig(max_inline_bytes=2, large_file_mode="reference"),
+        allow_external_files=True,
     )
     assert not out.references[0].expanded
     context = ToolContext(working_directory=workspace, user_read_paths=out.read_paths)

@@ -732,6 +732,7 @@ def prepare_turn_for_model(
     session_id: str | None = None,
     turn_id: str | None = None,
     config: ContextConfig | None = None,
+    allow_external_files: bool = False,
 ) -> ProcessedTurnInput:
     """Expand ``@mentions`` before the message is sent to the LLM."""
     del turn_id  # reserved for per-turn artifact namespacing
@@ -741,6 +742,7 @@ def prepare_turn_for_model(
         cwd=cwd,
         session_id=session_id,
         config=config,
+        allow_external_files=allow_external_files,
     )
     # Trust boundary: reminder tags inside user-supplied content (typed
     # or inlined via @file expansion) must not read as runtime reminders.

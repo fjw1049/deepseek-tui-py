@@ -147,6 +147,8 @@ _UNSET = object()
 IDLE_WORKTREE_RECLAIM_AFTER = timedelta(days=3)
 # Matches the small-window tool-result cap used for soft-resume context.
 BROWSER_DETAIL_CHARS = 12_000
+# Rewind joins foreground sub-agents under the global _active_lock.
+REWIND_CHILD_JOIN_TIMEOUT_S = 10.0
 
 UNPUBLISHED_WORKTREE_LABOR = "<unpublished-worktree-labor>"
 PUBLISH_FAILED = "<publish-failed>"
@@ -1278,11 +1280,7 @@ class RuntimeThreadManager:
             recorded = checkpoint.post_signatures
             for raw in checkpoint.mutated:
                 path = _normalize_relative_path(raw)
-                if (
-                    path in checkpoint.ownership_conflicts
-                    or path in checkpoint.uncertain
-                    or (checkpoint.tool_writes_only and path not in checkpoint.tool_post_contents)
-                ):
+                if checkpoint.ownership_unproven(path):
                     latest[path] = "uncaptured"
                 elif not checkpoint.post_signatures_captured:
                     content_available = path in checkpoint.post_contents
@@ -3259,6 +3257,40 @@ class RuntimeThreadManager:
         self._reset_publish_request(thread)
         self._touch(thread)
 
+    async def _paths_claimed_by_other_turns(
+        self, turn_id: str, workspace: Path
+    ) -> set[str]:
+        """Paths other active turns in the same workspace already touched.
+
+        Shell detection attributes every path that changed while a command
+        ran to that command. When several sessions share one workspace their
+        in-flight edits would be claimed too — and a later restore of this
+        thread would revert their work — so their checkpoints' paths are
+        fenced off.
+        """
+        other_turn_ids: list[str] = []
+        async with self._active_lock:
+            for state in self._active.values():
+                active = state.active_turn
+                if active is None or active.turn_id == turn_id:
+                    continue
+                try:
+                    ws = (
+                        Path(state.engine.tool_context.working_directory)
+                        .expanduser()
+                        .resolve()
+                    )
+                except Exception:
+                    continue
+                if ws == workspace:
+                    other_turn_ids.append(active.turn_id)
+        paths: set[str] = set()
+        for other_id in other_turn_ids:
+            checkpoint = self.checkpoints.load(other_id)
+            if checkpoint is not None:
+                paths.update(checkpoint.mutated)
+        return paths
+
     async def rewind_thread(
         self,
         thread_id: str,
@@ -3384,7 +3416,17 @@ class RuntimeThreadManager:
             turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
 
             if state is not None:
-                await state.engine.prepare_session_rewind()
+                # _active_lock is global: a child stuck in teardown must not
+                # stall every other thread, nor let restore race its writes.
+                try:
+                    await asyncio.wait_for(
+                        state.engine.prepare_session_rewind(),
+                        timeout=REWIND_CHILD_JOIN_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise ValueError(
+                        "cannot rewind thread while sub-agents are still stopping; retry shortly"
+                    ) from exc
 
             restored_files: list[str] = []
             merged_files: list[str] = []
@@ -5497,7 +5539,11 @@ class RuntimeThreadManager:
             TurnMutationLedger,
             mutation_from_metadata,
         )
-        from deepseek_tui.workspace.shell_mutation_watch import capture_shell_snapshot
+        from deepseek_tui.workspace.shell_mutation_watch import (
+            ShellMutationSnapshot,
+            capture_shell_snapshot,
+            detect_shell_mutations,
+        )
 
         current_message_text = ""
         current_message_item_id: str | None = None
@@ -5510,6 +5556,8 @@ class RuntimeThreadManager:
         current_reasoning_text = ""
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
+        # tool_call_id -> pre-exec workspace snapshot (shell mutation detection)
+        shell_watch: dict[str, ShellMutationSnapshot] = {}
         seen_subagent_ids: set[str] = set()  # agents touched this turn (for reconcile)
         pending_turn_diffs: list[dict[str, Any]] = []
         mutation_ledger = TurnMutationLedger(turn_id, throttle_ms=150)
@@ -5571,6 +5619,72 @@ class RuntimeThreadManager:
             for payload in batch:
                 await self._emit_event(
                     thread_id, turn_id, None, "turn.diff.updated", payload
+                )
+
+        async def emit_shell_detected_mutations(
+            snapshot: ShellMutationSnapshot,
+            *,
+            tool_call_id: str,
+            tool_name: str,
+            tool_args: Any,
+            result_metadata: Any,
+        ) -> None:
+            # Paths the tool result already reported (e.g. allowlisted shell
+            # writes) must not be double-reported by disk detection, and
+            # paths other sessions' active turns claimed are theirs.
+            skip = await self._paths_claimed_by_other_turns(turn_id, snapshot.workspace)
+            if isinstance(result_metadata, dict):
+                reported = result_metadata.get("mutation")
+                if isinstance(reported, dict) and isinstance(reported.get("path"), str):
+                    skip.add(reported["path"])
+                listed = result_metadata.get("mutations")
+                if isinstance(listed, list):
+                    for entry in listed:
+                        if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                            skip.add(entry["path"])
+            for mut in await detect_shell_mutations(
+                snapshot, skip_paths=skip, include_contents=True
+            ):
+                public_mut = {
+                    key: value for key, value in mut.items() if not key.startswith("_")
+                }
+                now = datetime.now(timezone.utc)
+                sub_item_id = f"item_{uuid.uuid4().hex[:8]}"
+                sub_item = TurnItemRecord(
+                    id=sub_item_id,
+                    turn_id=turn_id,
+                    kind=TurnItemKind.FILE_CHANGE,
+                    status=TurnItemLifecycleStatus.COMPLETED,
+                    summary=summarize_text(
+                        f"{tool_name}: {public_mut['op']} {public_mut['path']}", SUMMARY_LIMIT
+                    ),
+                    detail=public_mut["unified_diff"],
+                    metadata={
+                        "tool_name": tool_name,
+                        "path": public_mut["path"],
+                        "mutation": public_mut,
+                    },
+                    started_at=now,
+                    ended_at=now,
+                )
+                self.store.save_item(sub_item)
+                self._attach_item_to_turn(turn_id, sub_item_id)
+                tool_ref = {"id": tool_call_id, "name": tool_name, "input": tool_args}
+                await self._emit_event(
+                    thread_id, turn_id, sub_item_id, "item.started",
+                    {"item": sub_item.model_dump(mode="json"), "tool": tool_ref},
+                )
+                # Sink first so the pre-image and post-image chain are recorded;
+                # then mark the path uncertain: an external editor may have
+                # written it while the command ran, so restore stays strict.
+                _mutation_sink(mut)
+                self.checkpoints.record_out_of_band(
+                    turn_id, public_mut["path"], uncertain=True
+                )
+                await flush_turn_diffs()
+                await self._emit_event(
+                    thread_id, turn_id, sub_item_id, "item.completed",
+                    {"item": sub_item.model_dump(mode="json")},
                 )
 
         async with self._active_lock:
@@ -6113,11 +6227,26 @@ class RuntimeThreadManager:
                         },
                     },
                 )
+                # Shell commands can mutate files behind the tool layer
+                # (git apply / patch / heredocs / formatters): snapshot the
+                # workspace so the delta can be detected when the result arrives.
+                if (
+                    kind == TurnItemKind.COMMAND_EXECUTION
+                    and git_baseline is not None
+                    and git_baseline.is_git
+                ):
+                    try:
+                        shell_watch[tc.id] = await capture_shell_snapshot(
+                            git_baseline.workspace
+                        )
+                    except Exception:
+                        logger.debug("shell_watch_capture_failed", exc_info=True)
 
             elif isinstance(event, ToolResultEvent):
                 note_tool_result_timing(event.tool_call_id)
                 item_id = tool_items.pop(event.tool_call_id, None)
                 tool_args = tool_call_args.pop(event.tool_call_id, None)
+                shell_snapshot = shell_watch.pop(event.tool_call_id, None)
                 # Close legacy duplicate rows keyed by tool_call_id (older builds
                 # created these from UserInputRequiredEvent alongside item_*).
                 if (
@@ -6255,6 +6384,20 @@ class RuntimeThreadManager:
                         thread_id, turn_id, item_id, event_name,
                         {"item": item.model_dump(mode="json")},
                     )
+                    if shell_snapshot is not None:
+                        # Runs for failed commands too — a failing command can
+                        # still mutate; guard-denied ones simply yield nothing.
+                        # Detection must never break a turn.
+                        try:
+                            await emit_shell_detected_mutations(
+                                shell_snapshot,
+                                tool_call_id=event.tool_call_id,
+                                tool_name=event.tool_name,
+                                tool_args=tool_args,
+                                result_metadata=event.metadata,
+                            )
+                        except Exception:
+                            logger.debug("shell_watch_detect_failed", exc_info=True)
 
             elif isinstance(event, ApprovalRequiredEvent):
                 from deepseek_tui.tools.approval import (
@@ -6690,7 +6833,8 @@ class RuntimeThreadManager:
                     )
                 break
 
-        # Only tool-reported writes belong to this turn; disk deltas may be external edits.
+        # Only tool-reported and shell-detected writes belong to this turn; a
+        # turn-wide disk delta may hold external edits, so it is not reconciled.
         try:
             try:
                 final_snap = mutation_ledger.mark_complete(emit=False)

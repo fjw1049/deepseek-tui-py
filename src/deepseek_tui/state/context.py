@@ -81,8 +81,14 @@ def process_turn_input(
     cwd: Path | None = None,
     session_id: str | None = None,
     config: ContextConfig | None = None,
+    allow_external_files: bool = False,
 ) -> ProcessedTurnInput:
-    """Parse ``@mentions``, expand file context, return display vs model text."""
+    """Parse ``@mentions``, expand file context, return display vs model text.
+
+    ``allow_external_files`` lets absolute mentions name files outside the
+    workspace. Only text typed by the user may set it: model-authored text
+    (sub-agent prompts, agent_send) must stay inside the workspace.
+    """
     cfg = config or ContextConfig()
     raw = inp.raw_text or ""
     display_text = raw
@@ -116,7 +122,9 @@ def process_turn_input(
                 )
                 break
 
-            resolved = _resolve_mention(token, ws, proc_cwd)
+            resolved = _resolve_mention(
+                token, ws, proc_cwd, allow_external=allow_external_files
+            )
             if resolved is None:
                 ref = ContextReference(
                     kind="missing", source="at_mention", label=token, target=token,
@@ -405,7 +413,9 @@ def _expand_home(path: str) -> Path:
     return Path(path)
 
 
-def _resolve_mention(token: str, workspace: Path, cwd: Path) -> tuple[Path, str] | None:
+def _resolve_mention(
+    token: str, workspace: Path, cwd: Path, *, allow_external: bool = False
+) -> tuple[Path, str] | None:
     raw = token.strip().strip('"').strip("'")
     if not raw:
         return None
@@ -426,7 +436,7 @@ def _resolve_mention(token: str, workspace: Path, cwd: Path) -> tuple[Path, str]
         return None
     # Explicit absolute file mentions authorize that file, never its parent directory.
     if not resolved.is_relative_to(workspace):
-        if not candidate.is_absolute() or not resolved.is_file():
+        if not allow_external or not candidate.is_absolute() or not resolved.is_file():
             return None
     display = _display_path(resolved, workspace)
     return resolved, display

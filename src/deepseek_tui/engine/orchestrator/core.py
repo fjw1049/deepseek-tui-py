@@ -2050,6 +2050,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 workspace=self.tool_context.working_directory,
                 session_id=self._cycle_session_id,
                 turn_id=turn_id,
+                allow_external_files=True,
             )
             self.tool_context.user_read_paths.update(processed.read_paths)
             if focus_mcp_ahead is not None:
@@ -3246,6 +3247,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     steer_text,
                     workspace=self.tool_context.working_directory,
                     session_id=self._cycle_session_id,
+                    allow_external_files=True,
                 )
                 self.tool_context.user_read_paths.update(processed.read_paths)
                 logger.info(

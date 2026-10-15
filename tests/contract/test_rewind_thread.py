@@ -217,6 +217,39 @@ async def test_rewind_resyncs_warm_engine_session(runtime_app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rewind_aborts_when_subagents_do_not_stop(runtime_app, monkeypatch) -> None:
+    import asyncio
+
+    from deepseek_tui.server.threads import manager as manager_module
+
+    manager = runtime_app.state.thread_manager
+    thread_id = await _seed(manager)
+    monkeypatch.setattr(manager_module, "REWIND_CHILD_JOIN_TIMEOUT_S", 0.05)
+
+    class StuckEngine:
+        async def prepare_session_rewind(self):
+            await asyncio.Event().wait()
+
+        def sync_session(self, messages, *, model=None):
+            raise AssertionError("history must not be replaced")
+
+    manager._active[thread_id] = SimpleNamespace(
+        engine=StuckEngine(), active_turn=None,
+        handle=SimpleNamespace(resume_context=None),
+    )
+    try:
+        with pytest.raises(ValueError, match="sub-agents are still stopping"):
+            await manager.rewind_thread(thread_id, before_item_id="item_u2")
+        # The global lock is released for other threads.
+        assert not manager._active_lock.locked()
+    finally:
+        manager._active.pop(thread_id, None)
+
+    turns = manager.store.list_turns_for_thread(thread_id)
+    assert [t.id for t in turns] == ["turn_a", "turn_b"]
+
+
+@pytest.mark.asyncio
 async def test_rewind_rejected_while_turn_active(runtime_app) -> None:
     manager = runtime_app.state.thread_manager
     thread_id = await _seed(manager)

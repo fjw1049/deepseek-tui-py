@@ -1,4 +1,4 @@
-"""Turn receipts and restore include only writes reported by this turn's tools."""
+"""Turn receipts and restore include only this turn's tool and shell writes."""
 
 from __future__ import annotations
 
@@ -128,7 +128,9 @@ async def test_monitor_signals_ready_only_after_checkpoint_exists(
 
 
 @pytest.mark.parametrize("interference", ["none", "after", "between"])
-@pytest.mark.parametrize("writer", ["file_tool", "subagent", "shell", "external"])
+# Shell writes are covered by test_shell_edit_emits_file_change_item: detection
+# needs the pump gated on the pre-exec snapshot.
+@pytest.mark.parametrize("writer", ["file_tool", "subagent", "external"])
 @pytest.mark.asyncio
 async def test_only_reported_writes_enter_turn_receipt_and_restore(
     runtime_app: object,
@@ -255,6 +257,120 @@ async def test_only_reported_writes_enter_turn_receipt_and_restore(
         assert (git_repo / "tracked.py").read_text() == ("v1\n" if reported else "v2\n")
     assert (git_repo / "other.py").read_text() == "external edit\n"
     assert (git_repo / "external.py").read_text() == "external creation\n"
+
+
+@pytest.mark.asyncio
+async def test_shell_edit_emits_file_change_item(
+    runtime_app: object,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        manager, "_recover_missing_final_answer", AsyncMock(return_value=None)
+    )
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(
+        TurnRecord(
+            id=turn_id,
+            thread_id=thread.id,
+            status=RuntimeTurnStatus.IN_PROGRESS,
+            input_summary="test",
+            created_at=now,
+            started_at=now,
+        )
+    )
+    stub_engine = SimpleNamespace(
+        tool_context=ToolContext(working_directory=git_repo)
+    )
+    engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
+
+    tool = ToolCall(
+        id="tc_shell",
+        name="exec_shell",
+        arguments={"command": "git apply /tmp/x.patch"},
+    )
+    # handle.emit only queues — without this gate the pump could write the
+    # file before _monitor_turn takes its pre-exec snapshot. The first capture
+    # is the turn-start snapshot; the shell command's is the second one.
+    captured = asyncio.Event()
+    capture_calls = 0
+    real_capture = shell_mutation_watch.capture_shell_snapshot
+
+    async def _capture_spy(
+        workspace: Path,
+    ) -> shell_mutation_watch.ShellMutationSnapshot:
+        nonlocal capture_calls
+        try:
+            return await real_capture(workspace)
+        finally:
+            capture_calls += 1
+            if capture_calls >= 2:
+                captured.set()
+
+    monkeypatch.setattr(
+        shell_mutation_watch, "capture_shell_snapshot", _capture_spy
+    )
+
+    async def pump() -> None:
+        await handle.emit(ToolCallEvent(tool_call=tool))
+        await asyncio.wait_for(captured.wait(), timeout=5)
+        # The shell command edits the file behind the tool layer.
+        (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
+        await handle.emit(
+            ToolResultEvent(
+                tool_call_id="tc_shell",
+                tool_name="exec_shell",
+                content="patch applied ok",
+                success=True,
+            )
+        )
+        await handle.emit(TurnCompleteEvent(assistant_message=None))
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+    finally:
+        await pump_task
+        engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await engine_task
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
+
+    events = manager.events_since(thread.id, 0)
+    completed = [
+        e for e in events
+        if e.event == "item.completed" and e.payload["item"]["kind"] == "file_change"
+    ]
+    assert len(completed) == 1
+    mutation = completed[0].payload["item"]["metadata"]["mutation"]
+    assert mutation["source"] == "shell_detected"
+    assert mutation["path"] == "tracked.py"
+    assert "+v2" in mutation["unified_diff"]
+    final_diffs = [
+        e.payload for e in events
+        if e.event == "turn.diff.updated" and e.payload.get("complete")
+    ]
+    assert [f["path"] for f in final_diffs[0]["files"]] == ["tracked.py"]
+
+    checkpoint = manager.checkpoints.load(turn_id)
+    assert checkpoint.mutated == ["tracked.py"]
+    assert checkpoint.uncertain == ["tracked.py"]
+    # A later edit is never merged into a shell-detected path...
+    (git_repo / "tracked.py").write_text("v2\nlater edit\n", encoding="utf-8")
+    report = await manager.checkpoints.restore([turn_id], git_repo)
+    assert report.conflicted == ["tracked.py"]
+    assert (git_repo / "tracked.py").read_text() == "v2\nlater edit\n"
+    # ...but the user can confirm the overwrite.
+    report = await manager.checkpoints.restore([turn_id], git_repo, force=True)
+    assert report.restored == ["tracked.py"]
+    assert (git_repo / "tracked.py").read_text() == "v1\n"
 
 
 @pytest.mark.asyncio
