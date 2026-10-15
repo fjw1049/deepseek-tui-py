@@ -444,38 +444,43 @@ class ToolExecutionMixin:
 
         if tool_call.name == "checklist" and result.success:
             capture_goal_checklist(self.tool_context)
-        spec = (
-            self.tool_registry.get(tool_call.name)
-            if self.tool_registry.contains(tool_call.name) else None
-        )
-        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-        mutates = bool(
-            spec is not None and ToolCapability.WRITES_FILES in spec.capabilities()
-            and not spec.is_read_only_for_input(args)
-        )
         start = self.tool_context.metadata.get("goal_tool_starts", {}).pop(tool_call.id, None)
-        stable = False
-        if start is not None:
-            from deepseek_tui.goal.workspace import workspace_digest
-
-            digest = await asyncio.to_thread(workspace_digest, self.tool_context.working_directory)
-            current = self.goal_service.snapshot()
-            if current is not None and current.goal_id == start[0]:
-                self.goal_service.observe_workspace(digest)
-                stable = (digest is not None and digest == start[1]
-                          and self.goal_service.snapshot().work_revision == start[2])
-        # Unknown tools cannot claim verification based solely on a success flag.
-        mutates = mutates or spec is None
-        metadata = result.metadata or {}
-        finished = (
-            metadata.get("status") not in {"running", "queued", "pending", "cancelled"}
-            and not metadata.get("background")
-        )
         goal = self.goal_service.snapshot()
         if goal is not None and self.tool_context.metadata.get("goal_turn_id") == goal.goal_id:
+            spec = (
+                self.tool_registry.get(tool_call.name)
+                if self.tool_registry.contains(tool_call.name) else None
+            )
+            args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+            mutates = bool(
+                spec is not None and ToolCapability.WRITES_FILES in spec.capabilities()
+                and not spec.is_read_only_for_input(args)
+            )
+            stable = False
+            if start is not None:
+                from deepseek_tui.goal.workspace import workspace_digest
+
+                digest = await asyncio.to_thread(
+                    workspace_digest, self.tool_context.working_directory
+                )
+                current = self.goal_service.snapshot()
+                if current is not None and current.goal_id == start[0]:
+                    self.goal_service.observe_workspace(digest)
+                    stable = (digest is not None and digest == start[1]
+                              and self.goal_service.snapshot().work_revision == start[2])
+            # Unknown tools cannot claim verification based solely on a success flag.
+            mutates = mutates or spec is None
+            metadata = result.metadata or {}
+            status = metadata.get("status")
+            if isinstance(status, dict):
+                status = status.get("kind")
+            finished = (
+                status not in {"running", "queued", "pending", "cancelled"}
+                and not metadata.get("background")
+            )
             self.goal_service.record_tool_result(
                 tool_call.id, tool_call.name, args,
-                success=result.success and metadata.get("status") not in {"failed", "error"},
+                success=result.success and status not in {"failed", "error"},
                 mutates=mutates, finished=finished, verification=stable,
                 output=result.content or "",
             )

@@ -1,4 +1,4 @@
-"""Shell-mutation watch SSE contract: shell edits surface as file_change items."""
+"""Turn receipts and restore include only writes reported by this turn's tools."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from deepseek_tui.server.threads import (
     TurnRecord,
     _ActiveThreadState,
 )
+from deepseek_tui.tools.file import WriteFileTool
 from deepseek_tui.tools.registry import ToolContext
 
 
@@ -126,11 +127,13 @@ async def test_monitor_signals_ready_only_after_checkpoint_exists(
             manager._active.pop(thread.id, None)
 
 
+@pytest.mark.parametrize("writer", ["file_tool", "subagent", "shell", "external"])
 @pytest.mark.asyncio
-async def test_shell_edit_emits_file_change_item(
+async def test_only_reported_writes_enter_turn_receipt_and_restore(
     runtime_app: object,
     git_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
+    writer: str,
 ) -> None:
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
     # The turn completes with tool evidence but no final answer; skip the
@@ -139,6 +142,9 @@ async def test_shell_edit_emits_file_change_item(
         manager, "_recover_missing_final_answer", AsyncMock(return_value=None)
     )
     handle = EngineHandle()
+    (git_repo / "other.py").write_text("original\n", encoding="utf-8")
+    _git(git_repo, "add", "other.py")
+    _git(git_repo, "commit", "-m", "other editor's file")
     thread = await manager.create_thread(CreateThreadRequest())
     turn_id = f"turn_{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc)
@@ -160,54 +166,52 @@ async def test_shell_edit_emits_file_change_item(
     async with manager._active_lock:
         manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
 
+    reported = writer in {"file_tool", "subagent"}
     tool = ToolCall(
-        id="tc_shell",
-        name="exec_shell",
-        arguments={"command": "git apply /tmp/x.patch"},
+        id="tc_write",
+        name="write_file" if reported else "exec_shell",
+        arguments=(
+            {"path": "tracked.py", "content": "v2\n"}
+            if reported else {"command": "git apply /tmp/x.patch"}
+        ),
     )
-
-    # handle.emit only queues — without this gate the pump could write the
-    # file before _monitor_turn takes its pre-exec snapshot, and there would
-    # be no delta left to detect. The first capture is _monitor_turn's
-    # turn-start snapshot (rewind file checkpoints); the pre-exec snapshot
-    # for the shell command is the second one.
-    captured = asyncio.Event()
-    capture_calls = 0
-    real_capture = shell_mutation_watch.capture_shell_snapshot
-
-    async def _capture_spy(
-        workspace: Path,
-    ) -> shell_mutation_watch.ShellMutationSnapshot:
-        nonlocal capture_calls
-        try:
-            return await real_capture(workspace)
-        finally:
-            capture_calls += 1
-            if capture_calls >= 2:
-                captured.set()
-
-    monkeypatch.setattr(
-        shell_mutation_watch, "capture_shell_snapshot", _capture_spy
-    )
+    ready = asyncio.get_running_loop().create_future()
 
     async def pump() -> None:
-        await handle.emit(ToolCallEvent(tool_call=tool))
-        await asyncio.wait_for(captured.wait(), timeout=5)
-        # The shell command edits the file behind the tool layer.
-        (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
-        await handle.emit(
-            ToolResultEvent(
-                tool_call_id="tc_shell",
-                tool_name="exec_shell",
-                content="patch applied ok",
-                success=True,
+        await asyncio.wait_for(asyncio.shield(ready), timeout=5)
+        if writer != "external":
+            await handle.emit(ToolCallEvent(tool_call=tool))
+        metadata = {}
+        if reported:
+            context = stub_engine.tool_context
+            if writer == "subagent":
+                context = ToolContext(
+                    working_directory=git_repo,
+                    on_file_mutation=context.on_file_mutation,
+                    mutation_agent_id="agent_child",
+                )
+            result = await WriteFileTool().execute(tool.arguments, context)
+            metadata = result.metadata
+        else:
+            (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
+        # Another editor changes tracked and untracked files during this turn.
+        (git_repo / "other.py").write_text("external edit\n", encoding="utf-8")
+        (git_repo / "external.py").write_text("external creation\n", encoding="utf-8")
+        if writer != "external":
+            await handle.emit(
+                ToolResultEvent(
+                    tool_call_id=tool.id,
+                    tool_name=tool.name,
+                    content="ok",
+                    success=True,
+                    metadata=metadata,
+                )
             )
-        )
         await handle.emit(TurnCompleteEvent(assistant_message=None))
 
     pump_task = asyncio.create_task(pump())
     try:
-        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent", ready)
     finally:
         await pump_task
         engine_task.cancel()
@@ -217,45 +221,19 @@ async def test_shell_edit_emits_file_change_item(
             manager._active.pop(thread.id, None)
 
     events = manager.events_since(thread.id, 0)
-    started = {
-        e.item_id: e
-        for e in events
-        if e.event == "item.started" and e.payload["item"]["kind"] == "file_change"
-    }
-    completed = {
-        e.item_id: e
-        for e in events
-        if e.event == "item.completed" and e.payload["item"]["kind"] == "file_change"
-    }
-    assert set(started) == set(completed)
-    assert len(completed) == 1
-    first_diff_seq = min(e.seq for e in events if e.event == "turn.diff.updated")
-    assert first_diff_seq < next(iter(completed.values())).seq
-
-    item = next(iter(completed.values())).payload["item"]
-    mutation = item["metadata"]["mutation"]
-    assert mutation["source"] == "shell_detected"
-    assert mutation["path"] == "tracked.py"
-    assert mutation["op"] == "update"
-    assert mutation["line_start"] == 1
-    assert "+v2" in mutation["unified_diff"]
-    assert item["detail"] == mutation["unified_diff"]
-    # The synthetic row is attributed to the originating shell call.
-    start_payload = next(iter(started.values())).payload
-    assert start_payload["tool"] == {
-        "id": "tc_shell",
-        "name": "exec_shell",
-        "input": {"command": "git apply /tmp/x.patch"},
-    }
-
-    # The mutation entered the turn ledger; turn-end git reconcile must not
-    # count the covered path a second time.
     final_diffs = [
         e.payload for e in events
         if e.event == "turn.diff.updated" and e.payload.get("complete")
     ]
     assert len(final_diffs) == 1
-    assert [f["path"] for f in final_diffs[0]["files"]] == ["tracked.py"]
-    assert final_diffs[0]["totals"]["files"] == 1
+    expected = ["tracked.py"] if reported else []
+    assert [f["path"] for f in final_diffs[0]["files"]] == expected
+    assert final_diffs[0]["totals"]["files"] == len(expected)
     persisted = manager.store.load_turn(turn_id).diff_snapshot
     assert persisted == final_diffs[0]
+    assert manager.checkpoints.load(turn_id).mutated == expected
+    restored = await manager.checkpoints.restore([turn_id], git_repo)
+    assert restored.restored == expected
+    assert (git_repo / "tracked.py").read_text() == ("v1\n" if reported else "v2\n")
+    assert (git_repo / "other.py").read_text() == "external edit\n"
+    assert (git_repo / "external.py").read_text() == "external creation\n"
