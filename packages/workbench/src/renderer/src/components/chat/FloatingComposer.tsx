@@ -115,6 +115,7 @@ import {
   workspacePathFromDrag
 } from '../../lib/composer-insert'
 import { isLargePaste } from '../../lib/composer-paste-file'
+import { pollWhileVisible } from '../../lib/poll-while-visible'
 
 export type { ComposerMode }
 
@@ -742,10 +743,9 @@ export function FloatingComposer({
   useEffect(() => {
     if (!activeThreadId || !runtimeReady || !hasActiveDurableTask) return
     if (pendingUserInputs.length > 0) return
-    const timer = window.setInterval(() => {
+    return pollWhileVisible(() => {
       void refreshPendingUserInputs()
     }, 2000)
-    return () => window.clearInterval(timer)
   }, [
     activeThreadId,
     runtimeReady,
@@ -991,8 +991,7 @@ export function FloatingComposer({
     if (plusSubmenu !== 'connectors') return
     const pending = composerConnectors.some((connector) => connector.status === 'connecting')
     if (!pending) return
-    const timer = window.setInterval(() => loadComposerConnectors({ force: true }), 1500)
-    return () => window.clearInterval(timer)
+    return pollWhileVisible(() => loadComposerConnectors({ force: true }), 1500)
   }, [plusSubmenu, composerConnectors, loadComposerConnectors])
 
   useEffect(() => {

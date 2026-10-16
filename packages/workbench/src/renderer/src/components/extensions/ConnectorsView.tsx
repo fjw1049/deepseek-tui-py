@@ -33,6 +33,8 @@ import { ImportMcpJsonDialog } from './ImportMcpJsonDialog'
 import { resolveMcpInstall } from './modelscope-install'
 import { ReloadHint } from './ReloadHint'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
+import { pollWhileVisible } from '../../lib/poll-while-visible'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 export function ConnectorsView({
   query,
@@ -103,10 +105,10 @@ export function ConnectorsView({
       }
     }
     void loadRuntime()
-    const timer = window.setInterval(() => void loadRuntime(), 2000)
+    const stopPoll = pollWhileVisible(() => void loadRuntime(), 2000)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      stopPoll()
     }
   }, [mcpLoaded, mcpConfigText])
 
@@ -213,7 +215,7 @@ export function ConnectorsView({
 
   const deleteConnector = async (connector: ConnectorItem): Promise<void> => {
     if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
-    if (!window.confirm(t('connectorDeleteConfirm', { name: connector.name }))) return
+    if (!(await confirmAsync(t('connectorDeleteConfirm', { name: connector.name }), { destructive: true }))) return
     setBusyId(connector.id)
     setNotice(null)
     try {

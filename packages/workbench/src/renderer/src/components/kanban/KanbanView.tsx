@@ -43,6 +43,7 @@ import {
   type KanbanColumnKey,
   type KanbanProjectBoard
 } from './kanban.logic'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 type Props = {
   onOpenThread: (threadId: string) => void
@@ -411,10 +412,12 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
         break
       case 'delete': {
         const title = thread?.title ?? menu.card.title
-        if (!window.confirm(t('sidebarThreadDeleteConfirm', { title }))) break
-        void deleteThread(threadId)
-        clearKanbanDraftPrompt(threadId)
-        setDraftPrompts(loadKanbanDraftPrompts())
+        void confirmAsync(t('sidebarThreadDeleteConfirm', { title }), { destructive: true }).then((ok) => {
+          if (!ok) return
+          void deleteThread(threadId)
+          clearKanbanDraftPrompt(threadId)
+          setDraftPrompts(loadKanbanDraftPrompts())
+        })
         break
       }
     }

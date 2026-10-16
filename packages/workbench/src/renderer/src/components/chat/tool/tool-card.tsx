@@ -10,7 +10,7 @@ import { ToolGateBar } from './tool-gate-bar'
 import { useDisclosure } from '../model/use-disclosure'
 import { ToolBody, ToolCopyButton, ToolErrorState, ToolHeaderRow } from './primitives'
 import type { ToolBlock } from '../../../agent/types'
-import { findPendingToolGate, hasPendingToolGate } from '../../../lib/tool-gate'
+import { hasPendingToolGate, lookupPendingToolGate } from '../../../lib/tool-gate'
 import { useChatStore } from '../../../store/chat-store'
 import { prefetchWorkspaceFile } from '../../../lib/workspace-editor-events'
 
@@ -65,9 +65,12 @@ export const ToolCard = memo(function ToolCard({
 }: ToolCardProps): React.JSX.Element | null {
   const { t } = useTranslation('common')
   const scope = useConversationScope()
-  const mainBlocks = useChatStore((s) => s.blocks)
-  const blocks = scope?.blocks ?? mainBlocks
-  const gate = useMemo(() => findPendingToolGate(blocks, block), [block, blocks])
+  // Select only this card's gate blocks (stable references) so a card does not
+  // re-render on every unrelated blocks change.
+  const scopeBlocks = scope?.blocks
+  const approval = useChatStore((s) => lookupPendingToolGate(scopeBlocks ?? s.blocks, block).approval)
+  const elevation = useChatStore((s) => lookupPendingToolGate(scopeBlocks ?? s.blocks, block).elevation)
+  const gate = useMemo(() => ({ approval, elevation }), [approval, elevation])
   const awaitingGate = hasPendingToolGate(gate)
   const ctx = useMemo(() => {
     const built = buildToolRenderContext(block)

@@ -1694,6 +1694,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     // runtime crashed" / "port reclaimed" cases that would otherwise look like
     // a hung GUI.
     const RECONNECT_FAILURE_LIMIT = 6
+    // Set by a `stream.resync_required` frame: reconnecting from the same seq
+    // would hit the same gap and loop forever, so stop and let the owner reload.
+    let resyncRequired = false
 
     while (!signal.aborted) {
       const streamId = createSseStreamId()
@@ -1703,11 +1706,19 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             let settled = false
             let deltaFlushFrame = 0
             let pendingDeltas: ThreadDeltaEvent[] = []
+            // Sub-agent text rides the same frame batch: each flush used to be a
+            // store write (and a full block-array copy) per network chunk.
+            let pendingSubagentText = new Map<string, string>()
 
             const flushPendingDeltas = (): void => {
               if (deltaFlushFrame) {
                 window.cancelAnimationFrame(deltaFlushFrame)
                 deltaFlushFrame = 0
+              }
+              if (pendingSubagentText.size > 0) {
+                const batch = pendingSubagentText
+                pendingSubagentText = new Map()
+                for (const [agentId, text] of batch) sink.onSubagentTextDelta?.(agentId, text)
               }
               if (pendingDeltas.length === 0) return
               const batch = pendingDeltas
@@ -1732,6 +1743,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 deltaFlushFrame = 0
               }
               pendingDeltas = []
+              pendingSubagentText = new Map()
               signal.removeEventListener('abort', onAbort)
             }
 
@@ -1745,6 +1757,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
             const offData = window.dsGui.onSseEvent(({ streamId: sid, data }) => {
               if (sid !== streamId) return
+              if ((data as { event?: string } | null)?.event === 'stream.resync_required') {
+                resyncRequired = true
+                finish({ type: 'end' })
+                return
+              }
               reconnectDelayMs = 750
               consecutiveFailures = 0
               const row = data as {
@@ -1773,7 +1790,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   const agentId = itemId.startsWith('subagent_text_')
                     ? itemId.slice('subagent_text_'.length)
                     : ''
-                  if (agentId) sink.onSubagentTextDelta?.(agentId, delta)
+                  if (agentId) {
+                    pendingSubagentText.set(agentId, (pendingSubagentText.get(agentId) ?? '') + delta)
+                    scheduleDeltaFlush()
+                  }
                   return
                 }
                 if ((kind === 'agent_message' || kind === 'agent_reasoning') && delta) {
@@ -2306,6 +2326,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         )
 
         if (signal.aborted) return
+        if (resyncRequired) {
+          if (sink.onResyncRequired) sink.onResyncRequired()
+          else sink.onError(new Error('event stream requires a fresh thread snapshot'))
+          return
+        }
         if (outcome.type === 'error') {
           if (isFatalSseStatus(outcome.status)) {
             sink.onError(outcome.error)

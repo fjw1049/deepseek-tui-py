@@ -14,8 +14,8 @@ import {
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
+import { useActiveThreadHasTask } from '../../hooks/use-active-thread-has-task'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
-import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import {
   applyManualOrder,
   loadChatsOrder,
@@ -32,6 +32,7 @@ import { useChatStore } from '../../store/chat-store'
 import { isChatsWorkspace, isClawWorkspacePath } from '../../lib/workspace-path'
 import { SidebarSortableList, SidebarSortableRow } from './SidebarSortable'
 import { ThreadRow } from './SidebarProjectsSection'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 const CHATS_SORT_LABEL_KEYS: Record<ChatsSortMode, string> = {
   recent: 'sidebarProjectsSortRecent',
@@ -64,7 +65,6 @@ export function SidebarChatsSection({
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
-  const activeThreadBlocks = useChatStore((s) => s.blocks)
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
 
   const collapsed = useChatStore((s) => s.chatsCollapsed)
@@ -83,10 +83,7 @@ export function SidebarChatsSection({
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
-  const activeThreadHasTask = useMemo(() => {
-    if (!activeThreadId) return false
-    return extractTasksFromBlocks(activeThreadBlocks).some((task) => activeTaskIds.has(task.id))
-  }, [activeThreadId, activeThreadBlocks, activeTaskIds])
+  const activeThreadHasTask = useActiveThreadHasTask(activeTaskIds)
 
   // Chats bucket: temp/default-workspace threads not belonging to a user-added
   // project and not pinned. Claw threads stay excluded as elsewhere.
@@ -216,7 +213,7 @@ export function SidebarChatsSection({
     const threadId = thread.id.trim()
     if (!threadId || deletingThreadIds[threadId]) return
     const confirmMessage = t('sidebarThreadDeleteConfirm', { title: thread.title })
-    if (!window.confirm(confirmMessage)) return
+    if (!(await confirmAsync(confirmMessage, { destructive: true }))) return
     setDeletingThreadIds((prev) => ({ ...prev, [threadId]: true }))
     try {
       await onDeleteThread(threadId)
@@ -244,18 +241,18 @@ export function SidebarChatsSection({
     }
   }
 
-  const handleDeleteSelected = (): void => {
+  const handleDeleteSelected = async (): Promise<void> => {
     const targets = chatsThreads.filter((thread) => selectedIds.has(thread.id))
     if (targets.length === 0) return
-    const ok = window.confirm(t('sidebarChatsDeleteSelectedConfirm', { count: targets.length }))
+    const ok = await confirmAsync(t('sidebarChatsDeleteSelectedConfirm', { count: targets.length }), { destructive: true })
     if (!ok) return
     void deleteThreads(targets)
   }
 
-  const handleClearAll = (): void => {
+  const handleClearAll = async (): Promise<void> => {
     setMenuOpen(false)
     if (chatsThreads.length === 0) return
-    const ok = window.confirm(t('sidebarChatsClearAllConfirm', { count: chatsThreads.length }))
+    const ok = await confirmAsync(t('sidebarChatsClearAllConfirm', { count: chatsThreads.length }), { destructive: true })
     if (!ok) return
     setCollapsed(false)
     void deleteThreads(chatsThreads)

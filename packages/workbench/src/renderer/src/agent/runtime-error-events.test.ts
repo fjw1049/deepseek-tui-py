@@ -39,3 +39,26 @@ it('preserves a turn-level failure when the conversation is reloaded', async () 
   expect(detail.latestTurnOutcome).toBe('failed')
   expect(detail.blocks).toContainEqual(expect.objectContaining({ text: 'Rate limited', severity: 'error' }))
 })
+
+it('stops reconnecting and asks the owner to reload when replay is unavailable', async () => {
+  const controller = new AbortController()
+  let emit!: (event: SseEventPayload) => void
+  const startSse = vi.fn(async (_thread: string, _seq: number, streamId: string) => {
+    emit({ streamId, data: { thread_id: 'thread', since_seq: 7, reason: 'legacy_truncated_payload', event: 'stream.resync_required' } })
+    return { streamId }
+  })
+  const sink: ThreadEventSink = {
+    onSeq: vi.fn(), onDeltas: vi.fn(), onUserMessage: vi.fn(), onTool: vi.fn(),
+    onApproval: vi.fn(), onUserInput: vi.fn(), onUserInputStatus: vi.fn(), onError: vi.fn(),
+    onTurnComplete: vi.fn(), onResyncRequired: vi.fn()
+  }
+  vi.stubGlobal('dsGui', {
+    onSseEvent: (handler: typeof emit) => { emit = handler; return () => {} },
+    onSseEnd: () => () => {}, onSseError: () => () => {}, stopSse: async () => true, startSse
+  })
+  // Resolves on its own: the loop must not reconnect to the same gap.
+  await new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 7, sink, controller.signal)
+  expect(startSse).toHaveBeenCalledTimes(1)
+  expect(sink.onResyncRequired).toHaveBeenCalledTimes(1)
+  expect(sink.onError).not.toHaveBeenCalled()
+})

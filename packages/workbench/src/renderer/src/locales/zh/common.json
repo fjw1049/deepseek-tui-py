@@ -1085,6 +1085,7 @@
   "channelEmailAdvancedDesc": "手动调整服务器、端口、SSL 或环境变量名。",
   "channelEmailClearAuthCode": "清除已保存的授权码",
   "cancel": "取消",
+  "confirmAction": "确定",
   "viewClawTasks": "在设置中查看",
   "composerSlashHint": "输入 / 打开命令",
   "workingDirectory": "工作目录",

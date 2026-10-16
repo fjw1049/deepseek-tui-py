@@ -41,7 +41,7 @@ export function ModelUsagePanel({
   onRangeChange
 }: Props): ReactElement {
   const { t } = useTranslation('settings')
-  const buckets = usage?.buckets ?? []
+  const buckets = useMemo(() => usage?.buckets ?? [], [usage])
   const maxTokens = useMemo(
     () => Math.max(...buckets.map((bucket) => bucket.totalTokens), 1),
     [buckets]

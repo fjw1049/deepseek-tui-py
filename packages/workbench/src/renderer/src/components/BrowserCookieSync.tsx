@@ -3,6 +3,7 @@ import { X, Globe2 } from 'lucide-react'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
 import { useTranslation } from 'react-i18next'
 import { browserRequest } from './BrowserWorkspace'
+import { confirmAsync } from '../lib/confirm-dialog'
 
 export type CookieSyncState = {
   consent: 'pending' | 'enabled' | 'skipped' | 'disabled'
@@ -128,10 +129,10 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
     finally { setBusy(false) }
   }
 
-  function syncChosen(): void {
+  async function syncChosen(): Promise<void> {
     const list = [...chosen].sort()
     const risky = list.filter(site => sites?.some(row => row.site === site && row.sensitive))
-    if (risky.length && !window.confirm(t('browserCookieSensitiveConfirm', { sites: risky.join(', ') }))) return
+    if (risky.length && !(await confirmAsync(t('browserCookieSensitiveConfirm', { sites: risky.join(', ') })))) return
     void perform(current?.consent === 'enabled' && current.profile === profile ? 'sync' : 'enable', list)
   }
 
@@ -238,7 +239,7 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
       {manage && current.consent === 'enabled' ? <button type="button" className="ds-cookie-secondary" disabled={busy}
         onClick={() => void perform('disable')}>{t('browserCookieDisable')}</button> : null}
       {manage ? <button type="button" className="ds-cookie-danger" disabled={busy}
-        onClick={() => { if (window.confirm(t('browserCookieClearConfirm'))) void perform('clear') }}>{t('browserCookieClear')}</button> : null}
+        onClick={() => { void confirmAsync(t('browserCookieClearConfirm'), { destructive: true }).then((ok) => { if (ok) void perform('clear') }) }}>{t('browserCookieClear')}</button> : null}
     </div>
     </details>
     {error ? <p role="alert" className="mt-2 text-red-600">{t(error)}</p> : null}

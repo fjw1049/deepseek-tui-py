@@ -1085,6 +1085,7 @@
   "channelEmailAdvancedDesc": "Manually adjust server, port, SSL, or env var name.",
   "channelEmailClearAuthCode": "Clear saved authorization code",
   "cancel": "Cancel",
+  "confirmAction": "OK",
   "viewClawTasks": "View in Settings",
   "composerSlashHint": "Type / for commands",
   "workingDirectory": "Working directory",

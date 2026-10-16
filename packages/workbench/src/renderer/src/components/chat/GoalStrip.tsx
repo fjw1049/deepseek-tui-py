@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { GoalSnapshotJson } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 function tokenBudget(goal: GoalSnapshotJson): number | null {
   const limit = goal.budget_limits?.token_budget
@@ -72,8 +73,8 @@ export function GoalStrip(): ReactElement | null {
           <button
             type="button"
             className="ds-goal-strip__btn ds-goal-strip__btn--danger"
-            onClick={() => {
-              if (!complete && !window.confirm(t('goalCancelConfirm'))) return
+            onClick={async () => {
+              if (!complete && !(await confirmAsync(t('goalCancelConfirm'), { destructive: true }))) return
               void applyGoalCommand('cancel', { expectedGoalId: goal.goal_id })
             }}
           >

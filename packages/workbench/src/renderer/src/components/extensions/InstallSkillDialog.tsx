@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { Loader2, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { normalizePluginId } from './marketplace-shared'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 type Props = {
   open: boolean
@@ -78,7 +79,7 @@ export function InstallSkillDialog({ open, skillsDir, onClose, onInstalled }: Pr
     }
     if (result.conflict) {
       // `message` carries the conflicting skill name from the main process.
-      if (window.confirm(t('skillInstallConflict', { name: result.message ?? file.name }))) {
+      if (await confirmAsync(t('skillInstallConflict', { name: result.message ?? file.name }), { destructive: true })) {
         await installZip(file, true)
       }
       return

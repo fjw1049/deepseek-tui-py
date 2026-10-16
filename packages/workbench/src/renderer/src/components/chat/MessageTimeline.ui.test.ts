@@ -114,7 +114,8 @@ it('keeps silent edit rounds compact and inserts delayed narration once without 
   await act(async () => container.querySelector<HTMLButtonElement>('.ds-work-summary > button')!.click())
   expect(container.querySelector('#block-edit-1')).not.toBeNull()
   const intent = blocks[4]
-  if (intent.kind === 'assistant') intent.text = '修复已完成，开始核对结果。'
+  // The store replaces changed blocks immutably; unchanged turns keep identity.
+  if (intent.kind === 'assistant') blocks[4] = { ...intent, text: '修复已完成，开始核对结果。' }
   // Replace the array so the timeline rebuilds the same persisted frame.
   await act(async () => root.render(createElement(MessageTimeline, {
     blocks: [...blocks], liveReasoning: '', live: '', activeThreadId: 'silent-review',

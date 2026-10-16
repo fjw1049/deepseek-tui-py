@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import type { MarketplaceKind } from '../../store/chat-store'
 import type { Notice } from './marketplace-shared'
 import { FeedbackNotice } from '../FeedbackNotice'
+import { markdownExternalLinkComponents } from '../../lib/markdown-external-link'
 
 const KIND_ITEMS: Array<{
   value: MarketplaceKind
@@ -135,6 +136,7 @@ export function stripDocFrontmatter(content: string): string {
 }
 
 const drawerMarkdownComponents = {
+  ...markdownExternalLinkComponents,
   table: ({ children }: { children?: ReactNode }) => (
     <div className="ds-marketplace-doc-table-wrap">
       <table>{children}</table>

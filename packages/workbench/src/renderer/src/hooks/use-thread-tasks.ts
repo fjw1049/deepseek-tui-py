@@ -1,5 +1,5 @@
 import { requestTaskResume } from '../lib/resume-task'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   isActiveTaskStatus,
   normalizeTaskStatus,
@@ -7,6 +7,7 @@ import {
   type TaskStatus
 } from '../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../store/chat-store'
+import { pollWhileVisible } from '../lib/poll-while-visible'
 
 const POLL_INTERVAL_MS = 2_000
 
@@ -175,7 +176,7 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
  */
 let sharedIndex: ActiveTaskIndex = EMPTY_ACTIVE_TASK_INDEX
 let sharedSubscribers = 0
-let sharedInterval: number | undefined
+let stopSharedPoll: (() => void) | undefined
 let sharedInFlight = false
 const sharedListeners = new Set<() => void>()
 
@@ -208,14 +209,14 @@ function subscribeSharedIndex(listener: () => void): () => void {
   sharedSubscribers += 1
   if (sharedSubscribers === 1) {
     refreshSharedIndex()
-    sharedInterval = window.setInterval(refreshSharedIndex, ACTIVE_THREADS_POLL_MS)
+    stopSharedPoll = pollWhileVisible(refreshSharedIndex, ACTIVE_THREADS_POLL_MS)
   }
   return () => {
     sharedListeners.delete(listener)
     sharedSubscribers = Math.max(0, sharedSubscribers - 1)
-    if (sharedSubscribers === 0 && sharedInterval !== undefined) {
-      window.clearInterval(sharedInterval)
-      sharedInterval = undefined
+    if (sharedSubscribers === 0 && stopSharedPoll !== undefined) {
+      stopSharedPoll()
+      stopSharedPoll = undefined
     }
   }
 }
@@ -305,15 +306,20 @@ export function useLiveTasks(baseTasks: TaskItemView[]): TaskItemView[] {
       }
     }
     refresh()
-    const interval = anyActive ? window.setInterval(refresh, POLL_INTERVAL_MS) : undefined
+    const stopPoll = anyActive ? pollWhileVisible(refresh, POLL_INTERVAL_MS) : undefined
     return () => {
       cancelled = true
-      if (interval !== undefined) window.clearInterval(interval)
+      stopPoll?.()
     }
   }, [idsKey, anyActive, refreshPendingUserInputs])
 
-  return baseTasks.map((task) => {
-    const live = liveStatuses[task.id]
-    return live ? { ...task, status: live } : task
-  })
+  // Stable identity: consumers key effects on this array.
+  return useMemo(
+    () =>
+      baseTasks.map((task) => {
+        const live = liveStatuses[task.id]
+        return live ? { ...task, status: live } : task
+      }),
+    [baseTasks, liveStatuses]
+  )
 }

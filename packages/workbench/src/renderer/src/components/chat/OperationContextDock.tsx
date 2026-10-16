@@ -192,7 +192,7 @@ export function OperationContextDock({
   }, [reloadBranchChanges, reloadGitBranches])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
-  const todos = todoSnapshot?.items ?? []
+  const todos = useMemo(() => todoSnapshot?.items ?? [], [todoSnapshot])
   const doneCount = todos.filter((item) => item.status === 'completed').length
   const totalCount = todos.length
   const baseTasks = useMemo(() => extractTasksFromBlocks(blocks), [blocks])

@@ -3,13 +3,14 @@ import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
+import { useActiveThreadHasTask } from '../../hooks/use-active-thread-has-task'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
-import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
 import { isWorkspaceHidden } from '../../lib/sidebar-chrome'
 import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { SidebarSortableList, SidebarSortableRow } from './SidebarSortable'
 import { ThreadRow } from './SidebarProjectsSection'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 type SidebarPinnedSectionProps = {
   headerHost?: HTMLElement | null
@@ -40,17 +41,13 @@ export function SidebarPinnedSection({
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
-  const activeThreadBlocks = useChatStore((s) => s.blocks)
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
   const sectionCollapsed = collapsed
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
-  const activeThreadHasTask = useMemo(() => {
-    if (!activeThreadId) return false
-    return extractTasksFromBlocks(activeThreadBlocks).some((task) => activeTaskIds.has(task.id))
-  }, [activeThreadId, activeThreadBlocks, activeTaskIds])
+  const activeThreadHasTask = useActiveThreadHasTask(activeTaskIds)
 
   const pinnedThreads = useMemo(() => {
     const byId = new Map(threads.map((thread) => [thread.id, thread]))
@@ -70,7 +67,7 @@ export function SidebarPinnedSection({
     const threadId = thread.id.trim()
     if (!threadId || deletingThreadIds[threadId]) return
     const confirmMessage = t('sidebarThreadDeleteConfirm', { title: thread.title })
-    if (!window.confirm(confirmMessage)) return
+    if (!(await confirmAsync(confirmMessage, { destructive: true }))) return
     setDeletingThreadIds((prev) => ({ ...prev, [threadId]: true }))
     try {
       await onDeleteThread(threadId)

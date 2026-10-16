@@ -33,6 +33,13 @@ type Props = {
   dense?: boolean
 }
 
+// auto = soft amber; untrusted = pale gold; on-request = pale green
+const tierAccent: Record<ComposerApprovalTier, string> = {
+  auto: '#e0a04a',
+  untrusted: '#c9b06a',
+  'on-request': '#7eab8a'
+}
+
 export function ComposerApprovalPolicySelector({
   disabled = false,
   onOpenChange,
@@ -100,12 +107,6 @@ export function ComposerApprovalPolicySelector({
   const TriggerIcon =
     policy === 'auto' ? Zap : policy === 'untrusted' ? Shield : Hand
 
-  // auto = soft amber; untrusted = pale gold; on-request = pale green
-  const tierAccent: Record<ComposerApprovalTier, string> = {
-    auto: '#e0a04a',
-    untrusted: '#c9b06a',
-    'on-request': '#7eab8a'
-  }
   const triggerAccent =
     policy === 'auto' || policy === 'untrusted' || policy === 'on-request'
       ? tierAccent[policy]
@@ -168,6 +169,9 @@ export function ComposerApprovalPolicySelector({
       setSaving(false)
     }
   }
+  // The window key handler outlives renders; read the current policy/saving state.
+  const selectPolicyRef = useRef(selectPolicy)
+  selectPolicyRef.current = selectPolicy
 
   useEffect(() => {
     if (!open) return
@@ -181,7 +185,7 @@ export function ComposerApprovalPolicySelector({
       }
       const handled = onKeyDown(event, (index) => {
         const option = options[index]
-        if (option) void selectPolicy(option.id)
+        if (option) void selectPolicyRef.current(option.id)
       })
       if (handled) event.stopPropagation()
     }

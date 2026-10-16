@@ -31,8 +31,8 @@ import {
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
+import { useActiveThreadHasTask } from '../../hooks/use-active-thread-has-task'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
-import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
 import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
@@ -71,6 +71,7 @@ import { ProjectContextMenu, type ProjectContextMenuAction } from './ProjectCont
 import { ThreadContextMenu, type ThreadContextMenuAction } from './ThreadContextMenu'
 import { HoverInfoCard } from './ThreadHoverCard'
 import { HoverMarqueeText } from '../HoverMarqueeText'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 type SidebarProjectsSectionProps = {
   threads: NormalizedThread[]
@@ -592,20 +593,22 @@ export function SidebarProjectsColumn({
     }
   }
 
-  const handleDeleteSelected = (): void => {
+  const handleDeleteSelected = async (): Promise<void> => {
     const targets = projectThreads.filter((thread) => selectedIds.has(thread.id))
     if (targets.length === 0) return
-    const ok = window.confirm(
-      t('sidebarProjectsDeleteSelectedConfirm', { count: targets.length })
+    const ok = await confirmAsync(
+      t('sidebarProjectsDeleteSelectedConfirm', { count: targets.length }),
+      { destructive: true }
     )
     if (!ok) return
     void deleteThreads(targets)
   }
 
-  const handleClearAll = (): void => {
+  const handleClearAll = async (): Promise<void> => {
     if (projectThreads.length === 0) return
-    const ok = window.confirm(
-      t('sidebarProjectsClearAllConfirm', { count: projectThreads.length })
+    const ok = await confirmAsync(
+      t('sidebarProjectsClearAllConfirm', { count: projectThreads.length }),
+      { destructive: true }
     )
     if (!ok) return
     setProjectsCollapsed(false)
@@ -749,11 +752,7 @@ function SidebarProjectsSection({
   // The active conversation's task ids come straight from its loaded message
   // blocks, so it can light up even for tasks created before thread_id wiring
   // existed (no backend restart required).
-  const activeThreadBlocks = useChatStore((s) => s.blocks)
-  const activeThreadHasTask = useMemo(() => {
-    if (!activeThreadId) return false
-    return extractTasksFromBlocks(activeThreadBlocks).some((task) => activeTaskIds.has(task.id))
-  }, [activeThreadId, activeThreadBlocks, activeTaskIds])
+  const activeThreadHasTask = useActiveThreadHasTask(activeTaskIds)
   const activeThreadWorkspace = normalizeWorkspaceRoot(
     threads.find((thread) => thread.id === activeThreadId)?.workspace
   )
@@ -814,7 +813,7 @@ function SidebarProjectsSection({
     const threadId = thread.id.trim()
     if (!threadId || deletingThreadIds[threadId]) return
     const confirmMessage = t('sidebarThreadDeleteConfirm', { title: thread.title })
-    if (!window.confirm(confirmMessage)) return
+    if (!(await confirmAsync(confirmMessage, { destructive: true }))) return
     setDeletingThreadIds((prev) => ({ ...prev, [threadId]: true }))
     try {
       await onDeleteThread(threadId)
@@ -844,14 +843,14 @@ function SidebarProjectsSection({
 
   const handleRemoveWorkspace = async (workspacePath: string): Promise<void> => {
     const confirmMessage = t('sidebarWorkspaceRemoveConfirm', { path: workspacePath })
-    if (!window.confirm(confirmMessage)) return
+    if (!(await confirmAsync(confirmMessage))) return
     await onRemoveWorkspace(workspacePath)
     setProjectMenu(null)
   }
 
   const handleDeleteWorkspace = async (workspacePath: string): Promise<void> => {
     const confirmMessage = t('sidebarWorkspaceDeleteFileConfirm', { path: workspacePath })
-    if (!window.confirm(confirmMessage)) return
+    if (!(await confirmAsync(confirmMessage, { destructive: true }))) return
     await onDeleteWorkspace(workspacePath)
     setProjectMenu(null)
   }

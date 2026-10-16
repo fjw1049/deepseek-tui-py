@@ -89,3 +89,28 @@ describe('completeAssistantProgress', () => {
     expect(tagged.blocks).toHaveLength(1)
   })
 })
+
+describe('reuseUnchangedItems', () => {
+  it('returns the previous array when nothing changed', async () => {
+    const { reuseUnchangedItems } = await import('./chat-store-helpers')
+    const prev = [{ id: 'a', title: 'A', conflicts: ['x'] }, { id: 'b', title: 'B', conflicts: [] }]
+    const next = [{ id: 'a', title: 'A', conflicts: ['x'] }, { id: 'b', title: 'B', conflicts: [] }]
+    expect(reuseUnchangedItems(prev, next)).toBe(prev)
+  })
+
+  it('keeps identity of unchanged rows and swaps only the changed one', async () => {
+    const { reuseUnchangedItems } = await import('./chat-store-helpers')
+    const prev = [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }]
+    const result = reuseUnchangedItems(prev, [{ id: 'a', title: 'A' }, { id: 'b', title: 'B2' }])
+    expect(result).not.toBe(prev)
+    expect(result[0]).toBe(prev[0])
+    expect(result[1]).toEqual({ id: 'b', title: 'B2' })
+  })
+
+  it('detects additions and reordering', async () => {
+    const { reuseUnchangedItems } = await import('./chat-store-helpers')
+    const prev = [{ id: 'a' }, { id: 'b' }]
+    expect(reuseUnchangedItems(prev, [{ id: 'b' }, { id: 'a' }])).not.toBe(prev)
+    expect(reuseUnchangedItems(prev, [{ id: 'a' }])).not.toBe(prev)
+  })
+})

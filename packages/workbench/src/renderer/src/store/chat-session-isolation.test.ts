@@ -272,3 +272,25 @@ it('tracks the latest stream event through thinking, response, tool and completi
   sink.onDeltas([{ kind: 'agent_reasoning', text: 'late', seq: 4 }])
   expect(pane.store.getState().liveActivity).toBeNull()
 })
+
+it('parks a queued follow-up when switching tasks and restores it on return', async () => {
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  expect(await pane.store.getState().sendMessage('follow up', 'agent')).toBe(true)
+  expect(pane.store.getState().queuedMessages.map(m => m.text)).toEqual(['follow up'])
+  await pane.store.getState().selectThread('b')
+  expect(pane.store.getState().queuedMessages).toEqual([])
+  await pane.store.getState().selectThread('a')
+  expect(pane.store.getState().queuedMessages.map(m => m.text)).toEqual(['follow up'])
+  expect(provider.sendUserMessage).not.toHaveBeenCalled()
+})
+
+it('sends a parked follow-up once its task has finished while away', async () => {
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  await pane.store.getState().sendMessage('follow up', 'agent')
+  await pane.store.getState().selectThread('b')
+  provider.getThreadDetail.mockImplementation(async (id: string) => ({ ...snapshot(id), threadStatus: 'idle' }))
+  await pane.store.getState().selectThread('a')
+  await vi.waitFor(() => expect(provider.sendUserMessage).toHaveBeenCalledWith('a', 'follow up', expect.anything()))
+})

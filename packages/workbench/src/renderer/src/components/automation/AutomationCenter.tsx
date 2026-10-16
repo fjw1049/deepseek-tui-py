@@ -47,6 +47,7 @@ import { SettingsSelect } from '../settings/SettingsSelect'
 import { ResizableRightDrawer } from '../extensions/ResizableRightDrawer'
 import { AutomationListCard } from './AutomationListCard'
 import { AutomationTaskForm } from './AutomationTaskForm'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 type Props = {
   runtimeReady: boolean
@@ -354,7 +355,7 @@ export function AutomationCenter({
     row: AutomationRecord,
     action: 'toggle' | 'run' | 'delete'
   ): Promise<void> => {
-    if (action === 'delete' && !window.confirm(t('automationDeleteConfirm', { name: row.name })))
+    if (action === 'delete' && !(await confirmAsync(t('automationDeleteConfirm', { name: row.name }), { destructive: true })))
       return
     setBusyId(row.id)
     setNotice(null)

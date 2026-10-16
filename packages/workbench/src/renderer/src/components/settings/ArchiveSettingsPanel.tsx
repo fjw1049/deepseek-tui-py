@@ -26,6 +26,7 @@ import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { useChatStore } from '../../store/chat-store'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 type ProjectGroup = {
   key: string
@@ -277,8 +278,8 @@ export function ArchiveSettingsPanel(): ReactElement {
     void runOnThread(thread.id, () => provider.setThreadArchived!(thread.id, false))
   }
 
-  const handleDeleteOne = (thread: NormalizedThread): void => {
-    const ok = window.confirm(t('archiveDeleteOneConfirm', { title: thread.title }))
+  const handleDeleteOne = async (thread: NormalizedThread): Promise<void> => {
+    const ok = await confirmAsync(t('archiveDeleteOneConfirm', { title: thread.title }), { destructive: true })
     if (!ok) return
     const provider = getProvider(providerId)
     if (typeof provider.purgeThread !== 'function') {
@@ -288,9 +289,9 @@ export function ArchiveSettingsPanel(): ReactElement {
     void runOnThread(thread.id, () => provider.purgeThread!(thread.id))
   }
 
-  const handleDeleteGroup = (group: ProjectGroup): void => {
+  const handleDeleteGroup = async (group: ProjectGroup): Promise<void> => {
     if (group.threads.length === 0 || batchBusy) return
-    const ok = window.confirm(t('archiveDeleteAllConfirm', { count: group.threads.length }))
+    const ok = await confirmAsync(t('archiveDeleteAllConfirm', { count: group.threads.length }), { destructive: true })
     if (!ok) return
     const provider = getProvider(providerId)
     if (typeof provider.purgeThread !== 'function') {
@@ -318,9 +319,9 @@ export function ArchiveSettingsPanel(): ReactElement {
     })()
   }
 
-  const handleDeleteAll = (): void => {
+  const handleDeleteAll = async (): Promise<void> => {
     if (threads.length === 0 || batchBusy) return
-    const ok = window.confirm(t('archiveDeleteAllConfirm', { count: threads.length }))
+    const ok = await confirmAsync(t('archiveDeleteAllConfirm', { count: threads.length }), { destructive: true })
     if (!ok) return
     const provider = getProvider(providerId)
     setBatchBusy(true)

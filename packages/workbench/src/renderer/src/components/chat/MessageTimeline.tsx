@@ -2,7 +2,7 @@ import { TurnActivity, resolveTurnActivity, type TurnActivityKind } from './Turn
 import { useBrowserAssistanceStore } from '../../store/browser-assistance-store'
 import { copyText } from '../../lib/copy-text'
 import { ConversationScope, useConversationScope } from './conversation-scope'
-import { findPendingToolGate, hasPendingToolGate } from '../../lib/tool-gate'
+import { hasPendingToolGate, lookupPendingToolGate } from '../../lib/tool-gate'
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -21,6 +21,7 @@ import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { remarkCjkAutolinks } from '../../lib/remark-cjk-autolinks'
+import { markdownExternalLinkComponents } from '../../lib/markdown-external-link'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -108,7 +109,12 @@ import {
 } from '../../lib/preview-pick-message'
 import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
-import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
+import {
+  createActiveTrailStore,
+  deriveQueryTrailItems,
+  reuseQueryTrailItems,
+  type QueryTrailItem
+} from './queryTrail.logic'
 import {
   clipMidTurnPrefaceText,
   shouldParseIncompleteAssistantMarkdown,
@@ -118,6 +124,7 @@ import {
   isVisibleWithoutExecutionDetails,
   placeAssistantContentBlock,
   planProcessRenderChunks,
+  reuseStableTurns,
   splitThink,
   toolNameFromProcessBlock,
   trailingThinkingIndicatorId,
@@ -248,16 +255,31 @@ function AssistantMarkdown({
   )
 }
 
+const REASONING_REMARK_PLUGINS = [remarkGfm, remarkCjkAutolinks]
+
 function BoundedReasoningMarkdown({ text }: { text: string }): ReactElement {
   const { shown, overLimit, expanded, remaining, toggle } = useBoundedText(text, false)
   return (
     <>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkAutolinks]}>{shown}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={REASONING_REMARK_PLUGINS} components={markdownExternalLinkComponents}>{shown}</ReactMarkdown>
       {overLimit ? (
         <ShowFullToggle expanded={expanded} remaining={remaining} onToggle={toggle} />
       ) : null}
     </>
   )
+}
+
+/** True when an upward wheel gesture is consumed by a scrollable element inside `container`. */
+function wheelScrollsNestedElement(event: WheelEvent, container: HTMLElement): boolean {
+  let node = event.target instanceof Element ? event.target : null
+  while (node && node !== container) {
+    if (node instanceof HTMLElement && node.scrollHeight > node.clientHeight + 1 && node.scrollTop > 0) {
+      const overflowY = getComputedStyle(node).overflowY
+      if (overflowY === 'auto' || overflowY === 'scroll') return true
+    }
+    node = node.parentElement
+  }
+  return false
 }
 
 export function MessageTimeline({
@@ -305,7 +327,12 @@ export function MessageTimeline({
   const prependInFlightRef = useRef(false)
   const scrollFrameRef = useRef<number | null>(null)
   const jumpAnimRef = useRef<number | null>(null)
-  const turns = useMemo(() => groupTurns(blocks), [blocks])
+  const previousTurnsRef = useRef<Turn[]>([])
+  const turns = useMemo(() => {
+    const next = reuseStableTurns(previousTurnsRef.current, groupTurns(blocks))
+    previousTurnsRef.current = next
+    return next
+  }, [blocks])
   const shouldCollapseHistory = turns.length > AUTO_COLLAPSE_THRESHOLD
   const [visibleTurnCount, setVisibleTurnCount] = useState(() =>
     shouldCollapseHistory ? TURN_PAGE_SIZE : turns.length
@@ -363,12 +390,21 @@ export function MessageTimeline({
         markUserScroll()
       }
     }
-    el.addEventListener('wheel', markUserScroll, { passive: true })
+    // Only an upward wheel detaches from the tail. Wheeling down at the bottom
+    // moves nothing (so no scroll event would ever re-arm follow), and wheel
+    // events that originate in a nested scroller (code block, tool output)
+    // scroll that element, not the timeline.
+    const onWheel = (event: WheelEvent): void => {
+      if (event.deltaY >= 0) return
+      if (wheelScrollsNestedElement(event, el)) return
+      markUserScroll()
+    }
+    el.addEventListener('wheel', onWheel, { passive: true })
     el.addEventListener('touchmove', markUserScroll, { passive: true })
     el.addEventListener('keydown', onKeyDown)
     return () => {
       el.removeEventListener('scroll', onScroll)
-      el.removeEventListener('wheel', markUserScroll)
+      el.removeEventListener('wheel', onWheel)
       el.removeEventListener('touchmove', markUserScroll)
       el.removeEventListener('keydown', onKeyDown)
     }
@@ -523,8 +559,24 @@ export function MessageTimeline({
     []
   )
 
+  const collapseScopeRef = useRef({ threadId: activeThreadId, turnCount: turns.length })
   useEffect(() => {
-    setVisibleTurnCount(shouldCollapseHistory ? TURN_PAGE_SIZE : turns.length)
+    const scope = collapseScopeRef.current
+    const delta = turns.length - scope.turnCount
+    const threadChanged = scope.threadId !== activeThreadId
+    collapseScopeRef.current = { threadId: activeThreadId, turnCount: turns.length }
+    if (threadChanged) {
+      setVisibleTurnCount(shouldCollapseHistory ? TURN_PAGE_SIZE : turns.length)
+      return
+    }
+    setVisibleTurnCount((count) => {
+      if (!shouldCollapseHistory) return turns.length
+      // Same thread: once the reader has loaded past the default page, grow
+      // with appended turns so loaded history is not yanked away (this also
+      // covers crossing the collapse threshold). An untouched view stays bounded.
+      if (delta > 0 && count > TURN_PAGE_SIZE) return Math.min(turns.length, count + delta)
+      return Math.min(turns.length, Math.max(count, TURN_PAGE_SIZE))
+    })
   }, [activeThreadId, shouldCollapseHistory, turns.length])
 
   useEffect(() => {
@@ -552,7 +604,15 @@ export function MessageTimeline({
   const showEmptyHeroOnly =
     (!activeThreadId || (activeThreadId && !hasContent)) && hiddenTurnCount === 0
 
-  const trailItems = useMemo(() => deriveQueryTrailItems(blocks), [blocks])
+  // Derived anew on every blocks change (each tool event); keep the previous
+  // array when the trail text is unchanged so the scroll-spy effect below does
+  // not re-measure every query block for nothing.
+  const trailItemsRef = useRef<QueryTrailItem[]>([])
+  const trailItems = useMemo(() => {
+    const next = reuseQueryTrailItems(trailItemsRef.current, deriveQueryTrailItems(blocks))
+    trailItemsRef.current = next
+    return next
+  }, [blocks])
   // Trail highlights live in an external store (not React state) so scroll-spy
   // can update the rail without re-rendering this heavy timeline. Created once.
   const activeTrailStoreRef = useRef<ReturnType<typeof createActiveTrailStore> | null>(null)
@@ -1780,11 +1840,18 @@ function ProcessStream({
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
   const scope = useConversationScope()
-  const mainBlocks = useChatStore((s) => s.blocks)
-  const allBlocks = scope?.blocks ?? mainBlocks
-  const interactiveToolIds = new Set(blocks
-    .filter((block) => block.kind === 'tool' && hasPendingToolGate(findPendingToolGate(allBlocks, block)))
-    .map((block) => block.id))
+  // Subscribe to the ids of tools awaiting a gate (a short, comparable string)
+  // rather than the whole transcript, so settled turns do not re-render on
+  // every streamed block.
+  const scopeBlocks = scope?.blocks
+  const gatedKey = useChatStore((s) => {
+    const all = scopeBlocks ?? s.blocks
+    return blocks
+      .filter((block) => block.kind === 'tool' && hasPendingToolGate(lookupPendingToolGate(all, block)))
+      .map((block) => block.id)
+      .join('\u0000')
+  })
+  const interactiveToolIds = new Set(gatedKey ? gatedKey.split('\u0000') : [])
   // Keep the opening thought separate when details are visible; collapsed
   // completed turns must not leak its heading into the answer area.
   const firstReasoning = blocks.find((block) => block.kind === 'reasoning')

@@ -1,4 +1,5 @@
 import i18n from '../i18n'
+import { confirmAsync } from './confirm-dialog'
 
 /** A user review is required only when the stored task exceeds the current session. */
 export async function requestTaskResume(
@@ -25,7 +26,7 @@ export async function requestTaskResume(
     )
     const scope = raw.resume_permissions as Record<string, unknown> | undefined
     const message = `${i18n.t('taskResume.review')}\n\n${i18n.t('taskResume.workspace')}: ${scope?.workspace ?? ''}\n${lines.join('\n')}\n\n${i18n.t('taskResume.confirm')}`
-    if (!window.confirm(message)) throw new Error(i18n.t('taskResume.cancelled'))
+    if (!(await confirmAsync(message))) throw new Error(i18n.t('taskResume.cancelled'))
     if (typeof raw.confirmation_key !== 'string') throw new Error('Missing resume review')
     raw = await post(raw.confirmation_key)
     // Never reuse consent after permissions change while the dialog is open.

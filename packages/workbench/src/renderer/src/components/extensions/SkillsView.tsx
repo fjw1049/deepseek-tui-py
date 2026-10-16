@@ -19,6 +19,7 @@ import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { ReloadHint } from './ReloadHint'
 import { dedupeSkillsById, skillDiscoveryRoots, skillRootFromMdPath } from '@shared/skill-source'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 export function SkillsView({
   query,
@@ -132,8 +133,8 @@ export function SkillsView({
     if (removable.length === 0) return
     const confirmed =
       removable.length > 1
-        ? window.confirm(t('skillDeleteConfirmCopies', { name: skill.name, count: removable.length }))
-        : window.confirm(t('skillDeleteConfirm', { name: skill.name }))
+        ? await confirmAsync(t('skillDeleteConfirmCopies', { name: skill.name, count: removable.length }), { destructive: true })
+        : await confirmAsync(t('skillDeleteConfirm', { name: skill.name }), { destructive: true })
     if (!confirmed) return
     setBusyId(skill.path)
     setNotice(null)

@@ -74,11 +74,21 @@ export function createActiveTrailStore(): ActiveTrailStore {
 /** Hard cap so a pathological paste can't bloat the hover-card payload. */
 const MAX_PREVIEW_LENGTH = 280
 
-function normalizePreview(text: string): string {
+const PREVIEW_SCAN_CHARS = 4096
+
+function collapsePreview(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim()
   return collapsed.length > MAX_PREVIEW_LENGTH
     ? `${collapsed.slice(0, MAX_PREVIEW_LENGTH).trimEnd()}…`
     : collapsed
+}
+
+function normalizePreview(text: string): string {
+  if (text.length <= PREVIEW_SCAN_CHARS) return collapsePreview(text)
+  // Answers can be hundreds of KB; the preview only needs the start. Fall back
+  // to the full text only when the prefix collapses to less than a preview.
+  const head = text.slice(0, PREVIEW_SCAN_CHARS).replace(/\s+/g, ' ').trim()
+  return head.length > MAX_PREVIEW_LENGTH ? collapsePreview(head) : collapsePreview(text)
 }
 
 export function queryDisplayText(text: string): string {
@@ -101,6 +111,9 @@ export function queryDisplayText(text: string): string {
  */
 export function deriveQueryTrailItems(blocks: readonly ChatBlock[]): QueryTrailItem[] {
   const items: QueryTrailItem[] = []
+  // Only the last non-empty assistant row of a turn is shown, so remember the
+  // candidates and normalise from the end instead of every row of the thread.
+  const assistantsByItem: string[][] = []
   let currentTurnIndex = -1
   for (const block of blocks) {
     if (block.kind === 'user') {
@@ -110,15 +123,37 @@ export function deriveQueryTrailItems(blocks: readonly ChatBlock[]): QueryTrailI
         preview: normalizePreview(queryDisplayText(block.text)),
         responsePreview: ''
       })
+      assistantsByItem.push([])
       currentTurnIndex = items.length - 1
     } else if (block.kind === 'assistant' && currentTurnIndex >= 0) {
-      const responsePreview = normalizePreview(block.text)
-      if (responsePreview !== '') {
-        items[currentTurnIndex]!.responsePreview = responsePreview
-      }
+      assistantsByItem[currentTurnIndex]!.push(block.text)
     }
   }
+  items.forEach((item, index) => {
+    const texts = assistantsByItem[index]!
+    for (let i = texts.length - 1; i >= 0; i -= 1) {
+      const preview = normalizePreview(texts[i]!)
+      if (preview !== '') {
+        item.responsePreview = preview
+        break
+      }
+    }
+  })
   return items
+}
+
+/** Keep the previous array when the derived trail is unchanged (stable effect deps). */
+export function reuseQueryTrailItems(
+  previous: QueryTrailItem[],
+  next: QueryTrailItem[]
+): QueryTrailItem[] {
+  if (previous.length !== next.length) return next
+  const same = next.every((item, i) => {
+    const old = previous[i]!
+    return old.id === item.id && old.ordinal === item.ordinal &&
+      old.preview === item.preview && old.responsePreview === item.responsePreview
+  })
+  return same ? previous : next
 }
 
 /** Clamp `value` into `[min, max]`, finite-safe (returns `min` if range inverted). */

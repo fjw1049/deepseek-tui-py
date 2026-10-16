@@ -8,6 +8,8 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 const api = vi.hoisted(() => vi.fn())
 vi.mock('./BrowserWorkspace', () => ({ browserRequest: api }))
+const confirm = vi.hoisted(() => vi.fn<(message: string) => Promise<boolean>>())
+vi.mock('../lib/confirm-dialog', () => ({ confirmAsync: confirm }))
 
 let sitesResponse: () => unknown
 beforeEach(() => { localStorage.clear(); sitesResponse = () => ({ sites: chromeSites }) })
@@ -75,8 +77,7 @@ it('does not offer a sync that would pause a running agent task', async () => {
 })
 
 it('confirms before importing sensitive sites', async () => {
-  const confirm = vi.fn(() => false)
-  vi.stubGlobal('confirm', confirm)
+  confirm.mockReset().mockResolvedValue(false)
   const h = await mount(undefined, initial, true)
   try {
     expect(h.host.textContent).toContain('browserCookieSitesSensitive')
@@ -85,7 +86,7 @@ it('confirms before importing sensitive sites', async () => {
     await act(async () => h.button('browserCookieEnable').click())
     expect(confirm).toHaveBeenCalledWith('browserCookieSensitiveConfirm')
     expect(api.mock.calls.every(call => !call[2])).toBe(true)
-  } finally { vi.unstubAllGlobals(); await h.unmount() }
+  } finally { await h.unmount() }
 })
 
 it('resyncs the saved sites without asking again', async () => {

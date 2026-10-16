@@ -14,6 +14,7 @@ import {
   type PluginRow,
   type RegistryEntry
 } from './InstalledPluginsPanel'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 /** Plugins are bundles of rules + skills + hooks + MCP servers managed by the
  * Python runtime (`/v1/plugins`). Mounting via “Use plugin” injects `rules/`
@@ -147,12 +148,12 @@ export function PluginsView({
   )
 
   const handleTrust = useCallback(
-    (plugin: PluginRow) => {
+    async (plugin: PluginRow) => {
       if (!plugin.trusted) {
         const perms = plugin.permissions.length
           ? `\n\n${t('pluginSysPermissions')}: ${plugin.permissions.join(', ')}`
           : ''
-        const ok = window.confirm(t('pluginSysTrustConfirm', { name: plugin.name }) + perms)
+        const ok = await confirmAsync(t('pluginSysTrustConfirm', { name: plugin.name }) + perms)
         if (!ok) return
       }
       void mutate(plugin, `/v1/plugins/${encodeURIComponent(plugin.name)}/action`, 'POST', {
@@ -172,8 +173,8 @@ export function PluginsView({
   )
 
   const handleRemove = useCallback(
-    (plugin: PluginRow) => {
-      const ok = window.confirm(t('pluginSysRemoveConfirm', { name: plugin.name }))
+    async (plugin: PluginRow) => {
+      const ok = await confirmAsync(t('pluginSysRemoveConfirm', { name: plugin.name }), { destructive: true })
       if (!ok) return
       void mutate(plugin, `/v1/plugins/${encodeURIComponent(plugin.name)}`, 'DELETE', {})
     },
@@ -282,8 +283,8 @@ export function PluginsView({
   )
 
   const handleMarketplaceRemove = useCallback(
-    (name: string) => {
-      const ok = window.confirm(t('pluginMpRemoveConfirm', { name }))
+    async (name: string) => {
+      const ok = await confirmAsync(t('pluginMpRemoveConfirm', { name }), { destructive: true })
       if (!ok) return
       void handleMarketplaceMutation(
         name,

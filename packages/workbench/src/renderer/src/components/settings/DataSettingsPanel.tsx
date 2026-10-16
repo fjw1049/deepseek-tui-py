@@ -10,6 +10,7 @@ import {
   settingsBlockButtonClass,
   settingsToolbarButtonClass
 } from './SettingsActionToolbar'
+import { confirmAsync } from '../../lib/confirm-dialog'
 
 type DataInventory = {
   home_dir: string
@@ -295,7 +296,7 @@ export function DataSettingsPanel(): ReactElement {
   }
 
   const runClean = async (): Promise<void> => {
-    if (!window.confirm(t('dataCleanConfirm', { days: cleanAgeDays }))) return
+    if (!(await confirmAsync(t('dataCleanConfirm', { days: cleanAgeDays }), { destructive: true }))) return
     setCleanState('running')
     setNotice(null)
     try {
@@ -321,8 +322,8 @@ export function DataSettingsPanel(): ReactElement {
   }
 
   const runClearHistory = async (): Promise<void> => {
-    if (!window.confirm(t('dataClearHistoryConfirm'))) return
-    if (!window.confirm(t('dataClearHistoryConfirm2'))) return
+    if (!(await confirmAsync(t('dataClearHistoryConfirm'), { destructive: true }))) return
+    if (!(await confirmAsync(t('dataClearHistoryConfirm2'), { destructive: true }))) return
     setClearState('running')
     setNotice(null)
     try {
@@ -359,7 +360,7 @@ export function DataSettingsPanel(): ReactElement {
     }
     if (
       (exportScope === 'all' || exportScope === 'settings') &&
-      !window.confirm(t('dataExportSecretsConfirm'))
+      !(await confirmAsync(t('dataExportSecretsConfirm')))
     ) {
       return
     }
@@ -484,8 +485,8 @@ export function DataSettingsPanel(): ReactElement {
   }
 
   const runDeleteAndExit = async (): Promise<void> => {
-    if (!window.confirm(t('dataDeleteAndExitConfirm'))) return
-    if (!window.confirm(t('dataDeleteAndExitConfirm2'))) return
+    if (!(await confirmAsync(t('dataDeleteAndExitConfirm'), { destructive: true }))) return
+    if (!(await confirmAsync(t('dataDeleteAndExitConfirm2'), { destructive: true }))) return
     setDeleteExitState('running')
     try {
       const result = await window.dsGui.deleteGuiDataAndExit()

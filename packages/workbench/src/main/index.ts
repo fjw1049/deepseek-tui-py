@@ -18,7 +18,7 @@ import { parseSharedConversationLink } from '../shared/share-link'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { JsonSettingsStore, getRuntimeBaseUrl, devServerHintUrl } from './settings-store'
 import deepseekLogoPng from '../asset/img/deepseek.png'
@@ -57,6 +57,7 @@ import { readAsrConfigFile, writeAsrConfigFile } from './asr-config'
 import { readWebSearchConfigFile, writeWebSearchConfigFile } from './web-search-config'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
 import { installDevPreviewWebviewGuards } from './services/dev-browser-guards'
+import { installMainWindowNavigationGuards } from './services/main-window-guards'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
   deepseekTuiConfigChanged,
@@ -398,16 +399,25 @@ async function probeThreadApi(settings: AppSettingsV1): Promise<
 function parseSseData(raw: string): unknown | null {
   const lines = raw.split('\n')
   const dataLines: string[] = []
+  let eventName = ''
   for (const line of lines) {
     const normalized = line.endsWith('\r') ? line.slice(0, -1) : line
     if (normalized.startsWith('data:')) {
       dataLines.push(normalized.slice(5).trimStart())
+    } else if (normalized.startsWith('event:')) {
+      eventName = normalized.slice(6).trim()
     }
   }
   if (!dataLines.length) return null
   const payload = dataLines.join('\n')
   try {
-    return JSON.parse(payload)
+    const parsed: unknown = JSON.parse(payload)
+    // Control frames (e.g. `stream.resync_required`) name themselves only in
+    // the `event:` line; regular frames already carry `event` in their data.
+    if (eventName && parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('event' in parsed)) {
+      return { ...parsed, event: eventName }
+    }
+    return parsed
   } catch {
     return null
   }
@@ -732,6 +742,10 @@ function createWindow(): void {
     }
   })
   const devUrl = devServerHintUrl(app.isPackaged)
+  installMainWindowNavigationGuards(mainWindow.webContents, {
+    appUrl: devUrl ?? pathToFileURL(join(mainDir, '../renderer/index.html')).href,
+    openExternal: (url) => { void shell.openExternal(url) }
+  })
   traceStartup('createWindow:load', { devUrl: devUrl ?? 'file' })
   emitStartupPhase('renderer-loading')
 

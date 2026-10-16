@@ -325,3 +325,31 @@ export function shouldReleaseTailAnchor(input: {
   const slack = input.slackPx ?? TAIL_ANCHOR_RELEASE_SLACK_PX
   return input.spacerPx <= slack
 }
+
+type TurnLike = { user?: { id: string }; blocks: readonly unknown[] }
+
+/**
+ * `groupTurns` rebuilds every turn object on each blocks change, which defeats
+ * the per-turn memo (identity compare) even when only the live tail changed.
+ * Reuse the previous turn object whenever its user block and block entries are
+ * reference-identical, and the previous array when nothing changed at all.
+ */
+export function reuseStableTurns<T extends TurnLike>(previous: readonly T[], next: T[]): T[] {
+  if (previous.length === 0) return next
+  const keyOf = (turn: T): string => turn.user?.id ?? `~${(turn.blocks[0] as { id?: string } | undefined)?.id ?? ''}`
+  const byKey = new Map<string, T>()
+  for (const turn of previous) byKey.set(keyOf(turn), turn)
+  let identical = previous.length === next.length
+  const merged = next.map((turn, index) => {
+    const old = byKey.get(keyOf(turn))
+    const same =
+      old !== undefined &&
+      old.user === turn.user &&
+      old.blocks.length === turn.blocks.length &&
+      old.blocks.every((block, i) => block === turn.blocks[i])
+    const result = same ? old : turn
+    if (identical && previous[index] !== result) identical = false
+    return result
+  })
+  return identical ? (previous as T[]) : merged
+}

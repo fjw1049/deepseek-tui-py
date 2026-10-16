@@ -69,8 +69,10 @@ import {
   readStoredComposerModel,
   readStoredComposerEffort,
   rememberTurnModel,
-  savePinnedThreadIds
+  savePinnedThreadIds,
+  reuseUnchangedItems
 } from './chat-store-helpers'
+import { confirmAsync } from '../lib/confirm-dialog'
 import {
   isWorkspaceHidden,
   loadHiddenWorkspacePaths,
@@ -240,13 +242,18 @@ let bootPromise: Promise<void> | null = null
 let threadWarmupSeq = 0
 let threadWarmupTask: { threadId: string; promise: Promise<void> } | null = null
 const BUSY_WATCHDOG_MS = 120_000
+const SUBAGENT_LIVE_TEXT_MAX_CHARS = 8_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
 const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
+/** >0 while sendMessage owns the stream lifecycle (between abort and re-subscribe). */
+let sendsAwaitingSubscription = 0
 /** In-flight approval decisions — prevents double-submit before status flips. */
 const approvalSubmitInFlight = new Set<string>()
 const decisionSubmitInFlight = new Set<string>()
 const pendingInputRefreshes = new Set<string>()
+/** Queued follow-ups of threads the user switched away from, restored on return. */
+const parkedQueues = new Map<string, ChatState['queuedMessages']>()
 let turnCompletionProbeTimer: ReturnType<typeof setTimeout> | null = null
 
 const watchCompletionNotificationKeys = new Map<string, string>()
@@ -516,7 +523,9 @@ async function reloadActiveThreadBlocks(
     )
     if (get().activeThreadId !== threadId) return
     set((s) => ({
-      blocks: synced.blocks,
+      // Same thread: keep unchanged block objects so settled turns stay memoised
+      // instead of the whole transcript re-rendering after every turn.
+      blocks: reuseUnchangedItems(s.blocks, synced.blocks) as ChatBlock[],
       lastSeq: latestSeq,
       currentGoal: goal ?? null,
       turnStartedAtByUserId: {
@@ -625,8 +634,9 @@ async function deleteThreadWithConfirmation(
     ) {
       throw error
     }
-    const confirmed = window.confirm(
-      i18n.t('common:sidebarDeleteUnpublishedConfirm')
+    const confirmed = await confirmAsync(
+      i18n.t('common:sidebarDeleteUnpublishedConfirm'),
+      { destructive: true }
     )
     if (!confirmed) return false
     confirmation.discardUnpublished = true
@@ -641,48 +651,39 @@ async function syncRuntimePendingApprovals(
   blocks: ChatBlock[],
   busy: boolean
 ): Promise<{ blocks: ChatBlock[]; scrollToBlockId: string | null }> {
+  // The four lookups are independent; issuing them serially made every thread
+  // switch wait for the sum of four round trips before anything rendered.
+  // A failed lookup resolves to `undefined` and leaves that kind untouched.
+  const attempt = <T,>(run: (() => Promise<T>) | null): Promise<T | undefined> =>
+    run ? run().catch(() => undefined) : Promise.resolve(undefined)
+  // Evolution proposals only apply while a turn is active.
+  const [evolution, approvals, elevations, userInputs] = await Promise.all([
+    attempt(busy && typeof provider.fetchPendingEvolution === 'function'
+      ? () => provider.fetchPendingEvolution!(threadId) : null),
+    attempt(typeof provider.fetchPendingApprovals === 'function'
+      ? () => provider.fetchPendingApprovals!(threadId) : null),
+    attempt(typeof provider.fetchPendingElevations === 'function'
+      ? () => provider.fetchPendingElevations!(threadId) : null),
+    attempt(typeof provider.fetchPendingUserInputs === 'function'
+      ? () => provider.fetchPendingUserInputs!(threadId) : null)
+  ])
   let nextBlocks = blocks
   let scrollToBlockId: string | null = null
-  // Evolution proposals only apply while a turn is active.
-  if (busy && typeof provider.fetchPendingEvolution === 'function') {
-    try {
-      const pendingEvolution = await provider.fetchPendingEvolution(threadId)
-      const merged = mergePendingEvolutionBlocks(nextBlocks, pendingEvolution)
-      nextBlocks = merged.blocks
-      scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
-    } catch {
-      /* ignore */
-    }
+  if (evolution !== undefined) {
+    const merged = mergePendingEvolutionBlocks(nextBlocks, evolution)
+    nextBlocks = merged.blocks
+    scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
   }
   // Detached durable tasks can bridge tool approvals + plan prompts after the
   // parent turn is idle — always hydrate those cards, not only while busy.
-  if (typeof provider.fetchPendingApprovals === 'function') {
-    try {
-      const pending = await provider.fetchPendingApprovals(threadId)
-      const merged = mergePendingApprovalBlocks(nextBlocks, pending)
-      nextBlocks = merged.blocks
-      // Approvals live in the composer dock — do not scroll the timeline to them.
-    } catch {
-      /* ignore */
-    }
-  }
-  if (typeof provider.fetchPendingElevations === 'function') {
-    try {
-      const pending = await provider.fetchPendingElevations(threadId)
-      nextBlocks = mergePendingElevationBlocks(nextBlocks, pending).blocks
-    } catch {
-      /* Preserve uncertain decisions until the server confirms their state. */
-    }
-  }
-  if (typeof provider.fetchPendingUserInputs === 'function') {
-    try {
-      const pendingInputs = await provider.fetchPendingUserInputs(threadId)
-      const merged = mergePendingUserInputBlocks(nextBlocks, pendingInputs)
-      nextBlocks = merged.blocks
-      scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
-    } catch {
-      /* ignore */
-    }
+  // Approvals live in the composer dock — do not scroll the timeline to them.
+  if (approvals !== undefined) nextBlocks = mergePendingApprovalBlocks(nextBlocks, approvals).blocks
+  // Preserve uncertain elevation decisions until the server confirms their state.
+  if (elevations !== undefined) nextBlocks = mergePendingElevationBlocks(nextBlocks, elevations).blocks
+  if (userInputs !== undefined) {
+    const merged = mergePendingUserInputBlocks(nextBlocks, userInputs)
+    nextBlocks = merged.blocks
+    scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
   }
   return { blocks: nextBlocks, scrollToBlockId }
 }
@@ -1104,6 +1105,10 @@ function buildThreadEventSink(
         }
       })
     },
+    onResyncRequired: () => {
+      // The runtime cannot replay from our seq; reload a snapshot and resubscribe.
+      void get().recoverActiveTurn()
+    },
     onEvolutionProposal: (req) => {
       noteBusyStreamActivity(set, get)
       set((s) => {
@@ -1414,7 +1419,10 @@ function buildThreadEventSink(
         const block = s.blocks[idx]
         if (block.kind !== 'subagent') return {}
         const blocks = [...s.blocks]
-        blocks[idx] = { ...block, liveText: (block.liveText ?? '') + text }
+        // Only the tail is ever shown while a child streams; keep memory and
+        // the per-update string copy bounded on very chatty agents.
+        const liveText = ((block.liveText ?? '') + text).slice(-SUBAGENT_LIVE_TEXT_MAX_CHARS)
+        blocks[idx] = { ...block, liveText }
         return { blocks }
       }),
     onLiveSegmentComplete: (kind, itemId, createdAt, text, processIntent) => {
@@ -2133,7 +2141,7 @@ const store = create<ChatState>((set, get) => ({
           if (v && validIds.has(k)) u[k] = true
         }
         return {
-          threads,
+          threads: reuseUnchangedItems(s.threads, threads) as typeof threads,
           watchTurnCompletion: w,
           unreadThreadIds: u,
           ...(shouldClearSelection ? clearedThreadSelection() : {})
@@ -2147,7 +2155,7 @@ const store = create<ChatState>((set, get) => ({
       if (
         activeId &&
         get().threads.some((thread) => thread.id === activeId) &&
-        sseAbort == null && pendingSelectionVersion === null
+        sseAbort == null && pendingSelectionVersion === null && sendsAwaitingSubscription === 0
       ) {
         await get().selectThread(activeId)
       }
@@ -2281,14 +2289,16 @@ const store = create<ChatState>((set, get) => ({
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
       const synced = await syncRuntimePendingApprovals(p, activeThreadId, blocks, busy)
       if (stale()) return false
+      // Read after the awaits: stream events may have advanced the turn meanwhile.
+      const current = get()
       const currentTurnUserId = busy
-        ? state.currentTurnUserId ?? latestUserMessageId ?? findLatestUserBlockId(synced.blocks)
+        ? current.currentTurnUserId ?? latestUserMessageId ?? findLatestUserBlockId(synced.blocks)
         : null
-      const currentTurnId = busy ? state.currentTurnId ?? latestTurnId ?? null : null
+      const currentTurnId = busy ? current.currentTurnId ?? latestTurnId ?? null : null
 
       set((s) => ({
         activeThreadId,
-        blocks: synced.blocks,
+        blocks: reuseUnchangedItems(s.blocks, synced.blocks) as ChatBlock[],
         lastSeq: latestSeq,
         liveReasoning: '',
         liveActivity: null,
@@ -2337,8 +2347,9 @@ const store = create<ChatState>((set, get) => ({
           ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
-      if (state.busy) armBusyWatchdog(set, get)
-      return state.busy
+      const stillBusy = get().busy
+      if (stillBusy) armBusyWatchdog(set, get)
+      return stillBusy
     }
   },
 
@@ -2444,6 +2455,13 @@ const store = create<ChatState>((set, get) => ({
       const currentTurnUserId = busy
         ? latestUserMessageId ?? findLatestUserBlockId(synced.blocks)
         : null
+      // The queue belongs to the thread being left; park it instead of dropping it.
+      const leaving = get()
+      if (leaving.activeThreadId && leaving.activeThreadId !== id && leaving.queuedMessages.length > 0) {
+        parkedQueues.set(leaving.activeThreadId, leaving.queuedMessages)
+      }
+      const restoredQueue = parkedQueues.get(id) ?? []
+      parkedQueues.delete(id)
       set({
         watchTurnCompletion: nextWatch,
         unreadThreadIds: nextUnread,
@@ -2471,8 +2489,8 @@ const store = create<ChatState>((set, get) => ({
         turnReasoningFirstAtByUserId: {},
         turnReasoningLastAtByUserId: {},
         inspectorSelectedId: null,
-        queuedMessages: [],
-              scrollToBlockId: synced.scrollToBlockId
+        queuedMessages: restoredQueue,
+        scrollToBlockId: synced.scrollToBlockId
       })
       syncTurnCompletionPoll(set, get)
       const ac = sseAbort = new AbortController()
@@ -2483,6 +2501,8 @@ const store = create<ChatState>((set, get) => ({
         void reconcileStaleBusy(get, set, id)
       }
       if (!busy) void get().warmActiveThread(id)
+      // Same as recovery: a thread that finished while away sends its queue now.
+      if (!busy && restoredQueue.length > 0) void get().drainQueuedMessages()
     } catch (e) {
       if (disposed || version !== selectionVersion) return
       set({
@@ -2787,6 +2807,13 @@ const store = create<ChatState>((set, get) => ({
     sseAbort?.abort()
     sseAbort = null
     clearBusyWatchdog()
+    sendsAwaitingSubscription += 1
+    let sendHeld = true
+    const releaseSendHold = (): void => {
+      if (!sendHeld) return
+      sendHeld = false
+      sendsAwaitingSubscription -= 1
+    }
     try {
       const warmup = get().activeThreadWarmup
       if (
@@ -2883,13 +2910,17 @@ const store = create<ChatState>((set, get) => ({
         return true
       }
       set({ currentTurnId: turnId })
+      // Never orphan a stream another path subscribed while this send awaited.
+      sseAbortRef.current?.abort()
       const ac = sseAbort = new AbortController()
       const sink = buildThreadEventSink(set, get, activeThreadId)
       void p.subscribeThreadEvents(activeThreadId, seqAtSend, sink, ac.signal)
+      releaseSendHold()
       armBusyWatchdog(set, get)
       await get().refreshThreads()
       return true
     } catch (e) {
+      releaseSendHold()
       clearBusyWatchdog()
       void window.dsGui.logError('send-message', 'Failed to send message', {
         message: e instanceof Error ? e.message : String(e),
@@ -2919,10 +2950,19 @@ const store = create<ChatState>((set, get) => ({
         await get().refreshThreads()
         return false
       }
+      // Roll the optimistic bubble back like the other failure paths: the
+      // composer restores the draft (or the queue chip returns), so leaving the
+      // bubble would show the message twice and reuse its queued id on retry.
       set({
         error: formatRuntimeError(e),
         busy: false,
         currentTurnId: null,
+        currentTurnUserId: previousCurrentTurnUserId,
+        blocks: previousBlocks,
+        turnStartedAtByUserId: previousTurnStartedAtByUserId,
+        turnDurationByUserId: previousTurnDurationByUserId,
+        turnReasoningFirstAtByUserId: previousTurnReasoningFirstAtByUserId,
+        turnReasoningLastAtByUserId: previousTurnReasoningLastAtByUserId,
         queuedMessages: previousQueuedMessages,
         activePlugin: previousActivePlugin,
         ...(settingsSectionForRuntimeError(e)
@@ -2931,6 +2971,8 @@ const store = create<ChatState>((set, get) => ({
       })
       await get().refreshThreads()
       return false
+    } finally {
+      releaseSendHold()
     }
   },
 

@@ -147,3 +147,35 @@ export function savePinnedThreadIds(ids: string[]): void {
     /* localStorage may be unavailable (private window, quota) */
   }
 }
+
+function sameStructure(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  return aKeys.every((key) =>
+    sameStructure((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])
+  )
+}
+
+/**
+ * Keep object identity for list entries that did not change. Polling the
+ * thread list every few seconds otherwise replaces every row object and
+ * re-renders every subscriber (sidebar rows, composer, shell) for nothing.
+ * Returns `previous` itself when nothing changed.
+ */
+export function reuseUnchangedItems<T extends { id: string }>(
+  previous: readonly T[],
+  next: readonly T[]
+): readonly T[] {
+  const byId = new Map(previous.map((item) => [item.id, item]))
+  let identical = previous.length === next.length
+  const merged = next.map((item, index) => {
+    const old = byId.get(item.id)
+    const reused = old !== undefined && sameStructure(old, item) ? old : item
+    if (identical && previous[index] !== reused) identical = false
+    return reused
+  })
+  return identical ? previous : merged
+}

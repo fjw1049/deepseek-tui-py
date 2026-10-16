@@ -428,6 +428,12 @@ export type ThreadEventSink = {
   onUserMessage(ev: UserMessageEventPayload): void
   onTool(ev: ToolEventPayload): void
   onApproval(req: ApprovalRequestPayload): void
+  /**
+   * The runtime cannot replay history from the subscribed seq (truncated or
+   * evicted events). The stream has stopped; the owner must reload a fresh
+   * snapshot and resubscribe from its seq.
+   */
+  onResyncRequired?(): void
   onEvolutionProposal?(req: EvolutionProposalPayload): void
   onElevation?(req: ElevationRequestPayload): void
   onUserInput(req: UserInputRequestPayload): void

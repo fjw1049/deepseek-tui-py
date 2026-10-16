@@ -32,3 +32,21 @@ it('mounts hidden history before finishing a jump', async () => {
   expect(host.querySelector('#block-u0')).not.toBeNull()
   expect(useChatStore.getState().scrollToBlockId).toBeNull()
 })
+async function renderBlocks(next: unknown[]) {
+  await act(async () => root.render(createElement(MessageTimeline, { blocks: next as any, live:'',liveReasoning:'', activeThreadId:'audit',runtimeConnection:'ready',onRetryConnection(){},onOpenSettings(){},onOpenDiagnostics(){} })))
+}
+const nextTurn = [{kind:'user',id:'u40',text:'Question 40'},{kind:'assistant',id:'a40',text:'Answer 40'}]
+it('keeps history the reader loaded when a new turn arrives', async () => {
+  await render()
+  await act(async () => useChatStore.getState().scrollToBlock('u10'))
+  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(30)
+  await renderBlocks([...blocks, ...nextTurn])
+  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(31)
+  expect(host.querySelector('#block-u10')).not.toBeNull()
+})
+it('keeps an untouched collapsed view bounded as turns arrive', async () => {
+  await render()
+  await renderBlocks([...blocks, ...nextTurn])
+  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(18)
+  expect(host.querySelector('#block-u40')).not.toBeNull()
+})

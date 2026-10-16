@@ -157,6 +157,10 @@ function shouldAnimateStreamingText(text: string): boolean {
   )
 }
 
+// Module constants: fresh literals on each render defeat Streamdown's memo().
+const CONTROLS = { table: true } satisfies StreamdownProps['controls']
+const REMARK_PLUGINS = [remarkGfm, remarkCjkAutolinks] satisfies StreamdownProps['remarkPlugins']
+
 type Props = {
   /** Markdown source */
   text: string
@@ -179,8 +183,8 @@ export function StreamdownAssistant({ text, streaming, className }: Props): Reac
       parseIncompleteMarkdown={streaming}
       isAnimating={isAnimating}
       animated={animated}
-      controls={{ table: true }}
-      remarkPlugins={[remarkGfm, remarkCjkAutolinks]}
+      controls={CONTROLS}
+      remarkPlugins={REMARK_PLUGINS}
       rehypePlugins={rehypePlugins}
       components={components}
     >

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { pollWhileVisible } from '../lib/poll-while-visible'
 
 export type ThreadUsageSummary = {
   inputTokens: number
@@ -137,6 +138,10 @@ export async function loadThreadUsage(threadId: string): Promise<ThreadUsageSumm
   }
 }
 
+function sameUsage(a: ThreadUsageSummary | null, b: ThreadUsageSummary | null): boolean {
+  return a === b || (a != null && b != null && JSON.stringify(a) === JSON.stringify(b))
+}
+
 export function useThreadUsageState(
   threadId: string | null | undefined,
   enabled: boolean,
@@ -155,21 +160,39 @@ export function useThreadUsageState(
       setState({ usage: null, loading: false, loaded: false })
       return
     }
+    let inFlight = false
+    let firstLoadDone = false
     const refresh = (): void => {
+      // A slow response must not be overtaken (and later overwritten) by the next tick.
+      if (inFlight) return
+      inFlight = true
       void loadThreadUsage(threadId)
         .then((usage) => {
-          if (!cancelled) setState({ usage, loading: false, loaded: true })
+          if (cancelled) return
+          setState((current) =>
+            firstLoadDone && !current.loading && sameUsage(current.usage, usage)
+              ? current
+              : { usage, loading: false, loaded: true }
+          )
         })
         .catch(() => {
-          if (!cancelled) setState({ usage: null, loading: false, loaded: true })
+          if (cancelled) return
+          // A failed poll keeps the last reading; only a failed first load clears it.
+          setState((current) =>
+            firstLoadDone ? current : { usage: null, loading: false, loaded: true }
+          )
+        })
+        .finally(() => {
+          inFlight = false
+          firstLoadDone = true
         })
     }
     setState((current) => ({ ...current, loading: true }))
     refresh()
-    const interval = pollWhileBusy ? window.setInterval(refresh, 2_000) : undefined
+    const stopPoll = pollWhileBusy ? pollWhileVisible(refresh, 2_000) : undefined
     return () => {
       cancelled = true
-      if (interval !== undefined) window.clearInterval(interval)
+      stopPoll?.()
     }
   }, [enabled, pollWhileBusy, refreshKey, threadId])
 

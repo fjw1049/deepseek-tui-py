@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CalendarClock,
@@ -48,7 +48,8 @@ type Props = {
   onCollapseSidebar: () => void
 }
 
-export function Sidebar({
+/** Memoised: the shell re-renders on every tool event; the thread tree need not. */
+export const Sidebar = memo(function Sidebar({
   revealRequest,
   threads,
   activeThreadId,
@@ -120,7 +121,8 @@ export function Sidebar({
     })
     return () => cancelAnimationFrame(frame)
   }, [revealRequest])
-  const blocks = useChatStore((s) => s.blocks)
+  const activeWaiting = useChatStore((s) => s.blocks.some((block) =>
+    (block.kind === 'approval' || block.kind === 'user_input') && block.status === 'pending'))
   const refreshThreads = useChatStore((s) => s.refreshThreads)
   const { threadIds: taskThreadIds } = useThreadsWithActiveTasks()
   const runningIds = new Set(taskThreadIds)
@@ -130,8 +132,7 @@ export function Sidebar({
   if (busy && activeThreadId) runningIds.add(activeThreadId)
   const currentActivityRows = buildSidebarActivity({
     threads: storedThreads, hiddenWorkspacePaths, runningIds, unreadThreadIds, activeThreadId,
-    activeWaiting: blocks.some((block) =>
-      (block.kind === 'approval' || block.kind === 'user_input') && block.status === 'pending')
+    activeWaiting
   })
   const activityRows = filterDismissedActivity(currentActivityRows, dismissedActivity)
   useEffect(() => {
@@ -372,7 +373,7 @@ export function Sidebar({
       />
     </aside>
   )
-}
+})
 
 type SidebarLinkProps = {
   icon: ReactElement

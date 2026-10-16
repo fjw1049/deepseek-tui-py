@@ -12,6 +12,7 @@ import { syncChatPaneCatalog, disposeChatPaneSessions, peekChatPaneSession } fro
 import { FeedbackNotice } from './FeedbackNotice'
 import { useRunPanelStore } from '../store/run-panel-store'
 import type {
+  ComponentProps,
   CSSProperties,
   PointerEvent as ReactPointerEvent,
   ReactElement,
@@ -30,10 +31,15 @@ import {
 } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+import { useThrottledChatValue } from '../hooks/use-throttled-value'
+import { useStableCallback } from '../hooks/use-stable-callback'
 import { useShallow } from 'zustand/react/shallow'
+import { useStore, type StoreApi } from 'zustand'
+import { createStore } from 'zustand/vanilla'
 import type { ChatBlock } from '../agent/types'
 import { BrowserAssistance } from './BrowserAssistance'
 import { useChatStore } from '../store/chat-store'
+import type { ChatState } from '../store/chat-store-types'
 import { extractLatestTurnDevPreviewUrls } from '../lib/dev-preview-detection'
 import {
   extractLatestTurnHtmlPreviewPaths
@@ -246,6 +252,30 @@ function persistBoolean(key: string, value: boolean): void {
   }
 }
 
+const selectLiveAssistant = (s: ChatState): string => s.liveAssistant
+const selectHasLiveStream = (s: ChatState): boolean =>
+  s.liveAssistant.trim().length > 0 || s.liveReasoning.trim().length > 0
+
+type DraftStore = StoreApi<{ value: string }>
+
+/** Streamed text re-renders the timeline only, not the whole shell. */
+function LiveMessageTimeline(
+  props: Omit<ComponentProps<typeof MessageTimeline>, 'liveReasoning' | 'live'>
+): ReactElement {
+  const liveReasoning = useChatStore((s) => s.liveReasoning)
+  const live = useChatStore((s) => s.liveAssistant)
+  return <MessageTimeline {...props} liveReasoning={liveReasoning} live={live} />
+}
+
+/** Keystrokes re-render the composer only, not the whole shell (sidebar, panels). */
+function DraftComposerStage({
+  draftStore,
+  ...props
+}: Omit<ComponentProps<typeof ComposerStage>, 'input'> & { draftStore: DraftStore }): ReactElement {
+  const input = useStore(draftStore, (s) => s.value)
+  return <ComposerStage {...props} input={input} />
+}
+
 export function Workbench(): ReactElement {
   const actionFailures = useFeedbackStore((s) => s.failures)
   const dismissActionFailure = useFeedbackStore((s) => s.dismiss)
@@ -259,8 +289,6 @@ export function Workbench(): ReactElement {
     activateWorkspace,
     hiddenWorkspacePaths,
     blocks,
-    liveReasoning,
-    liveAssistant,
     error,
     connectionError,
     runtimeErrorDetail,
@@ -297,8 +325,6 @@ export function Workbench(): ReactElement {
       activateWorkspace: s.activateWorkspace,
       hiddenWorkspacePaths: s.hiddenWorkspacePaths,
       blocks: s.blocks,
-      liveReasoning: s.liveReasoning,
-      liveAssistant: s.liveAssistant,
       error: s.error,
       connectionError: s.connectionError,
       runtimeErrorDetail: s.runtimeErrorDetail,
@@ -328,9 +354,9 @@ export function Workbench(): ReactElement {
     }))
   )
   useWorkspaceFsWatch()
-  const [input, setInputState] = useState('')
+  const [draftStore] = useState<DraftStore>(() => createStore(() => ({ value: '' })))
   const setInput = useCallback((value: string): void => {
-    setInputState(value)
+    draftStore.setState({ value })
     const app = useChatStore.getState()
     const project = resolveChatLayoutKey(useChatLayoutStore.getState(), resolveActiveThreadWorkspace(app.activeThreadId, app.threads, app.workspaceRoot))
     const layout = useChatLayoutStore.getState().layouts[project]
@@ -338,7 +364,7 @@ export function Workbench(): ReactElement {
       const session = peekChatPaneSession(app.activeThreadId)
       if (session) session.draft = value
     }
-  }, [])
+  }, [draftStore])
   // Cold start always lands on the main chat shell: left rail expanded, no IDE
   // mode, no right tool panel (editor / changes / terminal / browser). Widths
   // and the last right-sidebar tab still persist for when the user opens them.
@@ -437,22 +463,27 @@ export function Workbench(): ReactElement {
   const draftByThread = useRef<Record<string, string>>({})
   const prevThreadId = useRef<string | null>(null)
   const previewThreadId = useRef<string | null>(activeThreadId)
-  const inputRef = useRef('')
   const autoOpenedPreviewUrlRef = useRef<string | null>(null)
   const previewAutoOpenSuppressedRef = useRef(false)
   const lastAutoDiagnosticsErrorRef = useRef('')
+  // Preview detection scans every block of the latest turn with regexes. Feeding
+  // it the live text on each streamed frame made that O(n²) over a long answer,
+  // so the live tail is sampled a few times per second instead.
+  const sampledLiveAssistant = useThrottledChatValue(selectLiveAssistant, 400, '')
+  // Booleans only: the shell must not re-render per streamed frame.
+  const hasLiveStream = useChatStore(selectHasLiveStream)
   const devPreviewBlocks = useMemo<ChatBlock[]>(() => {
-    const liveText = liveAssistant.trim()
+    const liveText = sampledLiveAssistant.trim()
     if (!liveText) return blocks
     return [
       ...blocks,
       {
         kind: 'assistant',
         id: '__live-assistant-dev-preview',
-        text: liveAssistant
+        text: sampledLiveAssistant
       }
     ]
-  }, [blocks, liveAssistant])
+  }, [blocks, sampledLiveAssistant])
   const detectedDevPreviewUrls = useMemo(
     () => extractLatestTurnDevPreviewUrls(devPreviewBlocks),
     [devPreviewBlocks]
@@ -482,8 +513,7 @@ export function Workbench(): ReactElement {
   const hasStartedConversation =
     blocks.length > 0 ||
     busy ||
-    liveAssistant.trim().length > 0 ||
-    liveReasoning.trim().length > 0
+    hasLiveStream
 
   const stageCentered = !hasStartedConversation
   const emptyHomeLayout = useSyncExternalStore(subscribeAppearance, getEmptyHomeLayout)
@@ -586,8 +616,7 @@ export function Workbench(): ReactElement {
     runtimeConnection === 'ready' &&
     !busy &&
     blocks.length === 0 &&
-    !liveAssistant &&
-    !liveReasoning
+    !hasLiveStream
   const sharedConversationVisible = route === 'chat' && (
     ideModeActive ? !bottomTerminalOpen : !splitActive
   )
@@ -840,10 +869,6 @@ export function Workbench(): ReactElement {
     }
   }, [chatColumnHidden])
 
-  useEffect(() => {
-    inputRef.current = input
-  }, [input])
-
   // IDE mode requires a bound workspace; fall back to chat if the root disappears
   // (thread switch / cleared project) so we never render an empty IDE shell.
   useEffect(() => {
@@ -1075,7 +1100,7 @@ export function Workbench(): ReactElement {
     const prev = prevThreadId.current
     prevThreadId.current = activeThreadId
     if (prev != null && prev !== activeThreadId) {
-      draftByThread.current[prev] = inputRef.current
+      draftByThread.current[prev] = draftStore.getState().value
     }
     if (activeThreadId != null && activeThreadId !== prev) {
       setInput(peekChatPaneSession(activeThreadId)?.draft ?? draftByThread.current[activeThreadId] ?? '')
@@ -1083,7 +1108,7 @@ export function Workbench(): ReactElement {
     if (activeThreadId == null) {
       setInput('')
     }
-  }, [activeThreadId, setInput])
+  }, [activeThreadId, draftStore, setInput])
 
   useEffect(() => {
     if (!splitActive) {
@@ -1364,6 +1389,14 @@ export function Workbench(): ReactElement {
     setRoute('chat')
     void createSidebarThread({ workspaceRoot })
   }
+
+  // Stable handlers so the memoised sidebar skips shell re-renders (tool events, panels).
+  const sidebarOpenThread = useStableCallback(openThread)
+  const sidebarOpenThreadTerminal = useStableCallback(openThreadTerminal)
+  const sidebarNewChat = useStableCallback(startNewChat)
+  const sidebarNewChatsThread = useStableCallback(startNewChatsThread)
+  const sidebarNewChatInWorkspace = useStableCallback(startNewChatInWorkspace)
+  const collapseLeftSidebar = useCallback(() => setLeftSidebarCollapsed(true), [])
 
   const closeRightSidebarPanel = (): void => {
     if (rightSidebarTab === 'preview') {
@@ -1736,15 +1769,15 @@ export function Workbench(): ReactElement {
             activeThreadId={activeThreadId}
             runtimeReady={runtimeConnection === 'ready'}
             revealRequest={sidebarRevealRequest}
-            onSelectThread={openThread}
-            onOpenThreadTerminal={openThreadTerminal}
+            onSelectThread={sidebarOpenThread}
+            onOpenThreadTerminal={sidebarOpenThreadTerminal}
             onDeleteThread={deleteThread}
             onArchiveThread={archiveThread}
-            onNewChat={startNewChat}
-            onNewChatsThread={startNewChatsThread}
-            onNewChatInWorkspace={startNewChatInWorkspace}
-            onOpenSettings={(section) => openSettings(section)}
-            onCollapseSidebar={() => setLeftSidebarCollapsed(true)}
+            onNewChat={sidebarNewChat}
+            onNewChatsThread={sidebarNewChatsThread}
+            onNewChatInWorkspace={sidebarNewChatInWorkspace}
+            onOpenSettings={openSettings}
+            onCollapseSidebar={collapseLeftSidebar}
           />
         </div>
         <div
@@ -1929,7 +1962,7 @@ export function Workbench(): ReactElement {
                 className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${splitActive ? 'p-0' : chatColumnInsetClass}`}
               >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {splitActive && chatLayout ? <ChatSplitWorkspace project={splitProject} layout={chatLayout} getInitialDraft={id => prevThreadId.current === id ? inputRef.current : draftByThread.current[id] ?? ''}
+              {splitActive && chatLayout ? <ChatSplitWorkspace project={splitProject} layout={chatLayout} getInitialDraft={id => prevThreadId.current === id ? draftStore.getState().value : draftByThread.current[id] ?? ''}
                 renderContext={(threadId, onCollapse) => activeThreadId !== threadId ? <div role="status" className="p-3 text-sm text-ds-muted">{t('splitLoading')}</div> : <OperationContextDock onCollapse={onCollapse} workspaceRoot={threads.find(thread => thread.id === threadId)?.workspace || splitProject}
                   onOpenChanges={handleBranchOpenDiff}
                   onOpenFilesSidebar={openFilesSidebar} onEnterIdeMode={enterIdeMode}
@@ -2098,11 +2131,9 @@ export function Workbench(): ReactElement {
         )}
         </Suspense>
       {sharedConversationVisible ? createPortal(
-        <MessageTimeline
+        <LiveMessageTimeline
           scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
           blocks={blocks}
-          liveReasoning={liveReasoning}
-          live={liveAssistant}
           activeThreadId={activeThreadId}
           runtimeConnection={runtimeConnection}
           stageCentered={!ideModeActive && stageCentered}
@@ -2120,9 +2151,9 @@ export function Workbench(): ReactElement {
         'workbench-timeline'
       ) : null}
       {sharedConversationVisible ? createPortal(
-        <ComposerStage
+        <DraftComposerStage
           sessionKey={activeThreadId ?? undefined}
-          input={input}
+          draftStore={draftStore}
           setInput={setInput}
           mode={mode}
           setMode={setMode}

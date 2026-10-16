@@ -38,3 +38,55 @@ export function findPendingToolGate(
 export function hasPendingToolGate(gate: PendingToolGate): boolean {
   return gate.approval != null || gate.elevation != null
 }
+
+type IndexedGate<T> = { block: T; order: number }
+type GateIndex = {
+  approvals: Map<string, IndexedGate<ApprovalGate>>
+  elevations: Map<string, IndexedGate<ElevationGate>>
+}
+
+const gateIndexCache = new WeakMap<readonly ChatBlock[], GateIndex>()
+
+function gateIndexFor(blocks: readonly ChatBlock[]): GateIndex {
+  const cached = gateIndexCache.get(blocks)
+  if (cached) return cached
+  const index: GateIndex = { approvals: new Map(), elevations: new Map() }
+  blocks.forEach((block, order) => {
+    if (block.kind === 'approval' && block.status === 'pending') {
+      index.approvals.set(block.approvalId, { block, order })
+    } else if (block.kind === 'elevation' && block.status === 'pending') {
+      index.elevations.set(block.elevationId, { block, order })
+    }
+  })
+  gateIndexCache.set(blocks, index)
+  return index
+}
+
+function latestGate<T>(
+  map: Map<string, IndexedGate<T>>,
+  ids: readonly string[]
+): T | null {
+  let best: IndexedGate<T> | undefined
+  for (const id of ids) {
+    const hit = map.get(id)
+    if (hit && (!best || hit.order > best.order)) best = hit
+  }
+  return best?.block ?? null
+}
+
+/**
+ * Same answer as `findPendingToolGate`, but the pending gates are indexed once
+ * per `blocks` array. Every tool card asks on every blocks change, so a linear
+ * scan per card made the cost tools × blocks.
+ */
+export function lookupPendingToolGate(
+  blocks: readonly ChatBlock[],
+  tool: ToolBlock
+): PendingToolGate {
+  const index = gateIndexFor(blocks)
+  const ids = toolGateIds(tool)
+  return {
+    approval: latestGate(index.approvals, ids),
+    elevation: latestGate(index.elevations, ids)
+  }
+}

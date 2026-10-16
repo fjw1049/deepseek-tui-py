@@ -32,16 +32,25 @@ export function useGitBranchCompareBase(
     },
     [key]
   )
-  const getSnapshot = useCallback(
-    () => (key ? window.localStorage.getItem(key) : null),
-    [key]
-  )
+  // Storage can throw (blocked site data); a throwing getSnapshot would crash the render.
+  const getSnapshot = useCallback((): string | null => {
+    if (!key) return null
+    try {
+      return window.localStorage.getItem(key)
+    } catch {
+      return null
+    }
+  }, [key])
   const baseRef = useSyncExternalStore(subscribe, getSnapshot, () => null)
   const setBaseRef = useCallback(
     (next?: string): void => {
       if (!key) return
-      if (next?.trim()) window.localStorage.setItem(key, next.trim())
-      else window.localStorage.removeItem(key)
+      try {
+        if (next?.trim()) window.localStorage.setItem(key, next.trim())
+        else window.localStorage.removeItem(key)
+      } catch {
+        return
+      }
       window.dispatchEvent(new CustomEvent(BRANCH_COMPARE_BASE_EVENT, { detail: { key } }))
     },
     [key]
