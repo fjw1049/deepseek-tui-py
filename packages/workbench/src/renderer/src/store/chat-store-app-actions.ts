@@ -1,3 +1,4 @@
+import { loadSettingsSnapshot } from '../lib/settings-snapshot'
 import type i18next from 'i18next'
 import {
   BUILTIN_LLM_PROVIDER_IDS,
@@ -307,7 +308,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     reloadUiSettings: async () => {
       if (typeof window.dsGui === 'undefined') return
-      const settings = await window.dsGui.getSettings()
+      const settings = await loadSettingsSnapshot()
       const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
       applyTheme(settings.theme)
       applyUiFontScale(settings.uiFontScale)

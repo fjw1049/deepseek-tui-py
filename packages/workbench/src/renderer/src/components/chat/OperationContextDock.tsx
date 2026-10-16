@@ -297,6 +297,8 @@ export function OperationContextDock({
         })
       )
       motionTimerRef.current = window.setTimeout(() => {
+        // Finalize width even if the animation frames were delayed.
+        setWidthCompact(false)
         setMotion('idle')
         motionTimerRef.current = null
       }, DOCK_MOTION_MS)

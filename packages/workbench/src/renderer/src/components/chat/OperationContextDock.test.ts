@@ -51,6 +51,7 @@ afterEach(async () => {
   useChatStore.setState(original, true)
   localStorage.removeItem('deepseekgui.operationDock.compact')
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 it('opens for new tasks and agents but respects dismissal during status updates', async () => {
@@ -115,4 +116,18 @@ it('discovers existing content and scopes seen activity to the conversation', as
   await close()
   await act(async () => { useChatStore.setState({ activeThreadId: 'a' }) })
   expect(compact()).toBe(true)
+})
+
+it('finishes expanding at full width even when animation frames are delayed', async () => {
+  vi.useFakeTimers()
+  vi.mocked(window.matchMedia).mockReturnValue({ matches: false } as MediaQueryList)
+  vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+  await refresh()
+  activity.tasks = [{ id: 'one', status: 'running', prompt: 'First' }]
+  await refresh()
+  expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-phase')).toBe('expanding')
+  await act(async () => { vi.advanceTimersByTime(220) })
+  expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-phase')).toBe('expanded')
+  expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-compact')).toBe('false')
 })

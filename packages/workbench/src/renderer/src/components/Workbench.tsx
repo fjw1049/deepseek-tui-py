@@ -20,8 +20,6 @@ import type {
   RefObject
 } from 'react'
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -126,11 +124,11 @@ import {
 import { IdeWorkspaceLayout } from './ide/IdeWorkspaceLayout'
 import { createFrameQueue } from '../lib/frame-queue'
 
-const MarketplaceView = lazy(() => import('./extensions/MarketplaceView').then((module) => ({ default: module.MarketplaceView })))
-const AutomationCenter = lazy(() => import('./automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter })))
-const ChannelCenter = lazy(() => import('./channels/ChannelCenter').then((module) => ({ default: module.ChannelCenter })))
-const KanbanView = lazy(() => import('./kanban/KanbanView').then((module) => ({ default: module.KanbanView })))
-const SettingsView = lazy(() => import('./SettingsView').then((module) => ({ default: module.SettingsView })))
+import { MarketplaceView } from './extensions/MarketplaceView'
+import { AutomationCenter } from './automation/AutomationCenter'
+import { ChannelCenter } from './channels/ChannelCenter'
+import { KanbanView } from './kanban/KanbanView'
+import { SettingsView } from './SettingsView'
 
 const LEFT_PANEL_WIDTH_KEY = 'deepseekgui.layout.leftSidebarWidth'
 const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
@@ -1805,7 +1803,6 @@ export function Workbench(): ReactElement {
           route === 'marketplace' ? 'px-0' : ''
         }`}
       >
-        <Suspense fallback={<div role="status" className="flex flex-1 items-center justify-center text-ds-muted">{t('viewLoading')}</div>}>
         {route === 'settings' ? (
           <SettingsView />
         ) : route === 'marketplace' ? (
@@ -2017,8 +2014,8 @@ export function Workbench(): ReactElement {
                     ? 'ds-chat-operation-band__dialogue ds-dialogue-gutter flex min-h-0 min-w-0 flex-1 flex-col'
                     : 'ds-chat-stage ds-dialogue-gutter mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col'}>
                     <div ref={attachTimeline} className="flex min-h-0 min-w-0 w-full flex-1 flex-col" />
-                    {operationColumnActive ? (
-                      <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
+                    {showOperationColumn ? (
+                      <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden" style={operationColumnActive ? undefined : { display: 'none' }}>
                         <OperationContextDock
                           workspaceRoot={activeWorkspaceRoot}
                           onOpenChanges={handleBranchOpenDiff}
@@ -2034,8 +2031,8 @@ export function Workbench(): ReactElement {
                       <div ref={attachComposer} className="flex min-w-0 w-full flex-col" />
                     </div>
                   </div>
-                  {operationColumnActive ? (
-                  <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex">
+                  {showOperationColumn ? (
+                  <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex" style={operationColumnActive ? undefined : { display: 'none' }}>
                     <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
                       <OperationContextDock
                         workspaceRoot={activeWorkspaceRoot}
@@ -2138,7 +2135,6 @@ export function Workbench(): ReactElement {
         ) : null}
           </>
         )}
-        </Suspense>
       {sharedConversationVisible ? createPortal(
         <LiveMessageTimeline
           scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}

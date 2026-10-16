@@ -1,3 +1,4 @@
+import { cacheSettingsSnapshot, getSettingsSnapshot, loadSettingsSnapshot } from '../lib/settings-snapshot'
 import { GlobalErrorNotice } from './GlobalFeedback'
 import { ConfirmDialog } from './workspace-editor/ConfirmDialog'
 import { formatRuntimeError } from '../lib/format-runtime-error'
@@ -178,7 +179,8 @@ export function SettingsView(): ReactElement {
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
   const [usageRange, setUsageRange] = useState<UsageRange>('30d')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
-  const [form, setForm] = useState<AppSettingsV1 | null>(null)
+  const [form, setForm] = useState<AppSettingsV1 | null>(getSettingsSnapshot)
+  const [settingsReady, setSettingsReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
@@ -341,10 +343,9 @@ export function SettingsView(): ReactElement {
       setLoadError('PRELOAD_BRIDGE')
       return
     }
-    void window.dsGui
-      .getSettings()
+    void loadSettingsSnapshot()
       .then((s) => {
-        if (!cancelled) setForm(s)
+        if (!cancelled) { setForm(s); setSettingsReady(true) }
       })
       .catch((e: unknown) => {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
@@ -367,26 +368,26 @@ export function SettingsView(): ReactElement {
   }, [])
 
   useEffect(() => {
-    if (!formTheme || !formUiFontScale || !formUiFontFamily) return
+    if (!settingsReady || !formTheme || !formUiFontScale || !formUiFontFamily) return
     applyTheme(formTheme)
     applyUiFontScale(formUiFontScale)
     applyUiFontFamily(formUiFontFamily)
-  }, [formTheme, formUiFontScale, formUiFontFamily])
+  }, [settingsReady, formTheme, formUiFontScale, formUiFontFamily])
 
   // Live preview: appearance edits repaint immediately while the debounced
   // save is still in flight (same pattern as theme/font scale above).
   useEffect(() => {
-    if (!formAppearance) return
+    if (!settingsReady || !formAppearance) return
     applyAppearance(formAppearance)
-  }, [formAppearance])
+  }, [settingsReady, formAppearance])
 
   useEffect(() => {
-    if (!formShortcuts) return
+    if (!settingsReady || !formShortcuts) return
     applyShortcutsSettings(formShortcuts)
-  }, [formShortcuts])
+  }, [settingsReady, formShortcuts])
 
   useEffect(() => {
-    if (!form || initializedCategory.current) return
+    if (!settingsReady || !form || initializedCategory.current) return
     initializedCategory.current = true
     if (category === 'setup') return
     const hasBuiltinKey = Object.values(form.llmProviders ?? {}).some((entry) =>
@@ -398,7 +399,7 @@ export function SettingsView(): ReactElement {
     if (!form.deepseek.apiKey?.trim() && !hasBuiltinKey && !hasCustomKey) {
       openSettings('models')
     }
-  }, [form, openSettings, category])
+  }, [settingsReady, form, openSettings, category])
 
   useEffect(() => {
     return () => {
@@ -435,6 +436,7 @@ export function SettingsView(): ReactElement {
       const write = savingQueue.current.catch(() => undefined).then(() => window.dsGui.setSettings(snapshot))
       savingQueue.current = write
       const next = await write
+      cacheSettingsSnapshot(next)
       savedVersion.current = version
       if (version !== draftVersion.current) return false
 
@@ -567,7 +569,7 @@ export function SettingsView(): ReactElement {
 
   const update = (partial: SettingsPatch): void => {
     const current = formRef.current
-    if (!current) return
+    if (!current || !settingsReady) return
     const next = mergeSettings(current, partial)
     formRef.current = next
     setForm(next)
@@ -596,7 +598,7 @@ export function SettingsView(): ReactElement {
   }
 
   return (
-    <div className="ds-settings-page ds-page-scroll ds-no-drag h-full min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-10 sm:px-10">
+    <div inert={!settingsReady} aria-busy={!settingsReady} className="ds-settings-page ds-page-scroll ds-no-drag h-full min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-10 sm:px-10">
       <div className={`mx-auto ${category === 'archive' ? 'max-w-[880px]' : 'max-w-[836px]'}`}>
           {!Object.values(form.llmProviders ?? {}).some((entry) => entry?.apiKey?.trim()) &&
           !form.customEndpoints.some((endpoint) => endpoint.enabled && endpoint.apiKey.trim()) &&

@@ -5,11 +5,12 @@ import { expect, it, vi } from 'vitest'
 import { Workbench } from './Workbench'
 import { useChatStore } from '../store/chat-store'
 
-const { t } = vi.hoisted(() => ({ t: (key: string) => key }))
+const { t, sidebarControl } = vi.hoisted(() => ({ t: (key: string) => key, sidebarControl: { setOpen: (_open: boolean) => {} } }))
 vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t }) }))
 vi.mock('../hooks/use-workspace-fs-watch', () => ({ useWorkspaceFsWatch: () => {} }))
 vi.mock('../hooks/use-thread-right-sidebar', () => ({ useThreadRightSidebar: () => {
   const [open, setOpen] = useState(true)
+  sidebarControl.setOpen = setOpen
   const [collapsed, setCollapsed] = useState(false)
   const [panels, setPanels] = useState({ tabs: ['changes'], activeTab: 'changes' })
   return { open, setOpen, collapsed, setCollapsed, panels, setPanels }
@@ -18,7 +19,10 @@ vi.mock('./chat/Sidebar', () => ({ Sidebar: () => createElement('div', null, 'si
 vi.mock('./chat/MessageTimeline', () => ({ MessageTimeline: () => createElement('div', null, 'chat content') }))
 vi.mock('./chat/ComposerStage', () => ({ ComposerStage: () => null }))
 vi.mock('./chat/SimpleEmptyPrompt', () => ({ SimpleEmptyPrompt: () => null }))
-vi.mock('./chat/OperationContextDock', () => ({ OperationContextDock: () => null }))
+vi.mock('./chat/OperationContextDock', () => ({ OperationContextDock: () => {
+  const [compact, setCompact] = useState(false)
+  return createElement('button', { 'data-testid': 'dock', onClick: () => setCompact(!compact) }, compact ? 'compact' : 'expanded')
+} }))
 vi.mock('./SessionHeader', () => ({ SessionHeader: () => null }))
 vi.mock('./SessionSharing', () => ({ SessionSharing: () => null, SharedLinkReceiver: () => null }))
 vi.mock('./BrowserAssistance', () => ({ BrowserAssistance: () => null }))
@@ -101,5 +105,30 @@ it.each(['sidebarResize', 'rightPanelResize'].flatMap(label => ['pointerup', 'po
     useChatStore.setState(initial, true)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  }
+})
+
+it('preserves dismissed cards across opening and closing the right sidebar', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const initial = useChatStore.getState()
+  useChatStore.setState({ route: 'chat', workspaceRoot: '/repo', activeThreadId: 'a', blocks: [], threads: [], busy: true, runtimeConnection: 'ready' })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(Workbench)))
+    await act(async () => sidebarControl.setOpen(false))
+    const cards = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="dock"]')]
+    expect(cards).toHaveLength(2)
+    await act(async () => cards.forEach(card => card.click()))
+    expect(cards.map(card => card.textContent)).toEqual(['compact', 'compact'])
+    await act(async () => sidebarControl.setOpen(true))
+    expect(host.querySelector<HTMLElement>('.ds-operation-rail')!.style.display).toBe('none')
+    await act(async () => sidebarControl.setOpen(false))
+    expect([...host.querySelectorAll('[data-testid="dock"]')]).toEqual(cards)
+    expect(cards.map(card => card.textContent)).toEqual(['compact', 'compact'])
+    expect(host.querySelector<HTMLElement>('.ds-operation-rail')!.style.display).toBe('')
+  } finally {
+    await act(async () => root.unmount())
+    useChatStore.setState(initial, true)
   }
 })

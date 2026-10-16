@@ -1,3 +1,4 @@
+import { cacheSettingsSnapshot, getSettingsSnapshot } from '../lib/settings-snapshot'
 // @vitest-environment happy-dom
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -21,8 +22,8 @@ vi.mock('react-i18next', async (original) => ({ ...await original<typeof import(
 vi.mock('../store/chat-store', () => ({ useChatStore: (select: (s: typeof state) => unknown) => select(state) }))
 vi.mock('../hooks/use-persistent-usage', () => ({ usePersistentUsage: () => ({}) }))
 vi.mock('./settings/AppearanceSettingsPanel', () => ({
-  AppearanceSettingsPanel: ({ onPatch }: { onPatch: (patch: object) => void }) =>
-    createElement('button', { onClick: () => onPatch({ theme: 'light' }) }, 'edit-theme')
+  AppearanceSettingsPanel: ({ form, onPatch }: { form: AppSettingsV1; onPatch: (patch: object) => void }) =>
+    createElement('button', { 'data-current-theme': form.theme, onClick: () => onPatch({ theme: 'light' }) }, 'edit-theme')
 }))
 vi.mock('../lib/resolve-channel-delivery', () => ({
   loadChannelDeliveryState: async () => null,
@@ -110,6 +111,7 @@ it('retains settings after a failed leave, then retries the same draft', async (
   expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
   await act(async () => button('settingsKeepEditing').click())
   expect(host.textContent).toContain('Write denied')
+  expect(getSettingsSnapshot()?.theme).toBe('dark')
   await act(async () => requestLeaveSettings())
   expect(save.mock.calls[1][0].theme).toBe('light')
   expect(state.setRoute).toHaveBeenCalledWith('chat')
@@ -124,4 +126,32 @@ it('does not show an empty success when all automation history requests fail', a
   expect(host.textContent).toContain('automationRunsPartialFailure')
   expect(host.textContent).not.toContain('automationAllRunsEmpty')
   expect(host.textContent).not.toContain('listReloaded')
+})
+
+
+it('shows the startup snapshot immediately, refreshes before editing, and reopens with saved settings', async () => {
+  const initial = normalizeAppSettings({ theme: 'dark', deepseek: { apiKey: 'test', port: 7878 } } as AppSettingsV1)
+  let finish!: (value: AppSettingsV1) => void
+  const getSettings = vi.fn(() => new Promise<AppSettingsV1>(resolve => { finish = resolve }))
+  const save = vi.fn(async (value: AppSettingsV1) => value)
+  vi.stubGlobal('dsGui', { getSettings, setSettings: save })
+  cacheSettingsSnapshot(initial)
+  await act(async () => root.render(createElement(SettingsView)))
+  expect(button('edit-theme').getAttribute('data-current-theme')).toBe('dark')
+  expect(host.querySelector<HTMLElement>('.ds-settings-page')!.inert).toBe(true)
+  // The handler also rejects synthetic edits while stale content is on display.
+  await act(async () => button('edit-theme').click())
+  expect(save).not.toHaveBeenCalled()
+  await act(async () => finish(initial))
+  expect(host.querySelector<HTMLElement>('.ds-settings-page')!.inert).toBe(false)
+  await act(async () => button('edit-theme').click())
+  await act(async () => requestLeaveSettings())
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(getSettingsSnapshot()?.theme).toBe('light')
+  await act(async () => root.render(null))
+  await act(async () => root.render(createElement(SettingsView)))
+  expect(button('edit-theme').getAttribute('data-current-theme')).toBe('light')
+  expect(host.textContent).not.toBe('loading')
+  await act(async () => finish({ ...initial, theme: 'dark' }))
+  expect(button('edit-theme').getAttribute('data-current-theme')).toBe('dark')
 })

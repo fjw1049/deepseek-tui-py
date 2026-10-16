@@ -1,3 +1,4 @@
+import { loadSettingsSnapshot } from '../lib/settings-snapshot'
 import { revealBrowserForTool } from '../lib/browser-activity'
 import { create, useStore, type StoreApi } from 'zustand'
 import { createContext, useContext } from 'react'
@@ -1824,7 +1825,7 @@ const store = create<ChatState>((set, get) => ({
           })
           return
         }
-        const settings = await window.dsGui.getSettings()
+        const settings = await loadSettingsSnapshot()
         const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
         const hasBuiltinKey = Object.values(settings.llmProviders ?? {}).some((entry) =>
           Boolean(entry?.apiKey?.trim())
