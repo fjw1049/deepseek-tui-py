@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
+import { createFrameQueue } from '../../lib/frame-queue'
+import { memo, useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { GlobalErrorNotice } from '../GlobalFeedback'
 import { useShallow } from 'zustand/react/shallow'
@@ -136,12 +137,60 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
     observer.observe(shell.current)
     return () => observer.disconnect()
   }, [])
+  const resizeCleanup = useRef<(() => void) | null>(null)
+  useEffect(() => () => resizeCleanup.current?.(), [project, arrangement, count, narrow])
+  const beginResize = (event: ReactPointerEvent<HTMLDivElement>, axis: 'x' | 'y'): void => {
+    if (event.button !== 0 || !root.current) return
+    resizeCleanup.current?.()
+    event.preventDefault()
+    const grid = root.current
+    const handle = event.currentTarget
+    const rect = grid.getBoundingClientRect()
+    const length = axis === 'x' ? rect.width : rect.height
+    if (length <= 0) return
+    const pointerId = event.pointerId
+    const queue = createFrameQueue()
+    let ratio = layout[axis]
+    const previousCursor = document.body.style.cursor
+    const previousSelect = document.body.style.userSelect
+    document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize'
+    document.body.style.userSelect = 'none'
+    const onMove = (move: PointerEvent): void => {
+      if (move.pointerId !== pointerId) return
+      ratio = Math.max(.25, Math.min(.75, (axis === 'x' ? move.clientX - rect.left : move.clientY - rect.top) / length))
+      queue.queue(() => {
+        grid.style.setProperty(`--split-${axis}`, `${ratio * 100}%`)
+        handle.setAttribute('aria-valuenow', String(Math.round(ratio * 100)))
+      })
+    }
+    const end = (event?: Event): void => {
+      if (event instanceof PointerEvent && event.pointerId !== pointerId) return
+      queue.flush()
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+      window.removeEventListener('blur', end)
+      handle.removeEventListener('lostpointercapture', end)
+      if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousSelect
+      resizeCleanup.current = null
+      if (ratio !== layout[axis]) actions.resize(project, axis, ratio)
+    }
+    resizeCleanup.current = end
+    handle.setPointerCapture(pointerId)
+    handle.addEventListener('lostpointercapture', end)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+    window.addEventListener('blur', end)
+  }
   const resizeHandle = (axis: 'x' | 'y'): ReactElement => <div
     key={axis} role="separator" tabIndex={0} aria-label={t('splitResize')}
     aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'} aria-valuemin={25} aria-valuemax={75}
     aria-valuenow={Math.round(layout[axis] * 100)}
     className={`ds-chat-split-resize ds-chat-split-resize--${axis}`}
-    style={axis === 'x' ? { left: `${layout.x * 100}%` } : { top: `${layout.y * 100}%`, left: arrangement === 'grid' && count === 3 ? `${layout.x * 100}%` : 0 }}
+    style={axis === 'x' ? { left: 'var(--split-x)' } : { top: 'var(--split-y)', left: arrangement === 'grid' && count === 3 ? 'var(--split-x)' : 0 }}
     onDoubleClick={() => actions.resize(project, axis, .5)}
     onKeyDown={event => {
       const previous = axis === 'x' ? 'ArrowLeft' : 'ArrowUp'
@@ -150,12 +199,7 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
       event.preventDefault()
       actions.resize(project, axis, event.key === 'Home' ? .5 : layout[axis] + (event.key === previous ? -.05 : .05))
     }}
-    onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId) }}
-    onPointerMove={event => {
-      if (!event.currentTarget.hasPointerCapture(event.pointerId) || !root.current) return
-      const rect = root.current.getBoundingClientRect()
-      actions.resize(project, axis, axis === 'x' ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height)
-    }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)} />
+    onPointerDown={event => beginResize(event, axis)} />
 
   const paneActions = (pane: ChatLayout['panes'][number]): ReactElement => <div className="ds-chat-split-pane-actions">
             {pane.threadId && renderContext ? <button type="button" className="ds-chat-split-icon"

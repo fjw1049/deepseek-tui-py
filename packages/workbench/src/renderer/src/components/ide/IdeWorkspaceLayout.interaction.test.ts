@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, Profiler } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { IdeWorkspaceLayout } from './IdeWorkspaceLayout'
@@ -102,6 +102,57 @@ it('keeps file, change and chat contents when switching activities and toggling 
     expect(editor.value).toBe('unsaved edit after entering IDE')
     expect(host.querySelector('[data-inspector="diff"]')).toBe(diff)
     expect(diff.scrollTop).toBe(170)
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+
+it.each(['ideChatRailResize', 'inspectorResizeSplit'])('previews %s without rendering the editor and commits the final width', async label => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const storage = new Map<string, string>()
+  vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) })
+  const frames = new Map<number, FrameRequestCallback>()
+  let frameId = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const render = vi.fn()
+  try {
+    await act(async () => root.render(createElement(Profiler, { id: 'ide', onRender: render }, createElement(IdeWorkspaceLayout, {
+      workspaceRoot: '/workspace', blocks: [], chatRail: createElement('div', null, 'conversation'),
+      onExitIdeMode: vi.fn(), onOpenFileInEditor: vi.fn()
+    }))))
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="ideActivityChanges"]')!.click())
+    const handle = host.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+    const rail = handle.parentElement!
+    const start = parseFloat(rail.style.width)
+    const direction = label === 'ideChatRailResize' ? -1 : 1
+    const pointer = async (type: string, delta: number) => {
+      await act(async () => (type === 'pointerdown' ? handle : window).dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 3, button: 0, clientX: 500 + direction * delta
+      })))
+    }
+    await pointer('pointerdown', 0)
+    render.mockClear()
+    await pointer('pointermove', 10)
+    await pointer('pointermove', 20)
+    expect(frames.size).toBe(1)
+    await act(async () => { for (const callback of [...frames.values()]) callback(0) })
+    expect(parseFloat(rail.style.width)).toBe(start + 20)
+    expect(render).not.toHaveBeenCalled()
+    await pointer('pointermove', 30)
+    await pointer('pointerup', 30)
+    expect(parseFloat(rail.style.width)).toBe(start + 30)
+    expect(frames.size).toBe(0)
+    if (label === 'ideChatRailResize') {
+      expect(rail.querySelector<HTMLElement>('.ds-ide-chat-rail__surface')!.style.width).toBe(`${start + 30}px`)
+      expect(handle.getAttribute('aria-valuenow')).toBe(String(start + 30))
+    }
   } finally {
     await act(async () => root.unmount())
     host.remove()

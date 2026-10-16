@@ -339,6 +339,7 @@ export function IdeWorkspaceLayout({
     const prevUserSelect = document.body.style.userSelect
     const shell = event.currentTarget.closest('.ds-workbench-shell')
     shell?.classList.add('is-resizing')
+    const rail = event.currentTarget.parentElement!
     changesListResizeRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -351,7 +352,7 @@ export function IdeWorkspaceLayout({
       // Follow the pointer past CHANGES_LIST_MIN so the list can be dragged shut.
       const next = clampChangesListWidth(state.startWidth + moveEvent.clientX - state.startX, 0)
       state.pendingWidth = next
-      queueResize(() => setChangesListWidth(next))
+      queueResize(() => { rail.style.width = `${next}px` })
     }
     const onEnd = (endEvent?: Event): void => {
       const state = changesListResizeRef.current
@@ -361,9 +362,11 @@ export function IdeWorkspaceLayout({
       changesListResizeRef.current = null
       if (collapsed) {
         // Changes activity icon reopens it at the width the drag started from.
+        rail.style.width = `${state.startWidth}px`
         setChangesListWidth(state.startWidth)
         setActivitySidebarVisible(false)
       } else {
+        setChangesListWidth(state.pendingWidth)
         persistChangesListWidth(state.pendingWidth)
       }
       window.removeEventListener('pointermove', onMove)
@@ -393,6 +396,9 @@ export function IdeWorkspaceLayout({
     const prevUserSelect = document.body.style.userSelect
     const shell = event.currentTarget.closest('.ds-workbench-shell')
     shell?.classList.add('is-resizing')
+    const rail = event.currentTarget.parentElement!
+    const surface = rail.querySelector<HTMLElement>('.ds-ide-chat-rail__surface')!
+    const handle = event.currentTarget
     resizeStateRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -404,12 +410,17 @@ export function IdeWorkspaceLayout({
       if (!state || moveEvent.pointerId !== state.pointerId) return
       const next = clampIdeChatRailWidth(state.startWidth + state.startX - moveEvent.clientX)
       state.pendingWidth = next
-      queueResize(() => setChatRailWidth(next))
+      queueResize(() => {
+        rail.style.width = `${next}px`
+        surface.style.width = `${next}px`
+        handle.setAttribute('aria-valuenow', String(next))
+      })
     }
     const onEnd = (endEvent?: Event): void => {
       const state = resizeStateRef.current
       if (!state || (endEvent instanceof PointerEvent && endEvent.pointerId !== state.pointerId)) return
       flushResize()
+      setChatRailWidth(state.pendingWidth)
       persistIdeChatRailWidth(state.pendingWidth)
       resizeStateRef.current = null
       window.removeEventListener('pointermove', onMove)

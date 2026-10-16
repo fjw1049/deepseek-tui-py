@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, Profiler } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { WorkspaceEditorPanel } from './WorkspaceEditorPanel'
@@ -223,5 +223,94 @@ it('keeps the code surface mounted while reading another code file', async () =>
     await act(async () => root.unmount()); host.remove()
     useWorkspaceEditorStore.setState(initial, true)
     vi.unstubAllGlobals(); window.dsGui = previousGui
+  }
+})
+
+
+it.each(['pointerup', 'pointercancel', 'blur'])('coalesces tree previews without rendering content and flushes on %s', async ending => {
+  const previousGui = window.dsGui
+  const frames = new Map<number, FrameRequestCallback>()
+  let frameId = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  window.dsGui = { listWorkspaceDirectory: vi.fn(async () => ({ ok: true, entries: [] })) } as unknown as typeof window.dsGui
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const render = vi.fn()
+  const pointer = async (type: string, x: number) => {
+    const target = type === 'pointerdown' ? host.querySelector('[role="separator"]')! : window
+    await act(async () => target.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, button: 0, clientX: x })))
+  }
+  try {
+    await act(async () => root.render(createElement(Profiler, { id: 'editor', onRender: render },
+      createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [] }))))
+    const rail = host.querySelector('.ds-editor-tree-rail') as HTMLElement
+    const initialWidth = parseFloat(rail.style.width)
+    await pointer('pointerdown', 300)
+    render.mockClear()
+    await pointer('pointermove', 310)
+    await pointer('pointermove', 320)
+    expect(parseFloat(rail.style.width)).toBe(initialWidth)
+    expect(frames.size).toBe(1)
+    await act(async () => { for (const callback of [...frames.values()]) callback(0) })
+    expect(parseFloat(rail.style.width)).toBe(initialWidth + 20)
+    expect(render).not.toHaveBeenCalled()
+    await pointer('pointermove', 330)
+    if (ending === 'blur') await act(async () => window.dispatchEvent(new Event('blur')))
+    else await pointer(ending, 330)
+    expect(parseFloat(rail.style.width)).toBe(initialWidth + 30)
+    expect(frames.size).toBe(0)
+    expect(host.querySelector('.fixed.cursor-col-resize')).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    window.dsGui = previousGui
+    vi.unstubAllGlobals()
+  }
+})
+
+
+it('previews editor split width without content renders and preserves its bounds on release', async () => {
+  const initial = useWorkspaceEditorStore.getState()
+  const previousGui = window.dsGui
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const frames = new Map<number, FrameRequestCallback>()
+  let frameId = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  window.dsGui = { readWorkspaceFile: vi.fn(async () => ({ ok: true, content: 'hello', truncated: false })) } as unknown as typeof window.dsGui
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const render = vi.fn()
+  try {
+    await act(async () => root.render(createElement(Profiler, { id: 'editor', onRender: render },
+      createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [], hideTree: true }))))
+    await act(async () => { await useWorkspaceEditorStore.getState().openFile('a.txt', '/workspace') })
+    await act(async () => { await useWorkspaceEditorStore.getState().openFile('b.txt', '/workspace', undefined, undefined, { toSide: true }) })
+    const handle = host.querySelector<HTMLElement>('[aria-label="workspaceEditorSplitResize"]')!
+    const split = handle.parentElement!.parentElement!
+    const primary = split.firstElementChild as HTMLElement
+    vi.spyOn(split, 'getBoundingClientRect').mockReturnValue({ width: 1000 } as DOMRect)
+    await act(async () => handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0, clientX: 500 })))
+    render.mockClear()
+    await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 1500 })))
+    await act(async () => { for (const callback of [...frames.values()]) callback(0) })
+    expect(primary.style.width).toBe('75%')
+    expect(render).not.toHaveBeenCalled()
+    await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: -500 })))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 })))
+    expect(primary.style.width).toBe('25%')
+    expect(frames.size).toBe(0)
+    expect(host.querySelector('.fixed.cursor-col-resize')).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    useWorkspaceEditorStore.setState(initial, true)
+    host.remove()
+    window.dsGui = previousGui
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   }
 })

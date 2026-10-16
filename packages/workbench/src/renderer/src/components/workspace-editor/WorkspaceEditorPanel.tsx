@@ -1,3 +1,4 @@
+import { createFrameQueue } from '../../lib/frame-queue'
 import { copyText } from '../../lib/copy-text'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import {
@@ -717,6 +718,9 @@ export function WorkspaceEditorPanel({
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null)
   const [savedFlashTabId, setSavedFlashTabId] = useState<string | null>(null)
   const endPointerDragRef = useRef<(() => void) | null>(null)
+  const resizeQueueRef = useRef<ReturnType<typeof createFrameQueue> | null>(null)
+  resizeQueueRef.current ??= createFrameQueue()
+  const { queue: queueResize, flush: flushResize } = resizeQueueRef.current
   const splitHostRef = useRef<HTMLDivElement | null>(null)
   const primaryPaneRef = useRef<EditorPaneHandle | null>(null)
   const secondaryPaneRef = useRef<EditorPaneHandle | null>(null)
@@ -831,8 +835,11 @@ export function WorkspaceEditorPanel({
     event.preventDefault()
     endPointerDragRef.current?.()
 
+    const pointerId = event.pointerId
+    const rail = event.currentTarget.parentElement!
     const startX = event.clientX
-    const startWidth = event.currentTarget.parentElement?.getBoundingClientRect().width || treeWidth
+    const startWidth = rail.getBoundingClientRect().width || treeWidth
+    let pendingWidth = startWidth
     let collapseOnRelease = false
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
@@ -841,13 +848,16 @@ export function WorkspaceEditorPanel({
     setResizing(true)
 
     const onMove = (moveEvent: PointerEvent): void => {
+      if (moveEvent.pointerId !== pointerId) return
       const width = startWidth + (moveEvent.clientX - startX) * (collapsibleTree ? -1 : 1)
       collapseOnRelease = treeCollapsible && width < TREE_COLLAPSE_THRESHOLD
       // Follow the pointer all the way to the edge instead of stalling at TREE_MIN.
-      setTreeWidth(clampTreeWidth(width, treeCollapsible ? 0 : TREE_MIN))
+      pendingWidth = clampTreeWidth(width, treeCollapsible ? 0 : TREE_MIN)
+      queueResize(() => { rail.style.width = `${pendingWidth}px` })
     }
 
     const endDrag = (): void => {
+      flushResize()
       setResizing(false)
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
@@ -858,23 +868,21 @@ export function WorkspaceEditorPanel({
       endPointerDragRef.current = null
     }
 
-    const onUp = (): void => {
+    const onUp = (endEvent: Event): void => {
+      if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
       endDrag()
       if (collapseOnRelease) {
         if (collapsibleTree) setTreeOpen(false)
         else onTreeCollapse?.()
         // Reopen at the width the drag started from, not the pinched one.
+        rail.style.width = `${treeWidth}px`
         setTreeWidth(treeWidth)
         return
       }
-      setTreeWidth((current) => {
-        try {
-          window.localStorage.setItem(TREE_WIDTH_KEY, String(current))
-        } catch {
-          /* ignore */
-        }
-        return current
-      })
+      setTreeWidth(pendingWidth)
+      try {
+        window.localStorage.setItem(TREE_WIDTH_KEY, String(pendingWidth))
+      } catch { /* ignore */ }
     }
 
     endPointerDragRef.current = endDrag
@@ -892,7 +900,10 @@ export function WorkspaceEditorPanel({
     if (!host) return
 
     const startX = event.clientX
+    const pointerId = event.pointerId
+    const primary = host.firstElementChild as HTMLElement
     const startRatio = splitRatio
+    let pendingRatio = startRatio
     const hostWidth = host.getBoundingClientRect().width
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
@@ -901,12 +912,14 @@ export function WorkspaceEditorPanel({
     setResizing(true)
 
     const onMove = (moveEvent: PointerEvent): void => {
-      if (hostWidth <= 0) return
+      if (moveEvent.pointerId !== pointerId || hostWidth <= 0) return
       const next = startRatio + (moveEvent.clientX - startX) / hostWidth
-      setSplitRatio(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, next)))
+      pendingRatio = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, next))
+      queueResize(() => { primary.style.width = `${pendingRatio * 100}%` })
     }
 
     const endDrag = (): void => {
+      flushResize()
       setResizing(false)
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
@@ -917,16 +930,13 @@ export function WorkspaceEditorPanel({
       endPointerDragRef.current = null
     }
 
-    const onUp = (): void => {
+    const onUp = (endEvent: Event): void => {
+      if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
       endDrag()
-      setSplitRatio((current) => {
-        try {
-          window.localStorage.setItem(SPLIT_RATIO_KEY, String(current))
-        } catch {
-          /* ignore */
-        }
-        return current
-      })
+      setSplitRatio(pendingRatio)
+      try {
+        window.localStorage.setItem(SPLIT_RATIO_KEY, String(pendingRatio))
+      } catch { /* ignore */ }
     }
 
     endPointerDragRef.current = endDrag

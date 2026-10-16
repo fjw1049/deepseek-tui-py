@@ -899,16 +899,16 @@ export function Workbench(): ReactElement {
   }, [])
 
   useEffect(() => {
-    persistWidth(LEFT_PANEL_WIDTH_KEY, leftSidebarWidth)
-  }, [leftSidebarWidth])
+    if (!resizeShieldCursor) persistWidth(LEFT_PANEL_WIDTH_KEY, leftSidebarWidth)
+  }, [leftSidebarWidth, resizeShieldCursor])
 
   useEffect(() => {
     persistBoolean(LEFT_PANEL_COLLAPSED_KEY, leftSidebarCollapsed)
   }, [leftSidebarCollapsed])
 
   useEffect(() => {
-    persistWidth(RIGHT_PANEL_WIDTH_KEY, rightSidebarWidth)
-  }, [rightSidebarWidth])
+    if (!resizeShieldCursor) persistWidth(RIGHT_PANEL_WIDTH_KEY, rightSidebarWidth)
+  }, [rightSidebarWidth, resizeShieldCursor])
 
   useEffect(() => {
     persistRightSidebarOpen(rightSidebarOpen)
@@ -1285,8 +1285,14 @@ export function Workbench(): ReactElement {
     toggleTerminalPanel
   ])
 
+  const syncPanelLayoutRef = useRef<(() => void) | null>(null)
+  const panelWidthsRef = useRef({ leftSidebarWidth, rightSidebarWidth })
+  panelWidthsRef.current = { leftSidebarWidth, rightSidebarWidth }
   useEffect(() => {
     const sync = (): void => {
+      // Pointer drags already fit both panels; the observer handles window/layout changes.
+      if (resizeCleanupRef.current) return
+      const { leftSidebarWidth, rightSidebarWidth } = panelWidthsRef.current
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
       const measuredMain = mainRowRef.current?.clientWidth ?? null
       const tooNarrow = (measuredMain ?? measureMainWidth(containerWidth, !leftSidebarHidden, leftSidebarWidth)) < RIGHT_PANEL_MIN + CHAT_READING_MIN_WIDTH
@@ -1325,6 +1331,7 @@ export function Workbench(): ReactElement {
       // IDE mode owns chat visibility; never let the chat-mode fit helper hide it.
       if (!ideModeActive) setChatColumnHidden(next.chatHidden)
     }
+    syncPanelLayoutRef.current = sync
     sync()
     const observer = new ResizeObserver(sync)
     if (mainRowRef.current) observer.observe(mainRowRef.current)
@@ -1337,10 +1344,11 @@ export function Workbench(): ReactElement {
     chatColumnHidden,
     ideModeActive,
     leftSidebarHidden,
-    leftSidebarWidth,
-    rightPanelVisible,
-    rightSidebarWidth
+    rightPanelVisible
   ])
+  useEffect(() => {
+    syncPanelLayoutRef.current?.()
+  }, [leftSidebarWidth, rightSidebarWidth, resizeShieldCursor])
 
   const openThread = (id: string, revealInSidebar = true): void => {
     sidebarNavigationVersion.current += 1

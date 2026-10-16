@@ -571,3 +571,53 @@ it('shows split-session failures in the shared viewport and dismisses only the o
   await act(async () => a.setState({ error: 'A failed' }))
   expect(viewport.querySelectorAll('[role="alert"]')).toHaveLength(2)
 })
+
+
+it.each(['pointerup', 'pointercancel', 'blur', 'lostpointercapture'])('previews split width without store writes or composer renders, then commits on %s', async (ending) => {
+  await act(async () => root.render(createElement(Harness)))
+  const grid = container.querySelector<HTMLElement>('.ds-chat-split-grid')!
+  const handle = container.querySelector<HTMLElement>('.ds-chat-split-resize--x')!
+  vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 1000, height: 600 } as DOMRect)
+  let captured = false
+  handle.setPointerCapture = () => { captured = true }
+  handle.hasPointerCapture = () => captured
+  handle.releasePointerCapture = () => { captured = false }
+  const frames = new Map<number, FrameRequestCallback>()
+  let frameId = 0
+  const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { frames.set(++frameId, callback); return frameId })
+  const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id) })
+  const updates = vi.fn()
+  const unsubscribe = useChatLayoutStore.subscribe(updates)
+  const initial = useChatLayoutStore.getState().layouts['/repo']
+  const before = renderCounts.composer
+  const pointer = async (target: EventTarget, type: string, x: number, pointerId = 4) => {
+    await act(async () => target.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId, button: 0, clientX: x })))
+  }
+  try {
+    await pointer(handle, 'pointerdown', 500)
+    await pointer(window, 'pointermove', 550)
+    await pointer(window, 'pointermove', 600)
+    expect(frames.size).toBe(1)
+    await act(async () => { for (const callback of [...frames.values()]) callback(0) })
+    expect(grid.style.getPropertyValue('--split-x')).toBe('60%')
+    expect(handle.getAttribute('aria-valuenow')).toBe('60')
+    expect(useChatLayoutStore.getState().layouts['/repo']).toBe(initial)
+    expect(renderCounts.composer).toBe(before)
+    expect(updates).not.toHaveBeenCalled()
+    await pointer(window, 'pointermove', 650)
+    await pointer(window, 'pointerup', 650, 99)
+    expect(updates).not.toHaveBeenCalled()
+    if (ending === 'blur') await act(async () => window.dispatchEvent(new Event('blur')))
+    else await pointer(ending === 'lostpointercapture' ? handle : window, ending, 650)
+    expect(useChatLayoutStore.getState().layouts['/repo'].x).toBe(.65)
+    expect(grid.style.getPropertyValue('--split-x')).toBe('65%')
+    expect(updates).toHaveBeenCalledTimes(1)
+    expect(frames.size).toBe(0)
+    await pointer(window, 'pointermove', 700)
+    expect(updates).toHaveBeenCalledTimes(1)
+  } finally {
+    unsubscribe()
+    raf.mockRestore()
+    caf.mockRestore()
+  }
+})
