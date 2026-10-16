@@ -1,3 +1,4 @@
+import { createFrameQueue } from '../lib/frame-queue'
 import { GlobalErrorNotice } from './GlobalFeedback'
 import {
   useCallback,
@@ -1104,22 +1105,39 @@ export function ChangeInspector({
   const [sideListWidth, setSideListWidth] = useState(FILE_LIST_DEFAULT)
   const lastSideListWidth = useRef(FILE_LIST_DEFAULT)
   const sideListPaneRef = useRef<HTMLDivElement | null>(null)
-  const sideListDrag = useRef<{ pointerId: number; start: number; width: number; previousWidth: number } | null>(null)
+  const resizeQueueRef = useRef<ReturnType<typeof createFrameQueue> | null>(null)
+  resizeQueueRef.current ??= createFrameQueue()
+  const { queue: queueResize, flush: flushResize } = resizeQueueRef.current
+  const sideListDrag = useRef<{ pointerId: number; start: number; width: number; previousWidth: number; pendingWidth: number; chromeWidth: number } | null>(null)
   const sideListCollapsed = sideListWidth === FILE_LIST_COLLAPSED
 
   const resizeSideList = (width: number): number =>
     Math.min(FILE_LIST_MAX, Math.max(FILE_LIST_COLLAPSED, width))
 
+  const previewSideList = (width: number, handle: HTMLDivElement): void => {
+    const pane = sideListPaneRef.current
+    if (pane) pane.style.width = `${width}px`
+    const list = pane?.querySelector<HTMLElement>('[data-change-file-list]')
+    if (list) {
+      list.style.opacity = String(Math.min(1, Math.max(0, width / 96)))
+      list.style.pointerEvents = width <= 72 ? 'none' : 'auto'
+    }
+    handle.setAttribute('aria-valuenow', String(width))
+    const expand = pane?.parentElement?.querySelector<HTMLElement>('[data-expand-file-list]')
+    if (expand) expand.style.opacity = String(Math.max(0, Math.min(1, (96 - width) / 96)))
+  }
   const finishSideListResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const drag = sideListDrag.current
     if (!drag || drag.pointerId !== event.pointerId) return
+    flushResize()
     sideListDrag.current = null
-    const width = event.type === 'pointercancel'
-      ? drag.previousWidth
-      : resizeSideList(drag.width + drag.start - event.clientX)
+    const width = event.type === 'pointercancel' ? drag.previousWidth
+      : event.type === 'pointerup' ? resizeSideList(drag.width + drag.start - event.clientX)
+        : drag.pendingWidth
+    previewSideList(width, event.currentTarget)
     setSideListWidth(width)
     if (event.type !== 'pointercancel' && width >= FILE_LIST_MIN) lastSideListWidth.current = width
-    event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
   const compactList = isReview || isList || (isStack && diffExpanded)
   const [listSize, setListSize] = useState(isReview ? FILE_LIST_DEFAULT : STACK_LIST_DEFAULT)
@@ -1167,22 +1185,28 @@ export function ChangeInspector({
   const onListResizePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = resizeDrag.current
     if (!drag || drag.pointerId !== event.pointerId) return
+    flushResize()
     resizeDrag.current = null
     setListResizing(false)
     const size = drag.startSize + ((isReview ? event.clientX : event.clientY) - drag.start) / drag.scale
     const expandDiff = !isReview && size <= 32 && size < drag.startSize
     if (event.type !== 'pointerup' || expandDiff) {
+      if (sideListPaneRef.current) sideListPaneRef.current.style[isReview ? 'width' : 'height'] = `${isReview ? drag.previousSize : Math.min(drag.previousSize, stackListMax)}px`
+      event.currentTarget.setAttribute('aria-valuenow', String(Math.round(isReview ? drag.previousSize : Math.min(drag.previousSize, stackListMax))))
       setListSize(drag.previousSize)
       if (event.type === 'pointerup' && expandDiff) setDiffExpanded(true)
     } else {
       const min = isReview ? FILE_LIST_MIN : stackListMin
       const max = isReview ? FILE_LIST_MAX : stackListMax
-      setListSize(Math.min(max, Math.max(min, size)))
+      const next = Math.min(max, Math.max(min, size))
+      if (sideListPaneRef.current) sideListPaneRef.current.style[isReview ? 'width' : 'height'] = `${next}px`
+      event.currentTarget.setAttribute('aria-valuenow', String(Math.round(next)))
+      setListSize(next)
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
-  }, [isReview, stackListMax, stackListMin])
+  }, [flushResize, isReview, stackListMax, stackListMin])
 
   const onListResizePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1195,10 +1219,22 @@ export function ChangeInspector({
       const delta = ((isReview ? event.clientX : event.clientY) - drag.start) / drag.scale
       const min = isReview ? FILE_LIST_MIN : 0
       const max = isReview ? FILE_LIST_MAX : stackListMax
-      setListSize(Math.min(max, Math.max(min, drag.startSize + delta)))
+      const next = Math.min(max, Math.max(min, drag.startSize + delta))
+      const handle = event.currentTarget
+      queueResize(() => {
+        if (resizeDrag.current !== drag) return
+        if (sideListPaneRef.current) sideListPaneRef.current.style[isReview ? 'width' : 'height'] = `${next}px`
+        handle.setAttribute('aria-valuenow', String(Math.round(next)))
+      })
     },
-    [isReview, onListResizePointerUp, stackListMax]
+    [isReview, onListResizePointerUp, queueResize, stackListMax]
   )
+
+  useEffect(() => () => {
+    sideListDrag.current = null
+    resizeDrag.current = null
+    flushResize()
+  }, [diffExpanded, flushResize, isReview])
 
   const fileChanges = useMemo(() => {
     if (scopedGitFiles) {
@@ -1777,7 +1813,7 @@ export function ChangeInspector({
           diffViewport
         ) : isReview ? (
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <div className="flex h-full min-h-0 shrink-0 flex-col" style={{ width: listSize }}>
+            <div ref={sideListPaneRef} className="flex h-full min-h-0 shrink-0 flex-col" style={{ width: listSize }}>
               {fileList}
             </div>
             <div
@@ -1805,7 +1841,12 @@ export function ChangeInspector({
             {diffExpanded && sideListWidth < 96 ? (
               <button
                 type="button"
-                onClick={() => setSideListWidth(lastSideListWidth.current)}
+                onClick={() => {
+                  sideListDrag.current = null
+                  flushResize()
+                  setSideListWidth(lastSideListWidth.current)
+                }}
+                data-expand-file-list=""
                 aria-label={t('inspectorExpandFileList')}
                 title={t('inspectorExpandFileList')}
                 tabIndex={sideListWidth <= 72 ? 0 : -1}
@@ -1831,6 +1872,7 @@ export function ChangeInspector({
                 title={t('inspectorResizeFileList')}
                 className={`group ds-no-drag z-10 flex shrink-0 cursor-col-resize touch-none items-center justify-center outline-none ${sideListCollapsed ? 'absolute bottom-0 right-0 top-9 w-8' : 'relative order-1 w-2 hover:bg-ds-hover focus-visible:bg-ds-hover'}`}
                 onPointerDown={(event) => {
+                  if (event.button !== 0) return
                   event.preventDefault()
                   event.stopPropagation()
                   event.currentTarget.setPointerCapture(event.pointerId)
@@ -1838,25 +1880,39 @@ export function ChangeInspector({
                     pointerId: event.pointerId,
                     start: event.clientX,
                     width: sideListPaneRef.current?.getBoundingClientRect().width ?? sideListWidth,
-                    previousWidth: sideListWidth
+                    previousWidth: sideListWidth,
+                    pendingWidth: sideListWidth,
+                    chromeWidth: sideListWidth
                   }
                 }}
                 onPointerMove={(event) => {
                   const drag = sideListDrag.current
                   if (!drag || drag.pointerId !== event.pointerId) return
                   if (event.pointerType && event.buttons === 0) {
-                    sideListDrag.current = null
+                    finishSideListResize(event)
                     return
                   }
-                  setSideListWidth(resizeSideList(drag.width + drag.start - event.clientX))
+                  const width = resizeSideList(drag.width + drag.start - event.clientX)
+                  drag.pendingWidth = width
+                  const handle = event.currentTarget
+                  queueResize(() => {
+                    if (sideListDrag.current !== drag) return
+                    previewSideList(width, handle)
+                    // Only rerender when collapsed/expand-button chrome changes.
+                    const bucket = (value: number): number => value === 0 ? 0 : value <= 72 ? 1 : value < 96 ? 2 : 3
+                    if (bucket(width) !== bucket(drag.chromeWidth)) {
+                      drag.chromeWidth = width
+                      setSideListWidth(width)
+                    }
+                  })
                 }}
                 onPointerUp={finishSideListResize}
                 onPointerCancel={finishSideListResize}
-                onLostPointerCapture={(event) => {
-                  if (sideListDrag.current?.pointerId === event.pointerId) sideListDrag.current = null
-                }}
+                onLostPointerCapture={finishSideListResize}
                 onKeyDown={(event) => {
                   if (!['ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return
+                  sideListDrag.current = null
+                  flushResize()
                   event.preventDefault()
                   const width = event.key === 'Enter'
                     ? sideListCollapsed ? lastSideListWidth.current : FILE_LIST_COLLAPSED

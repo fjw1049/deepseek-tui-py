@@ -1,3 +1,4 @@
+import { createWorkbenchResizePreview } from '../lib/workbench-resize-preview'
 import { useThreadRightSidebar } from '../hooks/use-thread-right-sidebar'
 import { BROWSER_ACTIVITY_EVENT } from '../lib/browser-activity'
 import { CHAT_READING_MIN_WIDTH, RIGHT_PANEL_MIN, resolveRightPanelLayout } from '../lib/workbench-pane-layout'
@@ -1547,6 +1548,10 @@ export function Workbench(): ReactElement {
     const startX = event.clientX
     const startLeft = leftSidebarWidth
     const startRight = rightSidebarWidth
+    const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+    const startMain = mainRowRef.current?.clientWidth ?? measureMainWidth(containerWidth, !leftSidebarHidden, startLeft)
+    const preview = createWorkbenchResizePreview(shellRef.current!, !leftSidebarHidden, rightPanelVisible)
+    let pending = { left: startLeft, right: startRight, chatHidden: chatColumnHidden }
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
@@ -1562,26 +1567,23 @@ export function Workbench(): ReactElement {
       if (moveEvent.pointerId !== pointerId) return
       const clientX = moveEvent.clientX
       queueResize(() => {
-        const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
-        const measuredMain = mainRowRef.current?.clientWidth ?? null
-        const next = fitWorkbenchWidths(
-          containerWidth,
-          startLeft + clientX - startX,
-          startRight,
-          { leftPanelVisible: true, rightPanelVisible },
-          measuredMain
-        )
-        setLeftSidebarWidth(next.left)
-        if (rightPanelVisible && !chatColumnHidden) {
-          if (next.right !== rightSidebarWidth) setRightSidebarWidth(next.right)
-          setChatColumnHidden(next.chatHidden)
-        }
+        const left = resolveLeftPanelWidth(containerWidth, startLeft + clientX - startX, rightPanelVisible)
+        const mainWidth = Math.max(0, startMain - (left - startLeft))
+        pending = fitWorkbenchWidths(containerWidth, left, startRight,
+          { leftPanelVisible: true, rightPanelVisible }, mainWidth)
+        if (rightPanelVisible && chatColumnHidden) pending = { left, right: mainWidth, chatHidden: true }
+        preview(pending)
       })
     }
 
     const onUp = (endEvent?: Event): void => {
       if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
       flushResize()
+      setLeftSidebarWidth(pending.left)
+      if (rightPanelVisible) {
+        setRightSidebarWidth(pending.right)
+        setChatColumnHidden(pending.chatHidden)
+      }
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       shellRef.current?.classList.remove('is-resizing')
@@ -1609,6 +1611,10 @@ export function Workbench(): ReactElement {
     const startX = event.clientX
     const startLeft = leftSidebarWidth
     const startRight = rightSidebarWidth
+    const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+    const startMain = mainRowRef.current?.clientWidth ?? measureMainWidth(containerWidth, !leftSidebarHidden, startLeft)
+    const preview = createWorkbenchResizePreview(shellRef.current!, !leftSidebarHidden, rightPanelVisible)
+    let pending = { left: startLeft, right: startRight, chatHidden: chatColumnHidden }
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
@@ -1620,25 +1626,20 @@ export function Workbench(): ReactElement {
       if (moveEvent.pointerId !== pointerId) return
       const clientX = moveEvent.clientX
       queueResize(() => {
-        const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
-        const measuredMain = mainRowRef.current?.clientWidth ?? null
-        const next = fitWorkbenchWidths(
-          containerWidth,
-          startLeft,
-          startRight - (clientX - startX),
-          { leftPanelVisible: !leftSidebarHidden, rightPanelVisible: true },
-          measuredMain
-        )
-        if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
-        if (!next.chatHidden) chatColumnRef.current?.style.removeProperty('--ds-chat-rest-width')
-        setRightSidebarWidth(next.right)
-        setChatColumnHidden(next.chatHidden)
+        pending = fitWorkbenchWidths(containerWidth, startLeft, startRight - (clientX - startX),
+          { leftPanelVisible: !leftSidebarHidden, rightPanelVisible: true }, startMain)
+        preview(pending)
       })
     }
 
     const onUp = (endEvent?: Event): void => {
       if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
       flushResize()
+      setLeftSidebarWidth(pending.left)
+      if (rightPanelVisible) {
+        setRightSidebarWidth(pending.right)
+        setChatColumnHidden(pending.chatHidden)
+      }
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       shellRef.current?.classList.remove('is-resizing')

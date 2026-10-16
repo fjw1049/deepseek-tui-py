@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useChatStore } from '../store/chat-store'
@@ -27,6 +27,10 @@ vi.mock('../hooks/use-git-branches', () => {
 vi.mock('../hooks/use-github-repository', () => ({ useGitHubRepository: () => ({ result: null }) }))
 vi.mock('../hooks/use-workspace-dirty-git-refresh', () => ({ useWorkspaceDirtyGitRefresh: () => {} }))
 
+let frames = new Map<number, FrameRequestCallback>()
+let frameId = 0
+const flushFrames = (): void => { for (const callback of [...frames.values()]) callback(0) }
+
 let container: HTMLDivElement
 let root: Root
 const initial = useChatStore.getState()
@@ -36,6 +40,9 @@ const listPane = (): HTMLElement => container.querySelector('ul')!.parentElement
 
 beforeEach(async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  frames = new Map()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
   useChatStore.setState({ workspaceRoot: '/repo', activeThreadId: null, inspectorSelectedId: null })
   container = document.createElement('div')
   document.body.append(container)
@@ -46,6 +53,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   useChatStore.setState(initial, true)
+  vi.unstubAllGlobals()
 })
 
 it('expands with files on the right, preserves selection, and restores height and collapse behavior', () => {
@@ -114,7 +122,7 @@ it('snaps at the top on release, restores the previous height, and does not expa
   handle.setPointerCapture = vi.fn()
   handle.releasePointerCapture = vi.fn()
   const drag = (type: string, clientY: number): void => {
-    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientY })) })
+    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientY })); flushFrames() })
   }
   drag('pointerdown', 220)
   drag('pointermove', 10)
@@ -163,7 +171,7 @@ it.each(['lostpointercapture', 'pointermove'])('cancels horizontal dragging afte
   const pointer = (type: string, clientY: number, buttons: number, pointerId = 1, button = 0): void => {
     act(() => { handle.dispatchEvent(new PointerEvent(type, {
       bubbles: true, pointerType: 'mouse', pointerId, button, clientY, buttons
-    })) })
+    })); flushFrames() })
   }
   pointer('pointerdown', 220, 2, 1, 2)
   expect(handle.hasAttribute('data-resizing')).toBe(false)
@@ -189,7 +197,7 @@ it('tracks horizontal dragging in layout pixels at a larger UI scale', () => {
   document.documentElement.style.setProperty('--ds-ui-scale', '1.5')
   try {
     for (const [type, clientY] of [['pointerdown', 330], ['pointermove', 390], ['pointerup', 390]] as const) {
-      act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientY })) })
+      act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientY })); flushFrames() })
     }
     expect(listPane().style.height).toBe('260px')
     expect(handle.hasAttribute('data-resizing')).toBe(false)
@@ -240,7 +248,7 @@ it('resizes the fullscreen directory to zero width and restores the last width',
   handle.releasePointerCapture = vi.fn()
   vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ width: parseFloat(pane.style.width) }) as DOMRect)
   const drag = (type: string, clientX: number): void => {
-    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })) })
+    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })); flushFrames() })
   }
   drag('pointerdown', 500)
   drag('pointermove', 460)
@@ -313,7 +321,7 @@ it('uses the file pane width when dragging again beside the expand icon', () => 
   handle.releasePointerCapture = vi.fn()
   vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ width: parseFloat(pane.style.width) }) as DOMRect)
   const drag = (type: string, clientX: number): void => {
-    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })) })
+    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })); flushFrames() })
   }
 
   drag('pointerdown', 500)
@@ -344,7 +352,7 @@ it.each([
     act(() => {
       handle.dispatchEvent(new PointerEvent(type, {
         bubbles: true, pointerId: 1, pointerType: 'mouse', clientX, buttons
-      }))
+      })); flushFrames()
     })
   }
 
@@ -481,4 +489,36 @@ it('toggles the displayed file while another file loads without changing the pen
     expect(container.textContent).toContain('b-tail')
     expect(button('diffShowChangesOnly')).not.toBeNull()
   } finally { vi.unstubAllGlobals() }
+})
+
+
+it.each(['side', 'stack', 'review'])('does not rerender diff content while resizing the %s list within its chrome thresholds', async mode => {
+  const render = vi.fn()
+  await act(async () => root.render(createElement(Profiler, { id: 'changes', onRender: render },
+    createElement(ChangeInspector, { variant: mode === 'review' ? 'review' : 'stack' }))))
+  if (mode === 'side') act(() => button('inspectorExpandDiff').click())
+  const handle = container.querySelector<HTMLDivElement>(mode === 'side'
+    ? '[aria-label="inspectorResizeFileList"]' : '[aria-label="inspectorResizeSplit"]')!
+  handle.setPointerCapture = vi.fn()
+  handle.releasePointerCapture = vi.fn()
+  const pane = mode === 'review' ? handle.previousElementSibling as HTMLElement : listPane()
+  vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue({ width: 280 } as DOMRect)
+  const pointer = (type: string, position: number): void => {
+    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX: position, clientY: position })) })
+  }
+  pointer('pointerdown', 500)
+  act(flushFrames)
+  render.mockClear()
+  const initial = mode === 'stack' ? pane.style.height : pane.style.width
+  pointer('pointermove', mode === 'side' ? 490 : 510)
+  pointer('pointermove', mode === 'side' ? 480 : 520)
+  expect(mode === 'stack' ? pane.style.height : pane.style.width).toBe(initial)
+  expect(frames.size).toBe(1)
+  act(flushFrames)
+  expect(mode === 'stack' ? pane.style.height : pane.style.width).toBe(`${parseFloat(initial) + 20}px`)
+  expect(render).not.toHaveBeenCalled()
+  pointer('pointermove', mode === 'side' ? 470 : 530)
+  pointer('pointerup', mode === 'side' ? 470 : 530)
+  expect(mode === 'stack' ? pane.style.height : pane.style.width).toBe(`${parseFloat(initial) + 30}px`)
+  expect(frames.size).toBe(0)
 })
