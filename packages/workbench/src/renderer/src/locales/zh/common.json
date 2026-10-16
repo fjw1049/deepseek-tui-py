@@ -1866,6 +1866,7 @@
   "inspectorStatusRunning": "运行中",
   "inspectorOpenInEditor": "在编辑器打开",
   "inspectorResizeDiff": "拖动调整 diff 高度",
+  "inspectorCollapseFileList": "收起文件目录",
   "inspectorExpandFileList": "展开文件目录",
   "inspectorResizeFileList": "左右拖动调整目录宽度，拖到最窄收起",
   "inspectorExpandDiff": "向上展开代码",

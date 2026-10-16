@@ -1882,6 +1882,7 @@
   "inspectorStatusRunning": "running",
   "inspectorOpenInEditor": "Open in editor",
   "inspectorResizeDiff": "Drag to resize diff",
+  "inspectorCollapseFileList": "Collapse file list",
   "inspectorExpandFileList": "Expand file list",
   "inspectorResizeFileList": "Drag to resize the file list; drag fully right to collapse",
   "inspectorExpandDiff": "Expand diff upward",

@@ -1,3 +1,4 @@
+import { freezeDiffResize } from '../lib/freeze-diff-resize'
 import { createWorkbenchResizePreview } from '../lib/workbench-resize-preview'
 import { useThreadRightSidebar } from '../hooks/use-thread-right-sidebar'
 import { BROWSER_ACTIVITY_EVENT } from '../lib/browser-activity'
@@ -14,7 +15,6 @@ import { FeedbackNotice } from './FeedbackNotice'
 import { useRunPanelStore } from '../store/run-panel-store'
 import type {
   ComponentProps,
-  CSSProperties,
   PointerEvent as ReactPointerEvent,
   ReactElement,
   RefObject
@@ -879,21 +879,24 @@ export function Workbench(): ReactElement {
 
   // Scroll perf: flag the shell while any surface is actively scrolling so CSS
   // can drop the expensive backdrop-filter blur (re-rasterized every frame in
-  // Electron). Capture-phase catches every scroll container at once; the blur
-  // is restored ~160ms after scrolling stops.
+  // Electron). Monaco reports virtual scrolling separately from native scroll;
+  // restore the blur ~160ms after either stops.
   useEffect(() => {
     const shell = shellRef.current
     if (!shell) return
     let timer: number | null = null
     const onScroll = (): void => {
-      shell.classList.add('is-scrolling')
+      if (!shell.classList.contains('is-scrolling')) shell.classList.add('is-scrolling')
       if (timer !== null) window.clearTimeout(timer)
       timer = window.setTimeout(() => shell.classList.remove('is-scrolling'), 160)
     }
     document.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    shell.addEventListener('ds-editor-scroll', onScroll)
     return () => {
       document.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)
+      shell.removeEventListener('ds-editor-scroll', onScroll)
       if (timer !== null) window.clearTimeout(timer)
+      shell.classList.remove('is-scrolling')
     }
   }, [])
 
@@ -1549,6 +1552,7 @@ export function Workbench(): ReactElement {
     const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
     const startMain = mainRowRef.current?.clientWidth ?? measureMainWidth(containerWidth, !leftSidebarHidden, startLeft)
     const preview = createWorkbenchResizePreview(shellRef.current!, !leftSidebarHidden, rightPanelVisible)
+    const restoreDiffLayout = freezeDiffResize(shellRef.current!.querySelector<HTMLElement>('.ds-workbench-right-panel') ?? event.currentTarget)
     let pending = { left: startLeft, right: startRight, chatHidden: chatColumnHidden }
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
@@ -1577,6 +1581,7 @@ export function Workbench(): ReactElement {
     const onUp = (endEvent?: Event): void => {
       if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
       flushResize()
+      restoreDiffLayout()
       setLeftSidebarWidth(pending.left)
       if (rightPanelVisible) {
         setRightSidebarWidth(pending.right)
@@ -1612,6 +1617,7 @@ export function Workbench(): ReactElement {
     const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
     const startMain = mainRowRef.current?.clientWidth ?? measureMainWidth(containerWidth, !leftSidebarHidden, startLeft)
     const preview = createWorkbenchResizePreview(shellRef.current!, !leftSidebarHidden, rightPanelVisible)
+    const restoreDiffLayout = freezeDiffResize(shellRef.current!.querySelector<HTMLElement>('.ds-workbench-right-panel') ?? event.currentTarget)
     let pending = { left: startLeft, right: startRight, chatHidden: chatColumnHidden }
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
@@ -1633,6 +1639,7 @@ export function Workbench(): ReactElement {
     const onUp = (endEvent?: Event): void => {
       if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
       flushResize()
+      restoreDiffLayout()
       setLeftSidebarWidth(pending.left)
       if (rightPanelVisible) {
         setRightSidebarWidth(pending.right)
@@ -1707,12 +1714,12 @@ export function Workbench(): ReactElement {
       ref={shellRef}
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
       data-ide-mode={ideModeActive ? '' : undefined}
-      style={
-        {
-          '--ds-sidebar-width': `${leftSidebarHidden ? 0 : sidebarWrapWidth}px`
-        } as CSSProperties
-      }
     >
+      <div
+        className="ds-workbench-chrome-fill"
+        aria-hidden="true"
+        style={{ left: leftSidebarHidden ? 0 : sidebarWrapWidth }}
+      />
       <div className="ds-window-drag-strip" aria-hidden />
       <SharedLinkReceiver />
       <BrowserAssistance visible={sharedConversationVisible} enabled={runtimeConnection === 'ready'} />

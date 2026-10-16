@@ -56,6 +56,15 @@ it.each(['sidebarResize', 'rightPanelResize'].flatMap(label => ['pointerup', 'po
     const handle = host.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
     expect(handle).toBeTruthy()
     const panel = host.querySelector<HTMLElement>(label === 'sidebarResize' ? '.ds-workbench-sidebar-wrap' : '.ds-workbench-right-panel')!
+    const diffSurface = host.querySelector<HTMLElement>('.ds-right-panel-surface')!
+    const diff = document.createElement('div')
+    diff.className = 'ds-diff-view'
+    diff.setAttribute('data-wrap', '')
+    diff.innerHTML = '<div><table class="ds-diff-table"><tbody><tr><td>code</td></tr></tbody></table></div>'
+    diffSurface.append(diff)
+    const table = diff.querySelector('table')!
+    Object.defineProperty(table, 'offsetWidth', { value: 600 })
+    Object.defineProperty(table.parentElement!, 'clientHeight', { value: 300 })
     const startWidth = parseFloat(panel.style.width)
     const pointer = async (type: string, delta: number) => {
       await act(async () => (type === 'pointerdown' ? handle : window).dispatchEvent(new PointerEvent(type, {
@@ -63,6 +72,8 @@ it.each(['sidebarResize', 'rightPanelResize'].flatMap(label => ['pointerup', 'po
       })))
     }
     await pointer('pointerdown', 0)
+    expect(table.style.width).toBe('600px')
+    expect(table.style.minWidth).toBe('600px')
     const frames = new Map<number, FrameRequestCallback>()
     let frameId = 0
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId })
@@ -76,6 +87,11 @@ it.each(['sidebarResize', 'rightPanelResize'].flatMap(label => ['pointerup', 'po
     expect(frames.size).toBe(1)
     await act(async () => { for (const callback of [...frames.values()]) callback(0) })
     expect(parseFloat(panel.style.width)).toBe(startWidth + 20)
+    const shell = host.querySelector<HTMLElement>('.ds-workbench-shell')!
+    expect(shell.style.getPropertyValue('--ds-sidebar-width')).toBe('')
+    if (label === 'sidebarResize') {
+      expect(host.querySelector<HTMLElement>('.ds-workbench-chrome-fill')!.style.left).toBe(`${startWidth + 20}px`)
+    }
     expect(render).not.toHaveBeenCalled()
     expect(save).not.toHaveBeenCalled()
     expect(observers).not.toHaveBeenCalled()
@@ -97,6 +113,9 @@ it.each(['sidebarResize', 'rightPanelResize'].flatMap(label => ['pointerup', 'po
     expect(parseFloat(panel.style.width)).toBe(startWidth + 30)
     expect(storage.get(label === 'sidebarResize' ? 'deepseekgui.layout.leftSidebarWidth' : 'deepseekgui.layout.rightInspectorWidth')).toBe(String(startWidth + 30))
     expect(frames.size).toBe(0)
+    expect(table.style.width).toBe('')
+    expect(table.style.minWidth).toBe('')
+    expect(table.style.maxWidth).toBe('')
     await pointer('pointermove', 100)
     expect(parseFloat(panel.style.width)).toBe(startWidth + 30)
   } finally {
@@ -129,6 +148,46 @@ it('preserves dismissed cards across opening and closing the right sidebar', asy
     expect(host.querySelector<HTMLElement>('.ds-operation-rail')!.style.display).toBe('')
   } finally {
     await act(async () => root.unmount())
+    useChatStore.setState(initial, true)
+  }
+})
+
+it('shares the scroll cooldown between Monaco and native scrolling without rerendering', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const initial = useChatStore.getState()
+  useChatStore.setState({ route: 'chat', workspaceRoot: '/repo', activeThreadId: null, blocks: [], threads: [], runtimeConnection: 'ready' })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const render = vi.fn()
+  try {
+    await act(async () => root.render(createElement(Profiler, { id: 'workbench', onRender: render }, createElement(Workbench))))
+    vi.useFakeTimers()
+    const shell = host.querySelector<HTMLElement>('.ds-workbench-shell')!
+    const editor = document.createElement('div')
+    shell.append(editor)
+    render.mockClear()
+    const add = vi.spyOn(shell.classList, 'add')
+    editor.dispatchEvent(new Event('ds-editor-scroll', { bubbles: true }))
+    expect(shell.classList.contains('is-scrolling')).toBe(true)
+    vi.advanceTimersByTime(100)
+    editor.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(100)
+    expect(shell.classList.contains('is-scrolling')).toBe(true)
+    expect(add).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(60)
+    expect(shell.classList.contains('is-scrolling')).toBe(false)
+    expect(render).not.toHaveBeenCalled()
+    editor.dispatchEvent(new Event('ds-editor-scroll', { bubbles: true }))
+    await act(async () => root.unmount())
+    expect(shell.classList.contains('is-scrolling')).toBe(false)
+    editor.dispatchEvent(new Event('ds-editor-scroll', { bubbles: true }))
+    expect(shell.classList.contains('is-scrolling')).toBe(false)
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
     useChatStore.setState(initial, true)
   }
 })

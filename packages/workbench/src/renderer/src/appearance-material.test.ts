@@ -161,18 +161,20 @@ describe('macOS translucent sidebar material', () => {
 
   it('keeps opaque gutters solid but lets the continuous material show through when enabled', () => {
     const chromeFillRule = stylesheet.match(
-      /:root\[data-platform='darwin'\] \.ds-workbench-shell::before \{(?<body>[^}]*)\}/
+      /:root\[data-platform='darwin'\] \.ds-workbench-chrome-fill \{(?<body>[^}]*)\}/
     )?.groups?.body
     expect(chromeFillRule).toContain('position: absolute;')
     expect(chromeFillRule).toContain('background: var(--app-chrome-fill);')
     expect(chromeFillRule).toContain('transition: left 300ms cubic-bezier(0.32, 0.72, 0, 1);')
-    expect(chromeFillRule).toContain('left: var(--ds-sidebar-width, 0px);')
+    expect(chromeFillRule).toContain('pointer-events: none;')
 
     const macWedgeRule = stylesheet.match(
       /:root\[data-platform='darwin'\] \.ds-workbench-sidebar-wrap::after \{(?<body>[^}]*)\}/
     )?.groups?.body
     expect(macWedgeRule).toContain('background: var(--app-corner-surface);')
-    expect(workbenchSource).toContain("'--ds-sidebar-width':")
+    expect(workbenchSource).toContain('className="ds-workbench-chrome-fill"')
+    expect(workbenchSource).toContain('style={{ left: leftSidebarHidden ? 0 : sidebarWrapWidth }}')
+    expect(workbenchSource).not.toContain("'--ds-sidebar-width':")
   })
 
   it('creates the macOS window over the native under-window material', () => {

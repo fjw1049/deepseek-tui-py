@@ -4,7 +4,8 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { WorkspaceEditorSurface } from './WorkspaceEditorSurface'
 import type { EditorTab } from '../../store/workspace-editor-store'
-const state = vi.hoisted(() => ({ pending: new Map<string, Promise<void>>(), options: {} as Record<string, unknown> }))
+import type { editor as MonacoEditor, IScrollEvent } from 'monaco-editor'
+const state = vi.hoisted(() => ({ pending: new Map<string, Promise<void>>(), options: {} as Record<string, unknown>, mount: undefined as ((editor: MonacoEditor.IStandaloneCodeEditor) => void) | undefined }))
 vi.mock('../../lib/monaco-editor-setup', () => ({
   ensureMonacoConfigured() {}, ensureWorkspaceMonacoThemes() {},
   workspaceMonacoTheme: () => 'ds-workspace-light',
@@ -14,8 +15,9 @@ vi.mock('../../lib/monaco-editor-setup', () => ({
 vi.mock('../../lib/workspace-monaco-models', () => ({ workspaceModelPath: (id: string) => id, prepareWorkspaceModel() {}, pruneClosedWorkspaceModels() {} }))
 vi.mock('../../lib/apply-editor-diff-highlights', () => ({ applyEditorDiffHighlights: () => () => {} }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-vi.mock('@monaco-editor/react', () => ({ default: (props: {path: string; defaultValue: string; options: Record<string, unknown>}) => {
+vi.mock('@monaco-editor/react', () => ({ default: (props: {path: string; defaultValue: string; options: Record<string, unknown>; onMount: typeof state.mount}) => {
   state.options = props.options
+  state.mount = props.onMount
   return createElement('div', { 'data-editor': props.path }, props.defaultValue)
 } }))
 const tab = (path: string, loading = false): EditorTab => ({ id: path, path, kind: 'text', content: path + ' code', savedContent: path + ' code', loading, error: null })
@@ -49,6 +51,37 @@ it('keeps the editor through reads and grammar loading, ignores late results, an
     await draw(tab('b.py'))
     expect(editor.textContent).toBe('b.py code')
     expect(state.options.readOnly).toBe(false)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})
+
+it('reports virtual position changes, ignores size-only notifications, and disposes the listener', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const activity = vi.fn()
+  host.addEventListener('ds-editor-scroll', activity)
+  let scroll: ((event: IScrollEvent) => void) | undefined
+  const dispose = vi.fn(() => { scroll = undefined })
+  const layout = vi.fn()
+  const editor = {
+    updateOptions() {}, layout, getModel: () => null,
+    onDidChangeCursorSelection: () => ({ dispose() {} }),
+    onDidScrollChange: (callback: typeof scroll) => { scroll = callback; return { dispose } }
+  } as unknown as MonacoEditor.IStandaloneCodeEditor
+  try {
+    await act(async () => root.render(createElement(WorkspaceEditorSurface, { paneId: 'primary', tab: tab('a.ts'), readOnly: true, onChange() {} })))
+    await act(async () => state.mount!(editor))
+    const initialLayouts = layout.mock.calls.length
+    await act(async () => scroll!({ scrollTopChanged: false, scrollLeftChanged: false } as IScrollEvent))
+    expect(activity).not.toHaveBeenCalled()
+    await act(async () => scroll!({ scrollTopChanged: true, scrollLeftChanged: false } as IScrollEvent))
+    await act(async () => scroll!({ scrollTopChanged: false, scrollLeftChanged: true } as IScrollEvent))
+    expect(activity).toHaveBeenCalledTimes(2)
+    expect(layout).toHaveBeenCalledTimes(initialLayouts)
+    await act(async () => root.unmount())
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(scroll).toBeUndefined()
   } finally { await act(async () => root.unmount()); host.remove() }
 })
 

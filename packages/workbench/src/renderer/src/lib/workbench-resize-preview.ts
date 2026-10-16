@@ -2,6 +2,7 @@ export type WorkbenchPanelWidths = { left: number; right: number; chatHidden: bo
 
 /** Cache the hosts once; pointer frames only write styles, never measure or render content. */
 export function createWorkbenchResizePreview(shell: HTMLElement, leftVisible: boolean, rightVisible: boolean) {
+  const chrome = shell.querySelector<HTMLElement>('.ds-workbench-chrome-fill')
   const sidebar = shell.querySelector<HTMLElement>('.ds-workbench-sidebar-wrap')
   const slide = sidebar?.querySelector<HTMLElement>('.ds-workbench-sidebar-slide')
   const right = shell.querySelector<HTMLElement>('.ds-workbench-right-panel')
@@ -9,7 +10,7 @@ export function createWorkbenchResizePreview(shell: HTMLElement, leftVisible: bo
   const chat = shell.querySelector<HTMLElement>('.ds-chat-column')
   return ({ left, right: width, chatHidden }: WorkbenchPanelWidths): void => {
     if (leftVisible) {
-      shell.style.setProperty('--ds-sidebar-width', `${left}px`)
+      if (chrome) chrome.style.left = `${left}px`
       if (sidebar) sidebar.style.width = `${left}px`
       if (slide) slide.style.width = `${left}px`
     }

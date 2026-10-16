@@ -1307,6 +1307,12 @@ samp {
   opacity: 0.8;
 }
 
+.ds-workspace-context-chip svg.ds-workspace-context-chip__closed-folder {
+  fill: #ffcc33;
+  color: #e99a08;
+  opacity: 1;
+}
+
 .ds-workspace-context-chip__chevron {
   width: 0.75rem;
   height: 0.75rem;
@@ -7363,12 +7369,16 @@ select:focus-visible,
   background: var(--app-shell-background);
 }
 
-:root[data-platform='darwin'] .ds-workbench-shell::before {
-  content: '';
+/* Keep drag updates on a leaf; an inherited shell variable invalidates content styles. */
+.ds-workbench-chrome-fill {
+  display: none;
+}
+
+:root[data-platform='darwin'] .ds-workbench-chrome-fill {
+  display: block;
   position: absolute;
   inset-block: 0;
   right: 0;
-  left: var(--ds-sidebar-width, 0px);
   pointer-events: none;
   background: var(--app-chrome-fill);
   transition: left 300ms cubic-bezier(0.32, 0.72, 0, 1);
@@ -7451,13 +7461,13 @@ select:focus-visible,
 }
 
 :root[data-platform='darwin']
-  .ds-workbench-shell:has(> .ds-workbench-sidebar-wrap.is-resizing)::before {
+  .ds-workbench-shell:has(> .ds-workbench-sidebar-wrap.is-resizing) > .ds-workbench-chrome-fill {
   transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ds-workbench-shell,
-  .ds-workbench-shell::before,
+  :root[data-platform='darwin'] .ds-workbench-chrome-fill,
   .ds-workbench-topbar__inner,
   .ds-right-panel-tabbar,
   .ds-workbench-sidebar-wrap,
@@ -8076,7 +8086,20 @@ select:focus-visible,
   background: var(--ds-bg-sidebar);
 }
 
-.ds-change-inspector__file-list-collapsed .ds-change-inspector__pane-header {
+/* Expanded diff chrome spans both columns; only the content resizes with the tree. */
+.ds-change-inspector__expanded-diff {
+  padding-top: 36px;
+}
+
+.ds-change-inspector__expanded-header .ds-change-inspector__pane-header {
+  padding-right: 40px;
+}
+
+.ds-change-inspector__expanded-diff > .ds-change-inspector__pane-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   padding-right: 40px;
 }
 

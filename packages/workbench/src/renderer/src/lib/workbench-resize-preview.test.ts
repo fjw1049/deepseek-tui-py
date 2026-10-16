@@ -4,7 +4,7 @@ import { createWorkbenchResizePreview } from './workbench-resize-preview'
 
 function hosts() {
   const shell = document.createElement('div')
-  shell.innerHTML = `<div class="ds-workbench-sidebar-wrap" style="width:272px"><div class="ds-workbench-sidebar-slide" style="width:272px"></div></div>
+  shell.innerHTML = `<div class="ds-workbench-chrome-fill" style="left:272px"></div><div class="ds-workbench-sidebar-wrap" style="width:272px"><div class="ds-workbench-sidebar-slide" style="width:272px"></div></div>
     <div class="ds-chat-column" aria-hidden="false"></div>
     <aside class="ds-workbench-right-panel" style="width:400px"><div class="ds-right-panel-surface" style="width:400px"></div></aside>`
   return {
@@ -25,7 +25,8 @@ it('previews both sidebar layers and the panel surface without querying or measu
   for (let delta = 0; delta <= 100; delta++) apply({ left: 272 + delta, right: 400 + delta, chatHidden: false })
   expect(sidebar.style.width).toBe('372px')
   expect(slide.style.width).toBe('372px')
-  expect(shell.style.getPropertyValue('--ds-sidebar-width')).toBe('372px')
+  expect(shell.style.getPropertyValue('--ds-sidebar-width')).toBe('')
+  expect(shell.firstElementChild!.getAttribute('style')).toContain('left: 372px')
   expect(right.style.width).toBe('500px')
   expect(surface.style.width).toBe('500px')
   expect(query).not.toHaveBeenCalled()

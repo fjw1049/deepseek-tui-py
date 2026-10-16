@@ -288,7 +288,13 @@ const PreparedWorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, 
         })
       }
       const sel = editor.onDidChangeCursorSelection(syncQuote)
-      const scroll = editor.onDidScrollChange(() => setQuoteUi(null))
+      const scroll = editor.onDidScrollChange((event) => {
+        setQuoteUi(null)
+        if (event.scrollTopChanged || event.scrollLeftChanged) {
+          // Monaco moves virtual lines without emitting a native scroll event.
+          hostRef.current?.dispatchEvent(new Event('ds-editor-scroll', { bubbles: true }))
+        }
+      })
       return () => {
         sel.dispose()
         scroll.dispose()

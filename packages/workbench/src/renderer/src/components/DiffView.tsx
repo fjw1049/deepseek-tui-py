@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { copyText } from '../lib/copy-text'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Copy, FileDiff, Loader2, WrapText } from 'lucide-react'
@@ -38,6 +39,7 @@ type Props = {
   fullFileUnavailable?: boolean
   /** Hide the file/stats header when a parent card already shows it. */
   showHeader?: boolean
+  headerContainer?: HTMLElement | null
   /** Keep the viewport pinned to the latest row (live file writes). */
   follow?: boolean
 }
@@ -332,6 +334,7 @@ export function DiffView({
   fullFilePending = false,
   fullFileUnavailable = false,
   showHeader = true,
+  headerContainer,
   follow = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
@@ -500,8 +503,8 @@ export function DiffView({
 
   if (!looksLikePatch) {
     return (
-      <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
-        {header}
+      <div className={shellClass} data-diff-path={fileLabel ?? undefined} data-wrap={wrapLines ? '' : undefined}>
+        {headerContainer && header ? createPortal(header, headerContainer) : header}
         {loadingStatus}
       {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
         <pre
@@ -516,8 +519,8 @@ export function DiffView({
   }
 
   return (
-    <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
-      {header}
+    <div className={shellClass} data-diff-path={fileLabel ?? undefined} data-wrap={wrapLines ? '' : undefined}>
+      {headerContainer && header ? createPortal(header, headerContainer) : header}
       {loadingStatus}
       {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
       {fullFileUnavailable ? <div role="status" className="shrink-0 px-2 py-1 text-[12.5px] text-ds-muted">
