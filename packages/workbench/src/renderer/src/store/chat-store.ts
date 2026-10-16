@@ -2460,7 +2460,9 @@ const store = create<ChatState>((set, get) => ({
       if (leaving.activeThreadId && leaving.activeThreadId !== id && leaving.queuedMessages.length > 0) {
         parkedQueues.set(leaving.activeThreadId, leaving.queuedMessages)
       }
-      const restoredQueue = parkedQueues.get(id) ?? []
+      const restoredQueue = leaving.activeThreadId === id
+        ? leaving.queuedMessages
+        : parkedQueues.get(id) ?? []
       parkedQueues.delete(id)
       set({
         watchTurnCompletion: nextWatch,

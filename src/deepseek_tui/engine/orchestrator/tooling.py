@@ -933,7 +933,7 @@ class ToolExecutionMixin:
         path_prompt = path_access_prompt(
             tool, args, self.tool_context, self.exec_policy.approval_policy
         )
-        one_shot_grants = []
+        execution_context = self.tool_context
         if path_prompt is not None:
             # Approving the paths approves this call: one prompt, not two.
             denied = await self._handle_approval_flow(
@@ -945,7 +945,7 @@ class ToolExecutionMixin:
             )
             if denied:
                 return ToolResult(success=False, content=path_prompt.denial_message())
-            one_shot_grants = path_prompt.grant(self.tool_context.path_grants)
+            execution_context = path_prompt.grant(self.tool_context)
             approval_request = None
         else:
             approval_request = approval_request_for_tool(
@@ -964,13 +964,9 @@ class ToolExecutionMixin:
             if denied:
                 return None
 
-        try:
-            self._check_human_intervention()
-            with self.handle.pause.tool_execution():
-                return await self.tool_registry.execute(tool_name, arguments, self.tool_context)
-        finally:
-            for grant in one_shot_grants:
-                self.tool_context.path_grants.remove(grant)
+        self._check_human_intervention()
+        with self.handle.pause.tool_execution():
+            return await self.tool_registry.execute(tool_name, arguments, execution_context)
 
     async def _handle_approval_flow(
         self,

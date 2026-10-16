@@ -135,7 +135,7 @@ async def test_real_repeated_agent_search_is_suggested_with_one_kept_capture(
                   observation_id=observation["observation_id"], **arguments)
 
     try:
-        for index, thread in enumerate(["t1", "t2", "t3"], 1):
+        for index, thread in enumerate(["t1", "t2", "t3", "t4"], 1):
             context = ToolContext(working_directory=tmp_path, metadata={
                 "browser_service": service, "runtime_thread_id": thread})
             await use(context, action="open", url=url)
@@ -143,9 +143,10 @@ async def test_real_repeated_agent_search_is_suggested_with_one_kept_capture(
             await act(context, "click", "Search")
             await service.end_agent_capture(thread, completed=True)
             assert service.runs[thread].recorder is None
-            assert bool(service.state(thread)["skill_suggestion"]) == (index == 3)
-        suggestion = service.state("t3")["skill_suggestion"]
-        assert suggestion["count"] == 3 and suggestion["site"] == "127.0.0.1"
+            assert bool(service.state(thread)["skill_suggestion"]) == (index >= 3)
+        assert service.state("t3")["skill_suggestion"] is None
+        suggestion = service.state("t4")["skill_suggestion"]
+        assert suggestion["count"] == 4 and suggestion["site"] == "127.0.0.1"
         kept = list((tmp_path / "artifacts").glob("*/flows/recordings/rec_*"))
         assert [path.name for path in kept] == [suggestion["recording_id"]]
         summary = await BrowserSkillTool().execute(
@@ -153,8 +154,19 @@ async def test_real_repeated_agent_search_is_suggested_with_one_kept_capture(
             context)
         assert [s["kind"] for s in json.loads(summary.content)["steps"]] == [
             "open", "fill", "click"]
-        service.suggestions.resolve("t3", accepted=True)
-        assert service.state("t3")["skill_suggestion"] is None
+        service.suggestions.resolve("t4", accepted=True)
+        assert service.state("t4")["skill_suggestion"] is None
     finally:
         await service.close_all()
         httpd.shutdown()
+
+
+def test_replacing_capture_removes_suggestions_that_reference_it(tmp_path):
+    store = SkillSuggestions(tmp_path / "index.json")
+    for index in range(1, 4):
+        store.observe(str(index), f"rec_{index}", SEARCH, "shop.example", set())
+    assert "3" in store.pending
+    discarded = store.observe("4", "rec_4", SEARCH, "shop.example", set())
+    assert ("3", "rec_3") in discarded
+    assert "3" not in store.pending
+    assert store.pending["4"]["recording_id"] == "rec_4"

@@ -1281,7 +1281,7 @@ class RuntimeThreadManager:
             recorded = checkpoint.post_signatures
             for raw in checkpoint.mutated:
                 path = _normalize_relative_path(raw)
-                if checkpoint.ownership_unproven(path):
+                if checkpoint.ownership_unproven(path) or path in checkpoint.uncertain:
                     latest[path] = "uncaptured"
                 elif not checkpoint.post_signatures_captured:
                     content_available = path in checkpoint.post_contents
@@ -4152,6 +4152,13 @@ class RuntimeThreadManager:
         if state is None:
             return False
         try:
+            # Engine idle precedes monitor cleanup (recordings, checkpoints, leases).
+            # Wait for that owner, rather than requeueing into a turn whose handoff
+            # has already finished. A genuinely running turn still owns delivery.
+            owner = self._thread_lease_owners.get(thread_id)
+            if (not state.handle.is_turn_active() and owner is not None
+                    and owner is not asyncio.current_task()):
+                await asyncio.shield(owner)
             await self.start_turn(
                 thread_id,
                 StartTurnRequest(
@@ -5585,11 +5592,7 @@ class RuntimeThreadManager:
             TurnMutationLedger,
             mutation_from_metadata,
         )
-        from deepseek_tui.workspace.shell_mutation_watch import (
-            ShellMutationSnapshot,
-            capture_shell_snapshot,
-            detect_shell_mutations,
-        )
+        from deepseek_tui.workspace.shell_mutation_watch import capture_shell_snapshot
 
         current_message_text = ""
         current_message_item_id: str | None = None
@@ -5602,8 +5605,6 @@ class RuntimeThreadManager:
         current_reasoning_text = ""
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
-        # tool_call_id -> pre-exec workspace snapshot (shell mutation detection)
-        shell_watch: dict[str, ShellMutationSnapshot] = {}
         seen_subagent_ids: set[str] = set()  # agents touched this turn (for reconcile)
         pending_turn_diffs: list[dict[str, Any]] = []
         mutation_ledger = TurnMutationLedger(turn_id, throttle_ms=150)
@@ -5646,6 +5647,8 @@ class RuntimeThreadManager:
                 ):
                     if m.status == "applied" and has_contents:
                         self.checkpoints.record_tool_write(turn_id, m.path, before, after)
+                    if m.status == "applied" and m.source == "shell_detected":
+                        self.checkpoints.record_out_of_band(turn_id, m.path, uncertain=True)
                     snap = (
                         mutation_ledger.commit(
                             m,
@@ -5668,29 +5671,13 @@ class RuntimeThreadManager:
                 )
 
         async def emit_shell_detected_mutations(
-            snapshot: ShellMutationSnapshot,
+            mutations: list[dict[str, Any]],
             *,
             tool_call_id: str,
             tool_name: str,
             tool_args: Any,
-            result_metadata: Any,
         ) -> None:
-            # Paths the tool result already reported (e.g. allowlisted shell
-            # writes) must not be double-reported by disk detection, and
-            # paths other sessions' active turns claimed are theirs.
-            skip = await self._paths_claimed_by_other_turns(turn_id, snapshot.workspace)
-            if isinstance(result_metadata, dict):
-                reported = result_metadata.get("mutation")
-                if isinstance(reported, dict) and isinstance(reported.get("path"), str):
-                    skip.add(reported["path"])
-                listed = result_metadata.get("mutations")
-                if isinstance(listed, list):
-                    for entry in listed:
-                        if isinstance(entry, dict) and isinstance(entry.get("path"), str):
-                            skip.add(entry["path"])
-            for mut in await detect_shell_mutations(
-                snapshot, skip_paths=skip, include_contents=True
-            ):
+            for mut in mutations:
                 public_mut = {
                     key: value for key, value in mut.items() if not key.startswith("_")
                 }
@@ -5720,13 +5707,6 @@ class RuntimeThreadManager:
                     thread_id, turn_id, sub_item_id, "item.started",
                     {"item": sub_item.model_dump(mode="json"), "tool": tool_ref},
                 )
-                # Sink first so the pre-image and post-image chain are recorded;
-                # then mark the path uncertain: an external editor may have
-                # written it while the command ran, so restore stays strict.
-                _mutation_sink(mut)
-                self.checkpoints.record_out_of_band(
-                    turn_id, public_mut["path"], uncertain=True
-                )
                 await flush_turn_diffs()
                 await self._emit_event(
                     thread_id, turn_id, sub_item_id, "item.completed",
@@ -5747,6 +5727,9 @@ class RuntimeThreadManager:
         except Exception:
             turn_workspace = None
         _engine.tool_context.on_file_mutation = _mutation_sink
+        _engine.tool_context.metadata["shell_mutation_skip_paths"] = functools.partial(
+            self._paths_claimed_by_other_turns, turn_id, turn_workspace
+        )
         mgr = _engine.tool_context.subagent_manager
         if mgr is not None:
             mgr.on_file_mutation = _mutation_sink
@@ -6273,26 +6256,11 @@ class RuntimeThreadManager:
                         },
                     },
                 )
-                # Shell commands can mutate files behind the tool layer
-                # (git apply / patch / heredocs / formatters): snapshot the
-                # workspace so the delta can be detected when the result arrives.
-                if (
-                    kind == TurnItemKind.COMMAND_EXECUTION
-                    and git_baseline is not None
-                    and git_baseline.is_git
-                ):
-                    try:
-                        shell_watch[tc.id] = await capture_shell_snapshot(
-                            git_baseline.workspace
-                        )
-                    except Exception:
-                        logger.debug("shell_watch_capture_failed", exc_info=True)
 
             elif isinstance(event, ToolResultEvent):
                 note_tool_result_timing(event.tool_call_id)
                 item_id = tool_items.pop(event.tool_call_id, None)
                 tool_args = tool_call_args.pop(event.tool_call_id, None)
-                shell_snapshot = shell_watch.pop(event.tool_call_id, None)
                 # Close legacy duplicate rows keyed by tool_call_id (older builds
                 # created these from UserInputRequiredEvent alongside item_*).
                 if (
@@ -6430,17 +6398,17 @@ class RuntimeThreadManager:
                         thread_id, turn_id, item_id, event_name,
                         {"item": item.model_dump(mode="json")},
                     )
-                    if shell_snapshot is not None:
+                    shell_mutations = (event.metadata or {}).get("shell_mutations")
+                    if isinstance(shell_mutations, list) and shell_mutations:
                         # Runs for failed commands too — a failing command can
                         # still mutate; guard-denied ones simply yield nothing.
                         # Detection must never break a turn.
                         try:
                             await emit_shell_detected_mutations(
-                                shell_snapshot,
+                                shell_mutations,
                                 tool_call_id=event.tool_call_id,
                                 tool_name=event.tool_name,
                                 tool_args=tool_args,
-                                result_metadata=event.metadata,
                             )
                         except Exception:
                             logger.debug("shell_watch_detect_failed", exc_info=True)

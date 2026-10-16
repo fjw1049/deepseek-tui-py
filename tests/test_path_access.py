@@ -182,7 +182,7 @@ def test_search_root_approval_grants_directory_tree(layout) -> None:
     )
     assert prompt is not None
     prompt.request.remembered = True
-    assert prompt.grant(ctx.path_grants) == []  # remembered: nothing to revoke
+    assert prompt.grant(ctx) is ctx  # remembered: shared with this session
     assert ctx.check_path(str(layout.notes), allow_read_roots=True).allowed
 
 
@@ -394,3 +394,33 @@ async def test_detached_auto_subagent_does_not_gain_outside_access(layout) -> No
     )
     assert out.startswith("Error:") and "approval" in out
     assert context.path_grants.grants == []
+
+
+def test_one_shot_grant_is_call_local_and_never_persisted(layout):
+    ctx = ToolContext(working_directory=layout.workspace)
+    saved = []
+    ctx.path_grants.on_change = saved.append
+    sibling = ToolContext(working_directory=layout.workspace, path_grants=ctx.path_grants)
+    prompt = path_access_prompt(ReadFileTool(), {"path": str(layout.notes)}, ctx, "on-request")
+    approved = prompt.grant(ctx)
+    assert approved.check_path(str(layout.notes), allow_read_roots=True).allowed
+    assert not sibling.check_path(str(layout.notes), allow_read_roots=True).allowed
+    assert ctx.path_grants.dump() == []
+    assert saved == []
+    reloaded = PathGrants()
+    reloaded.load(ctx.path_grants.dump())
+    assert not reloaded.allows(layout.notes, write=False)
+    assert approved.metadata is ctx.metadata
+    assert approved.file_reads is ctx.file_reads
+
+
+async def test_search_honors_exact_sensitive_grant_but_not_directory_grant(layout):
+    ctx = ToolContext(working_directory=layout.workspace)
+    ctx.path_grants.add(layout.outside, recursive=True)
+    tool = GrepFilesTool()
+    result = await tool.execute({"path": str(layout.outside), "pattern": "TOKEN"}, ctx)
+    assert "TOKEN=outside" not in result.content
+    ctx.path_grants.add(layout.outside_env)
+    for path in (layout.outside, layout.outside_env):
+        result = await tool.execute({"path": str(path), "pattern": "TOKEN", "output_mode": "content"}, ctx)
+        assert "TOKEN=outside" in result.content

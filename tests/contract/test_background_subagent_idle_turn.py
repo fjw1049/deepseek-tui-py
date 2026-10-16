@@ -83,8 +83,9 @@ def _agent_texts(manager, turn_id: str) -> list[str]:  # noqa: ANN001
     ]
 
 
+@pytest.mark.parametrize("during_cleanup", [False, True])
 async def test_idle_background_completion_runs_in_its_own_turn(
-    subagent_runtime_app: object,
+    subagent_runtime_app: object, monkeypatch, during_cleanup,
 ) -> None:
     manager = subagent_runtime_app.state.thread_manager  # type: ignore[attr-defined]
     client = _ReplyByPrompt()
@@ -92,6 +93,16 @@ async def test_idle_background_completion_runs_in_its_own_turn(
     thread = await manager.create_thread(CreateThreadRequest())
     await manager._ensure_engine_loaded(thread)  # noqa: SLF001
     engine = manager._active[thread.id].engine  # noqa: SLF001
+    release_cleanup = asyncio.Event()
+    if during_cleanup:
+        cleanup_started = asyncio.Event()
+        async def finish_capture(*args, **kwargs):
+            cleanup_started.set()
+            await release_cleanup.wait()
+        monkeypatch.setattr(manager.browser_service, "end_agent_capture", finish_capture)
+        await manager.start_turn(thread.id, StartTurnRequest(prompt="user question"))
+        await asyncio.wait_for(cleanup_started.wait(), 5)
+        await _until(lambda: not engine.handle.is_turn_active())
     try:
         # A background child finishes while the thread has no active turn.
         subagents = engine.tool_context.subagent_manager
@@ -112,6 +123,10 @@ async def test_idle_background_completion_runs_in_its_own_turn(
         engine._enqueue_subagent_completion(  # noqa: SLF001
             SubAgentCompletion(agent_id=child.id, payload="background done")
         )
+        if during_cleanup:
+            await asyncio.sleep(0.1)
+            assert "background reply" not in client.answered
+            release_cleanup.set()
         await _until(lambda: "background reply" in client.answered)
 
         def hidden_turns() -> list:  # noqa: ANN202
@@ -129,4 +144,41 @@ async def test_idle_background_completion_runs_in_its_own_turn(
         await _until(lambda: manager.store.load_turn(turn.id).status in _TERMINAL)
         assert _agent_texts(manager, turn.id) == ["user answer"]
     finally:
+        release_cleanup.set()
         await manager.aclose()
+
+
+async def test_internal_delivery_waits_for_previous_turn_cleanup(runtime_app, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from deepseek_tui.engine.handle import EngineHandle, PROCESS_BACKGROUND_DONE_KIND
+
+    manager = runtime_app.state.thread_manager
+    handle = EngineHandle()
+    state = SimpleNamespace(handle=handle, engine=SimpleNamespace(mode="agent"), active_turn=object())
+    manager._active["cleanup"] = state
+    release = asyncio.Event()
+
+    async def cleanup():
+        await release.wait()
+        state.active_turn = None
+
+    monitor = asyncio.create_task(cleanup())
+    manager._thread_lease_owners["cleanup"] = monitor
+    start = AsyncMock()
+    monkeypatch.setattr(manager, "start_turn", start)
+    delivery = asyncio.create_task(manager._start_internal_turn("cleanup", "done", PROCESS_BACKGROUND_DONE_KIND))
+    try:
+        await asyncio.sleep(0)
+        start.assert_not_awaited()
+        release.set()
+        assert await asyncio.wait_for(delivery, 2)
+        start.assert_awaited_once()
+    finally:
+        release.set()
+        await monitor
+        if not delivery.done():
+            delivery.cancel()
+        await asyncio.gather(delivery, return_exceptions=True)
+        manager._active.pop("cleanup", None)
+        manager._thread_lease_owners.pop("cleanup", None)

@@ -150,6 +150,48 @@ class ExecShellTool(ToolSpec):
         return [ToolCapability.EXECUTES_CODE, ToolCapability.SANDBOXABLE]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
+        from deepseek_tui.workspace.shell_mutation_watch import (
+            capture_shell_snapshot, detect_shell_mutations,
+        )
+
+        snapshot = None
+        if context.on_file_mutation is not None:
+            try:
+                snapshot = await capture_shell_snapshot(context.working_directory)
+            except Exception:
+                logger.debug("shell_watch_capture_failed", exc_info=True)
+        result = None
+        try:
+            result = await self._execute(input_data, context)
+            return result
+        finally:
+            # This runs before the result event, including on failed/cancelled commands.
+            # Disk deltas are evidence of change, never proof of who wrote it.
+            if snapshot is not None:
+                try:
+                    claimed_paths = context.metadata.get("shell_mutation_skip_paths")
+                    skip = await claimed_paths() if callable(claimed_paths) else set()
+                    if result is not None:
+                        reported = result.metadata.get("mutation")
+                        if isinstance(reported, dict) and isinstance(reported.get("path"), str):
+                            skip.add(reported["path"])
+                        for mutation in result.metadata.get("mutations", []):
+                            if isinstance(mutation, dict) and isinstance(mutation.get("path"), str):
+                                skip.add(mutation["path"])
+                    mutations = await detect_shell_mutations(
+                        snapshot, skip_paths=skip, include_contents=True
+                    )
+                    for mutation in mutations:
+                        context.report_file_mutation(mutation)
+                    if result is not None and mutations:
+                        result.metadata["shell_mutations"] = [
+                            {k: v for k, v in mutation.items() if not k.startswith("_")}
+                            for mutation in mutations
+                        ]
+                except Exception:
+                    logger.debug("shell_watch_detect_failed", exc_info=True)
+
+    async def _execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         if input_data.get("process_id") is not None:
             if input_data.get("command") is not None:
                 raise ToolError(

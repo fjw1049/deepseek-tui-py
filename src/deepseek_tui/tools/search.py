@@ -194,7 +194,7 @@ class GrepFilesTool(ToolSpec):
                 after=context_after if output_mode == "content" else 0,
                 head_limit=head_limit,
                 glob=glob_pattern,
-                authorize=_path_authorizer(denied),
+                authorize=_path_authorizer(context, denied),
             )
         except (ValueError, re.error) as exc:
             raise ToolError(f"invalid glob: {exc}") from exc
@@ -339,7 +339,7 @@ class FileSearchTool(ToolSpec):
         try:
             matches, skipped_ignored = await asyncio.to_thread(
                 _file_search, root, pattern, max_depth,
-                authorize=_path_authorizer(denied),
+                authorize=_path_authorizer(context, denied),
             )
         except (ValueError, re.error) as exc:
             raise ToolError(f"invalid glob: {exc}") from exc
@@ -422,12 +422,14 @@ def _walk_depth(dirpath: str, root: Path) -> int:
         return 0
 
 
-def _path_authorizer(denied: list[int]) -> Callable[[Path], bool]:
+def _path_authorizer(context: ToolContext, denied: list[int]) -> Callable[[Path], bool]:
     def allowed(path: Path) -> bool:
         try:
             # The search root was already resolved and authorized. os.walk
             # does not descend into symlink dirs; reject symlink files too.
-            if not path.is_symlink() and not is_sensitive_path(path):
+            if not path.is_symlink() and context.check_path(
+                str(path), allow_read_roots=True
+            ).allowed:
                 return True
         except (OSError, RuntimeError, ValueError, ToolError):
             pass
@@ -456,7 +458,7 @@ def _iter_files(
             if skipped_ignored is not None:
                 skipped_ignored[0] += 1
             return
-        if not is_sensitive_path(root) and (
+        if (authorize is not None or not is_sensitive_path(root)) and (
             glob is None or _path_matches_glob(root, root, glob)
         ):
             if skip_over_bytes is not None:
@@ -495,7 +497,7 @@ def _iter_files(
             path = current / name
             if authorize is not None and not authorize(path):
                 continue
-            if is_sensitive_path(path):
+            if authorize is None and is_sensitive_path(path):
                 continue
             if ignore.ignored(path, is_dir=False):
                 if skipped_ignored is not None:

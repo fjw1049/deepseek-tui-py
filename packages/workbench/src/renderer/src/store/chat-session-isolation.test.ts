@@ -294,3 +294,13 @@ it('sends a parked follow-up once its task has finished while away', async () =>
   await pane.store.getState().selectThread('a')
   await vi.waitFor(() => expect(provider.sendUserMessage).toHaveBeenCalledWith('a', 'follow up', expect.anything()))
 })
+
+
+it('preserves queued input when the current task is selected again', async () => {
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  await pane.store.getState().sendMessage('follow up', 'agent')
+  await pane.store.getState().selectThread('a')
+  expect(pane.store.getState().queuedMessages.map(m => m.text)).toEqual(['follow up'])
+  expect(provider.sendUserMessage).not.toHaveBeenCalled()
+})

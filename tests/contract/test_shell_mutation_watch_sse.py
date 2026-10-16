@@ -259,12 +259,17 @@ async def test_only_reported_writes_enter_turn_receipt_and_restore(
     assert (git_repo / "external.py").read_text() == "external creation\n"
 
 
+@pytest.mark.parametrize("real_shell", [False, True])
 @pytest.mark.asyncio
 async def test_shell_edit_emits_file_change_item(
+    real_shell: bool,
     runtime_app: object,
     git_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    (git_repo / "scratch").mkdir()
+    _git(git_repo, "mv", "tracked.py", "scratch/tracked.py")
+    _git(git_repo, "commit", "-m", "move fixture to shell allowlist")
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
     monkeypatch.setattr(
         manager, "_recover_missing_final_answer", AsyncMock(return_value=None)
@@ -293,48 +298,40 @@ async def test_shell_edit_emits_file_change_item(
     tool = ToolCall(
         id="tc_shell",
         name="exec_shell",
-        arguments={"command": "git apply /tmp/x.patch"},
+        arguments={"command": "printf 'v2\n' > scratch/tracked.py"},
     )
-    # handle.emit only queues — without this gate the pump could write the
-    # file before _monitor_turn takes its pre-exec snapshot. The first capture
-    # is the turn-start snapshot; the shell command's is the second one.
-    captured = asyncio.Event()
-    capture_calls = 0
-    real_capture = shell_mutation_watch.capture_shell_snapshot
+    from deepseek_tui.tools.shell import ExecShellTool
+    from deepseek_tui.tools.registry import ToolResult
 
-    async def _capture_spy(
-        workspace: Path,
-    ) -> shell_mutation_watch.ShellMutationSnapshot:
-        nonlocal capture_calls
-        try:
-            return await real_capture(workspace)
-        finally:
-            capture_calls += 1
-            if capture_calls >= 2:
-                captured.set()
+    ready = asyncio.get_running_loop().create_future()
 
-    monkeypatch.setattr(
-        shell_mutation_watch, "capture_shell_snapshot", _capture_spy
-    )
+    async def fast_command(self, input_data, context):
+        # No await: the edit can finish before the monitor consumes ToolCallEvent.
+        (git_repo / "scratch/tracked.py").write_text("v2\n", encoding="utf-8")
+        return ToolResult(success=True, content="patch applied ok")
+
+    if not real_shell:
+        monkeypatch.setattr(ExecShellTool, "_execute", fast_command)
 
     async def pump() -> None:
+        await ready
         await handle.emit(ToolCallEvent(tool_call=tool))
-        await asyncio.wait_for(captured.wait(), timeout=5)
-        # The shell command edits the file behind the tool layer.
-        (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
+        result = await ExecShellTool().execute(tool.arguments, stub_engine.tool_context)
+        assert result.success, result.content
         await handle.emit(
             ToolResultEvent(
                 tool_call_id="tc_shell",
                 tool_name="exec_shell",
-                content="patch applied ok",
-                success=True,
+                content=result.content,
+                success=result.success,
+                metadata=result.metadata,
             )
         )
         await handle.emit(TurnCompleteEvent(assistant_message=None))
 
     pump_task = asyncio.create_task(pump())
     try:
-        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent", ready)
     finally:
         await pump_task
         engine_task.cancel()
@@ -351,26 +348,33 @@ async def test_shell_edit_emits_file_change_item(
     assert len(completed) == 1
     mutation = completed[0].payload["item"]["metadata"]["mutation"]
     assert mutation["source"] == "shell_detected"
-    assert mutation["path"] == "tracked.py"
+    assert mutation["path"] == "scratch/tracked.py"
     assert "+v2" in mutation["unified_diff"]
     final_diffs = [
         e.payload for e in events
         if e.event == "turn.diff.updated" and e.payload.get("complete")
     ]
-    assert [f["path"] for f in final_diffs[0]["files"]] == ["tracked.py"]
+    assert [f["path"] for f in final_diffs[0]["files"]] == ["scratch/tracked.py"]
 
     checkpoint = manager.checkpoints.load(turn_id)
-    assert checkpoint.mutated == ["tracked.py"]
-    assert checkpoint.uncertain == ["tracked.py"]
-    # A later edit is never merged into a shell-detected path...
-    (git_repo / "tracked.py").write_text("v2\nlater edit\n", encoding="utf-8")
+    assert checkpoint.mutated == ["scratch/tracked.py"]
+    assert checkpoint.uncertain == ["scratch/tracked.py"]
+    # An unchanged post-image does not prove that the command wrote it.
+    # The same disk delta could be a user saving while a read-only command runs.
     report = await manager.checkpoints.restore([turn_id], git_repo)
-    assert report.conflicted == ["tracked.py"]
-    assert (git_repo / "tracked.py").read_text() == "v2\nlater edit\n"
+    assert report.conflicted == ["scratch/tracked.py"]
+    assert (git_repo / "scratch/tracked.py").read_text() == "v2\n"
+    drifted, _ = await manager._checkpoint_post_state(git_repo, [checkpoint])
+    assert drifted == ["scratch/tracked.py"]
+    # A later edit is never merged into a shell-detected path...
+    (git_repo / "scratch/tracked.py").write_text("v2\nlater edit\n", encoding="utf-8")
+    report = await manager.checkpoints.restore([turn_id], git_repo)
+    assert report.conflicted == ["scratch/tracked.py"]
+    assert (git_repo / "scratch/tracked.py").read_text() == "v2\nlater edit\n"
     # ...but the user can confirm the overwrite.
     report = await manager.checkpoints.restore([turn_id], git_repo, force=True)
-    assert report.restored == ["tracked.py"]
-    assert (git_repo / "tracked.py").read_text() == "v1\n"
+    assert report.restored == ["scratch/tracked.py"]
+    assert (git_repo / "scratch/tracked.py").read_text() == "v1\n"
 
 
 @pytest.mark.asyncio
@@ -385,3 +389,36 @@ async def test_publish_does_not_claim_interleaved_external_write(runtime_app, gi
     checkpoint = store.load("turn_publish_ownership")
     drifted, _ = await manager._checkpoint_post_state(git_repo, [checkpoint])
     assert drifted == ["tracked.py"]
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+async def test_shell_captures_edits_before_failure_or_cancellation(git_repo, monkeypatch, failure):
+    from deepseek_tui.tools.shell import ExecShellTool
+
+    changes = []
+    context = ToolContext(working_directory=git_repo, on_file_mutation=changes.append)
+    async def command(self, input_data, ctx):
+        (git_repo / "tracked.py").write_text("changed before failure\n")
+        raise failure()
+    monkeypatch.setattr(ExecShellTool, "_execute", command)
+    with pytest.raises(failure):
+        await ExecShellTool().execute({"command": "patch"}, context)
+    assert len(changes) == 1
+    assert changes[0]["_before_content"] == "v1\n"
+    assert changes[0]["_after_content"] == "changed before failure\n"
+
+
+async def test_shell_does_not_claim_another_active_turns_files(git_repo, monkeypatch):
+    from deepseek_tui.tools.shell import ExecShellTool
+    from deepseek_tui.tools.registry import ToolResult
+
+    changes = []
+    context = ToolContext(working_directory=git_repo, on_file_mutation=changes.append)
+    context.metadata["shell_mutation_skip_paths"] = AsyncMock(return_value={"tracked.py"})
+    async def command(self, input_data, ctx):
+        (git_repo / "tracked.py").write_text("other turn's edit\n")
+        return ToolResult(success=True, content="done")
+    monkeypatch.setattr(ExecShellTool, "_execute", command)
+    result = await ExecShellTool().execute({"command": "sleep 1"}, context)
+    assert changes == []
+    assert not result.metadata.get("shell_mutations")

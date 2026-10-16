@@ -79,6 +79,10 @@ class SkillSuggestions:
             if patterns[old].get("recording"):
                 discard.append(tuple(patterns[old]["recording"]))
             del patterns[old]
+        for owner, recording in discard:
+            pending = self.pending.get(owner)
+            if pending and pending["recording_id"] == recording:
+                del self.pending[owner]
         self._save()
         if (entry.get("recording") and entry["count"] >= THRESHOLD and site not in covered
                 and self.enabled):

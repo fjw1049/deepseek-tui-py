@@ -29,7 +29,7 @@ from deepseek_tui.tools.registry import ApprovalRequirement, ToolCapability, Too
 
 if TYPE_CHECKING:
     from deepseek_tui.config.models import Config
-    from deepseek_tui.tools.path_access import PathAccess, PathGrant, PathGrants
+    from deepseek_tui.tools.path_access import PathAccess
     from deepseek_tui.tools.registry import ToolContext
     from deepseek_tui.engine.events import ElevationRequiredEvent
 
@@ -563,13 +563,26 @@ class PathAccessPrompt:
             "around it (e.g. with shell); ask the user to @-mention the path if needed."
         )
 
-    def grant(self, grants: PathGrants) -> list[PathGrant]:
-        """Record the approval. Returns grants to revoke after a one-shot call."""
-        added = [
-            grants.add(a.path, recursive=a.path.is_dir() and not a.sensitive, write=a.write)
-            for a in self.accesses
-        ]
-        return [] if self.request.remembered else added
+    def grant(self, context: ToolContext) -> ToolContext:
+        """Session grants are shared; one-shot grants belong only to this call."""
+        from dataclasses import replace
+
+        from deepseek_tui.tools.path_access import PathGrants
+
+        if not self.request.remembered:
+            context = replace(
+                context,
+                path_grants=PathGrants(
+                    grants=list(context.path_grants.grants),
+                    turn_id=context.path_grants.turn_id,
+                ),
+            )
+        for access in self.accesses:
+            context.path_grants.add(
+                access.path, recursive=access.path.is_dir() and not access.sensitive,
+                write=access.write,
+            )
+        return context
 
 
 def path_access_prompt(

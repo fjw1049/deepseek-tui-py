@@ -260,14 +260,14 @@ async def _execute_subagent_tool(
         pause_generation is not None and pause.generation != pause_generation
     )):
         return "Error: Not executed: human intervention invalidated this operation."
-    one_shot_grants = (
-        path_prompt.grant(context.path_grants)  # type: ignore[union-attr]
+    execution_context = (
+        path_prompt.grant(context)  # type: ignore[union-attr]
         if path_approved and path_prompt is not None
-        else []
+        else context
     )
     try:
         with pause.tool_execution() if pause is not None else nullcontext():
-            result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
+            result = await registry.execute(tool_name, tool_input, execution_context)  # type: ignore[arg-type]
         if hook_executor:
             from dataclasses import replace
 
@@ -302,9 +302,6 @@ async def _execute_subagent_tool(
         return f"Error: {exc}"
     except Exception as exc:  # noqa: BLE001
         return f"Error: {exc}"
-    finally:
-        for grant in one_shot_grants:
-            context.path_grants.remove(grant)  # type: ignore[union-attr]
 
 
 def _structured_output_contract() -> str:

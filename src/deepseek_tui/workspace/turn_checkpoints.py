@@ -30,10 +30,10 @@ turn left behind (the post-image):
   overrides and writes the pre-image anyway).
 
 Detected interleaved writes are always conflicts, even with force enabled.
-On ``tool_writes_only`` checkpoints a path needs ownership evidence: a tool
-write (``tool_post_contents``) or shell detection (``uncertain``). Uncertain
-paths are never merged: they restore only on an exact post-image match, and
-otherwise conflict unless forced.
+On ``tool_writes_only`` checkpoints a path needs a recorded tool write
+(``tool_post_contents``) or shell-detected delta (``uncertain``). Uncertain
+paths are never merged or automatically restored: a matching disk image
+cannot establish ownership. Restoring them requires explicit force.
 
 Checkpoints written before ownership tracking existed (no
 ``tool_writes_only`` field) keep the earlier restore rules.
@@ -432,7 +432,7 @@ class TurnCheckpointStore:
 
         ``uncertain=True`` marks paths attributed by disk detection (an
         external editor may have written them meanwhile), so restore never
-        merges them and requires an exact post-image match unless forced.
+        merges or restores them without explicit force, even on a post-image match.
         It also applies to paths a tool already wrote earlier in the turn.
         """
         norm = _normalize_relative_path(path)
@@ -1348,6 +1348,11 @@ class TurnCheckpointStore:
                         restoring=False,
                     )
                     state.status = STATUS_RESTORED
+                    continue
+                if uncertain and not force:
+                    # A disk delta may be the user's save during a read-only command.
+                    state.status = STATUS_CONFLICTED
+                    state.done = True
                     continue
                 post_matches = post is not _MISSING and current == post
                 if post_matches and mode_aware and (uncertain or mode_changed):

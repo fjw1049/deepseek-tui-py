@@ -1272,11 +1272,11 @@ def _shell_detected_turn(tmp_path: Path) -> tuple[TurnCheckpointStore, Path]:
 
 
 @pytest.mark.asyncio
-async def test_shell_detected_write_restores_on_exact_post_image(tmp_path):
+async def test_shell_detected_write_requires_confirmation_even_on_exact_post_image(tmp_path):
     store, path = _shell_detected_turn(tmp_path)
     report = await store.restore(["turn"], path.parent)
-    assert report.restored == ["file.txt"]
-    assert path.read_text() == "original\n"
+    assert report.conflicted == ["file.txt"]
+    assert path.read_text() == "shell output\n"
 
 
 @pytest.mark.asyncio
@@ -1312,6 +1312,9 @@ async def test_shell_rewrite_of_tool_written_file_keeps_ownership(tmp_path):
     assert checkpoint.ownership_conflicts == []
     assert checkpoint.uncertain == ["file.py"]
     report = await store.restore(["turn"], ws)
+    assert report.conflicted == ["file.py"]
+    assert path.read_text() == "v2\n"
+    report = await store.restore(["turn"], ws, force=True)
     assert report.restored == ["file.py"]
     assert path.read_text() == "v1\n"
 
