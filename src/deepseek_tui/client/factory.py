@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from deepseek_tui.client.anthropic import AnthropicCompatClient
 from deepseek_tui.client.deepseek import DeepSeekClient
+from deepseek_tui.client.reasoning import is_deepseek_reasoning_model
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
@@ -118,9 +119,11 @@ def _infer_thinking_supported(base_url: str, model: str) -> bool:
     it just won't receive explicit reasoning control).
     """
     model_lower = model.lower()
-    # DeepSeek v4 models require these fields for reasoning control,
+    # DeepSeek v4+ models require these fields for reasoning control,
     # regardless of which host serves them.
     if "v4-pro" in model_lower or "v4-flash" in model_lower:
+        return True
+    if is_deepseek_reasoning_model(model_lower):
         return True
     # DeepSeek's own endpoint — all reasoning models accept these fields.
     if "deepseek" in base_url.lower() and "deepseek" in model_lower:

@@ -15,6 +15,7 @@ from httpx_sse import aconnect_sse
 from deepseek_tui.tools.encoding import to_api_tool_name
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.chat_messages import build_chat_messages
+from deepseek_tui.client.reasoning import openai_reasoning_fields, sent_reasoning_fields
 from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import OpenAIStreamParser
 from deepseek_tui.media import media_variant_scope
@@ -135,11 +136,14 @@ class DeepSeekClient(LLMClient):
         url = self._chat_completions_url()
         body_bytes = len(json.dumps(payload).encode())
         logger.info(
-            "http_request method=POST url=%s model=%s msg_count=%d body_bytes=%d",
+            "http_request method=POST url=%s model=%s msg_count=%d body_bytes=%d "
+            "reasoning_effort=%s reasoning_sent=%s",
             url,
             request.model,
             len(payload.get("messages", [])),
             body_bytes,
+            request.reasoning_effort,
+            sent_reasoning_fields(payload),
         )
         request_started = time.monotonic()
         async for sse_event in self._stream_with_pre_retry(
@@ -317,19 +321,19 @@ class DeepSeekClient(LLMClient):
         # Gate on the ``thinking_supported`` capability flag set at
         # construction time by the client factory. This correctly handles
         # DeepSeek models served via third-party hosts (e.g. OpenRouter)
-        # where base_url no longer contains "deepseek".
-        if (
-            request.reasoning_effort is not None
-            and request.reasoning_effort != "off"
-            and (
+        # where base_url no longer contains "deepseek". Other vendors get
+        # their own fields from ``openai_reasoning_fields``.
+        tier, fields = openai_reasoning_fields(
+            request.model,
+            request.reasoning_effort,
+            deepseek=(
                 _infer_thinking_supported(self.base_url, request.model)
                 if self.dynamic_thinking
                 else self.thinking_supported
-            )
-            and not _is_forced_tool_choice(payload.get("tool_choice"))
-        ):
-            payload["reasoning_effort"] = request.reasoning_effort
-            payload["thinking"] = {"type": "enabled"}
+            ),
+        )
+        if tier == "off" or not _is_forced_tool_choice(payload.get("tool_choice")):
+            payload.update(fields)
         payload.update(sanitize_extra_body(request.extra_body))
         return payload
 

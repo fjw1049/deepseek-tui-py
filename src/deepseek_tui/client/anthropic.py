@@ -14,6 +14,7 @@ from httpx_sse import aconnect_sse
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
+from deepseek_tui.client.reasoning import anthropic_reasoning_fields, sent_reasoning_fields
 from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import AnthropicStreamParser
 from deepseek_tui.media import media_variant_scope
@@ -110,6 +111,13 @@ class AnthropicCompatClient(LLMClient):
         payload = await asyncio.to_thread(self._build_payload, request)
         url = self._messages_url()
         client = self._get_http_client()
+        logger.info(
+            "http_request method=POST url=%s model=%s reasoning_effort=%s reasoning_sent=%s",
+            url,
+            request.model,
+            request.reasoning_effort,
+            sent_reasoning_fields(payload),
+        )
         started = time.monotonic()
 
         async with aconnect_sse(
@@ -192,8 +200,24 @@ class AnthropicCompatClient(LLMClient):
         if request.top_p is not None:
             payload["top_p"] = request.top_p
         payload.update(sanitize_extra_body(request.extra_body))
-        if request.reasoning_effort == "off":
-            payload["thinking"] = {"type": "disabled"}
+        tier, fields = anthropic_reasoning_fields(
+            request.model, request.reasoning_effort, payload["max_tokens"]
+        )
+        # Explicit off always wins. Other fields defer to configured
+        # extra_body; enabling thinking is also skipped where Anthropic-format
+        # endpoints reject it: forced tool calls and custom sampling.
+        if tier == "off" or (
+            not fields.keys() & payload.keys()
+            and (
+                "thinking" not in fields
+                or (
+                    payload.get("tool_choice", {}).get("type") not in {"any", "tool"}
+                    and request.temperature is None
+                    and request.top_p is None
+                )
+            )
+        ):
+            payload.update(fields)
         return payload
 
     def cache_fingerprint_units(

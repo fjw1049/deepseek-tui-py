@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from deepseek_tui.tools.encoding import to_api_tool_name
 from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
+from deepseek_tui.client.reasoning import is_deepseek_reasoning_model
 from deepseek_tui.config.providers import normalize_model
 from deepseek_tui.protocol.messages import (
     ImageBlock,
@@ -225,12 +227,24 @@ def _should_include_reasoning(model: str, reasoning_effort: str | None) -> bool:
     DeepSeek model whose name contains one of the reasoning markers gets
     its reasoning blocks replayed back into the request, which avoids the
     400 error DeepSeek returns when an assistant turn carries tool_calls
-    but no reasoning_content.
+    but no reasoning_content. Kimi K2.5+ thinking needs the same; Kimi
+    models that always reason (K3+, ``*-code``, ``*-thinking``) replay even
+    when the caller asked for off.
     """
+    normalized = normalize_model(model).lower()
+    kimi = re.search(r"kimi-k(\d+)(?:\.(\d+))?", normalized)
+    kimi_version = (int(kimi[1]), int(kimi[2] or 0)) if kimi else None
+    if kimi_version is not None and (
+        kimi_version >= (3, 0) or "code" in normalized or "thinking" in normalized
+    ):
+        return True
     if reasoning_effort is not None:
         if reasoning_effort.strip().lower() in {"off", "disabled", "none", "false"}:
             return False
-    normalized = normalize_model(model).lower()
+    if kimi_version is not None:
+        return kimi_version >= (2, 5)
+    if is_deepseek_reasoning_model(normalized):
+        return True
     if "deepseek" not in normalized:
         return False
     markers = (
