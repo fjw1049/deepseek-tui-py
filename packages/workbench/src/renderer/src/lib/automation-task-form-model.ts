@@ -61,7 +61,8 @@ export function buildAutomationSchedulePayload(
 
   if (schedule.kind === 'hourly') {
     const interval = Number(schedule.everyHours)
-    if (!Number.isInteger(interval) || interval < 1 || interval > 23)
+    // `*/N` restarts at midnight, so only divisors of 24 give even gaps.
+    if (!Number.isInteger(interval) || interval < 1 || interval > 12 || 24 % interval !== 0)
       throw new Error('interval_invalid')
     return { schedule: interval === 1 ? '0 * * * *' : `0 */${interval} * * *` }
   }

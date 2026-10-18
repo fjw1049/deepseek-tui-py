@@ -210,15 +210,18 @@ def _imap_fetch_sync(
         client = imaplib.IMAP4(host, port, timeout=20)
     try:
         client.login(user, password)
-        client.select(mailbox)
-        since = start_utc.strftime("%d-%b-%Y")
-        before = end_utc.strftime("%d-%b-%Y")
+        # Read-only: building a digest must not mark the user's mail as read.
+        client.select(mailbox, readonly=True)
+        # IMAP dates ignore time and zone, and BEFORE is exclusive. Pad a day
+        # on each side; the Date filter below trims to the exact window.
+        since = (start_utc - timedelta(days=1)).strftime("%d-%b-%Y")
+        before = (end_utc + timedelta(days=1)).strftime("%d-%b-%Y")
         status, data = client.search(None, f'(SINCE "{since}" BEFORE "{before}")')
         if status != "OK" or not data or not data[0]:
             return []
         out: list[InboxMessage] = []
         for num in data[0].split():
-            st, fetched = client.fetch(num, "(RFC822)")
+            st, fetched = client.fetch(num, "(BODY.PEEK[])")
             if st != "OK" or not fetched:
                 continue
             raw = fetched[0][1]

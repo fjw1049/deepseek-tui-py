@@ -35,3 +35,12 @@ async def test_reloading_rejects_ambiguous_task_prefix(tmp_path) -> None:
     manager._tasks.clear()
     with pytest.raises(KeyError, match="Ambiguous"):
         await manager.get_task("task_")
+
+
+@pytest.mark.asyncio
+async def test_exact_id_lookup_of_evicted_task_skips_catalog_scan(tmp_path, monkeypatch) -> None:
+    manager = TaskManager(TaskManagerConfig(data_dir=tmp_path / "data", default_workspace=tmp_path))
+    task = await manager.add_task(NewTaskRequest(prompt="first"))
+    manager._tasks.clear()  # evicted: the record only lives on disk
+    monkeypatch.setattr(manager, "_catalog", lambda: pytest.fail("full catalog scan"))
+    assert (await manager.get_task(task.id)).id == task.id

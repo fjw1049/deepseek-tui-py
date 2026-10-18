@@ -294,6 +294,14 @@ class TaskManager:
         async with self._lock:
             if id_or_prefix in self._tasks:
                 return self._tasks[id_or_prefix]
+            # Exact ids skip the full catalog scan: automation reconcile polls
+            # evicted tasks every tick, and parsing every record each time
+            # stalls the event loop as history grows.
+            if (self._tasks_dir / f"{id_or_prefix}.json").is_file():
+                task = self._reload_task_from_disk(id_or_prefix)
+                if task is not None:
+                    self._evict_terminal_tasks_locked()
+                    return task
             task_id = _resolve_task_id(self._catalog(), id_or_prefix)
             if task_id not in self._tasks:
                 task = self._reload_task_from_disk(task_id)

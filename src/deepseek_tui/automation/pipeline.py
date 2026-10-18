@@ -301,6 +301,16 @@ async def try_write_run_result(
             status=run.status.value,
             summary=summary,
         )
+    except FileNotFoundError:
+        # The chat was deleted, so retrying every tick can never succeed.
+        # Discussing the run later opens a fresh chat instead.
+        logger.info(
+            "automation_result_thread_gone run=%s thread=%s",
+            run.id,
+            run.conversation_thread_id,
+        )
+        run.conversation_thread_id = None
+        return True
     except Exception:
         # A busy chat or failed write is retried on the next reconcile tick.
         logger.debug("automation_result_write_pending run=%s", run.id, exc_info=True)
@@ -413,6 +423,7 @@ async def try_deliver_completed_run(
                 return True
             # Out of retries: stop re-hammering the channel and record why.
             run.delivery_done = True
+            run.delivery_error = str(exc) or type(exc).__name__
             run.error = (
                 f"delivery failed after {run.delivery_attempts} attempts: {exc}"
             )
@@ -423,7 +434,8 @@ async def try_deliver_completed_run(
                 run.delivery_attempts,
             )
             return True
-        # best_effort: one shot, mark done regardless.
+        # best_effort: one shot, mark done regardless — but not as sent.
+        run.delivery_error = str(exc) or type(exc).__name__
     run.delivery_done = True
     return True
 
@@ -530,6 +542,9 @@ async def fire_http_trigger(
     if decision.action is not TRIAGE_RUN:
         return {"status": "deferred", "reason": decision.reason or "not runnable"}
 
+    # Reject a bad delivery mode before enqueueing, or the caller sees an
+    # error for a task that is already running (and retries into a duplicate).
+    delivery_cfg = DeliveryConfig.from_mapping(delivery)
     trigger_id = uuid.uuid4().hex[:12]
     final_prompt = await build_trigger_prompt(
         prompt=prompt,
@@ -565,7 +580,7 @@ async def fire_http_trigger(
         "trigger_id": trigger_id,
         "task_id": task.id,
     }
-    if delivery and DeliveryConfig.from_mapping(delivery).is_active():
+    if delivery and delivery_cfg.is_active():
         outcome["delivery"] = "scheduled"
         if automation_manager is not None:
             # Persist the run so reconcile (not a one-shot poller) owns

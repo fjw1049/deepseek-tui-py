@@ -602,6 +602,9 @@ CURRENT_RUN_SCHEMA_VERSION = 1
 # replayed one-per-tick.
 MISFIRE_GRACE_SECS = 30 * 60
 
+# Run history kept per automation (the Workbench shows at most 50).
+MAX_RUNS_PER_AUTOMATION = 100
+
 # Reserved automation-id under runs/ for one-shot HTTP-trigger runs. These
 # runs have no user-visible AutomationRecord; reconcile walks their runs dir
 # through a synthesized shadow record so they get status propagation and
@@ -841,6 +844,8 @@ class AutomationRunRecord:
     error: str | None = None
     delivery_done: bool = False
     delivery_attempts: int = 0
+    # Why delivery gave up; a done-but-failed send must not read as sent.
+    delivery_error: str | None = None
     conversation_thread_id: str | None = None
     conversation_written: bool = False
     # Per-run delivery config (HTTP-trigger runs carry their request's
@@ -864,6 +869,7 @@ class AutomationRunRecord:
             "error": self.error,
             "delivery_done": self.delivery_done,
             "delivery_attempts": self.delivery_attempts,
+            "delivery_error": self.delivery_error,
             "conversation_thread_id": self.conversation_thread_id,
             "conversation_written": self.conversation_written,
             "delivery": self.delivery,
@@ -892,6 +898,7 @@ class AutomationRunRecord:
             error=raw.get("error"),
             delivery_done=bool(raw.get("delivery_done", False)),
             delivery_attempts=int(raw.get("delivery_attempts", 0)),
+            delivery_error=_opt_str_value(raw.get("delivery_error")),
             conversation_thread_id=_opt_str_value(raw.get("conversation_thread_id")),
             conversation_written=bool(raw.get("conversation_written", False)),
             delivery=raw.get("delivery") or None,
@@ -1025,7 +1032,11 @@ class AutomationManager:
         # types. ``None`` on the scheduler path means notify falls back to a
         # log line only (which is the pre-fix behaviour).
         self.thread_manager: Any = None
+        # Two loops, two locks, so due jobs never wait behind remote
+        # delivery: ``_scheduler_lock`` serializes run-state writes
+        # (reconcile, discussion), ``_tick_lock`` serializes firing.
         self._scheduler_lock = asyncio.Lock()
+        self._tick_lock = asyncio.Lock()
 
     @classmethod
     def open(cls, root: Path) -> AutomationManager:
@@ -1187,6 +1198,14 @@ class AutomationManager:
             existing.next_run_at = _normalize_run_at(req.run_at, existing.timezone)
         if req.cwds is not None:
             existing.cwds = [str(Path(p).expanduser().resolve()) for p in (req.cwds or [str(Path.cwd())])]
+        if (
+            req.status is None
+            and existing.status is AutomationStatus.COMPLETED
+            and (req.schedule is not None or req.run_at is not None)
+        ):
+            # A finished one-shot given a new time is live again; otherwise
+            # the edit saves but the job can never fire.
+            existing.status = AutomationStatus.ACTIVE
         if req.status is not None:
             if req.status is AutomationStatus.ACTIVE:
                 # Guard against resurrecting an exhausted one-shot into a
@@ -1269,6 +1288,17 @@ class AutomationManager:
         self._runs_dir_for(run.automation_id).mkdir(parents=True, exist_ok=True)
         write_json_atomic(self._run_path(run.automation_id, run.id), run.to_dict())
 
+    def prune_runs(self, automation_id: str) -> None:
+        """Keep the newest :data:`MAX_RUNS_PER_AUTOMATION` runs.
+
+        Reconcile walks every run each tick, so history must stay bounded.
+        In-flight runs are never dropped.
+        """
+        for run in self.list_runs(automation_id)[MAX_RUNS_PER_AUTOMATION:]:
+            if run.status in (AutomationRunStatus.QUEUED, AutomationRunStatus.RUNNING):
+                continue
+            self._run_path(automation_id, run.id).unlink(missing_ok=True)
+
     async def _enqueue_run_task(
         self,
         automation: AutomationRecord,
@@ -1316,21 +1346,9 @@ class AutomationManager:
             current = self.get_automation(automation.id)
         except KeyError:
             return run
+        # A failed enqueue is delivered by reconcile, like scheduled runs.
         self.save_run(run)
-        if run.status is AutomationRunStatus.FAILED:
-            from deepseek_tui.automation.pipeline import try_deliver_completed_run
-
-            if await try_deliver_completed_run(
-                automation, run, task_manager,
-                thread_manager=self.thread_manager,
-            ):
-                if self._automation_path(automation.id).exists():
-                    self.save_run(run)
-
-        try:
-            current = self.get_automation(automation.id)
-        except KeyError:
-            return run
+        self.prune_runs(automation.id)
         current.updated_at = _utc_now_iso()
         if run.status in (
             AutomationRunStatus.COMPLETED,
@@ -1344,7 +1362,7 @@ class AutomationManager:
     # ── scheduler ──
 
     async def scheduler_tick(self, task_manager: TaskManager) -> None:
-        async with self._scheduler_lock:
+        async with self._tick_lock:
             await self._scheduler_tick(task_manager)
 
     async def _scheduler_tick(self, task_manager: TaskManager) -> None:
@@ -1362,96 +1380,102 @@ class AutomationManager:
         """
         now = _utc_now()
 
-        for automation in self.list_automations():
-            if automation.status is not AutomationStatus.ACTIVE:
-                continue
-
-            if automation.next_run_at is None:
-                if automation.schedule is None:
-                    continue  # one-shot with nothing left to do
-                automation.next_run_at = _next_run_after_now(automation)
-                automation.updated_at = now.isoformat()
-                self.save_automation(automation)
-                continue
-
-            due_at = _parse_iso(automation.next_run_at)
-            if due_at > now:
-                continue
-
-            # Re-arm from *now*, never from the missed slot — otherwise a
-            # backlog fires one slot per tick. One-shots have no next slot.
-            upcoming = (
-                None
-                if automation.schedule is None
-                else AutomationSchedule.parse(
-                    automation.schedule, automation.timezone
-                )
-                .next_after(now)
-                .isoformat()
-            )
-
-            if (
-                automation.schedule is not None
-                and (now - due_at).total_seconds() > MISFIRE_GRACE_SECS
-            ):
-                logger.info(
-                    "automation_misfire_skipped id=%s due_at=%s next_run_at=%s",
-                    automation.id,
-                    automation.next_run_at,
-                    upcoming,
-                )
-                automation.next_run_at = upcoming
-                automation.updated_at = now.isoformat()
-                self.save_automation(automation)
-                continue
-
-            # Idempotency guard: don't re-fire the same scheduled slot if
-            # we already wrote a run for it.
-            prior = next((run for run in self.list_runs(automation.id)
-                          if run.scheduled_for == automation.next_run_at), None)
-            if prior is None or (prior.status is AutomationRunStatus.QUEUED and prior.task_id is None):
-                run = prior or AutomationRunRecord(
-                    id=uuid.uuid5(uuid.NAMESPACE_URL, f"{automation.id}:{automation.next_run_at}").hex,
-                    automation_id=automation.id,
-                    scheduled_for=automation.next_run_at,
-                    status=AutomationRunStatus.QUEUED,
-                    created_at=now.isoformat(),
-                    conversation_thread_id=automation.conversation_thread_id,
-                )
-                self.save_run(run)  # durable dispatch intent before task enqueue
-                await self._enqueue_run_task(automation, run, task_manager)
-                try:
-                    current = self.get_automation(automation.id)
-                except KeyError:
-                    continue
-                self.save_run(run)
-                if run.status is AutomationRunStatus.FAILED:
-                    from deepseek_tui.automation.pipeline import (
-                        try_deliver_completed_run,
-                    )
-
-                    if await try_deliver_completed_run(
-                        automation, run, task_manager,
-                        thread_manager=self.thread_manager,
-                    ):
-                        if self._automation_path(automation.id).exists():
-                            self.save_run(run)
-
+        for listed in self.list_automations():
+            # One bad record (unknown timezone, broken timestamp) must not
+            # stop every other job from firing.
             try:
-                current = self.get_automation(automation.id)
-            except KeyError:
-                continue
-            if current.status is not AutomationStatus.ACTIVE or (
-                current.next_run_at != automation.next_run_at
-                or current.updated_at != automation.updated_at
-            ):
-                continue
+                await self._tick_automation(listed.id, now, task_manager)
+            except Exception:  # noqa: BLE001
+                logger.warning("automation_tick_failed id=%s", listed.id, exc_info=True)
 
-            current.updated_at = now.isoformat()
-            current.next_run_at = upcoming
-            if current.schedule is None:
-                current.status = AutomationStatus.COMPLETED
-            self.save_automation(current)
+    async def _tick_automation(
+        self, automation_id: str, now: datetime, task_manager: TaskManager
+    ) -> None:
+        # Re-read rather than trust the tick's listing: an earlier job's
+        # enqueue may have yielded while this one was paused or deleted.
+        try:
+            automation = self.get_automation(automation_id)
+        except KeyError:
+            return
+        if automation.status is not AutomationStatus.ACTIVE:
+            return
+
+        if automation.next_run_at is None:
+            if automation.schedule is None:
+                return  # one-shot with nothing left to do
+            automation.next_run_at = _next_run_after_now(automation)
+            automation.updated_at = now.isoformat()
+            self.save_automation(automation)
+            return
+
+        due_at = _parse_iso(automation.next_run_at)
+        if due_at > now:
+            return
+
+        # Re-arm from *now*, never from the missed slot — otherwise a
+        # backlog fires one slot per tick. One-shots have no next slot.
+        upcoming = (
+            None
+            if automation.schedule is None
+            else AutomationSchedule.parse(
+                automation.schedule, automation.timezone
+            )
+            .next_after(now)
+            .isoformat()
+        )
+
+        if (
+            automation.schedule is not None
+            and (now - due_at).total_seconds() > MISFIRE_GRACE_SECS
+        ):
+            logger.info(
+                "automation_misfire_skipped id=%s due_at=%s next_run_at=%s",
+                automation.id,
+                automation.next_run_at,
+                upcoming,
+            )
+            automation.next_run_at = upcoming
+            automation.updated_at = now.isoformat()
+            self.save_automation(automation)
+            return
+
+        # Idempotency guard: don't re-fire the same scheduled slot if
+        # we already wrote a run for it.
+        prior = next((run for run in self.list_runs(automation.id)
+                      if run.scheduled_for == automation.next_run_at), None)
+        if prior is None or (prior.status is AutomationRunStatus.QUEUED and prior.task_id is None):
+            run = prior or AutomationRunRecord(
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"{automation.id}:{automation.next_run_at}").hex,
+                automation_id=automation.id,
+                scheduled_for=automation.next_run_at,
+                status=AutomationRunStatus.QUEUED,
+                created_at=now.isoformat(),
+                conversation_thread_id=automation.conversation_thread_id,
+            )
+            self.save_run(run)  # durable dispatch intent before task enqueue
+            await self._enqueue_run_task(automation, run, task_manager)
+            if not self._automation_path(automation.id).exists():
+                return
+            # A failed enqueue is delivered by reconcile, which owns every
+            # delivery so a slow channel never holds up due jobs.
+            self.save_run(run)
+            self.prune_runs(automation.id)
+
+        try:
+            current = self.get_automation(automation.id)
+        except KeyError:
+            return
+        if current.status is not AutomationStatus.ACTIVE or (
+            current.next_run_at != automation.next_run_at
+            or current.updated_at != automation.updated_at
+        ):
+            return
+
+        current.updated_at = now.isoformat()
+        current.next_run_at = upcoming
+        if current.schedule is None:
+            current.status = AutomationStatus.COMPLETED
+        self.save_automation(current)
 
     def _reconcile_targets(self) -> list[AutomationRecord]:
         """User automations, plus the HTTP-trigger shadow when trigger runs exist."""
@@ -1466,146 +1490,165 @@ class AutomationManager:
             await self._reconcile_run_statuses(task_manager)
 
     async def _reconcile_run_statuses(self, task_manager: TaskManager) -> None:
+        for automation in self._reconcile_targets():
+            for run in self.list_runs(automation.id):
+                # One failing run (record deleted mid-pass, broken delivery
+                # config) must not stall reconciliation of every other run.
+                try:
+                    await self._reconcile_run(automation, run, task_manager)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "automation_reconcile_failed automation=%s run=%s",
+                        automation.id,
+                        run.id,
+                        exc_info=True,
+                    )
+
+    async def _reconcile_run(
+        self,
+        automation: AutomationRecord,
+        run: AutomationRunRecord,
+        task_manager: TaskManager,
+    ) -> None:
         from deepseek_tui.automation.pipeline import try_write_run_result
         from deepseek_tui.tools.task import TaskStatus
 
-        for automation in self._reconcile_targets():
-            for run in self.list_runs(automation.id):
-                task = None
-                if run.task_id is not None and run.status is not AutomationRunStatus.COMPLETED:
-                    try:
-                        task = await task_manager.get_task(run.task_id)
-                    except Exception:  # noqa: BLE001
-                        pass
-                # Resume can settle between ticks, even into the same failed
-                # state. A new end timestamp distinguishes that new attempt.
-                resumed = (
-                    run.status in (AutomationRunStatus.FAILED, AutomationRunStatus.CANCELED)
-                    and task is not None
-                    and (
-                        task.status in (TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.COMPLETED)
-                        or (
-                            getattr(task, "ended_at", None) is not None
-                            and task.ended_at != run.ended_at
-                        )
-                    )
+        task = None
+        if run.task_id is not None and run.status is not AutomationRunStatus.COMPLETED:
+            try:
+                task = await task_manager.get_task(run.task_id)
+            except Exception:  # noqa: BLE001
+                pass
+        # Resume can settle between ticks, even into the same failed
+        # state. A new end timestamp distinguishes that new attempt.
+        resumed = (
+            run.status in (AutomationRunStatus.FAILED, AutomationRunStatus.CANCELED)
+            and task is not None
+            and (
+                task.status in (TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.COMPLETED)
+                or (
+                    getattr(task, "ended_at", None) is not None
+                    and task.ended_at != run.ended_at
                 )
-                if run.status not in (
-                    AutomationRunStatus.QUEUED,
-                    AutomationRunStatus.RUNNING,
-                ) and not resumed:
-                    if await try_write_run_result(
-                        automation, run, task_manager, thread_manager=self.thread_manager,
-                    ):
-                        self.save_run(run)
-                    # An unchanged terminal run may still need a delivery retry.
-                    if (
-                        not run.delivery_done
-                        and run.status in (
-                            AutomationRunStatus.COMPLETED,
-                            AutomationRunStatus.FAILED,
-                        )
-                    ):
-                        from deepseek_tui.automation.pipeline import (
-                            try_deliver_completed_run,
-                        )
+            )
+        )
+        if run.status not in (
+            AutomationRunStatus.QUEUED,
+            AutomationRunStatus.RUNNING,
+        ) and not resumed:
+            if await try_write_run_result(
+                automation, run, task_manager, thread_manager=self.thread_manager,
+            ):
+                self.save_run(run)
+            # An unchanged terminal run may still need a delivery retry.
+            if (
+                not run.delivery_done
+                and run.status in (
+                    AutomationRunStatus.COMPLETED,
+                    AutomationRunStatus.FAILED,
+                )
+            ):
+                from deepseek_tui.automation.pipeline import (
+                    try_deliver_completed_run,
+                )
 
-                        if await try_deliver_completed_run(
-                            automation, run, task_manager,
-                            thread_manager=self.thread_manager,
-                        ):
-                            self.save_run(run)
-                    continue
-                if task is None:
-                    continue
-                if resumed:
-                    run.started_at = None
-                    run.ended_at = None
-                    run.error = None
-                    run.delivery_done = False
-                    run.delivery_attempts = 0
-                    run.conversation_written = False
-
-                run.thread_id = getattr(task, "thread_id", None)
-                run.turn_id = getattr(task, "turn_id", None)
-                changed = resumed
-
-                if task.status is TaskStatus.QUEUED:
-                    if run.status is not AutomationRunStatus.QUEUED:
-                        run.status = AutomationRunStatus.QUEUED
-                        changed = True
-                elif task.status is TaskStatus.RUNNING:
-                    if run.status is not AutomationRunStatus.RUNNING:
-                        run.status = AutomationRunStatus.RUNNING
-                        changed = True
-                    if run.started_at != getattr(task, "started_at", None):
-                        run.started_at = (
-                            getattr(task, "started_at", None) or _utc_now_iso()
-                        )
-                        changed = True
-                elif task.status is TaskStatus.COMPLETED:
-                    run.status = AutomationRunStatus.COMPLETED
-                    run.started_at = run.started_at or getattr(task, "started_at", None)
-                    run.ended_at = (
-                        getattr(task, "ended_at", None) or _utc_now_iso()
-                    )
-                    run.error = None
-                    changed = True
-                elif task.status is TaskStatus.FAILED:
-                    run.status = AutomationRunStatus.FAILED
-                    run.started_at = run.started_at or getattr(task, "started_at", None)
-                    run.ended_at = (
-                        getattr(task, "ended_at", None) or _utc_now_iso()
-                    )
-                    run.error = getattr(task, "error", None)
-                    changed = True
-                elif task.status is TaskStatus.CANCELED:
-                    run.status = AutomationRunStatus.CANCELED
-                    run.started_at = run.started_at or getattr(task, "started_at", None)
-                    run.ended_at = (
-                        getattr(task, "ended_at", None) or _utc_now_iso()
-                    )
-                    changed = True
-                elif task.status is TaskStatus.TIMED_OUT:
-                    run.status = AutomationRunStatus.FAILED
-                    run.started_at = run.started_at or getattr(task, "started_at", None)
-                    run.ended_at = (
-                        getattr(task, "ended_at", None) or _utc_now_iso()
-                    )
-                    run.error = getattr(task, "error", None) or "Task timed out"
-                    changed = True
-
-                if changed:
+                if await try_deliver_completed_run(
+                    automation, run, task_manager,
+                    thread_manager=self.thread_manager,
+                ):
                     self.save_run(run)
-                    if await try_write_run_result(
-                        automation, run, task_manager, thread_manager=self.thread_manager,
-                    ):
-                        self.save_run(run)
-                    if run.status in (
-                        AutomationRunStatus.COMPLETED,
-                        AutomationRunStatus.FAILED,
-                        AutomationRunStatus.CANCELED,
-                    ):
-                        # The HTTP-trigger shadow has no persisted record
-                        # to update — runs are its whole story.
-                        if automation.id != HTTP_TRIGGER_RUNS_KEY:
-                            latest = self.get_automation(automation.id)
-                            latest.last_run_at = run.ended_at or _utc_now_iso()
-                            latest.updated_at = _utc_now_iso()
-                            self.save_automation(latest)
-                    if run.status in (
-                        AutomationRunStatus.COMPLETED,
-                        AutomationRunStatus.FAILED,
-                    ):
-                        from deepseek_tui.automation.pipeline import (
-                            try_deliver_completed_run,
-                        )
+            return
+        if task is None:
+            return
+        if resumed:
+            run.started_at = None
+            run.ended_at = None
+            run.error = None
+            run.delivery_done = False
+            run.delivery_attempts = 0
+            run.delivery_error = None
+            run.conversation_written = False
 
-                        if await try_deliver_completed_run(
-                            automation, run, task_manager,
-                            thread_manager=self.thread_manager,
-                        ):
-                            self.save_run(run)
+        run.thread_id = getattr(task, "thread_id", None)
+        run.turn_id = getattr(task, "turn_id", None)
+        changed = resumed
+
+        if task.status is TaskStatus.QUEUED:
+            if run.status is not AutomationRunStatus.QUEUED:
+                run.status = AutomationRunStatus.QUEUED
+                changed = True
+        elif task.status is TaskStatus.RUNNING:
+            if run.status is not AutomationRunStatus.RUNNING:
+                run.status = AutomationRunStatus.RUNNING
+                changed = True
+            if run.started_at != getattr(task, "started_at", None):
+                run.started_at = (
+                    getattr(task, "started_at", None) or _utc_now_iso()
+                )
+                changed = True
+        elif task.status is TaskStatus.COMPLETED:
+            run.status = AutomationRunStatus.COMPLETED
+            run.started_at = run.started_at or getattr(task, "started_at", None)
+            run.ended_at = (
+                getattr(task, "ended_at", None) or _utc_now_iso()
+            )
+            run.error = None
+            changed = True
+        elif task.status is TaskStatus.FAILED:
+            run.status = AutomationRunStatus.FAILED
+            run.started_at = run.started_at or getattr(task, "started_at", None)
+            run.ended_at = (
+                getattr(task, "ended_at", None) or _utc_now_iso()
+            )
+            run.error = getattr(task, "error", None)
+            changed = True
+        elif task.status is TaskStatus.CANCELED:
+            run.status = AutomationRunStatus.CANCELED
+            run.started_at = run.started_at or getattr(task, "started_at", None)
+            run.ended_at = (
+                getattr(task, "ended_at", None) or _utc_now_iso()
+            )
+            changed = True
+        elif task.status is TaskStatus.TIMED_OUT:
+            run.status = AutomationRunStatus.FAILED
+            run.started_at = run.started_at or getattr(task, "started_at", None)
+            run.ended_at = (
+                getattr(task, "ended_at", None) or _utc_now_iso()
+            )
+            run.error = getattr(task, "error", None) or "Task timed out"
+            changed = True
+
+        if changed:
+            self.save_run(run)
+            if await try_write_run_result(
+                automation, run, task_manager, thread_manager=self.thread_manager,
+            ):
+                self.save_run(run)
+            if run.status in (
+                AutomationRunStatus.COMPLETED,
+                AutomationRunStatus.FAILED,
+                AutomationRunStatus.CANCELED,
+            ):
+                # The HTTP-trigger shadow has no persisted record
+                # to update — runs are its whole story.
+                if automation.id != HTTP_TRIGGER_RUNS_KEY:
+                    latest = self.get_automation(automation.id)
+                    latest.last_run_at = run.ended_at or _utc_now_iso()
+                    latest.updated_at = _utc_now_iso()
+                    self.save_automation(latest)
+            if run.status in (
+                AutomationRunStatus.COMPLETED,
+                AutomationRunStatus.FAILED,
+            ):
+                from deepseek_tui.automation.pipeline import (
+                    try_deliver_completed_run,
+                )
+
+                if await try_deliver_completed_run(
+                    automation, run, task_manager,
+                    thread_manager=self.thread_manager,
+                ):
+                    self.save_run(run)
 
 
 # Background scheduler for :class:`AutomationManager`.

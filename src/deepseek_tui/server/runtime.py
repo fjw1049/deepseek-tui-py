@@ -1041,21 +1041,24 @@ class AppRuntime:
 
         if self._tool_runtime is None or self._tool_runtime.task_manager is None:
             return {"ok": False, "error": "task manager not configured"}
-        prompt = _require_str(body, "prompt")
-        outcome = await fire_http_trigger(
-            prompt=prompt,
-            task_manager=self._tool_runtime.task_manager,
-            automation_manager=self._tool_runtime.automation_manager,
-            digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
-            delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
-            workspace=_pick_str(body, "workspace"),
-            triage_policy=str(body.get("triage_policy", "skip")),
-            triage_metadata=(
-                body.get("triage_metadata")
-                if isinstance(body.get("triage_metadata"), dict)
-                else None
-            ),
-        )
+        try:
+            prompt = _require_str(body, "prompt")
+            outcome = await fire_http_trigger(
+                prompt=prompt,
+                task_manager=self._tool_runtime.task_manager,
+                automation_manager=self._tool_runtime.automation_manager,
+                digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
+                delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
+                workspace=_pick_str(body, "workspace"),
+                triage_policy=str(body.get("triage_policy", "skip")),
+                triage_metadata=(
+                    body.get("triage_metadata")
+                    if isinstance(body.get("triage_metadata"), dict)
+                    else None
+                ),
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         return {"ok": True, **outcome}
 
     async def list_automation_runs(

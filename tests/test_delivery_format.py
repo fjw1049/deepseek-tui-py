@@ -100,3 +100,11 @@ def test_sanitize_preserves_multisection_report_and_steps():
 首先准备材料
 然后运行测试"""
     assert sanitize_delivery_text(raw) == raw
+
+
+def test_classify_deleted_origin_conversation() -> None:
+    msg = classify_task_error_for_user(
+        "Cannot resolve current model route: original conversation no longer exists"
+    )
+    assert "对话已被删除" in msg
+    assert "稍后重试" not in msg  # retrying can never fix it

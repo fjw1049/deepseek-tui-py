@@ -62,6 +62,9 @@ def classify_task_error_for_user(error: str) -> str:
     if "stale after restart" in lower or "task interrupted (stale" in lower:
         return "服务重启中断了正在运行的后台任务。下次调度时会自动重试。"
 
+    if "original conversation no longer exists" in lower:
+        return "创建该自动化的对话已被删除，无法确定要使用的模型。请重新创建该自动化。"
+
     if (
         "tool round-trip limit" in lower
         or "max tool" in lower

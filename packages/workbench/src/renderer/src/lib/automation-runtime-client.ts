@@ -51,6 +51,8 @@ export type AutomationRunRecord = {
   turn_id?: string | null
   error?: string | null
   delivery_done?: boolean
+  /** Set when delivery gave up; `delivery_done` alone does not mean sent. */
+  delivery_error?: string | null
   conversation_thread_id?: string | null
   conversation_written?: boolean
 }

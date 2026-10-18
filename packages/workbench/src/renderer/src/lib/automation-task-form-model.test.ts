@@ -45,6 +45,20 @@ describe('automation task form model', () => {
     ).toThrow('interval_invalid')
   })
 
+  it('rejects hourly intervals that do not divide the day evenly', () => {
+    // `0 */5 * * *` fires at 20:00 and again at 00:00 — a 4-hour gap.
+    expect(() =>
+      buildAutomationSchedulePayload({
+        kind: 'hourly',
+        everyHours: '5',
+        onceAt: '',
+        timeOfDay: '',
+        weekdays: [],
+        customCron: ''
+      })
+    ).toThrow('interval_invalid')
+  })
+
   it('builds daily schedules with a wildcard day-of-week', () => {
     expect(
       buildAutomationSchedulePayload({

@@ -314,3 +314,117 @@ async def test_delivery_gives_up_after_max_attempts() -> None:
     assert run.delivery_done is True  # gave up → no more retries
     assert run.delivery_attempts == _MAX_DELIVERY_ATTEMPTS
     assert "delivery failed after" in (run.error or "")
+
+
+@pytest.mark.asyncio
+async def test_best_effort_delivery_failure_is_not_reported_as_sent() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from deepseek_tui.automation.pipeline import try_deliver_completed_run
+
+    automation = _sample_automation(
+        delivery={"mode": "feishu", "to": "oc_test", "best_effort": True}
+    )
+    run = AutomationRunRecord(
+        id="r1",
+        automation_id="a1",
+        scheduled_for="2026-05-28T08:00:00+00:00",
+        status=AutomationRunStatus.COMPLETED,
+        created_at="2026-05-28T08:00:00+00:00",
+        task_id="task-1",
+    )
+    with patch(
+        "deepseek_tui.automation.pipeline._FeishuSink.deliver",
+        AsyncMock(side_effect=RuntimeError("bot not in chat")),
+    ):
+        ok = await try_deliver_completed_run(automation, run, _completed_task())
+    assert ok is True
+    assert run.delivery_done is True  # one shot, no retry
+    assert run.delivery_error == "bot not in chat"
+    assert AutomationRunRecord.from_dict(run.to_dict()).delivery_error == "bot not in chat"
+
+
+@pytest.mark.asyncio
+async def test_result_write_to_deleted_chat_stops_retrying() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.automation.pipeline import try_write_run_result
+
+    run = AutomationRunRecord(
+        id="r1",
+        automation_id="a1",
+        scheduled_for="2026-05-28T08:00:00+00:00",
+        status=AutomationRunStatus.FAILED,
+        created_at="2026-05-28T08:00:00+00:00",
+        error="boom",
+        conversation_thread_id="thr_gone",
+    )
+    threads = MagicMock()
+    threads.append_automation_result = AsyncMock(side_effect=FileNotFoundError("thr_gone"))
+    automation = _sample_automation()
+
+    assert await try_write_run_result(automation, run, MagicMock(), thread_manager=threads)
+    assert run.conversation_thread_id is None
+    # Nothing left to write, so later reconcile ticks return immediately.
+    assert not await try_write_run_result(automation, run, MagicMock(), thread_manager=threads)
+    threads.append_automation_result.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fire_http_trigger_rejects_bad_delivery_before_enqueue() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.automation.pipeline import fire_http_trigger
+
+    task_manager = MagicMock()
+    task_manager.add_task = AsyncMock()
+    with pytest.raises(ValueError, match="Unknown delivery mode"):
+        await fire_http_trigger(
+            prompt="summarize inbox",
+            task_manager=task_manager,
+            delivery={"mode": "slack"},
+        )
+    task_manager.add_task.assert_not_awaited()
+
+
+def test_imap_digest_is_read_only_and_covers_the_local_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deepseek_tui.automation.inbox as inbox
+
+    calls: dict[str, object] = {}
+    raw = b"From: a@x.test\r\nSubject: hi\r\nDate: Sun, 18 Oct 2026 09:00:00 +0800\r\n\r\nbody"
+
+    class FakeImap:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def login(self, *_args: object) -> None:
+            pass
+
+        def select(self, mailbox: str, readonly: bool = False) -> tuple[str, list[bytes]]:
+            calls["readonly"] = readonly
+            return "OK", [b"1"]
+
+        def search(self, _charset: object, criteria: str) -> tuple[str, list[bytes]]:
+            calls["search"] = criteria
+            return "OK", [b"1"]
+
+        def fetch(self, _num: bytes, spec: str) -> tuple[str, list[object]]:
+            calls["fetch"] = spec
+            return "OK", [(b"1 (BODY[] {10}", raw)]
+
+        def logout(self) -> None:
+            pass
+
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeImap)
+    # Asia/Shanghai "today" (2026-10-18) is [10-17 16:00, 10-18 16:00) UTC.
+    start = datetime(2026, 10, 17, 16, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 18, 16, tzinfo=timezone.utc)
+    section = {"imap_host": "imap.test", "username": "u", "password": "p"}
+    messages = inbox._imap_fetch_sync(section, None, start, end)
+
+    assert calls["readonly"] is True  # must not mark mail as read
+    assert calls["fetch"] == "(BODY.PEEK[])"
+    assert calls["search"] == '(SINCE "16-Oct-2026" BEFORE "19-Oct-2026")'
+    assert [m.subject for m in messages] == ["hi"]

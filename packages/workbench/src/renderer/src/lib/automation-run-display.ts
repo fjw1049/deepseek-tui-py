@@ -34,7 +34,8 @@ export function formatRunDeliveryStatus(
     return '—'
   }
 
-  const deliveryFailed = run.error?.toLowerCase().includes('delivery failed') ?? false
+  const deliveryFailed =
+    Boolean(run.delivery_error) || (run.error?.toLowerCase().includes('delivery failed') ?? false)
   if (deliveryFailed) {
     return t('automationRunDeliveryFailed')
   }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -563,3 +564,138 @@ def test_edit_one_shot_preserves_or_explicitly_changes_target(tmp_path: Path) ->
     assert rescheduled.next_run_at == updated_time
     with pytest.raises(ValueError, match="not both"):
         mgr.update_automation(job.id, UpdateAutomationRequest(schedule="0 * * * *", run_at=updated_time))
+
+
+@pytest.mark.asyncio
+async def test_job_paused_while_an_earlier_job_enqueues_does_not_fire(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tick must not fire from its stale listing of a since-paused job."""
+    mgr = AutomationManager.open(tmp_path / "auto")
+    later = _daily_automation_due(mgr, seconds_ago=10)
+    earlier = mgr.get_automation(_daily_automation_due(mgr, seconds_ago=10))
+    earlier.updated_at = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    mgr.save_automation(earlier)  # newest first, so it is ticked first
+    fired: list[str] = []
+
+    async def enqueue(self, automation, run, task_manager):  # type: ignore[no-untyped-def] # noqa: ANN001, ANN202
+        fired.append(automation.id)
+        if automation.id == earlier.id:
+            self.pause_automation(later)  # user clicks pause mid-tick
+            await asyncio.sleep(0)
+        run.task_id = f"task-{automation.id}"
+
+    monkeypatch.setattr(AutomationManager, "_enqueue_run_task", enqueue)
+    await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+    assert fired == [earlier.id]
+    assert mgr.list_runs(later) == []
+
+
+@pytest.mark.asyncio
+async def test_slow_delivery_does_not_hold_up_due_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fired_slots: list[str]
+) -> None:
+    mgr = AutomationManager.open(tmp_path / "auto")
+    job = _daily_automation_due(mgr, seconds_ago=10)
+    _terminal_run_with_pending_delivery(mgr, job, attempts=0)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_deliver(*_args: object, **_kwargs: object) -> bool:
+        entered.set()
+        await release.wait()  # a channel that hangs until its timeout
+        return False
+
+    monkeypatch.setattr(
+        "deepseek_tui.automation.pipeline.try_deliver_completed_run", slow_deliver
+    )
+    reconcile = asyncio.create_task(mgr.reconcile_run_statuses(_completed_task_manager()))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    await asyncio.wait_for(mgr.scheduler_tick(task_manager=None), timeout=1)  # type: ignore[arg-type]
+    assert len(fired_slots) == 1
+    release.set()
+    await reconcile
+
+
+@pytest.mark.asyncio
+async def test_rescheduling_a_finished_one_shot_reactivates_it(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _one_shot_due(mgr, seconds_ago=60)
+    await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+    assert mgr.get_automation(automation_id).status is AutomationStatus.COMPLETED
+
+    run_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    # The Workbench form sends no status when only the time changes.
+    rescheduled = mgr.update_automation(automation_id, UpdateAutomationRequest(run_at=run_at))
+    assert rescheduled.status is AutomationStatus.ACTIVE
+    assert rescheduled.next_run_at == run_at
+
+
+@pytest.mark.asyncio
+async def test_unschedulable_record_does_not_stall_the_tick(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    mgr = AutomationManager.open(tmp_path / "auto")
+    healthy_id = _daily_automation_due(mgr, seconds_ago=10)
+    broken = mgr.get_automation(_daily_automation_due(mgr, seconds_ago=10))
+    broken.timezone = "Mars/Olympus"  # e.g. a zone this host's tzdata lacks
+    broken.updated_at = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    mgr.save_automation(broken)  # ticked before the healthy job
+
+    await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+    assert len(fired_slots) == 1
+    assert mgr.list_runs(healthy_id)
+
+
+@pytest.mark.asyncio
+async def test_bad_delivery_config_does_not_stall_reconcile(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    healthy = mgr.create_automation(
+        CreateAutomationRequest(
+            name="ok",
+            prompt="p",
+            schedule="0 9 * * *",
+            delivery={"mode": "feishu", "to": "oc_test"},
+        )
+    )
+    broken = mgr.create_automation(
+        CreateAutomationRequest(name="bad", prompt="p", schedule="0 9 * * *")
+    )
+    broken.delivery = {"mode": "slack"}  # hand-edited, never validated
+    broken.updated_at = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    mgr.save_automation(broken)
+    for automation_id in (broken.id, healthy.id):
+        _terminal_run_with_pending_delivery(mgr, automation_id, attempts=0)
+
+    deliver = AsyncMock()
+    with patch("deepseek_tui.automation.pipeline._FeishuSink.deliver", deliver):
+        await mgr.reconcile_run_statuses(_completed_task_manager())
+    deliver.assert_awaited_once()
+    assert mgr.list_runs(healthy.id)[0].delivery_done
+
+
+def test_run_history_is_capped_but_keeps_in_flight_runs(tmp_path: Path) -> None:
+    from deepseek_tui.tools.automation import MAX_RUNS_PER_AUTOMATION, AutomationRunRecord
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    job = mgr.create_automation(
+        CreateAutomationRequest(name="n", prompt="p", schedule="0 9 * * *")
+    )
+    for i in range(MAX_RUNS_PER_AUTOMATION + 5):
+        mgr.save_run(
+            AutomationRunRecord(
+                id=f"r{i:03}",
+                automation_id=job.id,
+                scheduled_for="2026-01-01T00:00:00+00:00",
+                status=AutomationRunStatus.RUNNING if i == 0 else AutomationRunStatus.COMPLETED,
+                created_at=f"2026-01-01T00:{i // 60:02}:{i % 60:02}+00:00",
+            )
+        )
+    mgr.prune_runs(job.id)
+    ids = {run.id for run in mgr.list_runs(job.id)}
+    assert len(ids) == MAX_RUNS_PER_AUTOMATION + 1
+    assert "r000" in ids  # oldest, but still running
+    assert "r001" not in ids

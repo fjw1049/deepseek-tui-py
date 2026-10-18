@@ -44,6 +44,21 @@ describe('automation-run-display', () => {
     )
   })
 
+  it('shows delivery failed when a best-effort send gave up', () => {
+    const run: AutomationRunRecord = {
+      id: 'r1',
+      automation_id: 'a1',
+      scheduled_for: '2026-01-01T00:00:00Z',
+      status: 'completed',
+      created_at: '2026-01-01T00:00:00Z',
+      delivery_done: true,
+      delivery_error: 'bot not in chat'
+    }
+    expect(formatRunDeliveryStatus(run, automationWithFeishu, t)).toBe(
+      'automationRunDeliveryFailed'
+    )
+  })
+
   it('shows delivered when delivery_done is true', () => {
     const run: AutomationRunRecord = {
       id: 'r1',
