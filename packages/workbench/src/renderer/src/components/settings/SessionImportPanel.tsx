@@ -140,6 +140,11 @@ export function SessionImportPanel() {
   }
 
   const failedRows = sessions.filter(s => failures[keyOf(s)])
+  // Before the first scan the button is the page's main call to action; afterwards it becomes a secondary rescan.
+  const scanButton = <button className={`${button} ${scanned ? 'session-import-scan' : 'session-import-primary session-import-scan-cta'}`} disabled={busy || !sources.some(s => enabled[s])} onClick={() => void scan()}>
+    {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+    {t(scanning ? 'sessionImport.scanning' : scanned ? 'sessionImport.rescan' : 'sessionImport.scan')}
+  </button>
   return <div className="session-import space-y-5 text-ds-ink">
     <section className="session-import-sources">
       <div className="session-import-section-heading">
@@ -153,13 +158,10 @@ export function SessionImportPanel() {
         <span className="min-w-0 flex-1"><span className="session-import-source-name">{sourceName(source)}</span><span className="session-import-source-path">{roots[source] || (source === 'codex' ? '~/.codex' : '~/.claude')}</span></span>
         <span className="session-import-source-check" aria-hidden="true">{enabled[source] && <Check size={13} strokeWidth={2.5} />}</span>
       </label>)}</div>
-      <div className="session-import-scan-row">
+      {scanned && <div className="session-import-scan-row">
         <span className="text-xs text-ds-muted">{t('sessionImport.scanHint')}</span>
-        <button className={`${button} session-import-scan`} disabled={busy || !sources.some(s => enabled[s])} onClick={() => void scan()}>
-          {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          {t(scanning ? 'sessionImport.scanning' : scanned ? 'sessionImport.rescan' : 'sessionImport.scan')}
-        </button>
-      </div>
+        {scanButton}
+      </div>}
       <details className="session-import-advanced text-sm text-ds-muted"><summary><ChevronRight size={14} aria-hidden="true" />{t('sessionImport.customSource')}</summary>
         <div className="mt-3 space-y-3">{sources.map(source => <label key={source} className="block">
           <span>{sourceName(source)}</span><div className="mt-1 flex gap-2">
@@ -215,7 +217,7 @@ export function SessionImportPanel() {
       })}</div>
     </section>}
 
-    {!scanned && <div className="session-import-empty session-import-welcome"><span className="session-import-empty-icon"><ArrowDownToLine size={26} strokeWidth={1.5} aria-hidden="true" /></span><h3>{t('sessionImport.readyTitle')}</h3><p>{t('sessionImport.readyBody')}</p></div>}
+    {!scanned && <div className="session-import-empty session-import-welcome"><span className="session-import-empty-icon"><ArrowDownToLine size={26} strokeWidth={1.5} aria-hidden="true" /></span><h3>{t('sessionImport.readyTitle')}</h3><p>{t('sessionImport.readyBody')}</p>{scanButton}</div>}
     <details className="session-import-advanced session-import-notes"><summary><Info size={14} aria-hidden="true" />{t('sessionImport.notesTitle')}<ChevronRight size={13} aria-hidden="true" /></summary><p className="mt-3 text-xs leading-6 text-ds-muted">{t('sessionImport.limitations')}</p></details>
     {errors.length > 0 && <details className="rounded-xl border border-amber-300 p-3 text-sm"><summary className="cursor-pointer">{t('sessionImport.scanIssues', { count: errors.length })}</summary><div className="mt-2 max-h-40 overflow-auto">{errors.map((error, i) => <p key={i} className="break-all py-1">{error}</p>)}</div></details>}
     {(running || progress.total > 0) && <div role="status" aria-live="polite" className="session-import-progress">

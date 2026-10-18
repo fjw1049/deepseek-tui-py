@@ -89,6 +89,7 @@
 .session-import-selection div > span { display: block; margin-top: 3px; font-size: 11px; color: var(--ds-text-faint); }
 .session-import-primary { background: var(--ds-accent); color: white; border-color: transparent; padding-inline: 16px; }
 .session-import-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ds-accent) 90%, black); }
+.session-import-scan-cta { margin-top: 8px; min-height: 38px; padding-inline: 22px; font-size: 13px; }
 @media (max-width: 640px) {
   .session-import-source-grid { grid-template-columns: 1fr; }
   .session-import-sources { padding: 18px; }
