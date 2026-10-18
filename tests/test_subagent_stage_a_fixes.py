@@ -57,6 +57,20 @@ def test_build_subagent_registry_applies_type_allowlist() -> None:
     assert not registry.contains("exec_shell")
 
 
+def test_build_subagent_registry_drops_engine_only_tools() -> None:
+    # The sub-agent loop calls registry.execute directly, so tools the parent
+    # Engine intercepts (or that need an active browser task) always fail.
+    names = set(build_subagent_registry(Config()).names())
+    assert not names & {
+        "request_user_input",
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "finish_task",
+        "request_task_tools",
+    }
+    assert "read_file" in names
+
+
 def test_resolve_subagent_model_priority() -> None:
     cfg = Config(
         subagents=SubagentConfig(
