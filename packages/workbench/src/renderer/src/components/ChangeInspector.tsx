@@ -1851,7 +1851,7 @@ export function ChangeInspector({
                 aria-label={t(sideListWidth >= 96 ? 'inspectorCollapseFileList' : 'inspectorExpandFileList')}
                 title={t(sideListWidth >= 96 ? 'inspectorCollapseFileList' : 'inspectorExpandFileList')}
                 aria-expanded={sideListWidth >= 96}
-                className="absolute right-1 top-1 z-20 inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
+                className={`absolute right-1 top-1 z-20 inline-flex h-7 w-7 items-center justify-center rounded-md transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96] ${sideListWidth >= 96 ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted'}`}
               >
                 <FolderTree className="h-4 w-4" strokeWidth={1.8} />
               </button>
