@@ -66,6 +66,13 @@ describe('dev browser guards', () => {
     })
   })
 
+  it('attaches blank tabs that agent-opened pages start from', () => {
+    const contents = createContents('window')
+    const event = { preventDefault: vi.fn() }
+    contents.emit('will-attach-webview', event, {}, { src: 'about:blank', partition: 'persist:deepseek-dev-browser' })
+    expect(event.preventDefault).not.toHaveBeenCalled()
+  })
+
   it('rejects unsupported guest URLs and other session partitions', () => {
     const contents = createContents('window')
     for (const params of [

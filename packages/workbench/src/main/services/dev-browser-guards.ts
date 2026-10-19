@@ -1,11 +1,12 @@
 import { app, session } from 'electron'
 import { isBrowsableUrl } from '../../shared/dev-preview-url'
+import { DEV_BROWSER_PARTITION } from '../../shared/browser-bridge'
 import { logWarn } from '../logger'
 
 export function installDevPreviewWebviewGuards(): void {
   // This partition is separate from the shell's microphone-enabled session.
   // Electron otherwise grants guest permission requests automatically.
-  const browserSession = session.fromPartition('persist:deepseek-dev-browser')
+  const browserSession = session.fromPartition(DEV_BROWSER_PARTITION)
   browserSession.setPermissionCheckHandler((_contents, permission) =>
     permission === 'fullscreen' || permission === 'clipboard-sanitized-write'
   )
@@ -15,7 +16,9 @@ export function installDevPreviewWebviewGuards(): void {
 
   app.on('web-contents-created', (_, contents) => {
     contents.on('will-attach-webview', (event, webPreferences, params) => {
-      if (!isBrowsableUrl(params.src ?? '') || params.partition !== 'persist:deepseek-dev-browser') {
+      // Blank tabs are where agent-opened pages start.
+      const src = params.src ?? ''
+      if (!(src === 'about:blank' || isBrowsableUrl(src)) || params.partition !== DEV_BROWSER_PARTITION) {
         event.preventDefault()
         return
       }

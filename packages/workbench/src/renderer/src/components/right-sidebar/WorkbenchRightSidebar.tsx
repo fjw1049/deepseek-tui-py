@@ -63,7 +63,6 @@ type Props = {
   changesProjectRoot?: string | null
   onChangesContextChange: (context: ChangeReviewContext) => void
   onChangesFocusPathConsumed?: () => void
-  agentBrowserRequest?: number
   devPreviewBlocks: ChatBlock[]
   latestDevPreviewUrl: string | null
   preferredPreviewFilePath?: string | null
@@ -111,7 +110,6 @@ export function WorkbenchRightSidebar({
   changesProjectRoot = null,
   onChangesContextChange,
   onChangesFocusPathConsumed,
-  agentBrowserRequest,
   devPreviewBlocks,
   latestDevPreviewUrl,
   preferredPreviewFilePath = null,
@@ -198,6 +196,7 @@ export function WorkbenchRightSidebar({
       className="ds-workbench-right-panel ds-no-drag relative h-full min-h-0 shrink-0"
       data-fill-width={panelVisible && fillWidth ? '' : undefined}
       data-open={open ? '' : undefined}
+      data-browser-shown={browserVisible ? '' : undefined}
       aria-hidden={!open}
       inert={!open}
       style={{ width: open ? (collapsed ? 52 : fillWidth ? '100%' : width) : 0 }}
@@ -215,7 +214,7 @@ export function WorkbenchRightSidebar({
 
       {open || hasOpened ? (
       <div
-        className="ds-tool-panel ds-right-panel-surface absolute inset-y-0 right-0 flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar"
+        className={`ds-tool-panel ds-right-panel-surface absolute inset-y-0 right-0 flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar${browserVisible ? ' is-browser' : ''}`}
         aria-hidden={!panelVisible}
         inert={!panelVisible}
         style={{
@@ -350,7 +349,6 @@ export function WorkbenchRightSidebar({
                 <Suspense fallback={<PanelFallback />}>
                   <BrowserWorkspace
                     threadId={browserThreadId}
-                    agentRequest={active ? agentBrowserRequest : 0}
                     visible={visible}
                     blocks={active ? devPreviewBlocks : []}
                     preferredUrl={active ? latestDevPreviewUrl : null}
@@ -361,7 +359,6 @@ export function WorkbenchRightSidebar({
                     onPreviewPick={active ? onPreviewPick : undefined}
                     onDemonstrationSaved={active ? onDemonstrationSaved : undefined}
                     onOpenFileInEditor={active ? onOpenFileInEditor : undefined}
-                    className="h-full max-h-full w-full flex-col"
                   />
                 </Suspense>
               </div>

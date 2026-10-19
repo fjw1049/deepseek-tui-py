@@ -74,6 +74,10 @@ async def test_takeover_continue_preserves_turn_and_requires_verification(help_t
 async def test_user_held_browser_asks_for_return_and_resumes(help_task):
     manager, run, handle = help_task
     run.owner = "user"  # The user opened the page from the panel before asking.
+    await manager.browser_service.action("one", BrowserAction(action="status"))
+    assert run.owner == "agent" and run.agent_task
+    assert manager.browser_task_state("one")["task_running"]
+    run.owner = "user"  # A takeover during this task keeps the browser with the user.
     with pytest.raises(ValueError, match="user controls this browser"):
         await manager.browser_service.action("one", BrowserAction(action="observe"))
     result = await manager.request_browser_assistance("one", "Please return control")
@@ -360,3 +364,31 @@ def test_handoff_detects_checkbox_change_without_retaining_input_values():
     report = json.loads(result.split("Resume reconciliation:\n")[1].split("\nFresh browser observation:")[0])
     assert report["sampled_controls_changed"] is True
     assert report["visible_text_changed"] is False
+
+
+@pytest.mark.asyncio
+async def test_browser_takeover_leaves_other_agent_work_running(help_task):
+    manager, run, handle = help_task
+    assert not manager.browser_task_state("one")["task_running"]
+    await manager.control_browser("one", "user")
+    assert run.owner == "user" and not handle.pause.paused
+    run.session.close = AsyncMock()
+    await manager.control_browser("one", "stopped")
+    assert not handle.cancel_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_preview_browser_needs_no_conversation():
+    from fastapi import HTTPException
+
+    from deepseek_tui.browser import PREVIEW_THREAD_ID
+    from deepseek_tui.server.browser_routes import service
+
+    def missing(_):
+        raise FileNotFoundError
+
+    manager = SimpleNamespace(browser_service=object(), store=SimpleNamespace(load_thread=missing))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(thread_manager=manager)))
+    assert service(request, PREVIEW_THREAD_ID) is manager.browser_service
+    with pytest.raises(HTTPException):
+        service(request, "thr_missing")

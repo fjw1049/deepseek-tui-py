@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DsGuiApi } from '../shared/ds-gui-api'
+import type { BrowserBridgeCommand } from '../shared/browser-bridge'
 
 const api = {
   platform: process.platform,
@@ -222,6 +223,16 @@ const api = {
   fetchPetManifest: (force) => ipcRenderer.invoke('pet:fetch-manifest', force === true),
   resolvePetSpritesheet: (slug) =>
     ipcRenderer.invoke('pet:resolve-spritesheet', slug ? { slug } : {}),
+  browserBridge: {
+    setTabs: (browserId, tabs) => ipcRenderer.invoke('browser-bridge:tabs', { browserId, tabs }),
+    reply: (requestId, reply) => ipcRenderer.invoke('browser-bridge:reply', { requestId, ...reply }),
+    onCommand: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: { requestId: string; command: BrowserBridgeCommand }): void =>
+        listener(message.requestId, message.command)
+      ipcRenderer.on('browser-bridge:command', handler)
+      return () => { ipcRenderer.removeListener('browser-bridge:command', handler) }
+    }
+  },
   copyDevBrowserScreenshotToClipboard: (webContentsId) =>
     ipcRenderer.invoke('dev-browser:copy-screenshot', { webContentsId })
 } satisfies DsGuiApi

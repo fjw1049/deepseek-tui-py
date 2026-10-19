@@ -1,4 +1,5 @@
 import type { AppSettingsPatch, AppSettingsV1, EndpointProtocol } from './app-settings'
+import type { BrowserBridgeCommand, BrowserBridgeReply, BrowserBridgeTab } from './browser-bridge'
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
 import type {
@@ -475,6 +476,12 @@ export type DsGuiApi = {
   openLogDir: () => Promise<{ ok: boolean; message?: string }>
   fetchPetManifest: (force?: boolean) => Promise<PetManifestFetchResult>
   resolvePetSpritesheet: (slug?: string) => Promise<PetSpritesheetResolveResult>
+  /** Workbench browser tabs the runtime may drive through the loopback CDP bridge. */
+  browserBridge: {
+    setTabs: (browserId: string, tabs: BrowserBridgeTab[]) => Promise<void>
+    reply: (requestId: string, reply: BrowserBridgeReply) => Promise<void>
+    onCommand: (listener: (requestId: string, command: BrowserBridgeCommand) => void) => () => void
+  }
   /** Capture the dev-browser guest webview and copy it to the system clipboard. */
   copyDevBrowserScreenshotToClipboard: (
     webContentsId: number

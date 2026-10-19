@@ -4075,34 +4075,8 @@ samp {
 
 .ds-dev-browser__tab-close:active:not(:disabled),
 .ds-dev-browser__icon-btn:active:not(:disabled),
-.ds-dev-browser__follow:active,
 .ds-dev-browser__chip:active {
   transform: scale(0.97);
-}
-
-.ds-dev-browser__actions {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 1px;
-  margin-left: 2px;
-}
-
-.ds-dev-browser__action-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  padding: 0 1px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
-}
-
-.ds-dev-browser__action-pill .ds-dev-browser__icon-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ds-text) 10%, transparent);
-}
-
-[data-theme='dark'] .ds-dev-browser__action-pill {
-  background: color-mix(in srgb, var(--ds-text) 14%, transparent);
 }
 
 .ds-dev-browser__icon-btn {
@@ -4129,113 +4103,6 @@ samp {
 .ds-dev-browser__icon-btn:disabled {
   cursor: default;
   opacity: 0.34;
-}
-
-.ds-dev-browser__follow {
-  display: inline-flex;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  margin-left: 1px;
-  padding: 0;
-  border-radius: 999px;
-  color: var(--ds-text-faint);
-  transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    transform 100ms ease-out;
-}
-
-.ds-dev-browser__follow:hover {
-  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
-  color: var(--ds-text);
-}
-
-.ds-dev-browser__follow.is-on {
-  background: color-mix(in srgb, var(--ds-accent, #0088ff) 12%, transparent);
-  color: var(--ds-accent, #0088ff);
-}
-
-[data-theme='dark'] .ds-dev-browser__follow.is-on {
-  background: var(--ds-accent-soft);
-  color: var(--ds-accent);
-}
-
-/* Element pick: idle matches left chrome icons; active uses accent fill. */
-.ds-dev-browser__magic {
-  position: relative;
-  display: inline-flex;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  margin-left: 1px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--ds-text-faint);
-  transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    transform 100ms ease-out;
-}
-
-.ds-dev-browser__magic:hover:not(.is-on) {
-  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
-  color: var(--ds-text);
-}
-
-.ds-dev-browser__magic:active {
-  transform: scale(0.94);
-}
-
-.ds-dev-browser__magic.is-on {
-  background: color-mix(in srgb, var(--ds-accent, #0088ff) 14%, transparent);
-  color: var(--ds-accent, #0088ff);
-}
-
-.ds-dev-browser__magic-icon {
-  flex-shrink: 0;
-  overflow: visible;
-  color: inherit;
-}
-
-.ds-dev-browser__screenshot-notice {
-  margin: 0 6px 4px;
-  padding: 4px 8px;
-  border-radius: 8px;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.ds-dev-browser__screenshot-notice--info {
-  background: color-mix(in srgb, var(--ds-accent, #0088ff) 12%, transparent);
-  color: var(--ds-accent, #0088ff);
-}
-
-.ds-dev-browser__screenshot-notice--success {
-  background: color-mix(in srgb, var(--ds-success) 12%, transparent);
-  color: var(--ds-success);
-}
-
-[data-theme='dark'] .ds-dev-browser__screenshot-notice--success {
-  color: var(--ds-success);
-}
-
-.ds-dev-browser__screenshot-notice--error {
-  background: color-mix(in srgb, var(--ds-danger) 12%, transparent);
-  color: var(--ds-danger);
-}
-
-[data-theme='dark'] .ds-dev-browser__screenshot-notice--error {
-  color: var(--ds-danger);
-}
-
-.ds-dev-browser__icon-btn.is-busy {
-  color: var(--ds-accent, #0088ff);
 }
 
 .ds-dev-browser__toolbar {
@@ -7572,6 +7439,48 @@ select:focus-visible,
 .ds-workbench-right-panel[data-open] .ds-right-panel-surface {
   opacity: 1;
   transform: translateX(0);
+}
+
+/* Workbench browser tabs live beneath the panels. The shown tab sits under the right
+   panel's page area, which turns transparent; others stay painted but invisible so the
+   agent can keep working while the panel is hidden. */
+.ds-browser-page-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ds-browser-page {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ds-browser-page.is-shown {
+  opacity: 1;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+/* Beats the panel fill below (.ds-workbench-right-panel .ds-tool-panel:not(...)). */
+.ds-workbench-right-panel .ds-tool-panel.ds-right-panel-surface.is-browser {
+  background-color: transparent;
+  pointer-events: none;
+}
+
+/* The panel box sits above the page; only its own controls (resize handle) take input. */
+.ds-workbench-right-panel[data-browser-shown] {
+  pointer-events: none;
+}
+
+.ds-workbench-right-panel[data-browser-shown] > :not(.ds-right-panel-surface) {
+  pointer-events: auto;
+}
+
+.ds-right-panel-surface.is-browser > .ds-dock-header {
+  background: var(--ds-bg-sidebar);
+  pointer-events: auto;
 }
 
 .ds-workbench-shell.is-resizing .ds-chat-column > section,

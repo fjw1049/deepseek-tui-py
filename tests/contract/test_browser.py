@@ -73,7 +73,7 @@ async def test_cookie_sync_never_pauses_a_running_task(
     handle._mark_turn_active()
     turn = SimpleNamespace(turn_id="t")
     manager._active[thread_id] = SimpleNamespace(handle=handle, active_turn=turn)
-    run = BrowserRun(thread_id, tmp_path / "page", session=SimpleNamespace(
+    run = BrowserRun(thread_id, tmp_path / "page", agent_task=True, session=SimpleNamespace(
         _internal=SimpleNamespace(client=SimpleNamespace(send=AsyncMock(return_value={})))))
     manager.browser_service.runs[thread_id] = run
     try:
@@ -188,7 +188,7 @@ async def test_takeover_resumes_existing_turn_only_after_fresh_observation(
             "frameTree": {"frame": {"url": "https://example.test/us"}},
         }))),
     )
-    run = BrowserRun(thread_id, tmp_path / "page", session=session)
+    run = BrowserRun(thread_id, tmp_path / "page", session=session, agent_task=True)
     manager.browser_service.runs[thread_id] = run
     observation_cdp(run.session, run.session.dom_tree.return_value.content)
     try:
@@ -564,7 +564,7 @@ async def test_recovery_keeps_original_task_paused_and_assistance_pending(
     turn = SimpleNamespace(turn_id="original")
     manager._active[thread_id] = SimpleNamespace(handle=handle, active_turn=turn)
     old = BrowserRun(thread_id, tmp_path / "old", session=SimpleNamespace(close=AsyncMock()),
-                     generation=2, healthy=False)
+                     generation=2, healthy=False, agent_task=True)
     old.assistance = {"id": "request", "status": "pending", "turn_id": "original"}
     manager.browser_service.runs[thread_id] = old
     replacement = BrowserRun(thread_id, tmp_path / "new", session=SimpleNamespace(), generation=5)
@@ -581,6 +581,7 @@ async def test_recovery_keeps_original_task_paused_and_assistance_pending(
         assert state["owner"] == "user" and state["generation"] == 5
         assert state["assistance"]["id"] == "request" and state["assistance"]["status"] == "human"
         assert handle.pause.paused and manager._active[thread_id].active_turn is turn
+        assert replacement.agent_task  # The paused turn still owns its browser task.
     finally:
         manager._active.pop(thread_id, None)
         manager.browser_service.runs.pop(thread_id, None)
@@ -607,7 +608,7 @@ async def test_large_handoff_observation_remains_valid_json(
         handle=handle, active_turn=SimpleNamespace(turn_id="original"))
     session = SimpleNamespace(_internal=SimpleNamespace(client=SimpleNamespace(send=AsyncMock())))
     observation_cdp(session, "Region details " * 3000)
-    run = BrowserRun(thread_id, tmp_path / "page", session=session, owner="user")
+    run = BrowserRun(thread_id, tmp_path / "page", session=session, owner="user", agent_task=True)
     manager.browser_service.runs[thread_id] = run
     try:
         response = await client.post(f"/v1/threads/{thread_id}/browser/control",

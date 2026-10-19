@@ -309,6 +309,33 @@ export const logErrorPayloadSchema = z
   })
   .strict()
 
+export const browserBridgeTabsPayloadSchema = z
+  .object({
+    browserId: z.string().min(1).max(200),
+    tabs: z
+      .array(
+        z
+          .object({
+            tabId: z.string().min(1).max(100),
+            webContentsId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+            active: z.boolean(),
+            visible: z.boolean()
+          })
+          .strict()
+      )
+      .max(100)
+  })
+  .strict()
+
+export const browserBridgeReplyPayloadSchema = z
+  .object({
+    requestId: z.string().min(1).max(100),
+    ok: z.boolean(),
+    tabId: z.string().min(1).max(100).optional(),
+    error: z.string().max(2_000).optional()
+  })
+  .strict()
+
 export const devBrowserScreenshotPayloadSchema = z
   .object({
     webContentsId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)

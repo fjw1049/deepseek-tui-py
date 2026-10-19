@@ -120,7 +120,10 @@ it('preserves browser and terminal across dock switching and collapse, and resto
     const browser = host.querySelector<HTMLInputElement>('[data-browser]')!
     const terminal = host.querySelector('[data-terminal]')
     browser.value = 'unsaved address'
+    // The panel lets the browser page beneath it take input only while it shows.
+    expect(host.querySelector('aside')?.hasAttribute('data-browser-shown')).toBe(true)
     await render('terminal')
+    expect(host.querySelector('aside')?.hasAttribute('data-browser-shown')).toBe(false)
     expect(host.querySelector('[data-browser]')).toBe(browser)
     expect(browser.dataset.visible).toBe('false')
     await render('preview', true, true)

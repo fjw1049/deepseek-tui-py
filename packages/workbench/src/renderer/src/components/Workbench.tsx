@@ -2,6 +2,7 @@ import { freezeDiffResize } from '../lib/freeze-diff-resize'
 import { createWorkbenchResizePreview } from '../lib/workbench-resize-preview'
 import { useThreadRightSidebar } from '../hooks/use-thread-right-sidebar'
 import { BROWSER_ACTIVITY_EVENT } from '../lib/browser-activity'
+import { BrowserPageLayer } from './BrowserPageLayer'
 import { CHAT_READING_MIN_WIDTH, RIGHT_PANEL_MIN, resolveRightPanelLayout } from '../lib/workbench-pane-layout'
 import { GlobalFeedbackViewport } from './GlobalFeedback'
 import { useFeedbackStore } from '../store/feedback-store'
@@ -493,7 +494,6 @@ export function Workbench(): ReactElement {
     [devPreviewBlocks]
   )
   const latestHtmlPreviewPath = detectedHtmlPreviewPaths[0] ?? null
-  const [agentBrowserRequest, setAgentBrowserRequest] = useState(0)
   const [workspacePreviewUrl, setWorkspacePreviewUrl] = useState<string | null>(null)
   const [workspacePreviewPath, setWorkspacePreviewPath] = useState<string | null>(null)
   const [browsePreviewUrl, setBrowsePreviewUrl] = useState<string | null>(null)
@@ -1042,7 +1042,6 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     const onBrowserActivity = (event: Event): void => {
       if ((event as CustomEvent<{ threadId: string }>).detail?.threadId !== activeThreadId) return
-      setAgentBrowserRequest(value => value + 1)
       setWorkspacePreviewUrl(null)
       setWorkspacePreviewPath(null)
       setBrowsePreviewUrl(null)
@@ -1073,7 +1072,6 @@ export function Workbench(): ReactElement {
     setWorkspacePreviewUrl(null)
     setWorkspacePreviewPath(null)
     setBrowsePreviewUrl(null)
-    setAgentBrowserRequest(0)
     setPendingPreviewPicks([])
     setHtmlPreviewError(null)
   }, [activeThreadId])
@@ -1810,6 +1808,8 @@ export function Workbench(): ReactElement {
           route === 'marketplace' ? 'px-0' : ''
         }`}
       >
+        {/* Browser pages outlive routes and panels; the right panel shows them through. */}
+        <BrowserPageLayer />
         {route === 'settings' ? (
           <SettingsView />
         ) : route === 'marketplace' ? (
@@ -2112,7 +2112,6 @@ export function Workbench(): ReactElement {
               setChangesProjectRoot(null)
             }}
             onChangesFocusPathConsumed={() => setChangesFocusPath(null)}
-            agentBrowserRequest={previewThreadId.current === activeThreadId ? agentBrowserRequest : 0}
             devPreviewBlocks={devPreviewBlocks}
             latestDevPreviewUrl={previewThreadId.current === activeThreadId ? preferredPreviewUrl : null}
             preferredPreviewFilePath={preferredPreviewFilePath}

@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs'
 import { describe, expect, it, vi } from 'vitest'
 import { localizeDevBrowserScreenshotError } from './dev-browser-screenshot-errors'
 
@@ -21,4 +22,13 @@ describe('localizeDevBrowserScreenshotError', () => {
       'Custom failure detail.'
     )
   })
+})
+
+it('names only messages both locales define', () => {
+  const source = readFileSync(new URL('./dev-browser-screenshot-errors.ts', import.meta.url), 'utf8')
+  const keys = [...new Set(source.match(/browserScreenshot[A-Za-z]+/g))]
+  for (const locale of ['zh', 'en']) {
+    const messages = JSON.parse(readFileSync(new URL(`../locales/${locale}/common.json`, import.meta.url), 'utf8')) as Record<string, string>
+    expect(keys.filter(key => !messages[key]), locale).toEqual([])
+  }
 })

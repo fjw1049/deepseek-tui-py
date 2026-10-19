@@ -28,6 +28,8 @@ import {
   feishuConfigPayloadSchema,
   wecomConfigPayloadSchema,
   feishuRegisterStartPayloadSchema,
+  browserBridgeReplyPayloadSchema,
+  browserBridgeTabsPayloadSchema,
   defaultPathSchema,
   devBrowserScreenshotPayloadSchema,
   gitBranchPayloadSchema,
@@ -158,6 +160,7 @@ import {
 import { usageLedgerService } from '../services/usage-ledger-service'
 import { deleteGuiDataAndExit } from '../services/gui-data-reset'
 import type { createTerminalService } from '../services/terminal-service'
+import type { BrowserBridge } from '../services/browser-bridge'
 
 type TerminalService = ReturnType<typeof createTerminalService>
 
@@ -183,6 +186,7 @@ type RegisterAppIpcHandlersOptions = {
   getAppVersion: () => string
   resolveLogDirectory: () => string
   logError: (category: string, message: string, detail?: unknown) => void
+  getBrowserBridge: () => BrowserBridge | null
 }
 
 function parseIpcPayload<T>(channel: string, schema: z.ZodType<T>, payload: unknown): T {
@@ -511,7 +515,8 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     showTurnCompleteNotification,
     getAppVersion,
     resolveLogDirectory,
-    logError
+    logError,
+    getBrowserBridge
   } = options
 
   ipcMain.handle('settings:get', async () => store.load())
@@ -1492,6 +1497,16 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('shell:open-external', async (_, url: unknown) => {
     const validatedUrl = parseIpcPayload('shell:open-external', shellOpenExternalUrlSchema, url)
     await shell.openExternal(validatedUrl)
+  })
+  ipcMain.handle('browser-bridge:tabs', async (event, payload: unknown) => {
+    if (event.sender.id !== getMainWindow()?.webContents.id) return
+    const request = parseIpcPayload('browser-bridge:tabs', browserBridgeTabsPayloadSchema, payload)
+    getBrowserBridge()?.setTabs(request.browserId, request.tabs)
+  })
+  ipcMain.handle('browser-bridge:reply', async (event, payload: unknown) => {
+    if (event.sender.id !== getMainWindow()?.webContents.id) return
+    const { requestId, ...reply } = parseIpcPayload('browser-bridge:reply', browserBridgeReplyPayloadSchema, payload)
+    getBrowserBridge()?.reply(requestId, reply)
   })
   ipcMain.handle('dev-browser:copy-screenshot', async (event, payload: unknown) => {
     const request = parseIpcPayload(

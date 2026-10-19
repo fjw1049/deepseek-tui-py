@@ -134,7 +134,8 @@ class CookieStore:
                     data = {"sites": []}
                     self.configure("disabled", None)
                     (self.root / "cookies.key").unlink(missing_ok=True)
-                data.update(cookies={}, skip_legacy=True)
+                data.update(cookies={}, skip_legacy=True, native_pending=False,
+                            native_migrated=True, native_removed=[])
                 # Keep visited sites so clearing cannot silently import old logins.
                 self._write(data)
         self.status, self.count, self.skipped, self.domains = "cleared", 0, 0, 0
@@ -201,6 +202,36 @@ class CookieStore:
         run.cookie_baseline = {
             cookie_key(c): c for c in (await client.send("Storage.getCookies"))["cookies"]
         }
+
+    async def apply_native(self, run) -> None:
+        """Bring saved logins into Workbench's own browser without replacing its own:
+        once for logins from the private browser, and after each Chrome sync made while
+        it was not attached."""
+        data = self._read()
+        migrate = not data.get("native_migrated")
+        pending = bool(data.get("native_pending")) and self.settings()["consent"] == "enabled"
+        gone = data.get("native_removed") or []
+        if not (migrate or pending or gone):
+            return
+        client = run.session._internal.client
+        for cookie in gone:
+            await client.send("Network.deleteCookies", cookie)
+        present = {cookie_key(c) for c in (await client.send("Network.getAllCookies"))["cookies"]}
+        chrome = set(data.get("chrome_sites", []))
+        now = time.time()
+        await set_cookies(client, [
+            cookie_params(cookie) for key, cookie in data["cookies"].items()
+            if not cookie.get("partitionKeyOpaque")
+            and (cookie.get("expires", -1) <= 0 or cookie["expires"] > now)
+            and ((pending and site_of(cookie["domain"]) in chrome)
+                 or (migrate and key not in present))
+        ])
+
+        def done(data):
+            data.update(native_migrated=True, native_pending=False, native_removed=[])
+            return True
+
+        await self._edit(done)
 
     async def capture(self, run) -> None:
         if run.cookie_baseline is None:
@@ -336,6 +367,14 @@ class CookieStore:
                 for cookie in cookies:
                     data["cookies"][cookie_key(cookie)] = cookie
                 data["chrome_sites"] = sorted(selected)
+                # Workbench's own browser picks these up when it next attaches.
+                data["native_pending"] = not getattr(run, "native", False)
+                if data["native_pending"]:
+                    gone = data.setdefault("native_removed", [])
+                    fields = ("name", "domain", "path", "partitionKey")
+                    gone.extend({key: cookie[key] for key in fields if key in cookie}
+                                for cookie in removed)
+                    del gone[:-2000]
                 return True
 
             try:

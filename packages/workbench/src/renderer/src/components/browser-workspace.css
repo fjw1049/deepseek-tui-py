@@ -29,6 +29,14 @@
 .ds-browser-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 12px; padding: 28px; color: var(--ds-text-muted); }
 .ds-browser-empty h3 { font-size: 14px; color: var(--ds-text); font-weight: 500; }
 .ds-browser-empty p { font-size: 12px; max-width: 280px; line-height: 1.8; }
+/* A Workbench tab shows through the page area; only the browser's own controls take input. */
+.ds-shared-browser { pointer-events: auto; }
+.ds-shared-browser.is-native { background: transparent; pointer-events: none; }
+.ds-shared-browser.is-native .ds-browser-chrome { background: var(--ds-bg-sidebar); }
+.ds-shared-browser.is-native :is(.ds-browser-chrome, .ds-browser-status, .ds-browser-feedback, .ds-browser-empty, .ds-browser-shield, .ds-browser-cookie-settings, .ds-browser-cookie-toast) { pointer-events: auto; }
+.ds-shared-browser.is-native .ds-browser-empty { background: var(--ds-bg-sidebar); }
+.ds-browser-shield { position: absolute; inset: 0; cursor: not-allowed; }
+.ds-browser-empty-action { border-radius: 999px; background: var(--ds-accent); color: var(--ds-accent-foreground); padding: 8px 16px; font-size: 12.5px; font-weight: 600; }
 .ds-browser-status { --control-color: var(--ds-text-muted); position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1; display: flex; flex-direction: column; width: max-content; max-width: calc(100% - 16px); max-height: calc(100% - 16px); overflow: auto; padding: 2px; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--ds-bg-sidebar); box-shadow: 0 6px 24px rgb(0 0 0 / 18%); -webkit-app-region: no-drag; }
 .ds-browser-status.is-agent, .ds-browser-status.is-human { --control-color: var(--ds-accent); }
 .ds-browser-status.is-attention { --control-color: var(--ds-warning); }

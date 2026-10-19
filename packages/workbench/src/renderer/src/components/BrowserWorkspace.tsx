@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb, CircleStop, Radar } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
-import { parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
+import { buildPreviewPickerCleanupScript, buildPreviewPickerInjectScript, extractWebviewConsoleMessage, parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
+import { localizeDevBrowserScreenshotError } from '../lib/dev-browser-screenshot-errors'
+import { BLANK_PAGE, activatePageTab, closePageTab, ensureBrowserSession, navigatePageTab, openPageTab, pageWebview, setPageDisplay, updatePageTab, useBrowserPagesStore } from '../store/browser-pages-store'
 import { isHtmlPreviewPath } from '@shared/html-preview'
 import { BrowserCookieSync, type CookieSyncState } from './BrowserCookieSync'
-import { DevBrowserPanel } from './DevBrowserPanel'
 import { BrowserViewport } from './BrowserViewport'
 import { formatAutomationApiError } from '../lib/automation-runtime-client'
-import { normalizeBrowseUrlInput } from '@shared/dev-preview-url'
+import { DEFAULT_DEV_PREVIEW_URL, isLocalPreviewUrl, normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
 import './browser-workspace.css'
 import { respondToAssistance } from './BrowserAssistance'
@@ -35,6 +36,8 @@ type BrowserState = {
   capabilities?: { video?: { ready: boolean } }
   unresolved?: ActionReceipt[]
   dialog?: { id: string; type: string; message: string } | null
+  loading?: boolean
+  surface?: 'native' | 'headless'
   file_chooser?: { id: string; mode: string } | null
   downloads?: { id: string; state: string; filename: string; received_bytes: number; path?: string }[]
 }
@@ -59,9 +62,16 @@ export async function browserRequest<T>(threadId: string, suffix = '', body?: un
   return JSON.parse(response.body) as T
 }
 
+/** The browser before a conversation exists; agents never act in it. */
+export const PREVIEW_BROWSER_ID = 'workbench-preview'
+const AUTO_FOLLOW_STORAGE_KEY = 'deepseekgui.devPreview.autoFollow'
+
+function readAutoFollow(): boolean {
+  try { return window.localStorage.getItem(AUTO_FOLLOW_STORAGE_KEY) === 'true' } catch { return false }
+}
+
 type BrowserWorkspaceProps = {
-  agentRequest?: number
-  threadId: string | null; visible?: boolean; blocks?: ChatBlock[]; className?: string
+  threadId: string | null; visible?: boolean; blocks?: ChatBlock[]
   preferredUrl?: string | null; preferredFilePath?: string | null; externalError?: string | null
   onPreferredUrlConsumed?: () => void; onExternalErrorConsumed?: () => void
   onPreviewPick?: (pick: PreviewElementPick) => void
@@ -69,39 +79,24 @@ type BrowserWorkspaceProps = {
   onDemonstrationSaved?: (message: string) => void
 }
 
-export function BrowserWorkspace({ agentRequest = 0, ...props }: BrowserWorkspaceProps): ReactElement {
-  const { t } = useTranslation('common')
-  const [mode, setMode] = useState<'preview' | 'agent'>(agentRequest ? 'agent' : 'preview')
-  const [agentOpened, setAgentOpened] = useState(!!agentRequest)
-  useEffect(() => {
-    if (props.preferredUrl || props.externalError) setMode('preview')
-  }, [props.preferredUrl, props.externalError])
-  useEffect(() => {
-    if (agentRequest) { setMode('agent'); setAgentOpened(true) }
-  }, [agentRequest])
-  return <div className="flex h-full min-h-0 flex-col">
-    <div className={mode === 'preview' ? 'min-h-0 flex-1' : 'hidden'} inert={mode !== 'preview'}>
-      <DevBrowserPanel {...props} blocks={props.blocks ?? []} className="h-full w-full"
-        visible={props.visible !== false && mode === 'preview'} />
-    </div>
-    {agentOpened ? <div className={mode === 'agent' ? 'min-h-0 flex-1' : 'hidden'} inert={mode !== 'agent'}>
-      {props.threadId ? <AgentBrowserPanel key={props.threadId} {...props} threadId={props.threadId}
-        visible={props.visible !== false && mode === 'agent'} preferredUrl={null} externalError={null}
-        onReturnToPages={() => setMode('preview')} /> :
-        <p className="p-5 text-sm text-ds-muted">{t('browserNeedThread')}</p>}
-    </div> : null}
-  </div>
-}
-
-export function AgentBrowserPanel({ threadId, visible = true, blocks = [], preferredUrl, preferredFilePath,
+/** One browser shared by the user and the agent: previews, browsing and automation. */
+export function BrowserWorkspace({ threadId: conversationId, visible = true, blocks = [], preferredUrl, preferredFilePath,
   onPreferredUrlConsumed, externalError, onExternalErrorConsumed, onPreviewPick, onOpenFileInEditor,
-  onReturnToPages, onDemonstrationSaved }: BrowserWorkspaceProps & {
-    threadId: string; onReturnToPages?: () => void
-  }): ReactElement {
+  onDemonstrationSaved }: BrowserWorkspaceProps): ReactElement {
+  const threadId = conversationId ?? PREVIEW_BROWSER_ID
   const [dialogAnswer, setDialogAnswer] = useState('')
   const { t } = useTranslation('common')
   const [state, setState] = useState<BrowserState | null>(null)
   useEffect(() => { setDialogAnswer('') }, [state?.dialog?.id])
+  // Workbench tabs are the browser; a private browser only appears when the runtime
+  // had to work without them, and is then shown as a live remote view.
+  const remote = !!state?.active && state.surface !== 'native'
+  const viewSuffix = remote ? '/view' : ''
+  const session = useBrowserPagesStore(store => store.sessions[threadId])
+  // Shown browsers always have a page; hidden ones may have been closed to save memory.
+  const hasSession = !!session
+  useEffect(() => { if (visible && !hasSession) ensureBrowserSession(threadId) }, [threadId, visible, hasSession])
+  const activeTab = session?.tabs.find(tab => tab.id === session.activeTabId)
   const [image, setImage] = useState<string | null>(null)
   const [frameFresh, setFrameFresh] = useState(false)
   const [url, setUrl] = useState('')
@@ -126,6 +121,8 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const menuRoot = useRef<HTMLDivElement>(null)
   const menuButton = useRef<HTMLButtonElement>(null)
   const [fresh, setFresh] = useState(false)
+  // Previews wait for the first answer, which tells whether the page is local or remote.
+  const [polled, setPolled] = useState(false)
   useLightDismiss({ open: more, refs: [menuRoot], onDismiss: () => setMore(false) })
   useEffect(() => { if (!visible) { setMore(false); setControlOpen(false); setCookieSettings(false); setFresh(false); setFrameFresh(false) } }, [visible])
   useEffect(() => {
@@ -141,20 +138,29 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const [waitingPreview, setWaitingPreview] = useState<{ url: string; filePath?: string | null } | null>(null)
   const [inspect, setInspect] = useState(false)
   const [notice, setNotice] = useState('')
+  const [copying, setCopying] = useState(false)
   useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(''), 4000)
     return () => window.clearTimeout(timer)
   }, [notice])
   const detectedUrls = useMemo(() => extractDetectedDevPreviewUrls(blocks), [blocks])
-  const filePath = state?.url ? previewFiles[state.url.split('#')[0]] : undefined
+  const [autoFollow, setAutoFollow] = useState(readAutoFollow)
+  useEffect(() => { try { window.localStorage.setItem(AUTO_FOLLOW_STORAGE_KEY, String(autoFollow)) } catch { /* optional */ } }, [autoFollow])
+  const followedUrls = useRef(new Set<string>())
+  const filePath = remote ? (state?.url ? previewFiles[state.url.split('#')[0]] : undefined) : activeTab?.filePath ?? undefined
   const canInspect = !!filePath && isHtmlPreviewPath(filePath) && !!onPreviewPick
-  useEffect(() => { setInspect(false) }, [visible, state?.url, state?.generation, state?.owner])
+  const inspectedPage = remote ? state?.url : activeTab?.id
+  useEffect(() => { setInspect(false) }, [visible, inspectedPage, state?.generation, state?.owner])
   useEffect(() => { if (externalError) { setError(externalError); onExternalErrorConsumed?.() } }, [externalError, onExternalErrorConsumed])
   const userControls = visible && fresh && state?.owner === 'user' && !state.transferring && !pending
   const canNavigate = visible && fresh && !pending && !state?.transferring && (!state?.active || userControls)
+  // The user browses Workbench tabs directly unless the agent is working in them.
+  const agentWorking = !!state?.active && state.owner === 'agent' && !!state.task_running
+  const canBrowse = visible && !agentWorking && !state?.transferring
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  useEffect(() => { if (state?.url) setUrl(state.url === 'about:blank' ? '' : state.url) }, [state?.url])
+  const pageUrl = remote ? state?.url : activeTab?.url
+  useEffect(() => { if (pageUrl) setUrl(pageUrl === BLANK_PAGE ? '' : pageUrl) }, [pageUrl])
   const displayedScene = useRef<string | undefined>(undefined)
   const apply = useCallback((next: BrowserState): void => {
     if (!alive.current || transferring.current || (next.generation ?? -1) < latestGeneration.current) return
@@ -179,17 +185,17 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       let delay = 600
       const started = performance.now()
       try {
-        const next = await browserRequest<BrowserState>(threadId, '/view')
+        const next = await browserRequest<BrowserState>(threadId, viewSuffix)
         if (!disposed) {
           apply(next); setConnectionError('')
           // Streamed frames make an unchanged view cheap, so the human view polls near 30 fps.
-          delay = next.active ? (next.owner === 'user' ? Math.max(16, 33 - (performance.now() - started)) : 300) : 600
+          delay = !viewSuffix || !next.active ? 600 : next.owner === 'user' ? Math.max(16, 33 - (performance.now() - started)) : 300
         }
       } catch (e) { if (!disposed) { setFresh(false); setFrameFresh(false); setConnectionError(e instanceof Error ? e.message : String(e)) } }
-      finally { if (!disposed) timer = setTimeout(() => void poll(), delay) }
+      finally { if (!disposed) { setPolled(true); timer = setTimeout(() => void poll(), delay) } }
     }
     void poll(); return () => { disposed = true; clearTimeout(timer) }
-  }, [threadId, visible, apply])
+  }, [threadId, visible, apply, viewSuffix])
   const perform = useCallback(async (suffix: string, body: unknown): Promise<boolean> => {
     setError(''); setPending(true)
     try {
@@ -199,7 +205,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       if (result.receipt) setLastReceipt(result.receipt)
       if (result.dialog) setState(previous => previous ? { ...previous, dialog: result.dialog } : previous)
       if (result.success === false) setError(typeof result.content === 'string' ? result.content : JSON.stringify(result.content))
-      try { apply(await browserRequest<BrowserState>(threadId, '/view')); setConnectionError('') }
+      try { apply(await browserRequest<BrowserState>(threadId, viewSuffix)); setConnectionError('') }
       catch (e) {
         if (alive.current) {
           setFresh(false); setFrameFresh(false)
@@ -216,13 +222,84 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       return false
     }
     finally { if (alive.current) setPending(false) }
-  }, [threadId, apply, state?.active, state?.generation, t])
+  }, [threadId, apply, state?.active, state?.generation, t, viewSuffix])
   const action = useCallback((body: unknown): void => { void perform('/action', body) }, [perform])
+  async function stopLoading(): Promise<void> {
+    if (!remote) { try { pageWebview(activeTab?.id)?.stop() } catch { /* not attached yet */ } return }
+    try { await browserRequest(threadId, '/input', { kind: 'stop', generation: state?.generation ?? 0 }) }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+  }
+  // The runtime drives the visible tabs once bound; without it they still browse locally.
+  const attachedAt = useRef(0)
+  const [attachRetry, setAttachRetry] = useState(0)
+  useEffect(() => {
+    if (!visible || !fresh || state?.active) return
+    const timer = window.setTimeout(() => {
+      attachedAt.current = Date.now()
+      // Workbench may not have announced its bridge yet; try again after a pause.
+      void browserRequest<BrowserState>(threadId, '/attach', {}).then(apply).catch(() => setAttachRetry(count => count + 1))
+    }, Math.max(0, 5000 - (Date.now() - attachedAt.current)))
+    return () => window.clearTimeout(timer)
+  }, [visible, fresh, state?.active, threadId, apply, attachRetry])
+  // The page layer places the active tab under this transparent area.
+  const pageArea = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const release = (): void => { if (useBrowserPagesStore.getState().display?.browserId === threadId) setPageDisplay(null) }
+    const area = pageArea.current
+    const layer = document.querySelector<HTMLElement>('.ds-browser-page-layer')
+    if (!visible || remote || !area || !layer) { release(); return }
+    let frame = 0
+    let until = 0
+    const measure = (): void => {
+      const box = area.getBoundingClientRect()
+      const origin = layer.getBoundingClientRect()
+      // Client rects include the UI scale (body zoom); the layer's own pixels do not.
+      const scale = layer.offsetWidth ? origin.width / layer.offsetWidth : 1
+      setPageDisplay({ browserId: threadId, rect: { top: Math.round((box.top - origin.top) / scale),
+        left: Math.round((box.left - origin.left) / scale), width: Math.round(box.width / scale), height: Math.round(box.height / scale) } })
+      if (performance.now() < until) frame = requestAnimationFrame(measure)
+    }
+    // Panel slides and resizes move the area; follow it for a moment after each change.
+    const follow = (): void => { until = performance.now() + 450; cancelAnimationFrame(frame); frame = requestAnimationFrame(measure) }
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(follow)
+    observer?.observe(area); observer?.observe(layer)
+    window.addEventListener('resize', follow)
+    document.addEventListener('transitionend', follow, true)
+    follow()
+    return () => {
+      observer?.disconnect(); window.removeEventListener('resize', follow)
+      document.removeEventListener('transitionend', follow, true); cancelAnimationFrame(frame); release()
+    }
+  }, [visible, remote, threadId])
+  useEffect(() => {
+    if (agentWorking) try { pageWebview(activeTab?.id)?.blur() } catch { /* not attached yet */ }
+  }, [agentWorking, activeTab?.id])
+  // Element picking on a native tab: the injected picker reports over console messages.
+  useEffect(() => {
+    const webview = remote ? null : pageWebview(activeTab?.id)
+    if (!inspect || !webview || !filePath) return
+    const run = (code: string): void => { try { void webview.executeJavaScript(code).catch(() => {}) } catch { /* not attached yet */ } }
+    const arm = (): void => run(buildPreviewPickerInjectScript())
+    const onMessage = (event: Event): void => {
+      const message = extractWebviewConsoleMessage(event)
+      const parsed = message && message.includes(PREVIEW_PICK_CONSOLE_PREFIX) ? parsePreviewPickConsoleMessage(message) : null
+      if (parsed?.type === 'cancel') setInspect(false)
+      else if (parsed?.type === 'pick') onPreviewPick?.({ ...parsed.payload, filePath })
+    }
+    arm()
+    webview.addEventListener('dom-ready', arm)
+    webview.addEventListener('console-message', onMessage)
+    return () => {
+      webview.removeEventListener('dom-ready', arm)
+      webview.removeEventListener('console-message', onMessage)
+      run(buildPreviewPickerCleanupScript())
+    }
+  }, [inspect, remote, activeTab?.id, filePath, onPreviewPick])
   async function refreshBrowser(): Promise<void> {
     setPending(true); setFrameFresh(false)
     try {
       if (state?.active) await browserRequest(threadId, '/action', { action: 'observe', generation: state.generation })
-      apply(await browserRequest<BrowserState>(threadId, '/view'))
+      apply(await browserRequest<BrowserState>(threadId, viewSuffix))
       setLastReceipt(null); setError(''); setConnectionError('')
     } catch (e) { setConnectionError(e instanceof Error ? e.message : String(e)) }
     finally { setPending(false) }
@@ -236,7 +313,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
         if (onDemonstrationSaved) onDemonstrationSaved(t('browserDemoMessage', { id: saved.recordingId, steps: saved.steps }))
         else setNotice(t('browserDemoSavedNotice'))
       } else await browserRequest(threadId, '/workflows', { action: 'start' })
-      if (alive.current) apply(await browserRequest<BrowserState>(threadId, '/view'))
+      if (alive.current) apply(await browserRequest<BrowserState>(threadId, viewSuffix))
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
     finally { if (alive.current) setPending(false) }
   }
@@ -248,7 +325,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
         if (onDemonstrationSaved) onDemonstrationSaved(t('browserSuggestMessage', { id: result.recording_id, site: result.site, count: result.count }))
         else setNotice(t('browserDemoSavedNotice'))
       }
-      if (alive.current) apply(await browserRequest<BrowserState>(threadId, '/view'))
+      if (alive.current) apply(await browserRequest<BrowserState>(threadId, viewSuffix))
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
     finally { if (alive.current) setPending(false) }
   }
@@ -260,7 +337,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       if (state?.assistance && owner !== 'stopped') {
         await respondToAssistance(threadId, state.assistance.id, owner === 'user' ? 'takeover' : 'continue')
         transferring.current = false
-        apply(await browserRequest<BrowserState>(threadId, '/view'))
+        apply(await browserRequest<BrowserState>(threadId, viewSuffix))
         return
       }
       const next = await browserRequest<BrowserState>(threadId, '/control', { owner, generation: state?.generation })
@@ -270,39 +347,70 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       if (demonstrating) setNotice(t('browserDemoSavedNotice'))
       if (owner === 'user' && next.unresolved?.length) {
         await browserRequest(threadId, '/action', { action: 'observe', generation: next.generation })
-        apply(await browserRequest<BrowserState>(threadId, '/view'))
+        apply(await browserRequest<BrowserState>(threadId, viewSuffix))
         setLastReceipt(null)
         setControlOpen(true)
       }
-      if (owner === 'stopped') onReturnToPages?.()
-
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
     finally { transferring.current = false; if (alive.current) { setPending(false); setControlTarget(null) } }
   }
-  const openPreview = useCallback(async (target: string, source?: string | null): Promise<void> => {
+  const openPreview = useCallback(async (target: string, source?: string | null, background = false): Promise<void> => {
     const normalized = normalizeBrowseUrlInput(target)
     if (!normalized) { setError(t('browserInvalidUrl')); return }
+    if (!remote) {
+      if (agentWorking) { setWaitingPreview({ url: normalized, filePath: source }); return }
+      const tabs = useBrowserPagesStore.getState().sessions[threadId]?.tabs ?? []
+      const existing = tabs.find(tab => tab.url === normalized)
+      const blank = tabs.find(tab => tab.id === useBrowserPagesStore.getState().sessions[threadId]?.activeTabId && tab.url === BLANK_PAGE)
+      if (existing) {
+        activatePageTab(threadId, existing.id)
+        if (source) updatePageTab(threadId, existing.id, { filePath: source })
+      } else if (blank) {
+        navigatePageTab(threadId, blank.id, normalized, source ?? null)
+      } else openPageTab(threadId, normalized, { filePath: source ?? null, select: !background })
+      setWaitingPreview(null)
+      return
+    }
     if (state?.active && !userControls) { setWaitingPreview({ url: normalized, filePath: source }); return }
     const existing = state?.tabs?.find(tab => tab.url === normalized)
     const opened = await perform('/action', existing ? { action: 'switch_tab', tab_id: existing.tab_id } :
       { action: state?.active ? 'new_tab' : 'open', url: normalized })
     if (opened && source) setPreviewFiles(current => ({ ...current, [normalized.split('#')[0]]: source }))
     if (opened) setWaitingPreview(null)
-  }, [state, userControls, perform, t])
+  }, [state, userControls, perform, t, remote, agentWorking, threadId])
   useEffect(() => {
     if (!preferredUrl) { lastPreferred.current = null; return }
-    if (!visible || !fresh || pending || lastPreferred.current === preferredUrl) return
+    if (!visible || !polled || (remote && (!fresh || pending)) || lastPreferred.current === preferredUrl) return
     lastPreferred.current = preferredUrl
     void openPreview(preferredUrl, preferredFilePath)
     onPreferredUrlConsumed?.()
-  }, [visible, fresh, preferredUrl, preferredFilePath, pending, openPreview, onPreferredUrlConsumed])
+  }, [visible, fresh, polled, preferredUrl, preferredFilePath, pending, openPreview, onPreferredUrlConsumed, remote])
+  const latestDetectedUrl = detectedUrls[0]
+  useEffect(() => {
+    if (!autoFollow || !latestDetectedUrl || !isLocalPreviewUrl(latestDetectedUrl)) return
+    if (!visible || !polled || (remote && (!fresh || pending)) || followedUrls.current.has(latestDetectedUrl)) return
+    followedUrls.current.add(latestDetectedUrl)
+    void openPreview(latestDetectedUrl, null, true)
+  }, [autoFollow, latestDetectedUrl, visible, fresh, polled, pending, openPreview, remote])
   async function openDevTools(): Promise<void> {
+    if (!remote) { try { pageWebview(activeTab?.id)?.openDevTools() } catch { /* not attached yet */ } return }
     try {
       const result = await browserRequest<{ url: string }>(threadId, '/input', { kind: 'devtools', generation: state?.generation ?? 0 })
       await window.dsGui.openExternal(result.url)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
   }
   async function copyScreenshot(): Promise<void> {
+    if (!remote) {
+      if (copying) return
+      setCopying(true)
+      try {
+        const result = await window.dsGui.copyDevBrowserScreenshotToClipboard(pageWebview(activeTab?.id)!.getWebContentsId())
+        if (!result.ok) throw new Error(result.message)
+        setNotice(t('browserScreenshotCopied'))
+      } catch (e) { setError(localizeDevBrowserScreenshotError(e instanceof Error ? e.message : String(e), t)) }
+      finally { setCopying(false) }
+      return
+    }
     try {
       const snapshot = await browserRequest<BrowserState>(threadId, '/view')
       if (!snapshot.image) throw new Error(t('browserScreenshotFailed'))
@@ -315,11 +423,20 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
   }
   function navigate(): void {
-    const value = url.trim(); if (!value) return
+    const value = url.trim()
+    if (!value) { if (!remote && activeTab && activeTab.url !== BLANK_PAGE) loadInTab(activeTab.id, BLANK_PAGE); return }
     const isSearch = /\s/.test(value) || (!/[.:/]/.test(value) && !/^\d+$/.test(value) && value !== 'localhost')
     const target = isSearch ? `https://www.google.com/search?q=${encodeURIComponent(value)}` : normalizeBrowseUrlInput(value)
     if (!target) { setError(t('browserInvalidUrl')); return }
+    if (!remote) { if (activeTab) loadInTab(activeTab.id, target); return }
     action({ action: 'open', url: target })
+  }
+  function loadInTab(tabId: string, target: string): void {
+    // Typed addresses have no workspace source.
+    navigatePageTab(threadId, tabId, target)
+  }
+  const nativeHistory = (method: 'canGoBack' | 'canGoForward'): boolean => {
+    try { return !!pageWebview(activeTab?.id)?.[method]() } catch { return false }
   }
   const controlBusy = controlTarget !== null || !!state?.transferring || !!state?.task_pausing
   const unresolvedReceipt = state?.unresolved?.[0] || (lastReceipt?.execution === 'unknown' && !lastReceipt.reconciliation ? lastReceipt : null)
@@ -337,34 +454,49 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const controlHint = controlBusy ? 'browserControlSwitchHint' : unresolvedReceipt ? 'browserReviewHint' : requiresReview ? 'browserResponseHint' : hasConnectionProblem ? 'browserReconnectHint' : needsHelp ? 'browserControlHelpHint'
     : state?.owner === 'user' ? state.task_running || state.task_paused ? 'browserControlHumanHint' : 'browserControlHumanIdleHint'
     : state?.active && state.task_running ? 'browserAgentHint' : 'browserControlReadyHint'
-  return <div className={`ds-shared-browser${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
+  const tabViews = remote
+    ? (state?.tabs ?? []).map(tab => ({ id: tab.tab_id, title: tab.title, url: tab.url, active: tab.active }))
+    : (session?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, active: tab.id === session?.activeTabId }))
+  const soleBlank = !remote && tabViews.length === 1 && tabViews[0]!.url === BLANK_PAGE
+  const tabsEnabled = remote ? canNavigate : visible
+  const addressEnabled = remote ? canNavigate : canBrowse
+  const loading = remote ? !!state?.loading : !!activeTab?.loading
+  const canStop = loading && (remote ? visible && fresh && state?.owner === 'user' && !state.transferring : canBrowse)
+  const pageOpen = !!activeTab && activeTab.url !== BLANK_PAGE
+  return <div className={`ds-shared-browser${remote ? '' : ' is-native'}${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
     {visible ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
       agentBusy={!!state?.active && state.owner !== 'user' && !!state.task_running}
       manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
     <div className="ds-dev-browser__chrome ds-browser-chrome">
       <div className="ds-dev-browser__tabs">
         <div className="ds-dev-browser__tab-scroll" aria-label={t('browserTabs')}>
-          {(state?.tabs?.length ? state.tabs : [{ tab_id: '', title: t('browserNewTab'), url: '', active: true }]).map(tab =>
-            <div className={`ds-dev-browser__tab${tab.active ? ' ds-dev-browser__tab--active' : ''}`} key={tab.tab_id}>
-              <button className="ds-dev-browser__tab-main" aria-pressed={tab.active} disabled={!canNavigate} title={tab.title || tab.url}
-                onClick={() => { if (tab.tab_id) action({ action: 'switch_tab', tab_id: tab.tab_id }) }}>
-                <Globe2 className="ds-dev-browser__tab-icon" /><span className="ds-dev-browser__tab-label">{tab.url === 'about:blank' ? t('browserNewTab') : tab.title || t('browserNewTab')}</span>
+          {(tabViews.length ? tabViews : [{ id: '', title: t('browserNewTab'), url: '', active: true }]).map(tab =>
+            <div className={`ds-dev-browser__tab${tab.active ? ' ds-dev-browser__tab--active' : ''}`} key={tab.id || 'placeholder'}>
+              <button className="ds-dev-browser__tab-main" aria-pressed={tab.active} disabled={!tabsEnabled} title={tab.title || tab.url}
+                onClick={() => { if (!tab.id) return; if (remote) action({ action: 'switch_tab', tab_id: tab.id }); else activatePageTab(threadId, tab.id) }}>
+                <Globe2 className="ds-dev-browser__tab-icon" /><span className="ds-dev-browser__tab-label">{!tab.url || tab.url === BLANK_PAGE ? t('browserNewTab') : tab.title || tab.url}</span>
               </button>
-              {tab.tab_id ? <button className={`ds-dev-browser__tab-close${tab.active ? ' is-visible' : ''}`} aria-label={`${t('browserCloseTab')} ${tab.title}`} title={t('browserCloseTab')} disabled={!canNavigate}
-                onClick={() => action({ action: 'close_tab', tab_id: tab.tab_id })}><X size={11} /></button> : null}
+              {tab.id && !soleBlank ? <button className={`ds-dev-browser__tab-close${tab.active ? ' is-visible' : ''}`} aria-label={`${t('browserCloseTab')} ${tab.title}`} title={t('browserCloseTab')} disabled={remote ? !canNavigate : !canBrowse}
+                onClick={() => { if (remote) action({ action: 'close_tab', tab_id: tab.id }); else closePageTab(threadId, tab.id) }}><X size={11} /></button> : null}
             </div>)}
         </div>
-        <button className="ds-dev-browser__icon-btn" aria-label={t('browserNewTab')} title={t('browserNewTab')} disabled={!canNavigate} onClick={() => action({ action: 'new_tab' })}><Plus size={14} /></button>
+        <button className="ds-dev-browser__icon-btn" aria-label={t('browserNewTab')} title={t('browserNewTab')} disabled={remote ? !canNavigate : !canBrowse}
+          onClick={() => { if (remote) action({ action: 'new_tab' }); else openPageTab(threadId, BLANK_PAGE) }}><Plus size={14} /></button>
       </div>
       <form className="ds-dev-browser__toolbar" onSubmit={(e) => { e.preventDefault(); navigate() }}>
         <div className="ds-dev-browser__nav">
-          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserBack')} title={t('browserBack')} disabled={!userControls} onClick={() => action({ action: 'back' })}><ArrowLeft size={14} /></button>
-          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserForward')} title={t('browserForward')} disabled={!userControls} onClick={() => action({ action: 'forward' })}><ArrowRight size={14} /></button>
-          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserReload')} title={t('browserReload')} disabled={!userControls} onClick={() => action({ action: 'reload' })}><RotateCw size={13} /></button>
+          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserBack')} title={t('browserBack')} disabled={remote ? !userControls : !canBrowse || !nativeHistory('canGoBack')}
+            onClick={() => { if (remote) action({ action: 'back' }); else pageWebview(activeTab?.id)?.goBack() }}><ArrowLeft size={14} /></button>
+          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserForward')} title={t('browserForward')} disabled={remote ? !userControls : !canBrowse || !nativeHistory('canGoForward')}
+            onClick={() => { if (remote) action({ action: 'forward' }); else pageWebview(activeTab?.id)?.goForward() }}><ArrowRight size={14} /></button>
+          {canStop ?
+            <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserStop')} title={t('browserStop')} onClick={() => void stopLoading()}><CircleStop size={13} /></button> :
+            <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserReload')} title={t('browserReload')} disabled={remote ? !userControls : !canBrowse || !pageOpen}
+              onClick={() => { if (remote) action({ action: 'reload' }); else pageWebview(activeTab?.id)?.reloadIgnoringCache() }}>{loading ? <LoaderCircle className="ds-browser-control-spinner" size={13} /> : <RotateCw size={13} />}</button>}
         </div>
-        <input className="ds-dev-browser__omnibox" aria-label={t('browserAddressPlaceholder')} placeholder={t('browserAddressPlaceholder')} value={url} disabled={!canNavigate} onChange={(e) => setUrl(e.target.value)} />
-        <button className="ds-dev-browser__icon-btn" aria-label={t('browserOpen')} title={t('browserOpen')} disabled={!canNavigate || !url.trim()}><ArrowRight size={13} /></button>
-        {canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={!userControls} onClick={() => setInspect(!inspect)}><MousePointer2 size={15} /></button> : null}
+        <input className="ds-dev-browser__omnibox" aria-label={t('browserAddressPlaceholder')} placeholder={t('browserAddressPlaceholder')} value={url} disabled={!addressEnabled} onChange={(e) => setUrl(e.target.value)} />
+        <button className="ds-dev-browser__icon-btn" aria-label={t('browserOpen')} title={t('browserOpen')} disabled={!addressEnabled || !url.trim()}><ArrowRight size={13} /></button>
+        {canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={remote ? !userControls : !canBrowse} onClick={() => setInspect(!inspect)}><MousePointer2 size={15} /></button> : null}
         <div className="ds-browser-menu-anchor" ref={menuRoot}>
           <button ref={menuButton} type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserMore')} title={t('browserMore')} aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(!more)}><MoreHorizontal size={16} /></button>
           {more ? <div className="ds-dock-menu" role="menu" aria-label={t('browserMore')}
@@ -383,22 +515,27 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void demonstrate()}><GraduationCap size={15} />{t(state?.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')}</button>
+            {conversationId ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void demonstrate()}><GraduationCap size={15} />{t(state?.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')}</button> : null}
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={pending} onClick={() => void suggestion(state?.skill_suggestions_enabled === false ? 'enable' : 'disable')}><Lightbulb size={15} />{t(state?.skill_suggestions_enabled === false ? 'browserSuggestOn' : 'browserSuggestOff')}</button>
             <div className="ds-browser-menu-divider" role="separator" />
             {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!image} onClick={() => void copyScreenshot()}><Copy size={15} />{t('browserCopyScreenshot')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.url || !normalizeBrowseUrlInput(state.url)} onClick={() => { if (state?.url) void window.dsGui.openExternal(state.url).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
-            <div className="ds-browser-menu-divider" role="separator" />
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.active || pending} onClick={() => void control('stopped')}><Square size={15} />{t(state?.task_running ? 'browserEndTaskAndSession' : 'browserEndSession')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !userControls : !pageOpen} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !image : !pageOpen || copying} aria-busy={copying} onClick={() => void copyScreenshot()}><Copy size={15} />{t('browserCopyScreenshot')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!pageUrl || !normalizeBrowseUrlInput(pageUrl)} onClick={() => { if (pageUrl) void window.dsGui.openExternal(pageUrl).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" aria-pressed={autoFollow} onClick={() => setAutoFollow(value => !value)}><Radar size={15} />{t('browserAutoFollow')}{autoFollow ? ' ✓' : ''}</button>
+            {/* Workbench tabs stay open; ending only matters for a task or a private browser. */}
+            {remote || state?.task_running ? <>
+              <div className="ds-browser-menu-divider" role="separator" />
+              <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.active || pending} onClick={() => void control('stopped')}><Square size={15} />{t(state?.task_running ? 'browserEndTaskAndSession' : 'browserEndSession')}</button>
+            </> : null}
           </div> : null}
         </div>
       </form>
       {detectedUrls.length ? <div className="ds-dev-browser__chips">{detectedUrls.map(target => <button key={target} className="ds-dev-browser__chip" disabled={pending || !fresh} title={target} onClick={() => void openPreview(target)}>{formatDevPreviewUrlLabel(target)}</button>)}</div> : null}
     </div>
-    <div className="ds-browser-content">
+    <div className="ds-browser-content" ref={pageArea}>
     {inspect || notice ? <div className="ds-browser-feedback" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
+    {!inspect && !notice && !remote && activeTab && activeTab.error !== null ? <div className="ds-browser-feedback" role="status"><span>{activeTab.error || t('browserLoadFailed')}</span></div> : null}
     {!inspect && !notice && state?.skill_suggestion ? <div className="ds-browser-feedback" role="status"><span>{t('browserSuggestSkill', { site: state.skill_suggestion.site, count: state.skill_suggestion.count })}</span>
       <button disabled={pending} onClick={() => void suggestion('accept')}>{t('browserSuggestAccept')}</button>
       <button disabled={pending} onClick={() => void suggestion('dismiss')}>{t('browserSuggestDismiss')}</button></div> : null}
@@ -450,13 +587,14 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
       </button>
       {controlOpen ? <div id={controlOptionsId} className="ds-browser-control-details">
         <p>{t(controlHint)}</p>
-        {state?.active && !(requiresReview && state.owner === 'user') && (!hasConnectionProblem || requiresReview) ? <button type="button" className="ds-browser-control" disabled={!visible || !fresh || pending || controlBusy}
+        {state?.active && !(requiresReview && state.owner === 'user') && (!hasConnectionProblem || requiresReview)
+          && !(state.owner === 'user' && state.task_running === false && !state.assistance) ? <button type="button" className="ds-browser-control" disabled={!visible || !fresh || pending || controlBusy}
           aria-busy={controlBusy} onClick={() => {
             setControlOpen(false); controlButton.current?.focus()
             void control(state.owner === 'user' ? 'agent' : 'user')
           }}>
           {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={14} /> : state.owner === 'user' ? <Play size={14} /> : <Hand size={14} />}
-          {t(controlBusy ? 'browserControlSwitching' : requiresReview && state.owner !== 'user' ? 'browserInspectAndHandle' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? state.task_running === false ? 'browserGiveControl' : 'browserReturnControl' : 'browserTakeControl')}
+          {t(controlBusy ? 'browserControlSwitching' : requiresReview && state.owner !== 'user' ? 'browserInspectAndHandle' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? 'browserReturnControl' : 'browserTakeControl')}
         </button> : null}
     {waitingPreview ? <div className="ds-browser-notice"><span>{t('browserPreviewWaiting')}</span><button disabled={!userControls} onClick={() => void openPreview(waitingPreview.url, waitingPreview.filePath)}>{t('browserOpen')}</button><button aria-label={t('browserDismissPreview')} onClick={() => setWaitingPreview(null)}><X size={13} /></button></div> : null}
     {unresolvedReceipt && userControls ?
@@ -495,14 +633,14 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     </div> : null}
       </div> : null}
     </header>
-      {image && state?.active ? <BrowserViewport image={image} enabled={!!userControls && frameFresh && !controlOpen && !more && !state.dialog} reviewOnly={!!unresolvedReceipt} resizeEnabled={!!userControls && frameFresh && !controlOpen && !more && !state.video_recording} generation={state.generation ?? 0}
+      {remote && image ? <BrowserViewport image={image} enabled={!!userControls && frameFresh && !controlOpen && !more && !state.dialog} reviewOnly={!!unresolvedReceipt} resizeEnabled={!!userControls && frameFresh && !controlOpen && !more && !state.video_recording} generation={state.generation ?? 0}
         sceneId={state.scene?.scene_id} inspect={inspect && canInspect} onInspectCancel={() => setInspect(false)} width={state.viewport?.width ?? 1200} height={state.viewport?.height ?? 760} label={t('browserLiveView')}
         send={async (body) => {
           if (body.kind === 'pick') {
             const result = await browserRequest<{ pick?: unknown; url?: string }>(threadId, '/input', body)
             const parsed = parsePreviewPickConsoleMessage(PREVIEW_PICK_CONSOLE_PREFIX + JSON.stringify({ type: 'pick', payload: result.pick }))
             if (alive.current && parsed?.type === 'pick' && filePath && result.url?.split('#')[0] === state.url?.split('#')[0]) {
-              onPreviewPick?.({ ...parsed.payload, filePath }); setInspect(false); setNotice(t('browserPickAdded'))
+              onPreviewPick?.({ ...parsed.payload, filePath }); setNotice(t('browserPickAdded'))
             }
             return {}
           }
@@ -515,7 +653,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
               if (alive.current && e instanceof Error && /Browser (page|control) changed; queued input was discarded/.test(e.message)) {
                 setFrameFresh(false)
                 try {
-                  apply(await browserRequest<BrowserState>(threadId, '/view'))
+                  apply(await browserRequest<BrowserState>(threadId, viewSuffix))
                   setError(''); setConnectionError('')
                   setNotice(t('browserInputDiscarded'))
                 } catch (refreshError) {
@@ -530,12 +668,17 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
           setPending(true)
           try {
             const result = await browserRequest<{ text?: string }>(threadId, '/input', body)
-            try { apply(await browserRequest<BrowserState>(threadId, '/view')) }
+            try { apply(await browserRequest<BrowserState>(threadId, viewSuffix)) }
             catch (e) { if (alive.current) { setFresh(false); setFrameFresh(false); setConnectionError(e instanceof Error ? e.message : String(e)) } }
             return result
           } finally { if (alive.current) setPending(false) }
         }} onError={setError} /> :
-        <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t(pending ? 'browserStarting' : 'browserStartTitle')}</h3><p>{t('browserStartHint')}</p></div>}
+        remote ? <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t(pending ? 'browserStarting' : 'browserStartTitle')}</h3><p>{t('browserStartHint')}</p></div>
+        // The agent's page stays visible underneath while it works; the user's input waits.
+        : agentWorking || state?.transferring ? <div className="ds-browser-shield" aria-hidden="true" />
+        : !pageOpen ? <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t('browserStartTitle')}</h3><p>{t('browserStartHint')}</p>
+          <button type="button" className="ds-browser-empty-action" disabled={!canBrowse} onClick={() => { if (activeTab) loadInTab(activeTab.id, DEFAULT_DEV_PREVIEW_URL) }}>{t('browserOpenDefault')}</button></div>
+        : null}
 
     </div>
   </div>

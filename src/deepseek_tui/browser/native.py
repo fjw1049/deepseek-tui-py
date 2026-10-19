@@ -20,10 +20,14 @@ class NativeBrowserEvents:
         }
         self.changed = asyncio.Event()
         self.requests = {}  # Document/XHR/Fetch requests in flight: id -> (client, seen at)
+        self.loading = set()  # Clients whose main frame is loading a document
 
     async def install(self, client):
         if client in self.clients:
             return
+        # A tab switch replaces the client; forget the closed ones.
+        self.clients = {known for known in self.clients if getattr(known, "_ws", True) is not None}
+        self.loading &= self.clients
         directory = self.service.artifact_root / self.run.thread_id / "downloads"
         directory.mkdir(parents=True, exist_ok=True)
         await client.send("Page.enable")
@@ -124,11 +128,23 @@ class NativeBrowserEvents:
         def request_done(params):
             self.requests.pop(params.get("requestId"), None)
 
+        def loading(started):
+            def update(params):
+                if params.get("frameId") != state["identity"][0]:
+                    return
+                if started:
+                    self.loading.add(client)
+                else:
+                    self.loading.discard(client)
+            return update
+
         for event, callback in {
             "Network.requestWillBeSent": request_sent,
             "Network.loadingFinished": request_done,
             "Network.loadingFailed": request_done,
             "Page.frameNavigated": navigated,
+            "Page.frameStartedLoading": loading(True),
+            "Page.frameStoppedLoading": loading(False),
             "Page.javascriptDialogOpening": dialog_opened,
             "Page.javascriptDialogClosed": lambda _: setattr(self, "dialog", None),
             "Page.fileChooserOpened": chooser_opened,
@@ -155,6 +171,8 @@ class NativeBrowserEvents:
             if self.chooser
             else None,
             "downloads": list(self.downloads.values())[-40:],
+            "loading": getattr(getattr(self.run.session, "_internal", None), "client", None)
+            in self.loading,
         }
 
     async def handle_dialog(self, action):

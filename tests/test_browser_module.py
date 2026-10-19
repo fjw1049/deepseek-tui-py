@@ -479,6 +479,7 @@ async def test_status_without_start_and_during_takeover(browser):
     result = await browser.action("new", BrowserAction(action="status"))
     assert result["content"]["active"] is False
     assert "new" not in browser.runs
+    browser.runs["one"].agent_task = True  # The takeover happens during the agent's task.
     await browser.control("one", "user")
     browser.runs["one"].session._internal.client.send.side_effect = None
     browser.runs["one"].session._internal.client.send.return_value = {
@@ -762,6 +763,9 @@ async def test_session_cap_reclaims_only_the_longest_idle_unused_session(tmp_pat
     service.runs["t2"] = BrowserRun("t2", tmp_path / "run2")
     with pytest.raises(ValueError, match="maximum 8"):
         await service._reclaim_idle_session()
+    service.runs["t1"].handed_back = True  # Only handed back after a task, never taken over.
+    await service._reclaim_idle_session()
+    assert "t1" not in service.runs
 
 
 async def test_navigation_does_not_import_chrome_cookies(browser, monkeypatch):
@@ -842,3 +846,52 @@ async def test_agent_capture_survives_handoffs_and_is_not_a_user_demonstration(
     assert browser.state("one")["workflow_recording"] is False
     await browser.control("one", owner)
     assert run.recorder is not None and not finish.called
+
+
+async def test_new_agent_task_takes_over_browsing_but_not_user_work(browser):
+    browsed, demonstrating = browser.runs["one"], browser.runs["two"]
+    await browser.control("one", "user")  # The user browsed before asking the agent.
+    await browser.action("one", BrowserAction(action="status"))
+    assert browsed.owner == "agent" and browsed.agent_task
+    await browser.control("two", "user")
+    demonstrating.recorder = SimpleNamespace(actor="user")
+    with pytest.raises(ValueError, match="user controls this browser"):
+        await browser.action("two", BrowserAction(action="reload"))
+    assert demonstrating.owner == "user" and demonstrating.agent_task
+
+
+async def test_stop_loading_bypasses_a_running_navigation(browser):
+    from deepseek_tui.browser.input import BrowserInput
+
+    run = browser.runs["one"]
+    await browser.control("one", "user")
+    async with run.lock:  # An open action is still waiting for its page.
+        result = await browser.input("one", BrowserInput(kind="stop", generation=run.generation))
+    assert result == {"success": True}
+    run.session._internal.client.send.assert_any_await("Page.stopLoading")
+    with pytest.raises(ValueError, match="control changed"):
+        await browser.input("one", BrowserInput(kind="stop", generation=run.generation - 1))
+
+
+async def test_view_reports_main_frame_loading(tmp_path):
+    from deepseek_tui.browser.native import NativeBrowserEvents
+
+    handlers = {}
+
+    class Client:  # Hashable, like the CDP client the native events track.
+        send = AsyncMock(return_value={"frameTree": {"frame": {"id": "main", "loaderId": "doc"}}})
+
+        def on(self, event, callback):
+            handlers[event] = callback
+
+    client = Client()
+    run = SimpleNamespace(thread_id="one", generation=0, session=SimpleNamespace(
+        _internal=SimpleNamespace(client=client)))
+    native = NativeBrowserEvents(run, BrowserService(tmp_path))
+    await native.install(client)
+    handlers["Page.frameStartedLoading"]({"frameId": "child"})
+    assert native.state()["loading"] is False
+    handlers["Page.frameStartedLoading"]({"frameId": "main"})
+    assert native.state()["loading"] is True
+    handlers["Page.frameStoppedLoading"]({"frameId": "main"})
+    assert native.state()["loading"] is False

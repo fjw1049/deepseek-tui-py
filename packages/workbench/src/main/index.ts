@@ -57,6 +57,7 @@ import { readAsrConfigFile, writeAsrConfigFile } from './asr-config'
 import { readWebSearchConfigFile, writeWebSearchConfigFile } from './web-search-config'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
 import { installDevPreviewWebviewGuards } from './services/dev-browser-guards'
+import { createBrowserBridge, type BrowserBridge } from './services/browser-bridge'
 import { installMainWindowNavigationGuards } from './services/main-window-guards'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
@@ -141,6 +142,7 @@ if (process.platform === 'win32') {
 }
 
 let mainWindow: BrowserWindow | null = null
+let browserBridge: BrowserBridge | null = null
 let store: JsonSettingsStore
 let logDir = ''
 const terminalService = createTerminalService()
@@ -530,7 +532,8 @@ async function ensureRuntime(settings: AppSettingsV1): Promise<void> {
   ) {
     return
   }
-  runtimeEnsurePromise = ensureRuntimeOnce(settings)
+  const ensured = ensureRuntimeOnce(settings)
+  runtimeEnsurePromise = ensured
     .catch((error) => {
       emitStartupPhase(
         'offline',
@@ -541,6 +544,8 @@ async function ensureRuntime(settings: AppSettingsV1): Promise<void> {
     .finally(() => {
       runtimeEnsurePromise = null
     })
+  // A (re)started runtime forgets the browser bridge; tell it again.
+  void ensured.then(() => browserBridge?.announce(), () => {})
   return runtimeEnsurePromise
 }
 
@@ -992,6 +997,21 @@ app.whenReady().then(async () => {
   installDevBrowserDownloadHandler()
   installMediaPermissionHandler()
   traceStartup('install webview guards:done')
+  browserBridge = createBrowserBridge({
+    getHost: () => mainWindow?.webContents ?? null,
+    sendCommand: (requestId, command) => mainWindow?.webContents.send('browser-bridge:command', { requestId, command }),
+    announce: async (port, token) => {
+      const settings = await store.load()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      const runtimeToken = resolveEffectiveRuntimeToken(settings)
+      if (runtimeToken) headers.Authorization = `Bearer ${runtimeToken}`
+      const response = await fetch(`${getRuntimeBaseUrl(settings.deepseek.port)}/v1/browser-workbench`, {
+        method: 'POST', headers, body: JSON.stringify({ port, token })
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    }
+  })
+  void browserBridge.start().then(() => { if (runtimeReadyCache.isFresh()) void browserBridge?.announce() })
 
   // Packaged builds already ship a padded .icns via electron-builder — do not
   // override with setIcon(PNG) or the Dock icon looks oversized vs other apps.
@@ -1186,7 +1206,8 @@ app.whenReady().then(async () => {
     showTurnCompleteNotification,
     getAppVersion: () => app.getVersion(),
     resolveLogDirectory,
-    logError
+    logError,
+    getBrowserBridge: () => browserBridge
   })
   ipcMain.handle('startup:phase:get', async () => currentStartupPhase)
   registerStartupWindowDrag(() => mainWindow)

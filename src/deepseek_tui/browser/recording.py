@@ -458,6 +458,8 @@ async def create_recording(run, store, actor="user"):
         "targetId"
     ]
     profile = run.profiles.get_or_create("workbench")
+    # A Workbench tab is reached only through the app's bridge, one page at a time.
+    native = getattr(run, "native", False)
     client = CDPClient(timeout=run.settings.cdp_timeout)
     manifest = RecordingManifest(
         recordingId="rec_" + uuid.uuid4().hex,
@@ -472,15 +474,20 @@ async def create_recording(run, store, actor="user"):
         client,
         store,
         manifest,
-        cdp_host=run.settings.cdp_host,
-        cdp_port=profile.cdp_port,
+        cdp_host=None if native else run.settings.cdp_host,
+        cdp_port=None if native else profile.cdp_port,
         initial_target_id=target,
     )
     session.actor = actor
     try:
-        await client.connect(
-            f"ws://{run.settings.cdp_host}:{profile.cdp_port}/devtools/page/{target}"
-        )
+        if native:
+            from deepseek_tui.browser.workbench import tab_url
+
+            await client.connect(tab_url(run.session.bridge, run.session.tab_id))
+        else:
+            await client.connect(
+                f"ws://{run.settings.cdp_host}:{profile.cdp_port}/devtools/page/{target}"
+            )
         directory = store.create(manifest)
         await session.start()
     except BaseException:

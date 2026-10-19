@@ -1,0 +1,354 @@
+import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
+import { createServer, type IncomingMessage, type Server } from 'http'
+import { isAbsolute, join } from 'path'
+import type { Duplex } from 'stream'
+import { session, webContents, type DownloadItem, type WebContents } from 'electron'
+import { WebSocketServer, type RawData, type WebSocket } from 'ws'
+import { DEV_BROWSER_PARTITION, type BrowserBridgeCommand, type BrowserBridgeReply, type BrowserBridgeTab } from '../../shared/browser-bridge'
+import { logWarn } from '../logger'
+
+type Deps = {
+  /** The window whose renderer hosts the tabs; guests of any other host are refused. */
+  getHost: () => WebContents | null
+  sendCommand: (requestId: string, command: BrowserBridgeCommand) => void
+  announce: (port: number, token: string) => Promise<void>
+}
+
+type Message = { id: number; method: string; params?: Record<string, unknown> }
+type Tab = BrowserBridgeTab & { browserId: string }
+type FrameInfo = { parentId?: string; frameIds: string[] }
+
+const REQUEST_TIMEOUT_MS = 15_000
+const ALLOWED_BROWSER_METHODS = new Set(['Browser.getVersion'])
+
+function frameIds(tree: { frame?: { id?: string }; childFrames?: unknown[] } | undefined): string[] {
+  if (!tree?.frame?.id) return []
+  return [tree.frame.id, ...((tree.childFrames ?? []) as typeof tree[]).flatMap(frameIds)]
+}
+
+/**
+ * Loopback CDP bridge to the Workbench browser's tabs, so the runtime drives the page
+ * the user sees. Only tab guests of this app's window are reachable, every connection
+ * carries the per-launch token, and cross-target CDP is limited to each tab's own
+ * frames: a guest's debugger can otherwise reach the app window itself.
+ */
+export function createBrowserBridge(deps: Deps) {
+  const token = randomBytes(24).toString('base64url')
+  const tabs = new Map<string, Tab>()
+  const sockets = new Map<string, Set<WebSocket>>()
+  const pending = new Map<string, { resolve: (reply: BrowserBridgeReply) => void; timer: NodeJS.Timeout }>()
+  let waiters: Array<() => void> = []
+  /** Download folders the runtime chose for the tabs it drives; other tabs keep the app's. */
+  const downloadDirs = new Map<number, string>()
+  let server: Server | null = null
+  let port = 0
+
+  const notify = (): void => { const current = waiters; waiters = []; current.forEach(wake => wake()) }
+  const waitFor = (ready: () => boolean, label: string): Promise<void> => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Workbench browser did not ${label} in time`)), REQUEST_TIMEOUT_MS)
+    const check = (): void => { if (ready()) { clearTimeout(timer); resolve() } else waiters.push(check) }
+    check()
+  })
+  const tabsOf = (browserId: string): Tab[] => [...tabs.values()].filter(tab => tab.browserId === browserId)
+  const guestOf = (tab: Tab): WebContents | null => {
+    const guest = webContents.fromId(tab.webContentsId)
+    return guest && !guest.isDestroyed() ? guest : null
+  }
+  const listTabs = (browserId: string) => tabsOf(browserId).flatMap(tab => {
+    const guest = guestOf(tab)
+    return guest ? [{ tab_id: tab.tabId, url: guest.getURL(), title: guest.getTitle(), active: tab.active }] : []
+  })
+
+  function isTabGuest(id: number): boolean {
+    const guest = webContents.fromId(id)
+    const host = deps.getHost()
+    return !!guest && !guest.isDestroyed() && !!host && guest.getType() === 'webview' &&
+      guest.hostWebContents?.id === host.id && guest.session === session.fromPartition(DEV_BROWSER_PARTITION)
+  }
+
+  function request(command: BrowserBridgeCommand): Promise<BrowserBridgeReply> {
+    const requestId = randomUUID()
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { pending.delete(requestId); resolve({ ok: false, error: 'Workbench did not respond' }) }, REQUEST_TIMEOUT_MS)
+      pending.set(requestId, { resolve, timer })
+      deps.sendCommand(requestId, command)
+    })
+  }
+
+  function sendToTab(webContentsId: number, method: string, params: Record<string, unknown>): void {
+    const tab = [...tabs.values()].find(item => item.webContentsId === webContentsId)
+    for (const socket of (tab && sockets.get(tab.tabId)) || []) {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ method, params }))
+    }
+  }
+
+  /** Per-tab Browser.setDownloadBehavior: CDP's own would redirect every Workbench tab. */
+  function onDownload(_event: unknown, item: DownloadItem, source: WebContents): void {
+    const directory = downloadDirs.get(source.id)
+    if (!directory) return
+    const guid = randomUUID()
+    item.setSavePath(join(directory, guid))
+    sendToTab(source.id, 'Browser.downloadWillBegin', { guid, url: item.getURL(), suggestedFilename: item.getFilename(), frameId: '' })
+    const progress = (state: string): void => sendToTab(source.id, 'Browser.downloadProgress',
+      { guid, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() })
+    item.on('updated', () => progress('inProgress'))
+    item.once('done', (_done, state) => progress(state === 'completed' ? 'completed' : 'canceled'))
+  }
+
+  function closeSockets(tabId: string): void {
+    for (const socket of sockets.get(tabId) ?? []) socket.close(1001, 'Tab closed')
+    sockets.delete(tabId)
+  }
+
+  async function workbenchMethod(browserId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
+    const owned = (id: unknown): string => {
+      if (typeof id !== 'string' || tabs.get(id)?.browserId !== browserId) throw new Error('Tab does not belong to this browser')
+      return id
+    }
+    if (method === 'Workbench.listTabs') return { tabs: listTabs(browserId) }
+    if (method === 'Workbench.createTab') {
+      const url = typeof params.url === 'string' ? params.url : 'about:blank'
+      if (url !== 'about:blank' && !/^https?:\/\//i.test(url)) throw new Error('Only http(s) pages can be opened')
+      const reply = await request({ kind: 'create', browserId, url })
+      if (!reply.ok || !reply.tabId) throw new Error(reply.error ?? 'Workbench could not open a tab')
+      const tabId = reply.tabId
+      await waitFor(() => tabs.get(tabId)?.browserId === browserId, 'open the tab')
+      return { tabId }
+    }
+    if (method === 'Workbench.activateTab' || method === 'Workbench.closeTab') {
+      const tabId = owned(params.tabId)
+      const reply = await request({ kind: method === 'Workbench.activateTab' ? 'activate' : 'close', browserId, tabId })
+      if (!reply.ok) throw new Error(reply.error ?? 'Workbench could not change the tab')
+      if (method === 'Workbench.closeTab') await waitFor(() => !tabs.has(tabId), 'close the tab')
+      return {}
+    }
+    throw new Error(`Unsupported method ${method}`)
+  }
+
+  function serveControl(socket: WebSocket): void {
+    socket.on('message', (raw: RawData) => void (async () => {
+      let message: Message
+      try { message = JSON.parse(String(raw)) as Message } catch { socket.close(1003, 'Invalid message'); return }
+      try {
+        if (message.method === 'Workbench.clearCookies') {
+          // The runtime cleared its saved logins; Workbench's tabs share this partition.
+          await session.fromPartition(DEV_BROWSER_PARTITION).clearStorageData({ storages: ['cookies'] })
+          socket.send(JSON.stringify({ id: message.id, result: {} }))
+          return
+        }
+        if (message.method !== 'Workbench.openSession') throw new Error(`Unsupported method ${message.method}`)
+        const browserId = String(message.params?.browserId ?? '')
+        if (!browserId) throw new Error('browserId is required')
+        if (!tabsOf(browserId).length) {
+          const reply = await request({ kind: 'open', browserId })
+          if (!reply.ok) throw new Error(reply.error ?? 'Workbench browser is unavailable')
+          await waitFor(() => tabsOf(browserId).length > 0, 'show the browser')
+        }
+        socket.send(JSON.stringify({ id: message.id, result: { tabs: listTabs(browserId) } }))
+      } catch (error) {
+        socket.send(JSON.stringify({ id: message.id, error: { message: error instanceof Error ? error.message : String(error) } }))
+      }
+    })())
+  }
+
+  function serveTab(socket: WebSocket, tab: Tab, guest: WebContents): void {
+    const debug = guest.debugger
+    try {
+      if (!debug.isAttached()) debug.attach('1.3')
+    } catch (error) {
+      socket.close(1011, String(error))
+      return
+    }
+    const ownSessions = new Set<string>()
+    const frameCache = new Map<string, FrameInfo>()
+    const set = sockets.get(tab.tabId) ?? new Set<WebSocket>()
+    set.add(socket)
+    sockets.set(tab.tabId, set)
+
+    const frameInfo = async (targetId: string): Promise<FrameInfo> => {
+      const cached = frameCache.get(targetId)
+      if (cached) return cached
+      // Electron leaves parentFrameId empty; the child's own tree names its parent.
+      const { sessionId } = await debug.sendCommand('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string }
+      try {
+        const tree = await debug.sendCommand('Page.getFrameTree', {}, sessionId) as { frameTree: { frame: { parentId?: string } } }
+        const info = { parentId: tree.frameTree.frame.parentId, frameIds: frameIds(tree.frameTree as never) }
+        frameCache.set(targetId, info)
+        return info
+      } finally {
+        await debug.sendCommand('Target.detachFromTarget', { sessionId }).catch(() => {})
+      }
+    }
+    /** Cross-origin frames of this tab, with their parent frame IDs. */
+    const ownedFrames = async (): Promise<{ owned: Map<string, string>; targets: Array<Record<string, unknown>> }> => {
+      const tree = await debug.sendCommand('Page.getFrameTree') as { frameTree: never }
+      const known = new Set(frameIds(tree.frameTree))
+      const targets = ((await debug.sendCommand('Target.getTargets')) as { targetInfos: Array<Record<string, unknown>> }).targetInfos
+        .filter(target => target.type === 'iframe')
+      const owned = new Map<string, string>()
+      for (let changed = true; changed;) {
+        changed = false
+        for (const target of targets) {
+          const id = String(target.targetId)
+          if (owned.has(id)) continue
+          const info = await frameInfo(id).catch(() => null)
+          if (info?.parentId && known.has(info.parentId)) {
+            owned.set(id, info.parentId)
+            info.frameIds.forEach(frame => known.add(frame))
+            changed = true
+          }
+        }
+      }
+      return { owned, targets }
+    }
+
+    async function target(method: string, params: Record<string, unknown>): Promise<unknown> {
+      if (method === 'Target.getTargets') {
+        const { owned, targets } = await ownedFrames()
+        return { targetInfos: targets.filter(item => owned.has(String(item.targetId)))
+          .map(item => ({ ...item, parentFrameId: owned.get(String(item.targetId)) })) }
+      }
+      if (method === 'Target.getTargetInfo' && !params.targetId) return debug.sendCommand(method, params)
+      if (method === 'Target.attachToTarget') {
+        if (params.flatten !== false) throw new Error('Only non-flattened frame sessions are supported')
+        if (!(await ownedFrames()).owned.has(String(params.targetId))) throw new Error('Target is outside this tab')
+        const attached = await debug.sendCommand(method, params) as { sessionId: string }
+        ownSessions.add(attached.sessionId)
+        return attached
+      }
+      if (method === 'Target.sendMessageToTarget' || method === 'Target.detachFromTarget') {
+        if (!ownSessions.has(String(params.sessionId))) throw new Error('Session is outside this tab')
+        if (method === 'Target.detachFromTarget') ownSessions.delete(String(params.sessionId))
+        return debug.sendCommand(method, params)
+      }
+      throw new Error(`${method} is not available for Workbench tabs`)
+    }
+
+    /** Captures at CSS-pixel size, also while the panel is hidden. */
+    async function screenshot(params: Record<string, unknown>): Promise<unknown> {
+      if (params.clip || params.captureBeyondViewport) return debug.sendCommand('Page.captureScreenshot', params)
+      const metrics = await debug.sendCommand('Page.getLayoutMetrics') as { cssLayoutViewport: { clientWidth: number; clientHeight: number } }
+      const { clientWidth: width, clientHeight: height } = metrics.cssLayoutViewport
+      let image = await guest.capturePage(undefined, { stayHidden: true })
+      if (image.isEmpty()) throw new Error('The page has not been painted yet')
+      if (image.getSize().width !== width) image = image.resize({ width, height, quality: 'good' })
+      const data = params.format === 'png' ? image.toPNG() : image.toJPEG(Number(params.quality ?? 80))
+      return { data: data.toString('base64') }
+    }
+
+    function downloadBehavior(params: Record<string, unknown>): Record<string, never> {
+      const path = typeof params.downloadPath === 'string' ? params.downloadPath : ''
+      if (params.behavior === 'default') downloadDirs.delete(guest.id)
+      else if ((params.behavior === 'allow' || params.behavior === 'allowAndName') && isAbsolute(path)) downloadDirs.set(guest.id, path)
+      else throw new Error('Unsupported download behavior')
+      return {}
+    }
+
+    const onMessage = (_event: unknown, method: string, params: Record<string, unknown>, sessionId?: string): void => {
+      if (sessionId || socket.readyState !== socket.OPEN) return // The bridge's own frame probes.
+      if (method.startsWith('Target.') && !ownSessions.has(String(params.sessionId))) return
+      socket.send(JSON.stringify({ method, params }))
+    }
+    const onDetach = (): void => socket.close(1011, 'Debugger detached')
+    debug.on('message', onMessage)
+    debug.on('detach', onDetach)
+    socket.on('close', () => {
+      debug.removeListener('message', onMessage)
+      debug.removeListener('detach', onDetach)
+      set.delete(socket)
+      if (!set.size) {
+        sockets.delete(tab.tabId)
+        if (debug.isAttached()) try { debug.detach() } catch { /* the guest is gone */ }
+      }
+    })
+    socket.on('message', (raw: RawData) => void (async () => {
+      let message: Message
+      try { message = JSON.parse(String(raw)) as Message } catch { return }
+      const params = message.params ?? {}
+      try {
+        const method = message.method
+        const result = method.startsWith('Workbench.') ? await workbenchMethod(tab.browserId, method, params)
+          : method === 'Browser.setDownloadBehavior' ? downloadBehavior(params)
+          : method.startsWith('Target.') ? await target(method, params)
+          : method.startsWith('Browser.') && !ALLOWED_BROWSER_METHODS.has(method) ? (() => { throw new Error(`${method} is not available for Workbench tabs`) })()
+          : method === 'Page.captureScreenshot' ? await screenshot(params)
+          : await debug.sendCommand(method, params)
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id: message.id, result }))
+      } catch (error) {
+        if (socket.readyState === socket.OPEN) {
+          socket.send(JSON.stringify({ id: message.id, error: { message: error instanceof Error ? error.message : String(error) } }))
+        }
+      }
+    })())
+  }
+
+  function upgrade(request: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer): void {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    const given = Buffer.from(url.searchParams.get('token') ?? '')
+    const expected = Buffer.from(token)
+    if (given.length !== expected.length || !timingSafeEqual(given, expected) || request.headers.origin) {
+      socket.destroy()
+      return
+    }
+    const tabMatch = /^\/tab\/([^/]+)$/.exec(url.pathname)
+    let tabId: string | undefined
+    try { tabId = tabMatch ? decodeURIComponent(tabMatch[1]!) : undefined } catch { socket.destroy(); return }
+    const tab = tabId ? tabs.get(tabId) : undefined
+    const guest = tab ? guestOf(tab) : null
+    if (url.pathname !== '/control' && !(tab && guest)) {
+      socket.destroy()
+      return
+    }
+    wss.handleUpgrade(request, socket, head, client => {
+      if (tab && guest) serveTab(client, tab, guest)
+      else serveControl(client)
+    })
+  }
+
+  return {
+    async start(): Promise<void> {
+      if (server) return
+      const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 })
+      server = createServer((_request, response) => { response.statusCode = 404; response.end() })
+      server.on('upgrade', (request, socket, head) => upgrade(request, socket, head, wss))
+      session.fromPartition(DEV_BROWSER_PARTITION).on('will-download', onDownload)
+      await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve))
+      port = (server.address() as { port: number }).port
+    },
+    /** Tells the runtime where the bridge is; repeated whenever the runtime (re)starts. */
+    async announce(): Promise<void> {
+      if (!port) return
+      try { await deps.announce(port, token) } catch (error) {
+        logWarn('browser-bridge', 'Runtime did not accept the browser bridge', String(error))
+      }
+    },
+    setTabs(browserId: string, next: BrowserBridgeTab[]): void {
+      const accepted = next.filter(tab => isTabGuest(tab.webContentsId))
+      for (const tab of tabsOf(browserId)) {
+        if (!accepted.some(item => item.tabId === tab.tabId && item.webContentsId === tab.webContentsId)) {
+          tabs.delete(tab.tabId)
+          closeSockets(tab.tabId)
+        }
+      }
+      for (const tab of accepted) {
+        const known = tabs.get(tab.tabId)
+        if (known && known.browserId !== browserId) continue
+        if (!known) webContents.fromId(tab.webContentsId)?.once('destroyed', () => {
+          downloadDirs.delete(tab.webContentsId)
+          if (tabs.get(tab.tabId)?.webContentsId === tab.webContentsId) { tabs.delete(tab.tabId); closeSockets(tab.tabId); notify() }
+        })
+        tabs.set(tab.tabId, { ...tab, browserId })
+      }
+      notify()
+    },
+    reply(requestId: string, reply: BrowserBridgeReply): void {
+      const waiting = pending.get(requestId)
+      if (!waiting) return
+      pending.delete(requestId)
+      clearTimeout(waiting.timer)
+      waiting.resolve(reply)
+    }
+  }
+}
+
+export type BrowserBridge = ReturnType<typeof createBrowserBridge>

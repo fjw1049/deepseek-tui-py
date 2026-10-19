@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from deepseek_tui.browser import PREVIEW_THREAD_ID
 from deepseek_tui.browser.input import BrowserInput
 from deepseek_tui.browser.service import BrowserAction, BrowserActionError, BrowserService
 
@@ -18,10 +19,11 @@ router = APIRouter(prefix="/v1/threads/{thread_id}/browser", tags=["browser"])
 
 def service(request: Request, thread_id: str) -> BrowserService:
     manager = request.app.state.thread_manager
-    try:
-        manager.store.load_thread(thread_id)
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        raise HTTPException(404, "Thread not found") from exc
+    if thread_id != PREVIEW_THREAD_ID:
+        try:
+            manager.store.load_thread(thread_id)
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            raise HTTPException(404, "Thread not found") from exc
     return manager.browser_service
 
 
@@ -71,6 +73,20 @@ async def action(request: Request, thread_id: str, body: BrowserAction) -> dict[
         return await browser.action(thread_id, body, actor="user")
     except BrowserActionError as exc:
         raise HTTPException(409, exc.response) from exc
+    except (ValueError, TimeoutError, RuntimeError, ConnectionError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/attach")
+async def attach(request: Request, thread_id: str) -> dict[str, Any]:
+    """Bind the visible Workbench browser to this thread, under the user's control."""
+    browser = service(request, thread_id)
+    try:
+        if thread_id not in browser.runs:
+            await browser.ensure(thread_id, native_only=True)
+            await browser.control(thread_id, "user")
+        return {**browser.state(thread_id),
+                **request.app.state.thread_manager.browser_task_state(thread_id)}
     except (ValueError, TimeoutError, RuntimeError, ConnectionError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -349,6 +365,27 @@ async def export_evidence(request: Request, thread_id: str) -> dict[str, str]:
         return {"path": str(path)}
     except (ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+workbench_router = APIRouter(prefix="/v1/browser-workbench", tags=["browser"])
+
+
+class WorkbenchBridge(BaseModel):
+    port: int = Field(ge=1, le=65535)
+    token: str = Field(min_length=16, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@workbench_router.post("")
+async def register_workbench(request: Request, body: WorkbenchBridge) -> dict[str, bool]:
+    """Workbench announces the loopback bridge to the tabs it shows."""
+    request.app.state.thread_manager.browser_service.workbench = body.model_dump()
+    return {"success": True}
+
+
+@workbench_router.delete("")
+async def unregister_workbench(request: Request) -> dict[str, bool]:
+    request.app.state.thread_manager.browser_service.workbench = None
+    return {"success": True}
 
 
 assistance_router = APIRouter(prefix="/v1/browser-assistance", tags=["browser"])

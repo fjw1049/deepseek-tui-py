@@ -4618,6 +4618,7 @@ class RuntimeThreadManager:
                 raise ValueError("Browser control is changing; check status before asking again")
             from deepseek_tui.browser.handoff import baseline
 
+            run.agent_task = True
             state.handle.pause.pause()
             run.handoff_baseline = baseline(run.latest_observation)
             # A user who already holds control is asked to return it, not to take over.
@@ -4726,9 +4727,31 @@ class RuntimeThreadManager:
                 state.handle.pause.resume()
             return {**self.browser_service.state(thread_id), **self.browser_task_state(thread_id)}
 
+    async def _hand_browser_back(self, thread_id: str) -> None:
+        """Between tasks the page is the user's; the next task takes it back."""
+        run = self.browser_service.runs.get(thread_id)
+        if run is not None:
+            run.user_hold = False  # A takeover lasts for the turn it interrupted.
+        # Recordings the agent started span turns; handing over would end them.
+        if (run is None or run.owner != "agent" or run.session is None
+                or run.recording or run.video is not None):
+            return
+        try:
+            async with run.control_lock:
+                # A new task may already hold it, or a help request may wait on it.
+                if (run.owner == "agent" and not run.agent_task and run.assistance is None
+                        and self.browser_service.runs.get(thread_id) is run):
+                    await self.browser_service.control(thread_id, "user")
+                    run.handed_back = True
+        except Exception:  # noqa: BLE001 — a hand-back must never fail turn release
+            logger.debug("browser_handback_failed", exc_info=True)
+
     def browser_task_state(self, thread_id: str) -> dict[str, Any]:
+        """The running turn as a browser task; other work leaves the browser free."""
         state = self._active.get(thread_id)
-        active = state is not None and state.active_turn is not None
+        run = self.browser_service.runs.get(thread_id)
+        active = (state is not None and state.active_turn is not None
+                  and run is not None and run.agent_task)
         return {
             "task_running": active,
             "task_turn_id": state.active_turn.turn_id if active else None,
@@ -4753,9 +4776,11 @@ class RuntimeThreadManager:
                     return {**browser.state(thread_id), **self.browser_task_state(thread_id)}
                 raise ValueError("Browser control changed. Refresh and try again.")
             state = self._active.get(thread_id)
-            turn = state.active_turn if state is not None else None
+            # Only a turn using the browser is paused, resumed or cancelled with it.
+            turn = state.active_turn if state is not None and run.agent_task else None
             handle = state.handle if turn is not None else None
             if owner == "user":
+                run.user_hold = state is not None and state.active_turn is not None
                 if handle is not None:
                     handle.pause.pause()
                 # Stay paused on transfer failure: do not silently restart the agent.
@@ -4765,6 +4790,7 @@ class RuntimeThreadManager:
             elif owner == "agent":
                 if run.assistance is not None:
                     raise ValueError("Respond to the browser assistance request to continue")
+                run.user_hold = False
                 if handle is not None and handle.pause.paused:
                     observed = await self._observe_browser_resume(thread_id, "user")
                     if state.active_turn is not turn or handle.cancel_event.is_set():
@@ -5318,12 +5344,16 @@ class RuntimeThreadManager:
         ):
             self._resync_warm_engine_from_store(thread_id)
 
+        run = self.browser_service.runs.get(thread_id)
+        if run is not None:
+            run.agent_task = False  # The next turn starts a new browser task.
         try:
             await self.browser_service.end_agent_capture(
                 thread_id, completed=turn_status == RuntimeTurnStatus.COMPLETED
             )
         except Exception:  # noqa: BLE001 — a capture must never fail turn release
             logger.debug("browser_capture_end_failed", exc_info=True)
+        await self._hand_browser_back(thread_id)
 
         # Clear active turn
         async with self._active_lock:

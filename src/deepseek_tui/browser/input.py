@@ -10,7 +10,8 @@ class BrowserInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     generation: int = Field(ge=0)
     scene_id: str | None = Field(default=None, min_length=1, max_length=200)
-    kind: Literal["mouse", "wheel", "key", "text", "resize", "copy", "cut", "pick", "devtools", "release"]
+    kind: Literal["mouse", "wheel", "key", "text", "resize", "copy", "cut", "pick", "devtools",
+                  "release", "stop"]
     event: Literal["mousePressed", "mouseReleased", "mouseMoved", "keyDown", "keyUp"] | None = None
     x: float = Field(default=0, ge=0, lt=2400)
     y: float = Field(default=0, ge=0, lt=1600)

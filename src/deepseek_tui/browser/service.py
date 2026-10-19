@@ -55,6 +55,15 @@ OBSERVE_AFTER = TARGET_ACTIONS | {"open", "new_tab", "switch_tab", "close_tab", 
                                   "forward", "reload", "wait", "check_text", "screenshot"}
 
 
+def keep_cdp_local() -> None:
+    """websockets >= 15 inherits OS proxy settings; CDP must stay on loopback."""
+    bypass = ",".join(dict.fromkeys(filter(None, (
+        os.environ.get("no_proxy", "") + "," + os.environ.get("NO_PROXY", "")
+        + ",localhost,127.0.0.1,::1"
+    ).split(","))))
+    os.environ["no_proxy"] = os.environ["NO_PROXY"] = bypass
+
+
 class BrowserActionError(RuntimeError):
     """A dispatched operation failed to settle; callers must inspect before retrying."""
 
@@ -264,6 +273,12 @@ class BrowserRun:
     recorder: Any = None
     activity: str = "demo"
     owner: str = "agent"
+    # The current agent turn has used this browser; reset when the turn ends.
+    agent_task: bool = False
+    native: bool = False  # A Workbench tab the user sees, rather than a private browser
+    user_hold: bool = False  # The user took over during the running turn
+    handed_back: bool = False  # The user owns it only because a task ended
+    frame_task: asyncio.Task | None = None  # Samples step frames of a Workbench tab
     generation: int = 0
     revision: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -334,6 +349,7 @@ class BrowserService:
         self.cookies = CookieStore(self.profile_root)
         self.installer = BrowserInstaller()
         self.runs: dict[str, BrowserRun] = {}
+        self.workbench: dict[str, Any] | None = None  # Workbench's CDP bridge, when it runs
         from deepseek_tui.browser.suggestions import SkillSuggestions
 
         self.suggestions = SkillSuggestions(artifact_root / "skill-suggestions.json")
@@ -387,6 +403,7 @@ class BrowserService:
         run.assistance, run.log = assistance, history
         if old:
             run.operations, run.unresolved, run.requests = old.operations, old.unresolved, old.requests
+            run.agent_task = old.agent_task
         if assistance and actor == "user":
             assistance["status"] = "human"
         if urlsplit(url).scheme in {"http", "https"}:
@@ -427,7 +444,8 @@ class BrowserService:
         return self.cookies.state()
 
     async def clear_cookies(self) -> None:
-        if self.runs:
+        # Workbench tabs clear in place; a private browser holds its cookies until closed.
+        if any(not run.native for run in self.runs.values()):
             raise ValueError("Close all app browser sessions before clearing saved cookies")
         roots = [self.profile_root / "profiles", *self.artifact_root.glob("*/profile")]
         for root in roots:
@@ -437,8 +455,17 @@ class BrowserService:
                     if path.is_file() or path.is_symlink():
                         path.unlink()
         await self.cookies.clear()
+        if self.workbench:
+            from deepseek_tui.browser.workbench import control
 
-    async def ensure(self, thread_id: str) -> BrowserRun:
+            keep_cdp_local()
+            try:
+                await control(self.workbench, "Workbench.clearCookies", {})
+            except Exception as exc:  # noqa: BLE001 - reported to the user who asked to clear
+                raise ValueError(
+                    "Saved cookies were cleared, but Workbench's browser was not") from exc
+
+    async def ensure(self, thread_id: str, *, native_only: bool = False) -> BrowserRun:
         existing = self.runs.get(thread_id)
         if existing and existing.session and not (existing.native_events and existing.native_events.dialog):
             try:
@@ -465,6 +492,12 @@ class BrowserService:
             if run.owner == "stopped":
                 raise ValueError("Browser session has stopped")
             if run.session is None:
+                if self.workbench and await self._attach_workbench(run):
+                    return run
+                if native_only:
+                    shutil.rmtree(run.directory, ignore_errors=True)
+                    self.runs.pop(thread_id, None)
+                    raise ValueError("Workbench browser is unavailable")
                 try:
                     from octop_browser import BrowserSession, OctopSettings
                     from octop_browser.profile import ProfileManager
@@ -492,21 +525,7 @@ class BrowserService:
                     viewport_width=1200,
                     viewport_height=760,
                 )
-                # websockets >= 15 inherits OS proxy settings. CDP must stay local.
-                bypass = ",".join(
-                    dict.fromkeys(
-                        filter(
-                            None,
-                            (
-                                os.environ.get("no_proxy", "")
-                                + ","
-                                + os.environ.get("NO_PROXY", "")
-                                + ",localhost,127.0.0.1,::1"
-                            ).split(","),
-                        )
-                    )
-                )
-                os.environ["no_proxy"] = os.environ["NO_PROXY"] = bypass
+                keep_cdp_local()
                 profiles = ProfileManager(base_dir=profile_dir, settings=cfg)
                 profiles.get_or_create("workbench").cdp_port = port
                 run.settings, run.profiles = cfg, profiles
@@ -536,12 +555,51 @@ class BrowserService:
                     raise
         return run
 
+    async def _attach_workbench(self, run: BrowserRun) -> bool:
+        """Use the browser the user sees in Workbench; without it, a private one."""
+        bridge = self.workbench
+        keep_cdp_local()
+        try:
+            from deepseek_tui.browser.workbench import WorkbenchBrowserSession
+
+            run.session, run.settings, run.profiles = await WorkbenchBrowserSession.attach(
+                bridge, run.thread_id, run.directory)
+            run.native = True
+            await self._sync_viewport(run)
+            try:
+                await asyncio.wait_for(self.cookies.apply_native(run), timeout=5)
+            except Exception:  # noqa: BLE001 - logins are a convenience; the page still works
+                self.cookies.save_error = True
+            return True
+        except ImportError:
+            return False
+        except Exception as exc:  # noqa: BLE001 - any bridge failure falls back to a private browser
+            if run.session is not None:
+                try:
+                    await run.session.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            run.session, run.native = None, False
+            if isinstance(exc, ConnectionRefusedError) and self.workbench is bridge:
+                self.workbench = None  # Workbench quit; it announces itself again on start.
+            return False
+
+    async def _sync_viewport(self, run: BrowserRun) -> None:
+        """A Workbench page is as large as its panel, which the user may resize."""
+        metrics = await run.session._internal.client.send("Page.getLayoutMetrics")
+        view = metrics.get("cssLayoutViewport") or {}
+        run.width = int(view.get("clientWidth") or run.width)
+        run.height = int(view.get("clientHeight") or run.height)
+
     async def _reclaim_idle_session(self) -> None:
         """At the cap, close the least recently used session that nobody is using."""
         now = time.monotonic()
         idle = [
             run for run in self.runs.values()
-            if now - run.last_used >= IDLE_RECLAIM_SECONDS and run.owner != "user"
+            # Closing a Workbench run only detaches it. A private page the user took
+            # over stays for them; one merely handed back after a task does not.
+            if now - run.last_used >= IDLE_RECLAIM_SECONDS and not run.agent_task
+            and (run.native or run.owner != "user" or run.handed_back)
             and run.assistance is None and not run.unresolved and not run.lock.locked()
             and not (run.recorder or run.recording or run.video)
             and not (run.demo_task and not run.demo_task.done())
@@ -579,6 +637,7 @@ class BrowserService:
             )
             is not None,
             "healthy": run.healthy,
+            "surface": "native" if run.native else "headless",
             "url": run.url,
             "video_recording": run.video is not None,
             "video_error": run.video_error,
@@ -605,7 +664,8 @@ class BrowserService:
             "cookie_sync": self.cookies.state(),
             "skill_suggestion": self.suggestions.pending.get(thread_id),
             "skill_suggestions_enabled": self.suggestions.enabled,
-            **(run.native_events.state() if run.native_events else {"dialog": None, "file_chooser": None, "downloads": []}),
+            **(run.native_events.state() if run.native_events else {
+                "dialog": None, "file_chooser": None, "downloads": [], "loading": False}),
         }
 
     def _saved_state(self, thread_id: str) -> dict[str, Any]:
@@ -948,6 +1008,12 @@ class BrowserService:
         if not run or not run.session:
             raise ValueError("Open a browser page first")
         run.last_used = time.monotonic()
+        if body.kind == "stop":
+            # Outside the lock: the navigation being stopped may be what holds it.
+            if run.owner != "user" or run.transferring or run.generation != body.generation:
+                raise ValueError("Browser control changed; queued input was discarded")
+            await asyncio.wait_for(run.session._internal.client.send("Page.stopLoading"), timeout=4)
+            return {"success": True}
         async with run.lock:
             if run.owner != "user" or run.transferring or run.generation != body.generation:
                 raise ValueError("Browser control changed; queued input was discarded")
@@ -1158,10 +1224,35 @@ class BrowserService:
             raise
         return path
 
+    async def _sample_frames(self, run: BrowserRun, interval: float = 1.0) -> None:
+        last = None
+        while True:
+            await asyncio.sleep(interval)
+            if not run.recording or run.session is None:
+                return
+            if run.lock.locked():
+                continue  # The running action records its own frame.
+            try:
+                frame = await self._capture(run)
+            except Exception:  # noqa: BLE001 - a missed sample only shortens the animation
+                continue
+            digest = hashlib.sha256(frame).digest()
+            if digest == last or not run.recording:
+                continue
+            last = digest
+            run.frames.append(frame)
+            if len(run.frames) >= 40:
+                self._finish_recording(run)
+                self._persist(run)
+                return
+
     def _finish_recording(self, run: BrowserRun) -> dict[str, str] | None:
         from PIL import Image
 
         run.recording = False
+        sampler, run.frame_task = run.frame_task, None
+        if sampler and sampler is not asyncio.current_task():
+            sampler.cancel()
         frames, run.frames = run.frames, []
         if not frames:
             return None
@@ -1265,6 +1356,8 @@ class BrowserService:
                 return {**saved, "success": True, "content": "Human review recorded", "reconciled": True}
         if action.action == "request_assistance":
             raise ValueError("Request assistance through the active agent task")
+        if actor == "agent" and run is not None:
+            await self._claim_for_agent(run)
         if action.action in {"recover", "close_session"}:
             if actor == "agent" and run and run.assistance is not None:
                 raise ValueError("Waiting for browser assistance; do not replace the session")
@@ -1310,6 +1403,8 @@ class BrowserService:
             if action.action not in {"open", "new_tab"}:
                 raise ValueError("Open a browser page first")
             run = await self.ensure(thread_id)
+            if actor == "agent":
+                run.agent_task = True
         if actor == "agent" and check_assistance and run.assistance is not None:
             raise ValueError("Waiting for browser assistance; do not repeat actions")
         run.last_used = time.monotonic()
@@ -1344,6 +1439,9 @@ class BrowserService:
                 run.native_events = NativeBrowserEvents(run, self)
             if run.native_events:
                 await run.native_events.install(run.session._internal.client)
+                # A page showing a native dialog cannot lay out until it is answered.
+                if run.native and not run.native_events.dialog:
+                    await self._sync_viewport(run)
                 if run.native_events.dialog and action.action not in {"handle_dialog", "tabs", "downloads"}:
                     return await self._reject_action(run, action, "native_dialog_pending")
             if action.operation_id:
@@ -1810,6 +1908,13 @@ class BrowserService:
             a.action in {"new_tab", "switch_tab", "close_tab"}
             and result is not None
             and result.success
+            and run.native
+        ):
+            await self._sync_viewport(run)  # A Workbench tab keeps the panel's size.
+        elif (
+            a.action in {"new_tab", "switch_tab", "close_tab"}
+            and result is not None
+            and result.success
         ):
             from deepseek_tui.browser.input import dispatch_input
 
@@ -1835,6 +1940,11 @@ class BrowserService:
         if a.action == "record_start":
             run.frames.clear()
             run.recording = True
+            if run.native:
+                # Input in a Workbench tab never reaches the runtime; sample the page.
+                if run.frame_task:
+                    run.frame_task.cancel()
+                run.frame_task = asyncio.create_task(self._sample_frames(run))
         if a.action == "video_start":
             await self.start_video(run)
         if a.action == "video_stop":
@@ -2157,7 +2267,7 @@ class BrowserService:
         if run.transferring:
             raise ValueError("Browser control is already changing")
         run.transferring = True
-        run.owner = owner
+        run.owner, run.handed_back = owner, False
         run.generation += 1
         if run.native_events:
             if run.native_events.dialog:
@@ -2188,6 +2298,47 @@ class BrowserService:
         if owner == "stopped":
             await self.close(thread_id)
         return self.state(thread_id)
+
+    async def _claim_for_agent(self, run: BrowserRun) -> None:
+        """A new agent task takes over a page the user was simply browsing.
+
+        A takeover during the task, a help request, a demonstration or a recording
+        keeps the browser with the user until they return it. In Workbench the task
+        starts on the tab the user is looking at.
+        """
+        if run.agent_task:
+            return
+        async with run.control_lock:
+            if run.agent_task:
+                return
+            # A control change in flight decides who holds the page; wait for it.
+            for _ in range(100):
+                if not run.transferring:
+                    break
+                await asyncio.sleep(0.05)
+            run.agent_task = True
+            if self._user_browsing(run):
+                await self.control(run.thread_id, "agent")
+            if run.native and run.session is not None and run.owner == "agent":
+                await self._follow_shown_tab(run)
+
+    async def _follow_shown_tab(self, run: BrowserRun) -> None:
+        try:
+            tabs = await run.session.list_tabs()
+        except Exception:  # noqa: BLE001 - the task's first action reports a lost page
+            return
+        shown = next((tab["tab_id"] for tab in (tabs.metadata or {}).get("tabs", [])
+                      if tab.get("shown")), None)
+        if shown and shown != run.session.tab_id:
+            try:
+                await self.action(run.thread_id, BrowserAction(action="switch_tab", tab_id=shown))
+            except Exception:  # noqa: BLE001 - the task still acts on its current tab
+                pass
+
+    def _user_browsing(self, run: BrowserRun) -> bool:
+        return (run.owner == "user" and run.session is not None and not run.transferring
+                and not run.user_hold and run.assistance is None and not self._demonstrating(run)
+                and not run.recording and run.video is None)
 
     @staticmethod
     def _demonstrating(run: BrowserRun) -> bool:
@@ -2303,7 +2454,7 @@ class BrowserService:
                             await self.save_cookies(run, force=True)
                             await asyncio.wait_for(run.session.close(kill=True), timeout=10)
                         except Exception:
-                            if run.profiles:
+                            if run.profiles and not run.native:
                                 from octop_browser.cdp.launcher import terminate_browser
 
                                 await terminate_browser(run.profiles.get_or_create("workbench"))
