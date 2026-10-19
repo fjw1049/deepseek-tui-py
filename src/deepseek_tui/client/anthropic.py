@@ -206,7 +206,9 @@ class AnthropicCompatClient(LLMClient):
         # Explicit off always wins. Other fields defer to configured
         # extra_body; enabling thinking is also skipped where Anthropic-format
         # endpoints reject it: forced tool calls and custom sampling.
-        if tier == "off" or (
+        if "output_config" in fields and isinstance(payload.get("output_config"), dict):
+            payload["output_config"] = {**fields["output_config"], **payload["output_config"]}
+        elif tier == "off" or (
             not fields.keys() & payload.keys()
             and (
                 "thinking" not in fields

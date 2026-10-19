@@ -247,3 +247,35 @@ def test_anthropic_unregistered_model_keeps_only_off() -> None:
 def test_anthropic_enable_yields_to_conflicts_and_config(overrides) -> None:
     payload = _anthropic_payload("glm-5.1", "high", max_tokens=65536, **overrides)
     assert payload.get("thinking") == overrides.get("extra_body", {}).get("thinking")
+
+
+@pytest.mark.parametrize("budget", [0, 8192])
+def test_qwen_explicit_budget_excludes_automatic_effort(budget) -> None:
+    sent = _openai_sent("qwen3.8-max", "low", extra_body={"thinking_budget": budget})
+    assert sent == {"enable_thinking": True, "thinking_budget": budget}
+
+
+@pytest.mark.parametrize("configured_effort", [None, "max"])
+def test_anthropic_effort_merges_with_output_format(configured_effort) -> None:
+    output = {"format": {"type": "json_schema", "schema": {"type": "object"}}}
+    if configured_effort is not None:
+        output["effort"] = configured_effort
+    original = dict(output)
+    payload = _anthropic_payload("glm-5.3", "low", extra_body={"output_config": output})
+    assert payload["output_config"] == {**original, "effort": configured_effort or "low"}
+    assert output == original
+
+
+@pytest.mark.parametrize(
+    ("tier", "expected"), [("low", "low"), ("medium", "medium"), ("max", "xhigh")]
+)
+def test_verified_qwen_gateway_alias_preserves_model_id(tier, expected) -> None:
+    model = "qwen-3-8-max"
+    payload = _anthropic_payload(model, tier)
+    assert payload["model"] == model
+    assert payload["output_config"] == {"effort": expected}
+    assert _openai_sent(model, tier) == {"enable_thinking": True, "reasoning_effort": expected}
+
+
+def test_unknown_qwen_gateway_alias_is_not_guessed() -> None:
+    assert _openai_sent("qwen-3-8-custom", "low") == {}

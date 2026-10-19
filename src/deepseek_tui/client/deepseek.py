@@ -332,6 +332,9 @@ class DeepSeekClient(LLMClient):
                 else self.thinking_supported
             ),
         )
+        # Qwen's explicit budget takes precedence over automatic effort.
+        if "enable_thinking" in fields and "thinking_budget" in request.extra_body:
+            fields.pop("reasoning_effort", None)
         if tier == "off" or not _is_forced_tool_choice(payload.get("tool_choice")):
             payload.update(fields)
         payload.update(sanitize_extra_body(request.extra_body))

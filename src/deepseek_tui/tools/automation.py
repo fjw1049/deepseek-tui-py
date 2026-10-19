@@ -1292,11 +1292,27 @@ class AutomationManager:
         """Keep the newest :data:`MAX_RUNS_PER_AUTOMATION` runs.
 
         Reconcile walks every run each tick, so history must stay bounded.
-        In-flight runs are never dropped.
+        In-flight runs and pending result writes or deliveries are never dropped.
         """
+        from deepseek_tui.automation.delivery import DeliveryConfig
+
         for run in self.list_runs(automation_id)[MAX_RUNS_PER_AUTOMATION:]:
             if run.status in (AutomationRunStatus.QUEUED, AutomationRunStatus.RUNNING):
                 continue
+            if run.conversation_thread_id and not run.conversation_written:
+                continue
+            if not run.delivery_done and run.status in (
+                AutomationRunStatus.COMPLETED, AutomationRunStatus.FAILED,
+            ):
+                delivery = run.delivery
+                if delivery is None:
+                    delivery = self.get_automation(automation_id).delivery
+                try:
+                    if DeliveryConfig.from_mapping(delivery).is_active():
+                        continue
+                except ValueError:
+                    # Preserve pending work until its delivery config is repaired.
+                    continue
             self._run_path(automation_id, run.id).unlink(missing_ok=True)
 
     async def _enqueue_run_task(

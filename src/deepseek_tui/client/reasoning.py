@@ -130,6 +130,9 @@ def _family(model: str) -> tuple[Profile, str | None] | None:
     if is_deepseek_reasoning_model(model):
         return DEEPSEEK, _EFFORT
     name = model.strip().lower().rsplit("::", 1)[-1].rsplit("/", 1)[-1]
+    # Verified gateway alias; normalize only for capability lookup.
+    if name == "qwen-3-8-max":
+        name = "qwen3.8-max"
     if m := re.match(r"glm-(\d+)(?:\.(\d+))?", name):
         version = _version(m)
         if version >= (5, 3):

@@ -699,3 +699,107 @@ def test_run_history_is_capped_but_keeps_in_flight_runs(tmp_path: Path) -> None:
     assert len(ids) == MAX_RUNS_PER_AUTOMATION + 1
     assert "r000" in ids  # oldest, but still running
     assert "r001" not in ids
+
+
+@pytest.mark.parametrize(
+    ("status", "delivery", "run_delivery", "delivery_done", "thread_id", "written", "keep"),
+    [
+        (
+            AutomationRunStatus.COMPLETED,
+            {"mode": "feishu", "to": "chat"},
+            None,
+            False,
+            None,
+            False,
+            True,
+        ),
+        (
+            AutomationRunStatus.FAILED,
+            {"mode": "feishu", "to": "chat"},
+            None,
+            False,
+            None,
+            False,
+            True,
+        ),
+        (
+            AutomationRunStatus.COMPLETED,
+            None,
+            {"mode": "feishu", "to": "chat"},
+            False,
+            None,
+            False,
+            True,
+        ),
+        (AutomationRunStatus.COMPLETED, None, None, False, "thread", False, True),
+        (AutomationRunStatus.CANCELED, None, None, False, "thread", False, True),
+        (AutomationRunStatus.COMPLETED, None, {"mode": "slack"}, False, None, False, True),
+        (
+            AutomationRunStatus.COMPLETED,
+            {"mode": "feishu", "to": "chat"},
+            None,
+            True,
+            "thread",
+            True,
+            False,
+        ),
+        (AutomationRunStatus.COMPLETED, None, None, False, None, False, False),
+        (
+            AutomationRunStatus.COMPLETED,
+            {"mode": "feishu", "to": "chat"},
+            {"mode": "none"},
+            False,
+            None,
+            False,
+            False,
+        ),
+        (
+            AutomationRunStatus.CANCELED,
+            {"mode": "feishu", "to": "chat"},
+            None,
+            False,
+            None,
+            False,
+            False,
+        ),
+    ],
+)
+def test_pruning_waits_for_required_postprocessing(
+    tmp_path, monkeypatch, status, delivery, run_delivery, delivery_done, thread_id, written, keep
+) -> None:
+    from deepseek_tui.tools.automation import AutomationRunRecord
+
+    monkeypatch.setattr("deepseek_tui.tools.automation.MAX_RUNS_PER_AUTOMATION", 1)
+    mgr = AutomationManager.open(tmp_path / "auto")
+    job = mgr.create_automation(
+        CreateAutomationRequest(name="test", prompt="p", schedule="0 * * * *", delivery=delivery)
+    )
+    old = AutomationRunRecord(
+        id="old",
+        automation_id=job.id,
+        scheduled_for="2026-01-01T00:00:00+00:00",
+        created_at="2026-01-01T00:00:00+00:00",
+        status=status,
+        delivery=run_delivery,
+        delivery_done=delivery_done,
+        conversation_thread_id=thread_id,
+        conversation_written=written,
+    )
+    mgr.save_run(old)
+    mgr.save_run(
+        AutomationRunRecord(
+            id="new",
+            automation_id=job.id,
+            scheduled_for="2026-01-02T00:00:00+00:00",
+            created_at="2026-01-02T00:00:00+00:00",
+            status=AutomationRunStatus.RUNNING,
+        )
+    )
+    mgr.prune_runs(job.id)
+    assert ("old" in {r.id for r in mgr.list_runs(job.id)}) is keep
+    if keep:
+        old.delivery_done = True
+        old.conversation_written = True
+        mgr.save_run(old)
+        mgr.prune_runs(job.id)
+        assert [r.id for r in mgr.list_runs(job.id)] == ["new"]
