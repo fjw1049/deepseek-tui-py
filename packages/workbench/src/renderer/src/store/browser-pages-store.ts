@@ -11,7 +11,7 @@ export type PageTab = {
   error: string | null
 }
 export type PageRect = { top: number; left: number; width: number; height: number }
-export type PageSession = { tabs: PageTab[]; activeTabId: string }
+export type PageSession = { tabs: PageTab[]; activeTabId: string; retained?: boolean }
 
 export type PageWebview = HTMLElement & {
   canGoBack(): boolean
@@ -75,7 +75,7 @@ function setSession(browserId: string, session: PageSession): void {
 function prune(): void {
   const { sessions, display } = useBrowserPagesStore.getState()
   const idle = Object.keys(sessions)
-    .filter(id => id !== display?.browserId && Date.now() - (lastUsed.get(id) ?? 0) >= RECENT_USE_MS)
+    .filter(id => !sessions[id]?.retained && id !== display?.browserId && Date.now() - (lastUsed.get(id) ?? 0) >= RECENT_USE_MS)
     .sort((a, b) => (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0))
   const excess = Object.keys(sessions).length - MAX_BROWSER_SESSIONS
   if (excess <= 0) return
@@ -84,6 +84,14 @@ function prune(): void {
   useBrowserPagesStore.setState(state => ({
     sessions: Object.fromEntries(Object.entries(state.sessions).filter(([id]) => !closing.has(id)))
   }))
+}
+
+/** A live runtime or recorder connection owns the page even when no panel shows it. */
+export function retainBrowserSession(browserId: string, retained: boolean): boolean {
+  const session = useBrowserPagesStore.getState().sessions[browserId]
+  if (!session) return false
+  setSession(browserId, { ...session, retained })
+  return true
 }
 
 /** Every browser keeps at least one tab, so the runtime always has a page to drive. */
@@ -102,7 +110,7 @@ export function openPageTab(browserId: string, url: string,
   { filePath = null, select = true }: { filePath?: string | null; select?: boolean } = {}): string {
   const session = ensureBrowserSession(browserId)
   const tab = createPageTab(url, filePath)
-  setSession(browserId, { tabs: [...session.tabs, tab], activeTabId: select ? tab.id : session.activeTabId })
+  setSession(browserId, { ...session, tabs: [...session.tabs, tab], activeTabId: select ? tab.id : session.activeTabId })
   return tab.id
 }
 
@@ -121,7 +129,7 @@ export function closePageTab(browserId: string, tabId: string): boolean {
   const tabs = session.tabs.filter(tab => tab.id !== tabId)
   if (!tabs.length) tabs.push(createPageTab(BLANK_PAGE, null))
   const activeTabId = session.activeTabId === tabId ? tabs[Math.min(index, tabs.length - 1)]!.id : session.activeTabId
-  setSession(browserId, { tabs, activeTabId })
+  setSession(browserId, { ...session, tabs, activeTabId })
   return true
 }
 
@@ -140,6 +148,7 @@ export function navigatePageTab(browserId: string, tabId: string, url: string, f
   if (!session?.tabs.some(tab => tab.id === tabId)) return
   const tab = createPageTab(url, filePath)
   setSession(browserId, {
+    ...session,
     tabs: session.tabs.map(item => item.id === tabId ? tab : item),
     activeTabId: session.activeTabId === tabId ? tab.id : session.activeTabId
   })

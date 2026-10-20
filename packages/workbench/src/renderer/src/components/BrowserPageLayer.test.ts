@@ -63,6 +63,8 @@ it("offers attached tabs to the bridge and follows the runtime's tab requests", 
     const [first] = useBrowserPagesStore.getState().sessions.one!.tabs
     expect(h.bridge.setTabs).toHaveBeenLastCalledWith('one', [{ tabId: first!.id, webContentsId: 41, active: true, visible: false }])
 
+    await h.send('retain', { kind: 'retain', browserId: 'one', retained: true })
+    expect(useBrowserPagesStore.getState().sessions.one!.retained).toBe(true)
     await h.send('create', { kind: 'create', browserId: 'one', url: 'https://example.test/' })
     const created = useBrowserPagesStore.getState().sessions.one!
     expect(created.tabs).toHaveLength(2)

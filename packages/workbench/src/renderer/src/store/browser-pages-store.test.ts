@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { MAX_BROWSER_SESSIONS, ensureBrowserSession, setPageDisplay, updatePageTab, useBrowserPagesStore } from './browser-pages-store'
+import { MAX_BROWSER_SESSIONS, retainBrowserSession, openPageTab, closePageTab, navigatePageTab, ensureBrowserSession, setPageDisplay, updatePageTab, useBrowserPagesStore } from './browser-pages-store'
 
 beforeEach(() => { vi.useFakeTimers(); useBrowserPagesStore.setState({ sessions: {}, display: null }) })
 afterEach(() => { vi.useRealTimers() })
@@ -35,4 +35,20 @@ it('opens a page in a tab that is still attaching by starting a tab there instea
   expect(session.tabs).toHaveLength(1)
   expect(session.tabs[0]).toMatchObject({ url: 'http://localhost:5173/design.html', filePath: '/project/design.html' })
   expect(session.activeTabId).not.toBe(blank)
+})
+
+
+it('protects a connected background browser across tab changes until its runtime releases it', () => {
+  ensureBrowserSession('running')
+  expect(retainBrowserSession('running', true)).toBe(true)
+  const tab = openPageTab('running', 'https://example.test/')
+  navigatePageTab('running', tab, 'https://example.test/next')
+  closePageTab('running', useBrowserPagesStore.getState().sessions.running!.activeTabId)
+  for (let i = 0; i < 7; i++) ensureBrowserSession(`other-${i}`)
+  vi.advanceTimersByTime(11 * 60_000)
+  ensureBrowserSession('ninth')
+  expect(useBrowserPagesStore.getState().sessions.running).toBeDefined()
+  retainBrowserSession('running', false)
+  ensureBrowserSession('tenth')
+  expect(useBrowserPagesStore.getState().sessions.running).toBeUndefined()
 })

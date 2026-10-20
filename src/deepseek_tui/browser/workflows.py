@@ -64,7 +64,8 @@ def validate_scope(target):
 
 
 async def start_recording(
-    service: BrowserService, thread_id: str, actor: str = "user"
+    service: BrowserService, thread_id: str, actor: str = "user", *,
+    tab_id: str = "", generation: int | None = None,
 ) -> dict[str, Any]:
     from deepseek_tui.browser.recording import create_recording
 
@@ -77,6 +78,10 @@ async def start_recording(
     async with run.lock:
         if run.owner != actor or run.recorder or (run.demo_task and not run.demo_task.done()):
             raise ValueError("Take control and finish the current workflow first")
+        if run.transferring or (generation is not None and generation != run.generation):
+            raise ValueError("Browser control changed; recording was discarded")
+        if actor == "user":
+            await service._bind_native_tab(run, tab_id)
         run.recorder, result = await create_recording(
             run, recording_store(service, thread_id), actor
         )

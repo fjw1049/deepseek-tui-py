@@ -10,6 +10,7 @@ import {
   markPageReady,
   openPageTab,
   registerPageWebview,
+  retainBrowserSession,
   updatePageTab,
   useBrowserPagesStore,
   type PageTab,
@@ -139,6 +140,7 @@ export function BrowserPageLayer(): ReactElement {
     const reply = (ok: boolean, extra: { tabId?: string; error?: string } = {}): void => {
       void window.dsGui.browserBridge.reply(requestId, { ok, ...extra })
     }
+    if (command.kind === 'retain') { reply(retainBrowserSession(command.browserId, command.retained)); return }
     if (command.kind === 'open') { ensureBrowserSession(command.browserId); reply(true); return }
     if (command.kind === 'create') { reply(true, { tabId: openPageTab(command.browserId, command.url) }); return }
     const done = command.kind === 'activate' ? activatePageTab(command.browserId, command.tabId)

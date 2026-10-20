@@ -214,6 +214,8 @@ class WorkbenchRecordSession(RecordSession):
         self.navigations = set()
         # "user" for a demonstration, "agent" for capturing the agent's own run.
         self.actor = "user"
+        self.workbench = None
+        self.target_lock = asyncio.Lock()
 
     def _append(self, event):
         event = dict(event)
@@ -324,6 +326,43 @@ class WorkbenchRecordSession(RecordSession):
     async def start(self):
         await super().start()
         await self._sync_frames()
+        if self.workbench and self._poll_task is None:
+            self._poll_task = asyncio.create_task(self._poll_targets())
+
+    async def _target_infos(self):
+        if self.workbench is None:
+            return await super()._target_infos()
+        from deepseek_tui.browser.workbench import control, tab_url
+
+        bridge, browser_id = self.workbench
+        listing = await control(bridge, "Workbench.listTabs", {"browserId": browser_id})
+        return [{"id": tab["tab_id"], "url": tab["url"], "title": tab["title"],
+                 "webSocketDebuggerUrl": tab_url(bridge, tab["tab_id"])}
+                for tab in listing["tabs"]]
+
+    async def _attach_known_targets(self):
+        if self.workbench is None:
+            return await super()._attach_known_targets()
+        async with self.target_lock:
+            for target in await self._target_infos():
+                target_id = target["id"]
+                if target_id in self._clients:
+                    continue
+                client = CDPClient(timeout=self.client._timeout)
+                try:
+                    await client.connect(target["webSocketDebuggerUrl"])
+                    await self._install_on_client(client, target_id)
+                except BaseException as exc:
+                    with suppress(Exception):
+                        await client.close()
+                    if not isinstance(exc, Exception):
+                        raise
+                    self._warn(f"Could not record Workbench tab: {exc}")
+                    continue
+                self._clients[target_id] = client
+                self._client_target_ids[id(client)] = target_id
+                self._append({"kind": "page_opened", "targetId": target_id,
+                              "url": target["url"], "title": target["title"], "initial": False})
 
     async def _sync_frames(self):
         async with self.frame_lock:
@@ -382,11 +421,12 @@ class WorkbenchRecordSession(RecordSession):
         while self.active:
             try:
                 await self._attach_known_targets()
-                alive = {str(t.get("id") or "") for t in await self._target_infos()}
-                for target_id in self._clients.keys() - alive:
-                    client = self._clients.pop(target_id)
-                    self._client_target_ids.pop(id(client), None)
-                    await client.close()
+                async with self.target_lock:
+                    alive = {str(t.get("id") or "") for t in await self._target_infos()}
+                    for target_id in self._clients.keys() - alive:
+                        client = self._clients.pop(target_id)
+                        self._client_target_ids.pop(id(client), None)
+                        await client.close()
                 await self._sync_frames()
             except Exception as exc:
                 self._warn(str(exc))
@@ -460,6 +500,8 @@ async def create_recording(run, store, actor="user"):
     profile = run.profiles.get_or_create("workbench")
     # A Workbench tab is reached only through the app's bridge, one page at a time.
     native = getattr(run, "native", False)
+    if native:
+        target = run.session.tab_id
     client = CDPClient(timeout=run.settings.cdp_timeout)
     manifest = RecordingManifest(
         recordingId="rec_" + uuid.uuid4().hex,
@@ -479,6 +521,8 @@ async def create_recording(run, store, actor="user"):
         initial_target_id=target,
     )
     session.actor = actor
+    if native:
+        session.workbench = run.session.bridge, run.thread_id
     try:
         if native:
             from deepseek_tui.browser.workbench import tab_url

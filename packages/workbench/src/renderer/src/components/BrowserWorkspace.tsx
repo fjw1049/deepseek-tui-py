@@ -26,6 +26,7 @@ type BrowserState = {
   image?: string | null; video_recording?: boolean; video_error?: string | null
   owner: 'agent' | 'user' | 'stopped'; recording: boolean
   activity?: string; workflow_recording?: boolean
+  workflow_tabs?: string[]
   skill_suggestion?: { id: string; site: string; count: number; recording_id: string } | null
   skill_suggestions_enabled?: boolean
   error: string | null; log: { action: string; success: boolean }[]
@@ -157,7 +158,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const canNavigate = visible && fresh && !pending && !state?.transferring && (!state?.active || userControls)
   // The user browses Workbench tabs directly unless the agent is working in them.
   const agentWorking = !!state?.active && state.owner === 'agent' && !!state.task_running
-  const canBrowse = visible && !agentWorking && !state?.transferring
+  const capturePending = !remote && !!state?.workflow_recording && !(state.workflow_tabs ?? []).includes(activeTab?.id ?? '')
+  const canBrowse = visible && !agentWorking && !state?.transferring && !capturePending && !pending
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const pageUrl = remote ? state?.url : activeTab?.url
   useEffect(() => { if (pageUrl) setUrl(pageUrl === BLANK_PAGE ? '' : pageUrl) }, [pageUrl])
@@ -199,7 +201,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const perform = useCallback(async (suffix: string, body: unknown): Promise<boolean> => {
     setError(''); setPending(true)
     try {
-      const payload = suffix === '/action' && state?.active ? { ...(body as Record<string, unknown>), generation: state.generation } : body
+      const payload = suffix === '/action' && state?.active ? {
+        ...(!remote && activeTab?.id ? { tab_id: activeTab.id } : {}),
+        ...(body as Record<string, unknown>), generation: state.generation
+      } : body
       const result = await browserRequest<ActionResult>(threadId, suffix, payload)
       if (!alive.current) return false
       if (result.receipt) setLastReceipt(result.receipt)
@@ -222,7 +227,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       return false
     }
     finally { if (alive.current) setPending(false) }
-  }, [threadId, apply, state?.active, state?.generation, t, viewSuffix])
+  }, [threadId, apply, state?.active, state?.generation, t, viewSuffix, remote, activeTab?.id])
   const action = useCallback((body: unknown): void => { void perform('/action', body) }, [perform])
   async function stopLoading(): Promise<void> {
     if (!remote) { try { pageWebview(activeTab?.id)?.stop() } catch { /* not attached yet */ } return }
@@ -272,8 +277,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     }
   }, [visible, remote, threadId])
   useEffect(() => {
-    if (agentWorking) try { pageWebview(activeTab?.id)?.blur() } catch { /* not attached yet */ }
-  }, [agentWorking, activeTab?.id])
+    if (agentWorking || capturePending || pending || state?.transferring) try { pageWebview(activeTab?.id)?.blur() } catch { /* not attached yet */ }
+  }, [agentWorking, capturePending, pending, state?.transferring, activeTab?.id])
   // Element picking on a native tab: the injected picker reports over console messages.
   useEffect(() => {
     const webview = remote ? null : pageWebview(activeTab?.id)
@@ -312,7 +317,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         if (!alive.current) return
         if (onDemonstrationSaved) onDemonstrationSaved(t('browserDemoMessage', { id: saved.recordingId, steps: saved.steps }))
         else setNotice(t('browserDemoSavedNotice'))
-      } else await browserRequest(threadId, '/workflows', { action: 'start' })
+      } else await browserRequest(threadId, '/workflows', { action: 'start', generation: state?.generation,
+        ...(!remote && activeTab ? { tab_id: activeTab.id } : {}) })
       if (alive.current) apply(await browserRequest<BrowserState>(threadId, viewSuffix))
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
     finally { if (alive.current) setPending(false) }
@@ -448,7 +454,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const controlTone = needsHelp || needsAttention ? 'attention' : state?.owner === 'user' ? 'human' : state?.active && state.task_running ? 'agent' : 'idle'
   const controlTitle = controlTarget === 'user' ? 'browserPausing' : controlTarget === 'agent' ? 'browserResuming'
     : controlTarget === 'stopped' ? 'browserWorking' : state?.task_pausing ? 'browserTaskPausing'
-    : state?.transferring ? 'browserWorking' : requiresReview || needsHelp ? 'browserWaitingForYou' : hasConnectionProblem ? 'browserConnectionProblem' : !state?.active ? 'browserIdle'
+    : state?.transferring || capturePending ? 'browserWorking' : requiresReview || needsHelp ? 'browserWaitingForYou' : hasConnectionProblem ? 'browserConnectionProblem' : !state?.active ? 'browserIdle'
     : state.owner === 'user' ? state.task_paused ? 'browserTaskPaused' : 'browserUserControl' : state.task_paused ? 'browserControlPaused'
     : state.task_running === false ? 'browserAgentReady' : 'browserAgentControl'
   const controlHint = controlBusy ? 'browserControlSwitchHint' : unresolvedReceipt ? 'browserReviewHint' : requiresReview ? 'browserResponseHint' : hasConnectionProblem ? 'browserReconnectHint' : needsHelp ? 'browserControlHelpHint'
@@ -675,7 +681,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         }} onError={setError} /> :
         remote ? <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t(pending ? 'browserStarting' : 'browserStartTitle')}</h3><p>{t('browserStartHint')}</p></div>
         // The agent's page stays visible underneath while it works; the user's input waits.
-        : agentWorking || state?.transferring ? <div className="ds-browser-shield" aria-hidden="true" />
+        : agentWorking || state?.transferring || capturePending || pending ? <div className="ds-browser-shield" aria-hidden="true" />
         : !pageOpen ? <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t('browserStartTitle')}</h3><p>{t('browserStartHint')}</p>
           <button type="button" className="ds-browser-empty-action" disabled={!canBrowse} onClick={() => { if (activeTab) loadInTab(activeTab.id, DEFAULT_DEV_PREVIEW_URL) }}>{t('browserOpenDefault')}</button></div>
         : null}

@@ -520,7 +520,7 @@ it('records a user demonstration and asks the agent to turn it into a skill', as
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: saved })))
     await h.click('browserMore')
     await h.click('browserDemoStart')
-    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start"}')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start","generation":2}')
     expect(saved).not.toHaveBeenCalled()
     await h.click('browserMore')
     await h.click('browserDemoFinish')
@@ -784,4 +784,37 @@ it('keeps trying to bind the visible tabs until Workbench has announced its brid
     await act(async () => { await vi.advanceTimersByTimeAsync(5200) })
     expect(attempts).toBe(2)
   } finally { vi.useRealTimers(); await h.close() }
+})
+
+
+it('binds native evidence and demonstrations to the tab selected when requested', async () => {
+  const h = mount({ active: true, surface: 'native', owner: 'user', task_running: false,
+    generation: 2, log: [], artifacts: [] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await act(async () => updatePageTab('one', nativeTab('one').id, { url: 'https://example.test/' }))
+    const tab = nativeTab('one').id
+    await h.click('browserMore'); await h.click('browserSaveEvidence')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST',
+      JSON.stringify({ tab_id: tab, action: 'screenshot', generation: 2 }))
+    await h.click('browserMore'); await h.click('browserDemoStart')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST',
+      JSON.stringify({ action: 'start', generation: 2, tab_id: tab }))
+  } finally { await h.close() }
+})
+
+it('blocks input in a demonstration tab until the recorder has attached there', async () => {
+  vi.useFakeTimers()
+  const state = { active: true, surface: 'native', owner: 'user', task_running: false,
+    workflow_recording: true, workflow_tabs: [] as string[], generation: 2, log: [], artifacts: [] }
+  const h = mount(state)
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('.ds-browser-shield')).toBeTruthy()
+    expect(h.container.querySelector<HTMLInputElement>('.ds-dev-browser__omnibox')?.disabled).toBe(true)
+    state.workflow_tabs = [nativeTab('one').id]
+    await act(async () => vi.advanceTimersByTimeAsync(600))
+    expect(h.container.querySelector('.ds-browser-shield')).toBeNull()
+    expect(h.container.querySelector<HTMLInputElement>('.ds-dev-browser__omnibox')?.disabled).toBe(false)
+  } finally { await h.close(); vi.useRealTimers() }
 })

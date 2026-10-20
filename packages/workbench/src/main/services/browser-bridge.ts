@@ -21,6 +21,15 @@ type FrameInfo = { parentId?: string; frameIds: string[] }
 const REQUEST_TIMEOUT_MS = 15_000
 const ALLOWED_BROWSER_METHODS = new Set(['Browser.getVersion'])
 
+function parseMessage(raw: string): Message {
+  const message = JSON.parse(raw) as Message
+  if (!message || !Number.isSafeInteger(message.id) || typeof message.method !== 'string' ||
+    (message.params !== undefined && (!message.params || typeof message.params !== 'object' || Array.isArray(message.params)))) {
+    throw new Error('Invalid CDP message')
+  }
+  return message
+}
+
 function frameIds(tree: { frame?: { id?: string }; childFrames?: unknown[] } | undefined): string[] {
   if (!tree?.frame?.id) return []
   return [tree.frame.id, ...((tree.childFrames ?? []) as typeof tree[]).flatMap(frameIds)]
@@ -36,6 +45,7 @@ export function createBrowserBridge(deps: Deps) {
   const token = randomBytes(24).toString('base64url')
   const tabs = new Map<string, Tab>()
   const sockets = new Map<string, Set<WebSocket>>()
+  const connections = new Map<WebSocket, string>()
   const pending = new Map<string, { resolve: (reply: BrowserBridgeReply) => void; timer: NodeJS.Timeout }>()
   let waiters: Array<() => void> = []
   /** Download folders the runtime chose for the tabs it drives; other tabs keep the app's. */
@@ -128,7 +138,7 @@ export function createBrowserBridge(deps: Deps) {
   function serveControl(socket: WebSocket): void {
     socket.on('message', (raw: RawData) => void (async () => {
       let message: Message
-      try { message = JSON.parse(String(raw)) as Message } catch { socket.close(1003, 'Invalid message'); return }
+      try { message = parseMessage(String(raw)) } catch { socket.close(1003, 'Invalid message'); return }
       try {
         if (message.method === 'Workbench.clearCookies') {
           // The runtime cleared its saved logins; Workbench's tabs share this partition.
@@ -136,9 +146,13 @@ export function createBrowserBridge(deps: Deps) {
           socket.send(JSON.stringify({ id: message.id, result: {} }))
           return
         }
-        if (message.method !== 'Workbench.openSession') throw new Error(`Unsupported method ${message.method}`)
         const browserId = String(message.params?.browserId ?? '')
         if (!browserId) throw new Error('browserId is required')
+        if (message.method !== 'Workbench.openSession') {
+          const result = await workbenchMethod(browserId, message.method, message.params ?? {})
+          socket.send(JSON.stringify({ id: message.id, result }))
+          return
+        }
         if (!tabsOf(browserId).length) {
           const reply = await request({ kind: 'open', browserId })
           if (!reply.ok) throw new Error(reply.error ?? 'Workbench browser is unavailable')
@@ -159,29 +173,30 @@ export function createBrowserBridge(deps: Deps) {
       socket.close(1011, String(error))
       return
     }
-    const ownSessions = new Set<string>()
-    const frameCache = new Map<string, FrameInfo>()
+    // Flattened Electron sessions stay behind the bridge. Every tunneled command
+    // is dispatched here again, with the same descendant checks as a root command.
+    const ownSessions = new Map<string, { parent?: string; targetId: string }>()
     const set = sockets.get(tab.tabId) ?? new Set<WebSocket>()
     set.add(socket)
     sockets.set(tab.tabId, set)
+    connections.set(socket, tab.browserId)
+    // Wait for the renderer to protect this session before accepting CDP work.
+    const retained = request({ kind: 'retain', browserId: tab.browserId, retained: true })
 
     const frameInfo = async (targetId: string): Promise<FrameInfo> => {
-      const cached = frameCache.get(targetId)
-      if (cached) return cached
       // Electron leaves parentFrameId empty; the child's own tree names its parent.
       const { sessionId } = await debug.sendCommand('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string }
       try {
         const tree = await debug.sendCommand('Page.getFrameTree', {}, sessionId) as { frameTree: { frame: { parentId?: string } } }
         const info = { parentId: tree.frameTree.frame.parentId, frameIds: frameIds(tree.frameTree as never) }
-        frameCache.set(targetId, info)
         return info
       } finally {
         await debug.sendCommand('Target.detachFromTarget', { sessionId }).catch(() => {})
       }
     }
     /** Cross-origin frames of this tab, with their parent frame IDs. */
-    const ownedFrames = async (): Promise<{ owned: Map<string, string>; targets: Array<Record<string, unknown>> }> => {
-      const tree = await debug.sendCommand('Page.getFrameTree') as { frameTree: never }
+    const ownedFrames = async (sessionId?: string): Promise<{ owned: Map<string, string>; targets: Array<Record<string, unknown>> }> => {
+      const tree = await debug.sendCommand('Page.getFrameTree', {}, sessionId) as { frameTree: never }
       const known = new Set(frameIds(tree.frameTree))
       const targets = ((await debug.sendCommand('Target.getTargets')) as { targetInfos: Array<Record<string, unknown>> }).targetInfos
         .filter(target => target.type === 'iframe')
@@ -202,24 +217,45 @@ export function createBrowserBridge(deps: Deps) {
       return { owned, targets }
     }
 
-    async function target(method: string, params: Record<string, unknown>): Promise<unknown> {
+    function emit(message: Record<string, unknown>, sessionId?: string): void {
+      if (sessionId) {
+        const owned = ownSessions.get(sessionId)
+        if (!owned) return
+        emit({ method: 'Target.receivedMessageFromTarget', params: {
+          sessionId, targetId: owned.targetId, message: JSON.stringify(message)
+        } }, owned.parent)
+      } else if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
+    }
+
+    async function target(method: string, params: Record<string, unknown>, parent?: string): Promise<unknown> {
       if (method === 'Target.getTargets') {
-        const { owned, targets } = await ownedFrames()
+        const { owned, targets } = await ownedFrames(parent)
         return { targetInfos: targets.filter(item => owned.has(String(item.targetId)))
           .map(item => ({ ...item, parentFrameId: owned.get(String(item.targetId)) })) }
       }
-      if (method === 'Target.getTargetInfo' && !params.targetId) return debug.sendCommand(method, params)
+      if (method === 'Target.getTargetInfo' && !params.targetId) return debug.sendCommand(method, params, parent)
       if (method === 'Target.attachToTarget') {
         if (params.flatten !== false) throw new Error('Only non-flattened frame sessions are supported')
-        if (!(await ownedFrames()).owned.has(String(params.targetId))) throw new Error('Target is outside this tab')
-        const attached = await debug.sendCommand(method, params) as { sessionId: string }
-        ownSessions.add(attached.sessionId)
+        if (!(await ownedFrames(parent)).owned.has(String(params.targetId))) throw new Error('Target is outside this tab')
+        const attached = await debug.sendCommand(method, { ...params, flatten: true }) as { sessionId: string }
+        ownSessions.set(attached.sessionId, { parent, targetId: String(params.targetId) })
         return attached
       }
       if (method === 'Target.sendMessageToTarget' || method === 'Target.detachFromTarget') {
-        if (!ownSessions.has(String(params.sessionId))) throw new Error('Session is outside this tab')
-        if (method === 'Target.detachFromTarget') ownSessions.delete(String(params.sessionId))
-        return debug.sendCommand(method, params)
+        const sessionId = String(params.sessionId)
+        if (!ownSessions.has(sessionId) || ownSessions.get(sessionId)!.parent !== parent) throw new Error('Session is outside this tab')
+        if (method === 'Target.detachFromTarget') {
+          ownSessions.delete(sessionId)
+          await debug.sendCommand(method, { sessionId })
+          return {}
+        }
+        const message = parseMessage(String(params.message))
+        try {
+          emit({ id: message.id, result: await dispatch(message, sessionId) }, sessionId)
+        } catch (error) {
+          emit({ id: message.id, error: { message: error instanceof Error ? error.message : String(error) } }, sessionId)
+        }
+        return {}
       }
       throw new Error(`${method} is not available for Workbench tabs`)
     }
@@ -245,9 +281,10 @@ export function createBrowserBridge(deps: Deps) {
     }
 
     const onMessage = (_event: unknown, method: string, params: Record<string, unknown>, sessionId?: string): void => {
-      if (sessionId || socket.readyState !== socket.OPEN) return // The bridge's own frame probes.
-      if (method.startsWith('Target.') && !ownSessions.has(String(params.sessionId))) return
-      socket.send(JSON.stringify({ method, params }))
+      if (method === 'Target.detachedFromTarget') ownSessions.delete(String(params.sessionId))
+      // Target lifecycle/events are managed by the bridge, never forwarded raw.
+      if (method.startsWith('Target.')) return
+      emit({ method, params }, sessionId)
     }
     const onDetach = (): void => socket.close(1011, 'Debugger detached')
     debug.on('message', onMessage)
@@ -255,24 +292,38 @@ export function createBrowserBridge(deps: Deps) {
     socket.on('close', () => {
       debug.removeListener('message', onMessage)
       debug.removeListener('detach', onDetach)
+      for (const sessionId of ownSessions.keys()) void debug.sendCommand('Target.detachFromTarget', { sessionId }).catch(() => {})
+      ownSessions.clear()
       set.delete(socket)
+      connections.delete(socket)
+      if (![...connections.values()].includes(tab.browserId)) {
+        void request({ kind: 'retain', browserId: tab.browserId, retained: false })
+      }
       if (!set.size) {
         sockets.delete(tab.tabId)
         if (debug.isAttached()) try { debug.detach() } catch { /* the guest is gone */ }
       }
     })
+    async function dispatch(message: Message, sessionId?: string): Promise<unknown> {
+      const { method } = message
+      const params = message.params ?? {}
+      if (method.startsWith('Target.')) return target(method, params, sessionId)
+      if (method.startsWith('Workbench.')) {
+        if (sessionId) throw new Error('Workbench commands require a tab connection')
+        return workbenchMethod(tab.browserId, method, params)
+      }
+      if (method === 'Browser.setDownloadBehavior' && !sessionId) return downloadBehavior(params)
+      if (method.startsWith('Browser.') && !ALLOWED_BROWSER_METHODS.has(method)) throw new Error(`${method} is not available for Workbench tabs`)
+      if (method === 'Page.captureScreenshot' && !sessionId) return screenshot(params)
+      return debug.sendCommand(method, params, sessionId)
+    }
+
     socket.on('message', (raw: RawData) => void (async () => {
       let message: Message
-      try { message = JSON.parse(String(raw)) as Message } catch { return }
-      const params = message.params ?? {}
+      try { message = parseMessage(String(raw)) } catch { socket.close(1003, 'Invalid message'); return }
       try {
-        const method = message.method
-        const result = method.startsWith('Workbench.') ? await workbenchMethod(tab.browserId, method, params)
-          : method === 'Browser.setDownloadBehavior' ? downloadBehavior(params)
-          : method.startsWith('Target.') ? await target(method, params)
-          : method.startsWith('Browser.') && !ALLOWED_BROWSER_METHODS.has(method) ? (() => { throw new Error(`${method} is not available for Workbench tabs`) })()
-          : method === 'Page.captureScreenshot' ? await screenshot(params)
-          : await debug.sendCommand(method, params)
+        if (!(await retained).ok) throw new Error('Workbench browser was closed before it could be retained')
+        const result = await dispatch(message)
         if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id: message.id, result }))
       } catch (error) {
         if (socket.readyState === socket.OPEN) {

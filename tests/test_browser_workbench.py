@@ -428,3 +428,119 @@ async def test_a_failed_close_never_kills_another_browser(browser, monkeypatch):
     with pytest.raises(RuntimeError):
         await browser.close("thr_one")
     terminate.assert_not_called()
+
+
+async def test_user_screenshot_follows_visible_tab(browser, bridge):
+    run = await browser.ensure('thr_one')
+    await browser.control('thr_one', 'user')
+    bridge.tabs['tab-b'] = {'url': 'https://example.test/b', 'title': 'B'}
+    bridge.active = 'tab-b'  # Native UI changes the shown tab without a runtime action.
+    result = await browser.action('thr_one', BrowserAction(action='screenshot'), actor='user')
+    assert result['success']
+    assert run.session.tab_id == bridge.active, 'Saved evidence targets the old hidden tab'
+
+async def test_attach_recovers_a_user_closed_native_tab(browser, bridge):
+    run = await browser.ensure('thr_one')
+    await browser.control('thr_one', 'user')
+    bridge.tabs['tab-b'] = {'url': 'https://example.test/b', 'title': 'B'}
+    bridge.tabs.pop('tab-a')
+    bridge.active = 'tab-b'
+    await run.session._internal.client._ws.close()  # guest destruction closes the transport remotely
+    await __import__('asyncio').sleep(0.01)
+    from types import SimpleNamespace
+    from deepseek_tui.server.browser_routes import attach
+
+    manager = SimpleNamespace(browser_service=browser,
+        store=SimpleNamespace(load_thread=lambda _: None),
+        browser_task_state=lambda _: {'task_running': False})
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(thread_manager=manager)))
+    state = await attach(request, 'thr_one')
+    status = await browser.action('thr_one', BrowserAction(action='status'), actor='user')
+    assert status['success'], 'Attach leaves the disconnected BrowserRun in place'
+    assert run.session.tab_id == 'tab-b'
+
+
+async def test_explicit_human_tab_does_not_drift_with_later_selection(browser, bridge):
+    run = await browser.ensure("thr_one")
+    await browser.control("thr_one", "user")
+    bridge.tabs["tab-b"] = {"url": "https://example.test/b", "title": "B"}
+    bridge.active = "tab-a"  # The UI selection changed after the request was submitted.
+    await browser.action("thr_one", BrowserAction(action="screenshot", tab_id="tab-b",
+                                                generation=run.generation), actor="user")
+    assert run.session.tab_id == "tab-b" and bridge.active == "tab-a"
+    with pytest.raises(ValueError, match="no longer exists"):
+        await browser.action("thr_one", BrowserAction(action="screenshot", tab_id="missing"), actor="user")
+    assert run.session.tab_id == "tab-b"
+
+
+async def test_an_active_agent_does_not_follow_manual_tab_selection(browser, bridge):
+    run = await browser.ensure("thr_one")
+    await browser.action("thr_one", BrowserAction(action="status"))
+    bridge.tabs["tab-b"] = {"url": "https://example.test/b", "title": "B"}
+    bridge.active = "tab-b"
+    await browser.action("thr_one", BrowserAction(action="status"))
+    assert run.session.tab_id == "tab-a" and run.agent_task
+
+
+async def test_reattach_keeps_receipts_and_does_not_retarget_a_running_agent(browser, bridge):
+    run = await browser.ensure("thr_one")
+    run.operations = {"op": {"receipt": {"execution": "unknown"}}}
+    run.unresolved = {"op": {"action_id": "op"}}
+    bridge.tabs["tab-b"] = {"url": "https://example.test/b", "title": "B"}
+    bridge.tabs.pop("tab-a")
+    bridge.active = "tab-b"
+    await run.session._internal.client._ws.close()
+    run.agent_task = True
+    with pytest.raises(ValueError, match="disconnected"):
+        await browser.attach_native("thr_one")
+    assert run.session.tab_id == "tab-a"
+    run.agent_task = False
+    run.owner = "user"
+    generation = run.generation
+    await browser.attach_native("thr_one")
+    assert browser.runs["thr_one"] is run
+    assert run.generation == generation + 1
+    assert run.operations["op"]["receipt"]["execution"] == "unknown" and "op" in run.unresolved
+    assert run.session.tab_id == "tab-b"
+    assert bridge.tabs["tab-b"]["url"] == "https://example.test/b"
+
+
+@pytest.mark.parametrize('fail_capture', [False, True])
+async def test_native_recorder_discovers_new_tabs_and_reports_capture_failures(
+        browser, bridge, monkeypatch, fail_capture):
+    from unittest.mock import AsyncMock
+    from deepseek_tui.browser import recording
+    from deepseek_tui.browser.workflows import recording_store
+
+    run = await browser.ensure('thr_one')
+    installed = []
+
+    async def install(self, client, target_id):
+        if target_id == 'tab-b' and fail_capture:
+            raise RuntimeError('test capture unavailable')
+        await client.enable_domain('Runtime')
+        installed.append(target_id)
+
+    monkeypatch.setattr(recording, 'evaluate', AsyncMock(return_value={
+        'url': 'https://example.test/', 'title': 'Example'}))
+    monkeypatch.setattr(recording.WorkbenchRecordSession, '_install_on_client', install)
+    sync_frames = AsyncMock()
+    monkeypatch.setattr(recording.WorkbenchRecordSession, '_sync_frames', sync_frames)
+    recorder, _ = await recording.create_recording(run, recording_store(browser, 'thr_one'))
+    try:
+        assert recorder._poll_task is not None
+        bridge.tabs['tab-b'] = {'url': 'https://example.test/b', 'title': 'B'}
+        bridge.active = 'tab-b'
+        for _ in range(30):
+            if ('tab-b' in installed or recorder.capture_warnings) and sync_frames.await_count >= 2:
+                break
+            await asyncio.sleep(.05)
+        if fail_capture:
+            assert recorder.capture_warnings and 'tab-b' not in recorder._clients
+        else:
+            assert 'tab-b' in recorder._clients and installed == ['tab-a', 'tab-b']
+            assert not recorder.capture_warnings
+        assert sync_frames.await_count >= 2
+    finally:
+        await recorder.close()
+        await browser.close_all()

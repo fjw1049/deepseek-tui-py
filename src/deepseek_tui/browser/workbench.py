@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -55,6 +56,7 @@ class _NativeInternal(_InternalCDPSession):
 
 class WorkbenchBrowserSession(BrowserSession):
     bridge: dict[str, Any]
+    browser_id: str
     tab_id: str
 
     @classmethod
@@ -66,22 +68,50 @@ class WorkbenchBrowserSession(BrowserSession):
         internal = _NativeInternal(profiles.get_or_create("workbench"), cfg)
         await internal.connect()
         session = cls(internal, "workbench")
-        session.bridge, session.tab_id = bridge, tab["tab_id"]
+        session.bridge, session.browser_id, session.tab_id = bridge, browser_id, tab["tab_id"]
         return session, cfg, profiles
 
     async def _workbench(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        return await self._internal.client.send("Workbench." + method, params or {})
+        # Tab lifecycle must survive the page socket being destroyed by the user.
+        return await control(self.bridge, "Workbench." + method,
+                             {**(params or {}), "browserId": self.browser_id})
+
+    @property
+    def connected(self) -> bool:
+        from websockets.protocol import State
+
+        ws = self._internal.client._ws
+        return ws is not None and ws.state == State.OPEN
+
+    async def bind_tab(self, tab_id: str = "") -> bool:
+        """Bind an explicit human request, or the shown tab, without changing the UI."""
+        tabs = await open_session(self.bridge, self.browser_id)
+        tab = next((item for item in tabs if item["tab_id"] == tab_id), None) if tab_id else next(
+            (item for item in tabs if item.get("active")), tabs[0])
+        if tab is None:
+            raise ValueError("Requested browser tab no longer exists")
+        if tab["tab_id"] == self.tab_id and self.connected:
+            return False
+        await self._reconnect(tab["tab_id"])
+        return True
 
     async def _reconnect(self, tab_id: str) -> None:
         internal = self._internal
-        await internal._client.close()
-        internal._client = CDPClient(timeout=internal._cfg.cdp_timeout,
-                                     activity_tracker=internal._idle_controller)
+        client = CDPClient(timeout=internal._cfg.cdp_timeout,
+                           activity_tracker=internal._idle_controller)
+        try:
+            await client.connect(tab_url(self.bridge, tab_id))
+            for domain in ("Page", "DOM", "Runtime"):
+                await client.enable_domain(domain)
+        except BaseException:
+            with suppress(Exception):
+                await client.close()
+            raise
+        previous, internal._client = internal._client, client
         internal._ref_cache.invalidate()
-        await internal._client.connect(tab_url(self.bridge, tab_id))
-        for domain in ("Page", "DOM", "Runtime"):
-            await internal._client.enable_domain(domain)
+        internal._cfg.cdp_ws_url = tab_url(self.bridge, tab_id)
         self.tab_id = tab_id
+        await previous.close()
 
     @staticmethod
     def _result(action: str, started: float, content: str = "", *, error: str | None = None,

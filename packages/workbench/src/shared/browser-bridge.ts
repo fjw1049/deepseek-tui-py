@@ -6,6 +6,7 @@ export type BrowserBridgeTab = { tabId: string; webContentsId: number; active: b
 
 /** Tab changes the runtime asks the Workbench browser to make. */
 export type BrowserBridgeCommand =
+  | { kind: 'retain'; browserId: string; retained: boolean }
   | { kind: 'open'; browserId: string }
   | { kind: 'create'; browserId: string; url: string }
   | { kind: 'activate'; browserId: string; tabId: string }

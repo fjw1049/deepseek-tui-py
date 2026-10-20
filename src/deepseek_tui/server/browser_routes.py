@@ -82,9 +82,7 @@ async def attach(request: Request, thread_id: str) -> dict[str, Any]:
     """Bind the visible Workbench browser to this thread, under the user's control."""
     browser = service(request, thread_id)
     try:
-        if thread_id not in browser.runs:
-            await browser.ensure(thread_id, native_only=True)
-            await browser.control(thread_id, "user")
+        await browser.attach_native(thread_id)
         return {**browser.state(thread_id),
                 **request.app.state.thread_manager.browser_task_state(thread_id)}
     except (ValueError, TimeoutError, RuntimeError, ConnectionError) as exc:
@@ -291,6 +289,8 @@ class WorkflowBody(BaseModel):
     action: Literal["start", "stop", "preview", "replay"]
     recording_id: str = ""
     inputs: dict[str, str] = {}
+    tab_id: str = Field(default="", max_length=200)
+    generation: int | None = Field(default=None, ge=0)
 
 
 @router.post("/workflows")
@@ -305,7 +305,8 @@ async def workflow(request: Request, thread_id: str, body: WorkflowBody) -> dict
     browser = service(request, thread_id)
     try:
         if body.action == "start":
-            return await start_recording(browser, thread_id)
+            return await start_recording(browser, thread_id, tab_id=body.tab_id,
+                                         generation=body.generation)
         if body.action == "stop":
             run = browser.runs.get(thread_id)
             if not run:

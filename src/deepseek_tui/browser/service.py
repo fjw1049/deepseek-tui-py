@@ -406,7 +406,7 @@ class BrowserService:
             run.agent_task = old.agent_task
         if assistance and actor == "user":
             assistance["status"] = "human"
-        if urlsplit(url).scheme in {"http", "https"}:
+        if not run.native and urlsplit(url).scheme in {"http", "https"}:
             await self.action(thread_id, BrowserAction(action="open", url=url), actor=actor)
         self._persist(run)
         return self.state(thread_id)
@@ -591,6 +591,41 @@ class BrowserService:
         run.width = int(view.get("clientWidth") or run.width)
         run.height = int(view.get("clientHeight") or run.height)
 
+    async def _bind_native_tab(self, run: BrowserRun, tab_id: str = "") -> None:
+        """Caller holds run.lock and has checked ownership/generation."""
+        if not run.native or run.session is None:
+            return
+        if self.workbench:
+            run.session.bridge = self.workbench
+        if await run.session.bind_tab(tab_id):
+            if run.observation_context:
+                try:
+                    await run.observation_context.close()
+                except Exception:  # A closed tab has no remaining frame session to detach.
+                    pass
+            run.observation_context = run.observation_root_context = None
+            run.latest_observation = run.scene = None
+            run.tabs, run.tab_cache_time = [], 0
+            run.healthy = True
+            if run.native_events:
+                run.native_events.dialog = run.native_events.chooser = None
+        if not (run.native_events and run.native_events.dialog):
+            await self._sync_viewport(run)
+
+    async def attach_native(self, thread_id: str) -> None:
+        run = self.runs.get(thread_id)
+        if run is None:
+            await self.ensure(thread_id, native_only=True)
+            await self.control(thread_id, "user")
+        elif run.native and run.session:
+            async with run.lock:
+                if run.session.connected and run.healthy:
+                    return
+                if run.transferring or (run.owner == "agent" and run.agent_task):
+                    raise ValueError("The agent's browser tab disconnected; recover or stop the task")
+                await self._bind_native_tab(run)
+                run.generation += 1
+
     async def _reclaim_idle_session(self) -> None:
         """At the cap, close the least recently used session that nobody is using."""
         now = time.monotonic()
@@ -632,6 +667,7 @@ class BrowserService:
         return {
             "active": run.session is not None
             and run.healthy
+            and (not run.native or getattr(run.session, "connected", True))
             and getattr(
                 getattr(getattr(run.session, "_internal", None), "client", None), "_ws", True
             )
@@ -653,6 +689,7 @@ class BrowserService:
             "demo_status": run.demo_status,
             "activity": run.activity,
             "workflow_recording": self._demonstrating(run),
+            "workflow_tabs": list(getattr(run.recorder, "_clients", {})),
             "demo_step": run.demo_step,
             "demo_total": run.demo_total,
             "error": run.error,
@@ -1383,6 +1420,10 @@ class BrowserService:
             else:
                 async with run.lock:
                     try:
+                        if actor == "user" and run.owner == "user" and not run.transferring:
+                            if action.generation is not None and action.generation != run.generation:
+                                raise ValueError("Browser control changed; stale action was discarded")
+                            await self._bind_native_tab(run, action.tab_id)
                         state = await self.page_state(run)
                         if run.native_events:
                             state.update(run.native_events.state())
@@ -1428,6 +1469,11 @@ class BrowserService:
                 raise ValueError("Waiting for browser assistance; do not repeat actions")
             if not run.session:
                 raise ValueError("Browser session has closed")
+            if actor == "user" and action.action not in {
+                "switch_tab", "close_tab", "new_tab", "tabs", "downloads", "handle_dialog",
+                "upload", "record_stop", "video_stop",
+            }:
+                await self._bind_native_tab(run, action.tab_id)
             action._action_id = uuid.uuid4().hex
             timings = {"queue_ms": round((asyncio.get_running_loop().time() - queued_at) * 1000, 2)}
             run.active_timings = timings
@@ -1884,6 +1930,8 @@ class BrowserService:
             result = None
         if run.native_events and a.action in {"open", "new_tab", "switch_tab", "close_tab"}:
             await run.native_events.install(s._internal.client)
+        if run.native and run.recorder and a.action in {"new_tab", "switch_tab"}:
+            await run.recorder._attach_known_targets()
         if a.action in {"fill", "select", "set_checked"} and (result is None or result.success):
             expected = json.dumps(a.checked if a.action == "set_checked" else a.text)
             state = (
@@ -2323,17 +2371,9 @@ class BrowserService:
                 await self._follow_shown_tab(run)
 
     async def _follow_shown_tab(self, run: BrowserRun) -> None:
-        try:
-            tabs = await run.session.list_tabs()
-        except Exception:  # noqa: BLE001 - the task's first action reports a lost page
-            return
-        shown = next((tab["tab_id"] for tab in (tabs.metadata or {}).get("tabs", [])
-                      if tab.get("shown")), None)
-        if shown and shown != run.session.tab_id:
-            try:
-                await self.action(run.thread_id, BrowserAction(action="switch_tab", tab_id=shown))
-            except Exception:  # noqa: BLE001 - the task still acts on its current tab
-                pass
+        async with run.lock:
+            # Failure must stop the action, never leave it aimed at a hidden old tab.
+            await self._bind_native_tab(run)
 
     def _user_browsing(self, run: BrowserRun) -> bool:
         return (run.owner == "user" and run.session is not None and not run.transferring
