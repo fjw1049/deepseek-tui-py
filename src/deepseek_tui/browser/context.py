@@ -123,6 +123,8 @@ def project_result(result: dict[str, Any], budget: int) -> str:
     ]
     if len(frames) > 2:
         observation["next_frame_offset"] = observation.get("frame_offset", 0) + 2
+    if "scroll_containers" in observation:
+        observation["scroll_containers"] = observation["scroll_containers"][:3]
     if isinstance(data.get("page"), dict):
         data["page"].pop("url", None)  # Already present in the observation.
     if data.get("tabs"):

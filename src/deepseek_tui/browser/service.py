@@ -1350,6 +1350,7 @@ class BrowserService:
         guidance = {
             "missing_observation_id": "Copy observation_id from the returned observation before retrying; the action was not executed.",
             "target_obscured": "Inspect and dismiss the overlay using its own observed controls; do not click through it.",
+            "target_scroll_only": "scroll_containers refs only accept scroll; use a ref from elements for other actions.",
             "screenshot_pixels_changed": "Pixels around the target point changed. Prefer an observed element ref/selector on dynamic pages; if none is available, inspect a fresh screenshot or request manual help.",
             "focus_not_active": "The page could not receive keyboard input. Inspect the active tab or request manual help.",
             "reload_would_resubmit_form": "This page came from a form submission; reloading would send the form again. Observe the current page, or open a specific URL for fresh content.",
@@ -1910,12 +1911,21 @@ class BrowserService:
                 })()""")
             except Exception:
                 pass  # Dispatch remains valid when effect verification is unavailable.
+            # Wheel deltas are device-independent pixels; at 150% page zoom 300 would move
+            # only 200 CSS pixels, so scale by the page's CSS-to-DIP zoom.
+            try:
+                metrics = await asyncio.wait_for(
+                    run.session._internal.client.send("Page.getLayoutMetrics"), timeout=2)
+                zoom = float(metrics["cssVisualViewport"].get("zoom") or 1)
+            except Exception:
+                zoom = 1.0
+            distance = a.amount * zoom
             await input_client.send("Input.dispatchMouseEvent", {
                 "type": "mouseWheel", "x": a.x if a.x is not None else run.width / 2,
                 "y": a.y if a.y is not None else run.height / 2,
-                "deltaX": (a.amount if a.direction == "right" else -a.amount)
+                "deltaX": (distance if a.direction == "right" else -distance)
                 if a.direction in {"left", "right"} else 0,
-                "deltaY": (a.amount if a.direction == "down" else -a.amount)
+                "deltaY": (distance if a.direction == "down" else -distance)
                 if a.direction in {"up", "down"} else 0,
             })
             result = None
@@ -2066,7 +2076,7 @@ class BrowserService:
                             if changed else
                             "Wheel dispatched but no observed scroll position changed. The target may be at its limit "
                             "or the pointer may be outside the list. Target the intended scroll container with "
-                            "an observed ref/selector, or fresh screenshot coordinates; do not repeat blindly."
+                            "its scroll_containers ref, or fresh screenshot coordinates; do not repeat blindly."
                         )
                 except Exception:
                     pass  # A missing probe must not imply that the page failed to scroll.

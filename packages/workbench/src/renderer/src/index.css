@@ -7463,6 +7463,51 @@ select:focus-visible,
   -webkit-app-region: no-drag;
 }
 
+/* Scroll position over the page; clicks and drags reach the page beneath. */
+.ds-browser-scrollbar {
+  position: absolute;
+  border-radius: 3px;
+  background: rgb(128 128 128 / 12%);
+  pointer-events: none;
+}
+
+.ds-browser-scrollbar.is-vertical {
+  top: 2px;
+  right: 2px;
+  bottom: 2px;
+  width: 6px;
+}
+
+.ds-browser-scrollbar.is-horizontal {
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  height: 6px;
+}
+
+/* Leave the corner to the vertical bar. */
+.ds-browser-scrollbar.is-vertical + .is-horizontal {
+  right: 10px;
+}
+
+.ds-browser-scrollbar > span {
+  position: absolute;
+  border-radius: 3px;
+  /* Mid grey reads on both light and dark pages. */
+  background: rgb(128 128 128 / 75%);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 35%);
+}
+
+.ds-browser-scrollbar.is-vertical > span {
+  left: 0;
+  right: 0;
+}
+
+.ds-browser-scrollbar.is-horizontal > span {
+  top: 0;
+  bottom: 0;
+}
+
 /* Beats the panel fill below (.ds-workbench-right-panel .ds-tool-panel:not(...)). */
 .ds-workbench-right-panel .ds-tool-panel.ds-right-panel-surface.is-browser {
   background-color: transparent;

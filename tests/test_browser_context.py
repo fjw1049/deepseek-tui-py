@@ -138,6 +138,29 @@ def test_large_options_and_frame_catalog_do_not_starve_targets():
     assert data["observation"]["next_frame_offset"] == 2
 
 
+@pytest.mark.parametrize("budget", [1_000_000, 6000])
+def test_scroll_positions_survive_context_pressure(budget):
+    from deepseek_tui.browser.context import project_result
+
+    viewport = {"width": 1200, "height": 760, "scroll_x": 0, "scroll_y": 1600,
+                "scroll_width": 1200, "scroll_height": 4000}
+    containers = [
+        {"ref": f"c{i}", "role": "div", "tag": "div", "name": "N" * 80,
+         "box": {"x": 0, "y": 0, "width": 300, "height": 200}, "viewport": dict(viewport)}
+        for i in range(10)
+    ]
+    result = {"success": True, "observation": {
+        "observation_id": "obs", "text": "t" * (20000 if budget == 6000 else 10),
+        "elements": [{"ref": "e0", "role": "button", "name": "Go"}], "viewport": viewport,
+        "scroll_containers": containers, "total_scroll_containers": 10}}
+    output = project_result(result, budget)
+    observation = json.loads(output)["observation"]
+    assert len(output) <= budget
+    assert observation["viewport"] == viewport and observation["total_scroll_containers"] == 10
+    assert [c["ref"] for c in observation["scroll_containers"]] == (
+        ["c0", "c1", "c2"] if budget == 6000 else [f"c{i}" for i in range(10)])
+
+
 @pytest.mark.parametrize("budget", [1_000_000, 3000])
 def test_projection_lists_shared_scope_once_and_drops_backend_fields(budget):
     from deepseek_tui.browser.context import project_result

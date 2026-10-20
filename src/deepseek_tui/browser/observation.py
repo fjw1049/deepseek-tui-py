@@ -117,7 +117,7 @@ COLLECT = (
     }
   };
   watch(document);
-  const refs = new Map(), warnings = [], texts = [], scrolls=[];
+  const refs = new Map(), warnings = [], texts = [], scrolls=[], scrollAreas=[];
   const identities=window.__deepseekNodeIdentities || {nodes:new WeakMap(),prefix:id,next:0};
   window.__deepseekNodeIdentities=identities;
   const visible = __VISIBLE__;
@@ -203,6 +203,17 @@ COLLECT = (
             box:{x:r.x,y:r.y,width:r.width,height:r.height}});
         }
       }
+      // Inner panels that scroll on their own; the document itself is the viewport.
+      if (tag!=='input' && e!==e.ownerDocument.scrollingElement &&
+          (e.scrollHeight>e.clientHeight+1 || e.scrollWidth>e.clientWidth+1)) {
+        const st=window.getComputedStyle.call(e.ownerDocument.defaultView,e),
+          can=o=>/^(auto|scroll|overlay)$/.test(o);
+        if ((can(st.overflowY) && e.scrollHeight>e.clientHeight+1) ||
+            (can(st.overflowX) && e.scrollWidth>e.clientWidth+1)) {
+          const r=e.getBoundingClientRect();
+          scrollAreas.push({element:e, area:r.width*r.height});
+        }
+      }
       if (e.shadowRoot) walk(e.shadowRoot);
       if (tag==='iframe' || tag==='frame') {
         frames.push({url:e.src || 'about:srcdoc', readable:!!e.contentDocument?.body});
@@ -215,6 +226,24 @@ COLLECT = (
     }
   };
   roots.forEach(walk);
+  // Largest first: the main list or pane matters more than small code blocks.
+  const scrollContainers=scrollAreas.sort((a,b)=>b.area-a.area).slice(0,10).map(({element:e},i)=>{
+    let ref=[...refs].find(([,v])=>v.element===e)?.[0];
+    if (!ref) {
+      if(!identities.nodes.has(e))identities.nodes.set(e,identities.prefix+':n'+identities.next++);
+      refs.set(ref='c'+i,
+        {element:e, target_id:identities.nodes.get(e), scrollOnly:true, options:new Map()});
+    }
+    const r=e.getBoundingClientRect();
+    return {ref, role:canonicalRole(e), tag:e.tagName.toLowerCase(),
+      name:Array.from(name(e)).slice(0,80).join(''),
+      box:{x:Math.round(r.x),y:Math.round(r.y),
+        width:Math.round(r.width),height:Math.round(r.height)},
+      viewport:{width:e.clientWidth,height:e.clientHeight,
+        scroll_x:e.scrollLeft,scroll_y:e.scrollTop,
+        scroll_width:e.scrollWidth,scroll_height:e.scrollHeight}};
+  });
+  const page=document.scrollingElement || document.documentElement;
   const text=Array.from(texts.join('\n').trim());
   if(continuation && (!previous || previous.id!==continuation ||
       previous.snapshot.length!==snapshot.length || previous.fullText!==text.join('') ||
@@ -240,7 +269,9 @@ COLLECT = (
     next_element_offset:elementCount>elementOffset+elements.length?elementOffset+elements.length:null,
     total_elements:elementCount, frames,
     capabilities:{same_origin_frames:true,open_shadow:true,cross_origin_frames:false,closed_shadow:false},
-    viewport:{width:innerWidth,height:innerHeight,scroll_x:scrollX,scroll_y:scrollY},
+    viewport:{width:innerWidth,height:innerHeight,scroll_x:scrollX,scroll_y:scrollY,
+      scroll_width:page.scrollWidth,scroll_height:page.scrollHeight},
+    scroll_containers:scrollContainers, total_scroll_containers:scrollAreas.length,
     dom_revision:state.revision,
     truncated:text.length>textOffset+16000 || elementCount>elementOffset+elements.length,
     warnings:[...new Set(warnings)]};
@@ -521,6 +552,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
         if (a.x!==null && (s.scrolls.some(v=>v.x!==(v.window?v.node.scrollX:v.node.scrollLeft) ||
               v.y!==(v.window?v.node.scrollY:v.node.scrollTop)) ||
             [...s.refs.values()].some(v=>{
+              if (v.scrollOnly) return false;
               const r=v.element.getBoundingClientRect(), scope=s.context(v.element), old=v.scope;
               return !v.element.isConnected || v.element.parentElement!==v.parent ||
                 !!scope!==!!old || (scope && (scope.node!==old.node || scope.id!==old.id ||
@@ -542,11 +574,14 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
         if (!entry) return {error:'target_not_observed'};
       }
       if (!e || !s.visible(e)) return {error:'target_not_visible'};
-      if (entry && (s.name(e)!==entry.name || (e.tagName==='A'?e.href:null)!==entry.href ||
+      // A scroll container is only scrolled; its text may change while the list loads.
+      if (entry?.scrollOnly && a.action!=='scroll') return {error:'target_scroll_only'};
+      if (entry && !entry.scrollOnly &&
+          (s.name(e)!==entry.name || (e.tagName==='A'?e.href:null)!==entry.href ||
           (e.form?.action || null)!==entry.formAction ||
           s.canonicalRole(e)!==entry.role))
         return {error:'target_changed'};
-      if(entry) {
+      if(entry && !entry.scrollOnly) {
         const scope=s.context(e), old=entry.scope;
         if(e.parentElement!==entry.parent || !!scope!==!!old ||
             (scope && (scope.node!==old.node || scope.id!==old.id || scope.text!==old.text ||

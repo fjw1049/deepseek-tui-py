@@ -124,3 +124,35 @@ it('pauses media in a tab once it is no longer shown', async () => {
     expect(executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('.pause()'))
   } finally { await h.close() }
 })
+
+it('shows where the shown page is scrolled, and nothing once the page fits', async () => {
+  vi.useFakeTimers()
+  const h = mount()
+  try {
+    openPageTab('one', 'https://example.test/long')
+    setPageDisplay({ browserId: 'one', rect: { top: 0, left: 0, width: 400, height: 300 } })
+    await act(async () => h.root.render(createElement(BrowserPageLayer)))
+    const page = h.container.querySelector('.ds-browser-page.is-shown')!
+    const webview = page.querySelector('webview')!
+    let metrics: unknown = { y: [750, 500, 2000], x: null }
+    const executeJavaScript = vi.fn(async (_code: string) => metrics)
+    await act(async () => {
+      Object.assign(webview, { getWebContentsId: () => 9, setAudioMuted: vi.fn(), executeJavaScript })
+      webview.dispatchEvent(new Event('dom-ready'))
+    })
+    expect(page.querySelector('.ds-browser-scrollbar')).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+    expect(() => new Function(executeJavaScript.mock.calls[0]![0])).not.toThrow()
+    const thumb = page.querySelector<HTMLElement>('.ds-browser-scrollbar.is-vertical > span')!
+    expect([thumb.style.top, thumb.style.height]).toEqual(['37.5%', '25%'])
+    expect(page.querySelector('.ds-browser-scrollbar.is-horizontal')).toBeNull()
+    metrics = { y: null, x: [0, 400, 1600] }
+    await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+    const wide = page.querySelector<HTMLElement>('.ds-browser-scrollbar.is-horizontal > span')!
+    expect([wide.style.left, wide.style.width]).toEqual(['0%', '25%'])
+    expect(page.querySelector('.ds-browser-scrollbar.is-vertical')).toBeNull()
+    metrics = null
+    await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+    expect(page.querySelector('.ds-browser-scrollbar')).toBeNull()
+  } finally { await h.close(); vi.useRealTimers() }
+})

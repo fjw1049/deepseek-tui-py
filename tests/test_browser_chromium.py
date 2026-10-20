@@ -746,6 +746,64 @@ async def test_harness_scrolls_target_and_only_requested_axis(chrome):
     assert await evaluate(client, "window.lastWheel") == {"x": 300, "y": 0}
 
 
+async def test_observation_reports_page_and_panel_scroll_sizes(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(
+        client,
+        "document.body.innerHTML=`<div id=small style='height:50px;overflow:auto'>"
+        "<div style='height:500px'>Code</div></div>"
+        "<div id=list aria-label=Messages style='height:300px;overflow:auto'>"
+        "<div style='height:2000px'>Rows</div></div>"
+        "<div style='height:3000px;overflow:hidden'><div style='height:9000px'></div></div>`;"
+        "scrollTo(0,0);true",
+    )
+    first = await read(service)
+    assert first["viewport"]["scroll_y"] == 0
+    assert first["viewport"]["scroll_height"] > 3000 > first["viewport"]["height"]
+    assert first["total_scroll_containers"] == 2  # overflow:hidden does not scroll
+    panel, small = first["scroll_containers"]  # largest first
+    assert panel["name"] == "Messages" and small["viewport"]["scroll_height"] == 500
+    assert panel["ref"] == "c0" and panel["viewport"] == {
+        "width": panel["box"]["width"], "height": 300, "scroll_x": 0, "scroll_y": 0,
+        "scroll_width": panel["box"]["width"], "scroll_height": 2000,
+    }
+
+    clicked = await act(service, first, "click", ref=panel["ref"])
+    assert clicked["receipt"]["reason"] == "target_scroll_only"
+    scrolled = await act(service, await read(service), "scroll", ref="c0", amount=300)
+    assert scrolled["receipt"]["effect"] == "confirmed"
+    await asyncio.sleep(0.15)
+    assert await evaluate(client, "document.querySelector('#list').scrollTop") > 0
+    assert (await read(service))["scroll_containers"][0]["viewport"]["scroll_y"] > 0
+    by_selector = await act(service, await read(service), "scroll", selector="#small", amount=100)
+    assert by_selector["receipt"]["effect"] == "confirmed"
+
+
+async def test_scroll_amount_stays_in_css_pixels_under_page_zoom(chrome, monkeypatch):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(
+        client,
+        "document.body.innerHTML=`<div id=box role=textbox style='height:300px;overflow:auto'>"
+        "<div style='height:3000px'>Content</div></div>`;"
+        "window.lastWheel=null;window.onwheel=e=>window.lastWheel=e.deltaY;true",
+    )
+    send = client.send
+
+    async def zoomed(method, params=None, **kwargs):
+        result = await send(method, params, **kwargs)
+        if method == "Page.getLayoutMetrics":  # Headless Chrome cannot set page zoom itself.
+            result = {**result, "cssVisualViewport": {**result["cssVisualViewport"], "zoom": 1.5}}
+        return result
+
+    monkeypatch.setattr(client, "send", zoomed)
+    await act(service, await read(service), "scroll", selector="#box", amount=300)
+    await asyncio.sleep(0.15)
+    # Wheel deltas are device-independent: 450 at 150% zoom moves 300 CSS pixels.
+    assert await evaluate(client, "window.lastWheel") == 450
+
+
 async def test_recording_failure_preserves_completed_click(chrome, monkeypatch):
     from unittest.mock import AsyncMock
 

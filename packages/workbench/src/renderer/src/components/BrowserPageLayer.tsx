@@ -22,6 +22,55 @@ type FailEvent = Event & { errorCode: number; errorDescription: string; isMainFr
 
 const PAUSE_MEDIA = "for (const media of document.querySelectorAll('video, audio')) { try { media.pause() } catch {} }"
 
+/** Per axis: the pane the page last scrolled, else the document, else (rechecked every 2s) its largest scrolling pane. */
+const SCROLL_PROBE = `(() => {
+  const d = document.scrollingElement || document.documentElement
+  if (!window.__dsScrollWatch) {
+    window.__dsScrollWatch = true
+    addEventListener('scroll', event => { window.__dsScroller = event.target }, { capture: true, passive: true })
+  }
+  const can = (e, overflow) => e === d || /^(auto|scroll|overlay)$/.test(getComputedStyle(e)[overflow])
+  const scrollsY = e => e.scrollHeight > e.clientHeight + 1 && can(e, 'overflowY')
+  const scrollsX = e => e.scrollWidth > e.clientWidth + 1 && can(e, 'overflowX')
+  const pane = window.__dsPane
+  if (!scrollsY(d) && !(pane?.isConnected && scrollsY(pane)) && Date.now() - (window.__dsScanAt || 0) > 2000) {
+    window.__dsScanAt = Date.now()
+    let best = 0
+    for (const item of document.querySelectorAll('body *')) {
+      const area = item.clientWidth * item.clientHeight
+      if (area > best && scrollsY(item)) { best = area; window.__dsPane = item }
+    }
+  }
+  const pick = scrolls => [window.__dsScroller, d, window.__dsPane].find(e => e instanceof Element && e.isConnected && scrolls(e))
+  const y = pick(scrollsY), x = pick(scrollsX)
+  // Classic scrollbars take room in the page and are already visible.
+  return {
+    y: y && !(y === d && innerWidth - d.clientWidth > 2) ? [y.scrollTop, y.clientHeight, y.scrollHeight] : null,
+    x: x && !(x === d && innerHeight - d.clientHeight > 2) ? [x.scrollLeft, x.clientWidth, x.scrollWidth] : null
+  }
+})()`
+
+type Track = [position: number, view: number, total: number]
+type ScrollMetrics = { x: Track | null; y: Track | null }
+
+function track(value: unknown): Track | null {
+  return Array.isArray(value) && value.length === 3 && value.every(Number.isFinite) && value[1] > 0 && value[2] > value[1]
+    ? value as Track : null
+}
+
+function scrollMetrics(value: unknown): ScrollMetrics | null {
+  if (!value || typeof value !== 'object') return null
+  const metrics = { x: track((value as ScrollMetrics).x), y: track((value as ScrollMetrics).y) }
+  return metrics.x || metrics.y ? metrics : null
+}
+
+/** Proportions only, so page zoom and the UI scale leave the thumb where the content is. */
+function thumbStyle([position, view, total]: Track, vertical: boolean): CSSProperties {
+  const size = Math.max(view / total, 0.05)
+  const offset = Math.min(1, Math.max(0, position / (total - view))) * (1 - size)
+  return vertical ? { top: `${offset * 100}%`, height: `${size * 100}%` } : { left: `${offset * 100}%`, width: `${size * 100}%` }
+}
+
 function samePage(a: string, b: string): boolean {
   try {
     const left = new URL(a), right = new URL(b)
@@ -94,12 +143,35 @@ function Page({ browserId, tab, shown, onReady }: {
 
   useEffect(() => () => { markPageReady(tab.id, false); onReady(tab.id, null) }, [tab.id, onReady])
 
-  return <webview ref={attach} src={initialUrl}
-    // React writes boolean attributes on custom elements only as strings.
-    allowpopups={'true' as unknown as boolean}
-    partition={DEV_BROWSER_PARTITION}
-    webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes"
-    className="flex h-full w-full bg-white" />
+  // macOS overlay scrollbars vanish between scrolls; keep the position visible.
+  const [scroll, setScroll] = useState<ScrollMetrics | null>(null)
+  useEffect(() => {
+    if (!shown) return
+    let active = true
+    let busy = false
+    const timer = setInterval(() => {
+      if (!ready.current || busy || document.hidden) return
+      busy = true
+      try {
+        void Promise.resolve(element.current?.executeJavaScript(SCROLL_PROBE)).then(value => {
+          const next = scrollMetrics(value)
+          if (active) setScroll(current => JSON.stringify(current) === JSON.stringify(next) ? current : next)
+        }, () => {}).finally(() => { busy = false })
+      } catch { busy = false /* detached */ }
+    }, 150)
+    return () => { active = false; clearInterval(timer); setScroll(null) }
+  }, [shown])
+
+  return <>
+    <webview ref={attach} src={initialUrl}
+      // React writes boolean attributes on custom elements only as strings.
+      allowpopups={'true' as unknown as boolean}
+      partition={DEV_BROWSER_PARTITION}
+      webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes"
+      className="flex h-full w-full bg-white" />
+    {scroll?.y ? <div className="ds-browser-scrollbar is-vertical" aria-hidden="true"><span style={thumbStyle(scroll.y, true)} /></div> : null}
+    {scroll?.x ? <div className="ds-browser-scrollbar is-horizontal" aria-hidden="true"><span style={thumbStyle(scroll.x, false)} /></div> : null}
+  </>
 }
 
 /**

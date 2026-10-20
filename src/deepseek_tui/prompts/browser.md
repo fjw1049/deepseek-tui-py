@@ -57,6 +57,14 @@ including unique open shadow hosts. Transformed frame owners and closed shadow
 roots require screenshots or user assistance.
 Full-page/cropped screenshots are evidence; coordinate clicks require a current
 viewport screenshot. Prefer observed refs for frame interactions.
+Observed text covers the whole DOM, including text below the screen and inside
+scrolled panels, so do not scroll only to read it. Content created on scroll is
+absent until then: when a `scroll_containers` entry or the page `viewport` has a
+`scroll_height` far beyond the rows its text shows (a virtual list), or a feed
+loads more at its end, scroll that target and observe again until the needed
+items appear or the position stops changing. Canvas, chart, map and image content
+is never in text; scroll it into view before a screenshot. A full-page screenshot
+expands only the document, not inner panels, so capture those panel by panel.
 
 After actions, collect the cheapest check that establishes the expected result.
 Do not request both DOM and screenshots routinely. Form actions already return
