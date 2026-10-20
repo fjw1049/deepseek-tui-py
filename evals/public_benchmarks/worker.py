@@ -182,10 +182,12 @@ async def run(private_path, instruction_path, logs_dir):
             ),
             timeout=120,
         )
-        engine.default_top_p = 1.0
+        engine.default_top_p = private.get("top_p", 1.0)
         recorder.write("runtime_ready", cwd=str(Path.cwd()), model=cfg.model)
         engine_task = asyncio.create_task(engine.run())
-        await handle.send_message(Path(instruction_path).read_text(), max_tokens=65536)
+        await handle.send_message(
+            Path(instruction_path).read_text(), max_tokens=private.get("max_output_tokens", 65536)
+        )
         events = handle.events().__aiter__()
         next_event = asyncio.create_task(events.__anext__())
         while True:

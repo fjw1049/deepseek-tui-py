@@ -3,7 +3,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AutomationTaskForm } from './AutomationTaskForm'
-const { t, update, confirm, back } = vi.hoisted(() => ({ confirm: vi.fn(async () => false), back: vi.fn(), t: (key: string) => key, update: vi.fn(async (_id: string, input: unknown) => input) }))
+const { t, update, confirm, back } = vi.hoisted(() => ({ confirm: vi.fn(async () => false), back: vi.fn(), t: (key: string, options?: { days?: string }) => options?.days ? `${key}:${options.days}` : key, update: vi.fn(async (_id: string, input: unknown) => input) }))
 vi.mock('../../lib/automation-runtime-client', async (original) => ({ ...await original<typeof import('../../lib/automation-runtime-client')>(), updateAutomation: update }))
 vi.mock('../../lib/confirm-dialog', () => ({ confirmAsync: confirm }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t }) }))
@@ -127,4 +127,12 @@ it('returns to the previous simple frequency when advanced timing is switched of
   expect(select.value).toBe('weekly')
   await save()
   expect(update).toHaveBeenLastCalledWith('daily', expect.objectContaining({ schedule: '0 10 * * MON,FRI' }))
+})
+
+it('lists weekly days with the locale separator', async () => {
+  await render({ ...record, schedule: '30 9 * * MON,FRI' })
+  const summary = host.querySelector('.automation-editor__summary')!.textContent!
+  expect(summary).toContain('automationSummaryWeekly:')
+  expect(summary).toContain('automationWeekdaySeparator')
+  expect(summary).not.toContain('、')
 })

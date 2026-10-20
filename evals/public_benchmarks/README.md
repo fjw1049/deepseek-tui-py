@@ -1,30 +1,73 @@
-# Public benchmark campaign
+# Public benchmark campaigns
 
 This adapter runs the existing `Engine.create` / `Engine.run` entry point inside
 official Harbor task containers. Production code and the official verifier are
-unchanged. The current campaign uses the configured `endpoint/glm-5-3` route.
+unchanged. The supported dataset is Terminal-Bench 2.1, one attempt per task.
 
-The first campaign is Terminal-Bench 2.1 (89 tasks, one attempt each). This matches
-the benchmark version named in the GLM-5.3 model card. The published 88.2% uses
-Claude Code 2.1.207; it is a reference, not a matched control. Gateway identity,
-hardware, agent implementation, reasoning defaults and repetitions can differ.
-Do not interpret a score difference as a causal architecture penalty.
+A campaign lives in one run directory. Its `manifest.json` freezes everything that
+defines the run: the model route, the task order, budgets, the optional published
+reference score and the hash of the evaluated source. The supervisors, the config
+exporter and the report all read it, so nothing campaign-specific is hard-coded.
 
-Run directory: `evals/artifacts/public-benchmarks-20261019/`.
+## Starting a campaign
 
-The user subsequently requested parallel execution. The active supervisor is now
-`parallel.py`: up to two tasks with a combined requested memory limit of 8192 MiB.
-The existing trial was adopted without replay. `parallel-handoff-*.json` records
-the change and preserves the prior supervisor state; the initial manifest and
-evaluated source archive remain intact. `progress.json` now lists `active_tasks`,
-and new supervisor output is in `campaign-parallel.log`. Create a `STOP` file in
-the run directory to request a graceful stop. Do not start the old sequential
-command while this supervisor is running.
+Prepare the run directory with the Terminal-Bench checkout under
+`datasets/terminal-bench-2.1`, a Harbor 0.24.0 virtual environment in `venv/`,
+the Linux uv bootstrap archives (`uv-<arch>.tar.gz`), `source.tar.gz` (the frozen
+source) and `pilot.json` (the Harbor job config for the `WorkbenchAgent`). Then
+start the parallel supervisor from the repository root (requires Docker and
+endpoint connectivity):
+
+```sh
+.venv/bin/python -m evals.public_benchmarks.parallel evals/artifacts/<run> \
+  --model endpoint/glm-5-3 \
+  --reference-percent 88.2 --reference-scaffold "Claude Code 2.1.207" \
+  --reference-source https://huggingface.co/zai-org/GLM-5.3/blob/main/README.md \
+  --concurrency 2 --memory-budget-mb 8192
+```
+
+`--model` is required for a new campaign. Without `--reference-percent` the report
+makes no comparison. Other options (`--limit`, `--seed`, `--request-limit`,
+`--idle-timeout`, `--task-timeout`, `--supervisor-timeout`, `--max-output-tokens`,
+`--temperature`, `--top-p`, `--gateway`, `--docker-platform`) default to the
+values in `campaign.py --help`. They apply only when the manifest is created;
+resuming always uses the frozen manifest. `campaign.py` takes the same options and
+runs one task at a time.
+
+The supervisor schedules tasks until the concurrency limit or the combined
+`memory_mb` budget of the running tasks is reached. A file lock prevents duplicate
+supervisors. Create a `STOP` file in the run directory to request a graceful stop.
+
+Resume by running the same command without the new-campaign options. Resume skips
+all already recorded attempts, including failures; a repaired rerun must be a
+separate campaign, not a silent replacement or best-of selection. To switch from a
+running sequential supervisor without restarting its trial, stop that supervisor
+and pass its saved progress as a handoff file:
+`... parallel evals/artifacts/<run> evals/artifacts/<run>/parallel-handoff-<id>.json`.
+
+## Budgets and stop rules
+
+Each worker enforces the request limit, the idle timeout and the task timeout
+from the manifest. A trial running past the supervisor timeout is stopped on its
+own and scheduling continues. Quota, authentication and persistent API errors stop
+scheduling. Three consecutive environment, runtime or idle failures, or trials the
+supervisor had to stop, also stop the campaign. Valid wrong answers do not.
+
+When `fast-policy.json` exists in the run directory, attempts started after it
+was created get tighter limits: `setup_seconds`, `idle_seconds` (without model
+progress) and `total_seconds` including verification, by default 300, 300 and
+1800. Its optional `created_at` (Unix time) defaults to the file's modification
+time; trials started earlier keep the original budgets. A timed-out trial receives
+SIGINT, then forced termination after 30 seconds. A campaign that uses this is a
+mixed-budget campaign, not an official same-budget comparison. Preserve the
+policy file when resuming.
+
+## Evidence
 
 - `source.tar.gz` freezes the evaluated source; `manifest.json` records its hash,
   dataset commit, task order, model and budgets.
-- `progress.json` records the supervisor PID, active task and last heartbeat.
-- `campaign.log` and `configs/*.console.log` preserve supervisor/Harbor output.
+- `progress.json` records the supervisor PID, `active_tasks` and the last heartbeat.
+- `configs/*.console.log` preserves Harbor output.
 - `results.jsonl` is the append-only result ledger. Pilots are separate.
 - `jobs/<attempt>/<trial>/agent/trace.jsonl` contains complete model requests,
   normalized provider events and Engine events, including tool arguments/results.
@@ -33,59 +76,45 @@ command while this supervisor is running.
 - Each `verifier/` directory and trial `result.json` hold official test evidence.
 - `analysis.json` and `analysis.md` summarize outcomes and review candidates.
 
-Credentials travel through a private pipe and temporary container file, which the
-worker removes before executing the task. Known credential values are redacted
-from traces. No results are uploaded to a public leaderboard.
+Refresh the analysis without making model calls:
 
-Original worker limits (the parallel supervisor allows up to two tasks): 600 model requests per task; 65,536 output tokens per
-request; six hours per task; 15 minutes without progress; 120 seconds for Engine
-startup; bounded setup/verifier phases and a seven-hour supervisor deadline.
-Quota/authentication/persistent API errors stop scheduling. Three consecutive
-environment/runtime/idle failures also stop the campaign. Valid wrong answers do
-not stop it. Cost is unknown because this custom gateway has no verified price.
+```sh
+.venv/bin/python -m evals.public_benchmarks.analyze evals/artifacts/<run>
+```
 
-When `fast-policy.json` exists in the run directory, the parallel supervisor
-limits subsequent attempts to 300 seconds for setup, 300 seconds without model
-progress, and 1800 seconds total including verification. A timed-out trial receives
-SIGINT, then forced termination after 30 seconds if needed; its failure is retained
-and scheduling continues subject to the consecutive-failure guard. Earlier attempts
-used the original budgets, so this is a mixed-budget campaign, not an official
-same-budget comparison. Preserve the policy file when resuming.
+Credentials travel through a private pipe and a temporary container file, which
+the worker removes before executing the task. Known credential values are
+redacted from traces. No results are uploaded to a public leaderboard. Cost is
+reported as unknown unless the gateway has a verified price.
 
 The model sees task instructions and the task container, not host benchmark
 solutions/tests. Harbor supplies the verifier after the agent finishes. Container
 access is unrestricted within the isolated task. Personal plugins, MCP, web
-search, child agents and background tasks are disabled for this first campaign;
-GUI and multi-agent behavior therefore remain outside its measured scope.
+search, child agents and background tasks are disabled, so GUI and multi-agent
+behavior remain outside the measured scope.
 
-Setup uses Harbor 0.24.0 in a separate virtual environment and Linux uv 0.9.5.
-Resume this existing campaign from the repository root (requires Docker and endpoint connectivity):
-
-```sh
-.venv/bin/python -m evals.public_benchmarks.parallel \
-  evals/artifacts/public-benchmarks-20261019 \
-  evals/artifacts/public-benchmarks-20261019/parallel-handoff-1792395368936875000.json
-```
-
-Do not run duplicate supervisors. A file lock prevents this. Resume skips all
-already recorded attempts, including failures; a repaired rerun must be a
-separate campaign, not a silent replacement or best-of selection. Preserve the
-source archive and adapter while a campaign is active. Raw artifacts are local
-and git-ignored, so keep the directory when cleaning the checkout.
-
-Refresh the analysis without making model calls:
-
-```sh
-.venv/bin/python -m evals.public_benchmarks.analyze \
-  evals/artifacts/public-benchmarks-20261019
-```
-
-Task correctness comes from the official verifier. Tool errors are diagnostic:
-an expected merge conflict followed by successful recovery is not automatically
-an architecture defect. Repeated identical calls and a completed turn that fails
+Task correctness comes from the official verifier. Tool errors are diagnostic: an
+expected merge conflict followed by successful recovery is not automatically an
+architecture defect. Repeated identical calls and a completed turn that fails
 verification are review candidates, not automatic judgments of dishonest claims.
-Broader scores require separate BFCL/SWE/interactive-task adapters and an explicit
-matched baseline; this run does not claim those benchmarks or whole-product coverage.
+A published reference is directional only: gateway identity, hardware, agent
+implementation, reasoning defaults and repetitions can differ, so a score
+difference is not a causal architecture penalty. Broader scores require separate
+BFCL/SWE/interactive-task adapters and an explicit matched baseline.
+
+Raw artifacts under `evals/artifacts/` are local and git-ignored; keep the
+directory when cleaning the checkout, and preserve the source archive and adapter
+while a campaign is active.
+
+## Recorded campaign
+
+`evals/artifacts/public-benchmarks-20261019/` ran `endpoint/glm-5-3` on all 89
+tasks against the GLM-5.3 model card's 88.2% (Claude Code 2.1.207). It started
+sequentially and was adopted by the parallel supervisor (two tasks, 8192 MiB)
+without replaying its live trial; `parallel-handoff-*.json` records that change.
+Its manifest predates the configurable fields, so resuming it uses those recorded
+values. Some of its attempts ran under a fast policy, making it a mixed-budget
+campaign.
 
 Official references:
 

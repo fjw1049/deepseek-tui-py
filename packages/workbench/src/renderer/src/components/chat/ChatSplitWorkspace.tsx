@@ -58,7 +58,7 @@ const PaneTimeline = memo(function PaneTimeline({ threadId, onOpenFile, setInput
 
 function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): ReactElement {
   const { t } = useTranslation('common')
-  const state = useChatStore(useShallow(s => ({ activeThreadId: s.activeThreadId, busy: s.busy, compactActiveThread: s.compactActiveThread, composerMode: s.composerMode, composerModel: s.composerModel, composerPickList: s.composerPickList, error: s.error, interrupt: s.interrupt, queuedMessages: s.queuedMessages, removeQueuedMessage: s.removeQueuedMessage, runtimeConnection: s.runtimeConnection, selectThread: s.selectThread, sendMessage: s.sendMessage, sendQueuedMessageNow: s.sendQueuedMessageNow, setComposerMode: s.setComposerMode, setComposerModel: s.setComposerModel, withdrawQueuedMessage: s.withdrawQueuedMessage })))
+  const state = useChatStore(useShallow(s => ({ activeThreadId: s.activeThreadId, busy: s.busy, compactActiveThread: s.compactActiveThread, composerMode: s.composerMode, composerModel: s.composerModel, composerPickList: s.composerPickList, error: s.error, interrupt: s.interrupt, queuedMessages: s.queuedMessages, queuePaused: s.queuePaused, resumeQueuedMessages: s.resumeQueuedMessages, removeQueuedMessage: s.removeQueuedMessage, runtimeConnection: s.runtimeConnection, selectThread: s.selectThread, sendMessage: s.sendMessage, sendQueuedMessageNow: s.sendQueuedMessageNow, setComposerMode: s.setComposerMode, setComposerModel: s.setComposerModel, withdrawQueuedMessage: s.withdrawQueuedMessage })))
   const session = getChatPaneSession(threadId)
   useEffect(() => retainChatPaneSession(threadId), [threadId])
   const [input, setInputState] = useState(session.draft)
@@ -80,7 +80,8 @@ function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): React
           onFork={async () => { await useChatStore.getState().forkThread(threadId) }} onOpenDiff={() => onOpenDiff(threadId)}
           queuedMessages={state.queuedMessages} onRemoveQueuedMessage={state.removeQueuedMessage}
           onWithdrawQueuedMessage={state.withdrawQueuedMessage}
-          onSendQueuedMessageNow={id => void state.sendQueuedMessageNow(id)} />
+          onSendQueuedMessageNow={id => void state.sendQueuedMessageNow(id)}
+          queuePaused={state.queuePaused} onResumeQueuedMessages={() => void state.resumeQueuedMessages()} />
       </div>
     </>}
   </>

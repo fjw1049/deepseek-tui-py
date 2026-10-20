@@ -148,7 +148,10 @@ function SkillRow({
       title={t('skillPreviewHint')}
       className="ds-skill-row group flex cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70 focus:bg-ds-subtle/50 focus:outline-none"
     >
-      <SkillSourceStack paths={sourcePaths} />
+      <SkillSourceStack
+        paths={sourcePaths}
+        labelFor={(filePath) => t(skillSourceLabelKey(skillSourceTagFromPath(filePath)))}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="truncate text-[15px] font-semibold text-ds-ink">{skill.name}</div>

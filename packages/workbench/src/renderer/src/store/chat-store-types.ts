@@ -124,6 +124,8 @@ export type ChatState = {
   composerMode: ComposerMode
   composerReasoningEffort: string
   queuedMessages: QueuedUserMessage[]
+  /** Stop also stopped this chat's queue; it waits for the user to resume. */
+  queuePaused: boolean
   watchTurnCompletion: Record<string, boolean>
   unreadThreadIds: Record<string, boolean>
   pinnedThreadIds: string[]
@@ -197,6 +199,8 @@ export type ChatState = {
   withdrawQueuedMessage: (id: string) => QueuedUserMessage | null
   /** Interrupt the active turn (if any), then send this queued message next. */
   sendQueuedMessageNow: (id: string) => Promise<void>
+  /** Clear a stopped queue's pause and send its messages in order. */
+  resumeQueuedMessages: () => Promise<void>
   rewindAndResend: (
     userBlockId: string,
     newText: string,

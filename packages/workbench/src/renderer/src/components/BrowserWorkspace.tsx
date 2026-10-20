@@ -27,6 +27,8 @@ type BrowserState = {
   owner: 'agent' | 'user' | 'stopped'; recording: boolean
   activity?: string; workflow_recording?: boolean
   workflow_tabs?: string[]
+  /** Demonstration tabs the recorder could not attach to, with the reason. */
+  workflow_tab_errors?: Record<string, string>
   skill_suggestion?: { id: string; site: string; count: number; recording_id: string } | null
   skill_suggestions_enabled?: boolean
   error: string | null; log: { action: string; success: boolean }[]
@@ -104,6 +106,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const [error, setError] = useState('')
   const [connectionError, setConnectionError] = useState('')
   const [pending, setPending] = useState(false)
+  const [demoChanging, setDemoChanging] = useState(false)
   const [controlTarget, setControlTarget] = useState<'agent' | 'user' | 'stopped' | null>(null)
   const [more, setMore] = useState(false)
   const controlOptionsId = useId()
@@ -159,7 +162,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   // The user browses Workbench tabs directly unless the agent is working in them.
   const agentWorking = !!state?.active && state.owner === 'agent' && !!state.task_running
   const capturePending = !remote && !!state?.workflow_recording && !(state.workflow_tabs ?? []).includes(activeTab?.id ?? '')
-  const canBrowse = visible && !agentWorking && !state?.transferring && !capturePending && !pending
+  const captureError = capturePending ? state?.workflow_tab_errors?.[activeTab?.id ?? ''] : undefined
+  // Input is held only while a demonstration starts or stops: anything typed then is unrecorded.
+  const inputHeld = demoChanging || capturePending || agentWorking || !!state?.transferring
+  const canBrowse = visible && !inputHeld
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const pageUrl = remote ? state?.url : activeTab?.url
   useEffect(() => { if (pageUrl) setUrl(pageUrl === BLANK_PAGE ? '' : pageUrl) }, [pageUrl])
@@ -277,8 +283,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     }
   }, [visible, remote, threadId])
   useEffect(() => {
-    if (agentWorking || capturePending || pending || state?.transferring) try { pageWebview(activeTab?.id)?.blur() } catch { /* not attached yet */ }
-  }, [agentWorking, capturePending, pending, state?.transferring, activeTab?.id])
+    if (inputHeld) try { pageWebview(activeTab?.id)?.blur() } catch { /* not attached yet */ }
+  }, [inputHeld, activeTab?.id])
   // Element picking on a native tab: the injected picker reports over console messages.
   useEffect(() => {
     const webview = remote ? null : pageWebview(activeTab?.id)
@@ -310,7 +316,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     finally { setPending(false) }
   }
   async function demonstrate(): Promise<void> {
-    setError(''); setPending(true)
+    setError(''); setPending(true); setDemoChanging(true)
     try {
       if (state?.workflow_recording) {
         const saved = await browserRequest<{ recordingId: string; steps: number }>(threadId, '/workflows', { action: 'stop' })
@@ -321,7 +327,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         ...(!remote && activeTab ? { tab_id: activeTab.id } : {}) })
       if (alive.current) apply(await browserRequest<BrowserState>(threadId, viewSuffix))
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
-    finally { if (alive.current) setPending(false) }
+    finally { if (alive.current) { setPending(false); setDemoChanging(false) } }
   }
   async function suggestion(action: 'accept' | 'dismiss' | 'enable' | 'disable'): Promise<void> {
     setError(''); setPending(true)
@@ -542,6 +548,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     <div className="ds-browser-content" ref={pageArea}>
     {inspect || notice ? <div className="ds-browser-feedback" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
     {!inspect && !notice && !remote && activeTab && activeTab.error !== null ? <div className="ds-browser-feedback" role="status"><span>{activeTab.error || t('browserLoadFailed')}</span></div> : null}
+    {!inspect && !notice && captureError ? <div className="ds-browser-feedback" role="alert"><span>{t('browserDemoTabUnavailable', { error: captureError })}</span></div> : null}
     {!inspect && !notice && state?.skill_suggestion ? <div className="ds-browser-feedback" role="status"><span>{t('browserSuggestSkill', { site: state.skill_suggestion.site, count: state.skill_suggestion.count })}</span>
       <button disabled={pending} onClick={() => void suggestion('accept')}>{t('browserSuggestAccept')}</button>
       <button disabled={pending} onClick={() => void suggestion('dismiss')}>{t('browserSuggestDismiss')}</button></div> : null}
@@ -681,7 +688,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         }} onError={setError} /> :
         remote ? <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t(pending ? 'browserStarting' : 'browserStartTitle')}</h3><p>{t('browserStartHint')}</p></div>
         // The agent's page stays visible underneath while it works; the user's input waits.
-        : agentWorking || state?.transferring || capturePending || pending ? <div className="ds-browser-shield" aria-hidden="true" />
+        : inputHeld ? <div className="ds-browser-shield" aria-hidden="true" />
         : !pageOpen ? <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t('browserStartTitle')}</h3><p>{t('browserStartHint')}</p>
           <button type="button" className="ds-browser-empty-action" disabled={!canBrowse} onClick={() => { if (activeTab) loadInTab(activeTab.id, DEFAULT_DEV_PREVIEW_URL) }}>{t('browserOpenDefault')}</button></div>
         : null}

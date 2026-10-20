@@ -195,7 +195,7 @@ const SESSION_FIELDS = [
   'blocks', 'liveReasoning', 'liveAssistant', 'liveActivity', 'lastSeq', 'busy', 'error', 'runtimeErrorDetail',
   'currentTurnId', 'lastCompletedTurnId', 'currentTurnUserId', 'turnStartedAtByUserId',
   'turnDurationByUserId', 'turnReasoningFirstAtByUserId', 'turnReasoningLastAtByUserId',
-  'composerModel', 'composerMode', 'composerReasoningEffort', 'queuedMessages', 'activePlugin',
+  'composerModel', 'composerMode', 'composerReasoningEffort', 'queuedMessages', 'queuePaused', 'activePlugin',
   'currentGoal', 'turnDiffByTurnId', 'scrollToBlockId', 'activeThreadWarmup'
 ] as const
 
@@ -249,6 +249,15 @@ const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
 const stoppedQueues = new Set<string>()
 const sendingQueuedNow = new Set<string>()
+/** Keep the visible pause flag in step with the stopped-queue set. */
+function setQueuePaused(threadId: string, paused: boolean): void {
+  if (paused) stoppedQueues.add(threadId)
+  else stoppedQueues.delete(threadId)
+  // "Send now" stops the turn on purpose; that alone is not a paused queue.
+  const visible = paused && !sendingQueuedNow.has(threadId)
+  const state = store.getState()
+  if (state.activeThreadId === threadId && state.queuePaused !== visible) store.setState({ queuePaused: visible })
+}
 /** >0 while sendMessage owns the stream lifecycle (between abort and re-subscribe). */
 let sendsAwaitingSubscription = 0
 /** In-flight approval decisions — prevents double-submit before status flips. */
@@ -384,6 +393,7 @@ function truncateStateAtUserBlock(state: ChatState, userBlockId: string): Partia
     turnReasoningFirstAtByUserId,
     turnReasoningLastAtByUserId,
     queuedMessages: [],
+    queuePaused: false,
     error: null
   }
 }
@@ -496,7 +506,8 @@ function flushLiveBlocks(state: ChatState, base: Partial<ChatState> = {}): Parti
 
 async function reloadActiveThreadBlocks(
   get: () => ChatState,
-  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+  attempt = 0
 ): Promise<void> {
   const state = get()
   const threadId = state.activeThreadId
@@ -525,8 +536,13 @@ async function reloadActiveThreadBlocks(
       get().busy
     )
     if (get().activeThreadId !== threadId ||
-        get().currentTurnUserId !== state.currentTurnUserId ||
-        get().lastSeq > latestSeq) return
+        get().currentTurnUserId !== state.currentTurnUserId) return
+    if (get().lastSeq > latestSeq) {
+      // Newer events (e.g. a title update) arrived meanwhile. Fetch a fresher
+      // snapshot rather than drop the finished turn's reconciliation.
+      if (attempt < 2) await reloadActiveThreadBlocks(get, set, attempt + 1)
+      return
+    }
     set((s) => ({
       // Same thread: keep unchanged block objects so settled turns stay memoised
       // instead of the whole transcript re-rendering after every turn.
@@ -1645,6 +1661,7 @@ const store = create<ChatState>((set, get) => ({
   composerMode: 'agent',
   composerReasoningEffort: readStoredComposerEffort(),
   queuedMessages: [],
+  queuePaused: false,
   watchTurnCompletion: {},
   unreadThreadIds: {},
   pinnedThreadIds: loadPinnedThreadIds(),
@@ -2498,6 +2515,7 @@ const store = create<ChatState>((set, get) => ({
         turnReasoningLastAtByUserId: {},
         inspectorSelectedId: null,
         queuedMessages: restoredQueue,
+        queuePaused: stoppedQueues.has(id),
         scrollToBlockId: synced.scrollToBlockId
       })
       syncTurnCompletionPoll(set, get)
@@ -2534,19 +2552,8 @@ const store = create<ChatState>((set, get) => ({
         const next = state.queuedMessages[0]
         if (disposed || state.activeThreadId !== threadId || (threadId && stoppedQueues.has(threadId))) return
         if (!next || state.busy || state.blocks.some(hasPendingRuntimeWork)) return
-        const provider = getProvider(state.providerId)
-        if (threadId && provider.isThreadTurnActive) {
-          // Cancellation acknowledgement and turn.completed can precede runtime teardown.
-          const active = await provider.isThreadTurnActive(threadId)
-          if (active) {
-            await new Promise(resolve => setTimeout(resolve, 250))
-            continue
-          }
-          const current = get()
-          if (disposed || current.activeThreadId !== threadId || stoppedQueues.has(threadId)) return
-          if (current.busy || current.blocks.some(hasPendingRuntimeWork)) return
-          if (current.queuedMessages[0]?.id !== next.id) continue
-        }
+        // Send at once: the runtime holds the new turn until the finished or
+        // stopped turn has released the thread, so no client-side polling.
         const started = await get().sendMessage(next.text, next.mode, { queued: next })
         if (!started) return
         if (get().queuedMessages[0]?.id === next.id) return
@@ -2586,12 +2593,21 @@ const store = create<ChatState>((set, get) => ({
       }
       if (disposed || get().activeThreadId !== threadId) return
       if (!get().busy && !get().blocks.some(hasPendingRuntimeWork)) {
-        stoppedQueues.delete(threadId)
+        setQueuePaused(threadId, false)
         await get().drainQueuedMessages()
       }
     } finally {
       sendingQueuedNow.delete(threadId)
+      // A failed interrupt leaves the queue stopped; show it so it can be resumed.
+      if (stoppedQueues.has(threadId)) setQueuePaused(threadId, true)
     }
+  },
+
+  resumeQueuedMessages: async () => {
+    const threadId = get().activeThreadId
+    if (!threadId) return
+    setQueuePaused(threadId, false)
+    if (!get().busy && !get().blocks.some(hasPendingRuntimeWork)) await get().drainQueuedMessages()
   },
 
   sendMessage: async (text, mode, overrides) => {
@@ -2691,7 +2707,7 @@ const store = create<ChatState>((set, get) => ({
     if (wantsGoalCreate) {
       return get().applyGoalCommand(trimmedText)
     }
-    if (!overrides?.queued && get().activeThreadId) stoppedQueues.delete(get().activeThreadId!)
+    if (!overrides?.queued && get().activeThreadId) setQueuePaused(get().activeThreadId!, false)
     const now = Date.now()
     const queued = overrides?.queued
     const userBlockId = queued?.id ?? `u-${now}`
@@ -3930,7 +3946,7 @@ const store = create<ChatState>((set, get) => ({
   interrupt: async () => {
     const { activeThreadId, currentTurnId, providerId } = get()
     if (!activeThreadId) return
-    stoppedQueues.add(activeThreadId)
+    setQueuePaused(activeThreadId, true)
 
     const settleInterrupted = (s: ChatState): Partial<ChatState> => {
       const flushed = flushLiveBlocks(s, {
@@ -3993,6 +4009,7 @@ if (options.appView) {
   const actionKeys = [
     'sendMessage', 'interrupt', 'recoverActiveTurn', 'warmActiveThread', 'applyGoalCommand',
     'drainQueuedMessages', 'removeQueuedMessage', 'withdrawQueuedMessage', 'sendQueuedMessageNow',
+    'resumeQueuedMessages',
     'rewindAndResend', 'rewindToMessage', 'restoreCodeAt', 'resolvePublishConflicts', 'compactActiveThread',
     'resolveApproval', 'resolveEvolution', 'resolveElevation', 'resolveUserInput', 'refreshPendingUserInputs',
     'setComposerModel', 'setComposerMode', 'setComposerReasoningEffort', 'scrollToBlock', 'clearScrollTarget'

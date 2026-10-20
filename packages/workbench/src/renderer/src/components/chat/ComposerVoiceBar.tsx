@@ -34,7 +34,7 @@ export function ComposerVoiceBar({
   const active = phase === 'recording'
 
   return (
-    <div className="mx-1 mb-1 flex items-center gap-3 rounded-2xl border border-ds-border-muted bg-ds-main/70 px-3 py-2">
+    <div className="mx-1 mb-1 flex items-center gap-3 rounded-2xl border border-ds-border-muted bg-ds-subtle px-3 py-2">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <div
           className="flex min-w-0 flex-1 items-center justify-between overflow-hidden"

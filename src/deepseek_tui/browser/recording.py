@@ -216,6 +216,10 @@ class WorkbenchRecordSession(RecordSession):
         self.actor = "user"
         self.workbench = None
         self.target_lock = asyncio.Lock()
+        # Workbench tabs open before recording started were not opened by it.
+        self.initial_tabs = set()
+        # Tabs the recorder could not attach to yet, with the reason shown to the user.
+        self.tab_errors = {}
 
     def _append(self, event):
         event = dict(event)
@@ -324,6 +328,8 @@ class WorkbenchRecordSession(RecordSession):
             self._on_frame_navigated(params, target_id)
 
     async def start(self):
+        if self.workbench:
+            self.initial_tabs = {target["id"] for target in await self._target_infos()}
         await super().start()
         await self._sync_frames()
         if self.workbench and self._poll_task is None:
@@ -340,11 +346,11 @@ class WorkbenchRecordSession(RecordSession):
                  "webSocketDebuggerUrl": tab_url(bridge, tab["tab_id"])}
                 for tab in listing["tabs"]]
 
-    async def _attach_known_targets(self):
+    async def _attach_known_targets(self, targets=None):
         if self.workbench is None:
             return await super()._attach_known_targets()
         async with self.target_lock:
-            for target in await self._target_infos():
+            for target in targets if targets is not None else await self._target_infos():
                 target_id = target["id"]
                 if target_id in self._clients:
                     continue
@@ -357,12 +363,17 @@ class WorkbenchRecordSession(RecordSession):
                         await client.close()
                     if not isinstance(exc, Exception):
                         raise
+                    # Retried on every poll; the tab stays blocked with this reason meanwhile.
+                    self.tab_errors[target_id] = str(exc) or type(exc).__name__
                     self._warn(f"Could not record Workbench tab: {exc}")
                     continue
+                self.tab_errors.pop(target_id, None)
                 self._clients[target_id] = client
                 self._client_target_ids[id(client)] = target_id
-                self._append({"kind": "page_opened", "targetId": target_id,
-                              "url": target["url"], "title": target["title"], "initial": False})
+                if target_id not in self.initial_tabs:
+                    self._append({"kind": "page_opened", "targetId": target_id,
+                                  "url": target["url"], "title": target["title"],
+                                  "initial": False})
 
     async def _sync_frames(self):
         async with self.frame_lock:
@@ -420,9 +431,13 @@ class WorkbenchRecordSession(RecordSession):
     async def _poll_targets(self):
         while self.active:
             try:
-                await self._attach_known_targets()
+                # One listing per poll: each is a separate Workbench control request.
+                targets = await self._target_infos()
+                await self._attach_known_targets(targets)
                 async with self.target_lock:
-                    alive = {str(t.get("id") or "") for t in await self._target_infos()}
+                    alive = {str(t.get("id") or "") for t in targets}
+                    for target_id in self.tab_errors.keys() - alive:
+                        self.tab_errors.pop(target_id)
                     for target_id in self._clients.keys() - alive:
                         client = self._clients.pop(target_id)
                         self._client_target_ids.pop(id(client), None)

@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import os
 import sys
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -16,20 +18,38 @@ from deepseek_tui.tools.registry import ToolError
 
 ApprovalCallback = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 MAX_FRAME = 48 * 1024 * 1024
+CONNECT_RETRY_SECONDS = 30
+LEASE_WAIT_SECONDS = 30
+LOCK_DIR = Path("/tmp")
+
+# Per installation in this process: the last runtime catalog, so later sessions
+# expose the runtime's own tools without starting it, and a shared retry window
+# so every conversation and child does not wait on an unavailable runtime.
+_RUNTIMES: dict[tuple[str, bool], dict[str, Any]] = {}
+
+
+def _runtime_key(config: Any) -> tuple[str, bool]:
+    return str(Path(config.installation).expanduser()), bool(config.chrome)
+
+
+def reset_runtime_cache() -> None:
+    _RUNTIMES.clear()
 
 
 class DesktopLease:
     """Hold through observe/action/verify, not merely through individual clicks."""
 
     def __init__(self, path: Path | None = None):
-        self.path = path or Path("/tmp") / f"deepseek-cua-{getattr(os, 'getuid', lambda: 0)()}.lock"
+        self.path = path or LOCK_DIR / f"deepseek-cua-{getattr(os, 'getuid', lambda: 0)()}.lock"
         self.fd: int | None = None
 
-    async def acquire(self) -> None:
+    async def acquire(self, timeout: float | None = None) -> None:
         import fcntl
 
         if self.fd is not None:
             return
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout is None else loop.time() + timeout
         fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
             if os.fstat(fd).st_uid != os.getuid():
@@ -40,6 +60,12 @@ class DesktopLease:
                     self.fd = fd
                     return
                 except BlockingIOError:
+                    if deadline is not None and loop.time() >= deadline:
+                        raise ToolError(
+                            "The desktop is in use by another computer-use task (another "
+                            "conversation or sub-agent). Nothing was executed. Wait for that "
+                            "task to finish or ask the user to stop it, then retry."
+                        ) from None
                     await asyncio.sleep(0.1)
         finally:
             if self.fd != fd:
@@ -79,6 +105,16 @@ class CuaSession:
         self._close_lock = asyncio.Lock()
         self._end_lock = asyncio.Lock()
         self.reset_reason = ""
+        # True once model code has run in this connection's REPL.
+        self._bound = False
+
+    def use_cached_catalog(self) -> bool:
+        """Adopt a catalog this process already received, without starting the runtime."""
+        if not self.descriptors:
+            cached = _RUNTIMES.get(_runtime_key(self.config), {}).get("catalog")
+            if cached:
+                self.instructions, self.descriptors = cached
+        return bool(self.descriptors)
 
     async def run(self, operation, events: list[asyncio.Event]):
         """Watch the whole session, including idle gaps, not only tool calls."""
@@ -108,7 +144,8 @@ class CuaSession:
         watchers = [asyncio.create_task(event.wait()) for event in events]
         try:
             await asyncio.wait(watchers, return_when=asyncio.FIRST_COMPLETED)
-            self.reset_reason = "Human takeover or cancellation reset the CUA session."
+            if self._bound:
+                self.reset_reason = "Human takeover or cancellation reset the CUA session."
             if self._operation is not None and not self._operation.done():
                 self._interrupted_operation = self._operation
                 self._operation.cancel()
@@ -147,25 +184,39 @@ class CuaSession:
 
     async def connect(self) -> None:
         if self.process is not None:
-            if self.process.returncode is not None or self.broken:
-                raise ToolError("CUA connection ended; stop this turn and reconnect")
-            return
-        node, client_path, executable = await asyncio.to_thread(
-            self._paths, self.config.installation
-        )
-        command = [str(executable)] + (["--chrome"] if self.config.chrome else [])
-        self.process = await asyncio.create_subprocess_exec(
-            node,
-            str(Path(__file__).with_name("bridge.mjs")),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self.cwd,
-            limit=MAX_FRAME,
-        )
-        self.reader = asyncio.create_task(self._read(), name="cua-reader")
-        self.stderr = asyncio.create_task(self._drain_stderr(), name="cua-stderr")
+            if self.process.returncode is None and not self.broken:
+                return
+            # The bridge exited while idle: no action is in flight, so reconnecting
+            # cannot replay one, but code that already ran has lost its bindings.
+            bound = self._bound
+            async with self._close_lock:
+                await self._close()
+            if bound:
+                self.reset_reason = ""
+                raise ToolError(
+                    "The CUA connection ended between calls; its JavaScript bindings are gone. "
+                    "Start with a documented CUA entry point and observe again before acting."
+                )
+        state = _RUNTIMES.setdefault(_runtime_key(self.config), {})
+        wait = state.get("retry_after", 0) - time.monotonic()
+        if wait > 0:
+            raise ToolError(f"{state['error']} (computer use retries in {math.ceil(wait)}s)")
         try:
+            node, client_path, executable = await asyncio.to_thread(
+                self._paths, self.config.installation
+            )
+            command = [str(executable)] + (["--chrome"] if self.config.chrome else [])
+            self.process = await asyncio.create_subprocess_exec(
+                node,
+                str(Path(__file__).with_name("bridge.mjs")),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.cwd,
+                limit=MAX_FRAME,
+            )
+            self.reader = asyncio.create_task(self._read(), name="cua-reader")
+            self.stderr = asyncio.create_task(self._drain_stderr(), name="cua-stderr")
             result = await self._request(
                 "connect",
                 timeout=120,
@@ -174,9 +225,20 @@ class CuaSession:
                 cwd=str(self.cwd),
             )
             self._catalog(result)
+        except Exception as exc:
+            # A stop or takeover (BaseException) is not a runtime failure.
+            state.update(
+                retry_after=time.monotonic() + CONNECT_RETRY_SECONDS,
+                error=str(exc) or type(exc).__name__,
+            )
+            state.pop("catalog", None)
+            self.instructions, self.descriptors = "", []
+            await self.close()
+            raise
         except BaseException:
             await self.close()
             raise
+        state.pop("retry_after", None)
 
     def _catalog(self, result: dict[str, Any]) -> None:
         tools = result.get("tools")
@@ -186,6 +248,10 @@ class CuaSession:
             raise ToolError("LCU public tool contract changed; adapter update required")
         self.instructions = result["instructions"]
         self.descriptors = tools
+        _RUNTIMES.setdefault(_runtime_key(self.config), {})["catalog"] = (
+            self.instructions,
+            self.descriptors,
+        )
 
     async def _write(self, value: dict[str, Any]) -> None:
         if (
@@ -293,16 +359,19 @@ class CuaSession:
         if name not in {"js", "js_reset"} or not turn_id or not call_id:
             raise ToolError("CUA requires a public tool and real host turn/call identities")
         async with self.lock:
+            # A cached catalog may predate this connection; report any change.
+            known_instructions = self.instructions
             await self.connect()
             if self.turn_id is not None and self.turn_id != turn_id:
                 raise ToolError("Previous CUA turn has not been cleaned up")
-            await self.lease.acquire()
+            await self.lease.acquire(timeout=LEASE_WAIT_SECONDS)
             if self.turn_id is None:
                 # Sky remembers ended IDs even after reconnect. A resumed host turn
                 # needs a fresh native segment, with the host identity preserved.
                 self.runtime_turn_id = f"{turn_id}:cua:{uuid.uuid4().hex}"
             self.turn_id = turn_id
             try:
+                self._bound = True
                 result = await self._request(
                     "call",
                     name=name,
@@ -315,9 +384,8 @@ class CuaSession:
                     },
                     timeout=max(150, float(arguments.get("timeout_ms", 0)) / 1000 + 60),
                 )
-                old_instructions = self.instructions
                 self._catalog(result)
-                if self.instructions != old_instructions:
+                if self.instructions != known_instructions:
                     result.setdefault("content", []).append(
                         {"type": "text", "text": self.instructions}
                     )
@@ -372,7 +440,7 @@ class CuaSession:
             await self._close()
 
     async def _close(self) -> None:
-        if self.process is not None:
+        if self.process is not None and self._bound:
             self.reset_reason = "The CUA connection was closed; its JavaScript bindings are gone."
         try:
             if self.process is not None:
@@ -396,6 +464,7 @@ class CuaSession:
         finally:
             self.process = None
             self.broken = False
+            self._bound = False
             self.turn_id = None
             self.runtime_turn_id = None
             self.lease.release()

@@ -81,3 +81,20 @@ it('allows retrying stop after a request fails', async () => {
   await act(async () => stop.click())
   expect(onInterrupt).toHaveBeenCalledTimes(2)
 })
+
+it('shows a paused queue with a resume action instead of the auto-send hint', async () => {
+  const onResumeQueuedMessages = vi.fn()
+  const queuedMessages = [{ id: 'q1', text: 'follow up', mode: 'agent' as const }]
+  await act(async () => root.render(createElement(FloatingComposer, { ...props, queuedMessages })))
+  expect(host.querySelector('[role="status"] button')).toBeNull()
+  // Rows sit on the card's control tint, not the darker shell underlay (bg-ds-main).
+  expect(host.querySelector('.ds-queued-message')!.className).toContain('bg-ds-subtle')
+  expect(host.querySelector('.ds-queued-message')!.className).not.toContain('bg-ds-main')
+  await act(async () => root.render(createElement(FloatingComposer, {
+    ...props, queuedMessages, queuePaused: true, onResumeQueuedMessages
+  })))
+  const resume = host.querySelector<HTMLButtonElement>('[role="status"] button')!
+  expect(resume).toBeTruthy()
+  await act(async () => resume.click())
+  expect(onResumeQueuedMessages).toHaveBeenCalledOnce()
+})

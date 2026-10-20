@@ -61,7 +61,10 @@ async def prepare_subagent_cua(agent, runtime, context, registry, allowed_tools,
         pause = getattr(runtime.manager, "parent_pause", None)
         if pause is not None:
             events.append(pause.requested)
-        await session.run(session.connect, events)
+        # With a catalog from this process, a child that never touches the desktop
+        # never starts the runtime; its first cua_js call connects.
+        if not session.use_cached_catalog():
+            await session.run(session.connect, events)
         register_tools(registry, session, events)
         for name in CUA_TOOLS - allowed:
             registry.remove(name)

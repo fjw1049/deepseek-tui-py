@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 HOST_APP_ID = "com.xingyuzhong.deepseekgui"
+# An unpackaged Workbench runs as Electron itself.
+HOST_APP_IDS = {HOST_APP_ID.lower(), "com.github.electron"}
 
 
 def approval_question(params: dict[str, Any]) -> dict[str, Any] | None:
@@ -21,7 +23,7 @@ def approval_question(params: dict[str, Any]) -> dict[str, Any] | None:
         return None
     app = (meta.get("tool_params") or {}).get("app")
     native = meta.get("connector_id") == "computer-use" and isinstance(app, str)
-    if native and app.lower() == HOST_APP_ID.lower():
+    if native and app.lower() in HOST_APP_IDS:
         return None
     # Browser requests must carry an exact origin; unfamiliar shapes fail closed.
     origin = meta.get("origin")

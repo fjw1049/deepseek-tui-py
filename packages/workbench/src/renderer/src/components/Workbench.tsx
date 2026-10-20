@@ -304,6 +304,8 @@ export function Workbench(): ReactElement {
     removeQueuedMessage,
     withdrawQueuedMessage,
     sendQueuedMessageNow,
+    queuePaused,
+    resumeQueuedMessages,
     interrupt,
     probeRuntime,
     composerModel,
@@ -340,6 +342,8 @@ export function Workbench(): ReactElement {
       removeQueuedMessage: s.removeQueuedMessage,
       withdrawQueuedMessage: s.withdrawQueuedMessage,
       sendQueuedMessageNow: s.sendQueuedMessageNow,
+      queuePaused: s.queuePaused,
+      resumeQueuedMessages: s.resumeQueuedMessages,
       interrupt: s.interrupt,
       probeRuntime: s.probeRuntime,
       composerModel: s.composerModel,
@@ -2184,6 +2188,8 @@ export function Workbench(): ReactElement {
           onRemoveQueuedMessage={removeQueuedMessage}
           onWithdrawQueuedMessage={withdrawQueuedMessage}
           onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
+          queuePaused={queuePaused}
+          onResumeQueuedMessages={() => void resumeQueuedMessages()}
           onInterrupt={() => interrupt()}
           focusRequestId={composerFocusRequestId}
           previewPicks={pendingPreviewPicks}

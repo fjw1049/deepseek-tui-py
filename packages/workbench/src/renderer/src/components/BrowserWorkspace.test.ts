@@ -818,3 +818,36 @@ it('blocks input in a demonstration tab until the recorder has attached there', 
     expect(h.container.querySelector<HTMLInputElement>('.ds-dev-browser__omnibox')?.disabled).toBe(false)
   } finally { await h.close(); vi.useRealTimers() }
 })
+
+it('keeps the page usable while an ordinary action is in flight', async () => {
+  const h = mount({ active: true, surface: 'native', owner: 'user', task_running: false,
+    generation: 2, log: [], artifacts: [] })
+  const original = h.request.getMockImplementation()!
+  let finish!: (value: { ok: boolean; status: number; body: string }) => void
+  h.request.mockImplementation((path: string, method: string, raw?: string) => path.endsWith('/action')
+    ? new Promise(resolve => { finish = resolve }) : original(path, method, raw))
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await act(async () => updatePageTab('one', nativeTab('one').id, { url: 'https://example.test/' }))
+    await h.click('browserMore'); await h.click('browserSaveEvidence')
+    // Saving evidence must not take focus or input away from the page.
+    expect(h.container.querySelector('.ds-browser-shield')).toBeNull()
+    await act(async () => finish({ ok: true, status: 200, body: JSON.stringify({ success: true, content: '' }) }))
+  } finally { await h.close() }
+})
+
+it('explains why a demonstration tab cannot be recorded', async () => {
+  vi.useFakeTimers()
+  const state = { active: true, surface: 'native', owner: 'user', task_running: false,
+    workflow_recording: true, workflow_tabs: [] as string[], workflow_tab_errors: {} as Record<string, string>,
+    generation: 2, log: [], artifacts: [] }
+  const h = mount(state)
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('[role="alert"]')).toBeNull()
+    state.workflow_tab_errors = { [nativeTab('one').id]: 'page refused the recorder' }
+    await act(async () => vi.advanceTimersByTimeAsync(600))
+    expect(h.container.querySelector('[role="alert"]')?.textContent).toBe('browserDemoTabUnavailable')
+    expect(h.container.querySelector('.ds-browser-shield')).toBeTruthy()
+  } finally { await h.close(); vi.useRealTimers() }
+})

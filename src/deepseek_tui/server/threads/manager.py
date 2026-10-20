@@ -14,7 +14,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -150,6 +150,9 @@ IDLE_WORKTREE_RECLAIM_AFTER = timedelta(days=3)
 BROWSER_DETAIL_CHARS = 12_000
 # Rewind joins foreground sub-agents under the global _active_lock.
 REWIND_CHILD_JOIN_TIMEOUT_S = 10.0
+# A new turn waits this long for a finished turn's teardown to release the
+# thread (well under the client's 60 s POST timeout).
+LEASE_HANDOFF_WAIT_SECONDS = 20.0
 
 UNPUBLISHED_WORKTREE_LABOR = "<unpublished-worktree-labor>"
 PUBLISH_FAILED = "<publish-failed>"
@@ -329,6 +332,8 @@ class RuntimeThreadManager:
         self._thread_lease_depth: dict[str, int] = {}
         self._thread_lease_owners: dict[str, asyncio.Task[Any] | None] = {}
         self._thread_lease_guard = asyncio.Lock()
+        # Set when a thread's lease is released, for a start waiting on a handoff.
+        self._lease_released: dict[str, asyncio.Event] = {}
         self._engine_load_tasks: dict[
             str, asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]]
         ] = {}
@@ -621,6 +626,9 @@ class RuntimeThreadManager:
         self._thread_leases.clear()
         self._thread_lease_depth.clear()
         self._thread_lease_owners.clear()
+        for released in self._lease_released.values():
+            released.set()
+        self._lease_released.clear()
         clients = tuple(self._provider_clients.values())
         self._provider_clients.clear()
         for client in clients:
@@ -1037,22 +1045,51 @@ class RuntimeThreadManager:
                 self._project_locks[key] = lock
             return lock
 
-    async def _claim_new_thread_lease(self, thread_id: str) -> Any:
-        """Take exclusive cross-process ownership for a new active turn."""
+    async def _claim_new_thread_lease(
+        self, thread_id: str, *, wait_for_handoff: bool = False
+    ) -> Any:
+        """Take exclusive cross-process ownership for a new active turn.
+
+        With ``wait_for_handoff``, a lease still held by a finished or interrupted
+        turn's teardown (or a short lifecycle operation) is awaited instead of
+        rejected, so a message sent right after Stop starts as soon as it can. A
+        turn that is still running is rejected at once, as before.
+        """
         from deepseek_tui.workspace.project_lease import ThreadLease
 
-        if self.is_shutdown:
-            raise RuntimeError("Runtime is shutting down")
-        async with self._thread_lease_guard:
-            if thread_id in self._thread_leases:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (LEASE_HANDOFF_WAIT_SECONDS if wait_for_handoff else 0)
+        while True:
+            if self.is_shutdown:
+                raise RuntimeError("Runtime is shutting down")
+            async with self._thread_lease_guard:
+                if thread_id not in self._thread_leases:
+                    lease = ThreadLease(thread_id)
+                    if not await lease.acquire(nonblocking=True):
+                        raise TurnConflictError("Thread is active in another runtime")
+                    self._thread_leases[thread_id] = lease
+                    self._thread_lease_depth[thread_id] = 1
+                    self._thread_lease_owners[thread_id] = asyncio.current_task()
+                    return lease
+                released = self._lease_released.setdefault(thread_id, asyncio.Event())
+            remaining = deadline - loop.time()
+            if remaining <= 0 or not await self._lease_handoff_pending(thread_id):
                 raise TurnConflictError("Thread already has an active operation")
-            lease = ThreadLease(thread_id)
-            if not await lease.acquire(nonblocking=True):
-                raise TurnConflictError("Thread is active in another runtime")
-            self._thread_leases[thread_id] = lease
-            self._thread_lease_depth[thread_id] = 1
-            self._thread_lease_owners[thread_id] = asyncio.current_task()
-            return lease
+            with suppress(TimeoutError):
+                await asyncio.wait_for(released.wait(), remaining)
+
+    async def _lease_handoff_pending(self, thread_id: str) -> bool:
+        """The lease holder is winding down rather than running a turn."""
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            active = state.active_turn if state is not None else None
+        if active is None or active.interrupt_requested:
+            return True
+        try:
+            status = self.store.load_turn(active.turn_id).status
+        except FileNotFoundError:
+            return False
+        return status not in (RuntimeTurnStatus.QUEUED, RuntimeTurnStatus.IN_PROGRESS)
 
     async def _release_thread_lease(
         self, thread_id: str, *, expected: Any | None = None
@@ -1068,7 +1105,10 @@ class RuntimeThreadManager:
             self._thread_leases.pop(thread_id, None)
             self._thread_lease_depth.pop(thread_id, None)
             self._thread_lease_owners.pop(thread_id, None)
+            released = self._lease_released.pop(thread_id, None)
         lease.release()
+        if released is not None:
+            released.set()
 
     @asynccontextmanager
     async def _hold_thread_operation(self, thread_id: str) -> AsyncIterator[None]:
@@ -3669,7 +3709,7 @@ class RuntimeThreadManager:
     async def start_turn(self, thread_id: str, req: StartTurnRequest) -> TurnRecord:
         if not req.prompt.strip():
             raise ValueError("prompt is required")
-        lease = await self._claim_new_thread_lease(thread_id)
+        lease = await self._claim_new_thread_lease(thread_id, wait_for_handoff=True)
         try:
             return await self._start_turn_claimed(thread_id, req)
         except BaseException:

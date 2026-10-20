@@ -690,6 +690,7 @@ class BrowserService:
             "activity": run.activity,
             "workflow_recording": self._demonstrating(run),
             "workflow_tabs": list(getattr(run.recorder, "_clients", {})),
+            "workflow_tab_errors": dict(getattr(run.recorder, "tab_errors", {})),
             "demo_step": run.demo_step,
             "demo_total": run.demo_total,
             "error": run.error,

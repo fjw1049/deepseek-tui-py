@@ -196,6 +196,9 @@ type Props = {
   onRemoveQueuedMessage: (id: string) => void
   onWithdrawQueuedMessage: (id: string) => QueuedComposerMessage | null
   onSendQueuedMessageNow: (id: string) => void
+  /** Stop also paused the queue; it waits for the user to resume. */
+  queuePaused?: boolean
+  onResumeQueuedMessages?: () => void
   onSend: (text: string) => Promise<boolean>
   onInterrupt: () => void | Promise<void>
   onCompact: () => Promise<void>
@@ -265,6 +268,8 @@ export function FloatingComposer({
   onRemoveQueuedMessage,
   onWithdrawQueuedMessage,
   onSendQueuedMessageNow,
+  queuePaused = false,
+  onResumeQueuedMessages,
   onSend,
   onInterrupt,
   onCompact,
@@ -1559,13 +1564,28 @@ export function FloatingComposer({
               <Clock3 className="h-3.5 w-3.5 text-ds-muted" strokeWidth={1.9} />
               <span>{t('queuedMessagesTitle', { count: visibleQueued.length })}</span>
             </div>
-            <div className="text-[12px] text-ds-muted">{t('queuedMessagesHint')}</div>
+            {queuePaused ? (
+              <div role="status" className="flex flex-wrap items-center gap-2 text-[12px] text-ds-muted">
+                <span>{t('queuedMessagesPausedHint')}</span>
+                {onResumeQueuedMessages ? (
+                  <button
+                    type="button"
+                    onClick={onResumeQueuedMessages}
+                    className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[12px] font-medium text-accent transition hover:bg-accent/16"
+                  >
+                    {t('queuedMessagesResume')}
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="text-[12px] text-ds-muted">{t('queuedMessagesHint')}</div>
+            )}
           </div>
           <div className="mt-2 flex flex-col gap-2">
             {visibleQueued.map((message, index) => (
               <div
                 key={message.id}
-                className="flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-[12px] border border-ds-border-muted bg-ds-main/80 px-3 py-2 text-[13px] text-ds-ink"
+                className="ds-queued-message flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-[12px] border border-ds-border-muted bg-ds-subtle px-3 py-2 text-[13px] text-ds-ink"
               >
                 <span className="shrink-0 text-ds-faint">{index + 1}.</span>
                 <span className="min-w-0 flex-1 truncate" title={message.text}>
@@ -1747,7 +1767,7 @@ export function FloatingComposer({
                 return (
                   <div
                     key={item.id}
-                    className="flex min-w-[200px] max-w-[260px] flex-col gap-1.5 overflow-hidden rounded-[14px] border border-ds-border-muted bg-ds-main/80 px-2.5 py-2"
+                    className="flex min-w-[200px] max-w-[260px] flex-col gap-1.5 overflow-hidden rounded-[14px] border border-ds-border-muted bg-ds-subtle px-2.5 py-2"
                   >
                     <div className="flex items-center gap-2">
                       <span

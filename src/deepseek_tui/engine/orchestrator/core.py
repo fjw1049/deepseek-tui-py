@@ -1078,7 +1078,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         trace = get_turn_latency(str(turn_id)) if turn_id else None
         build_start = now_ms() if trace is not None else None
 
-        await self._prepare_cua()
         native_tools = self.tool_registry.to_api_tools()
         mcp = self.mcp_manager
         profile = self.tool_profile or TOOL_PROFILE_FULL
@@ -3159,6 +3158,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             FINALIZATION_MAX_TOKENS, FINALIZATION_TIMEOUT_SECONDS, TaskDelivery,
         )
 
+        # Per turn, never from the polled context estimate: it may start the runtime.
+        await self._prepare_cua()
         task_catalog = await self._get_tools_with_mcp()
         system_prompt += self._cua_prompt()
         delivery = TaskDelivery(catalog={(t.get("function") or t)["name"] for t in task_catalog})

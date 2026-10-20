@@ -442,7 +442,7 @@ export function AutomationTaskForm({
               <div role="status" className="automation-editor__summary">
                 {scheduleKind === 'daily' ? t('automationSummaryDaily', { time: timeOfDay })
                   : scheduleKind === 'weekdays' ? t('automationSummaryWeekdays', { time: timeOfDay })
-                  : scheduleKind === 'weekly' ? (weekdays.length ? t('automationSummaryWeekly', { days: ALL_WEEKDAYS.filter(day => weekdays.includes(day)).map(day => t(WEEKDAY_LABELS[day])).join('、'), time: timeOfDay }) : t('automationError_weekdays_required'))
+                  : scheduleKind === 'weekly' ? (weekdays.length ? t('automationSummaryWeekly', { days: ALL_WEEKDAYS.filter(day => weekdays.includes(day)).map(day => t(WEEKDAY_LABELS[day])).join(t('automationWeekdaySeparator')), time: timeOfDay }) : t('automationError_weekdays_required'))
                   : scheduleKind === 'hourly' ? t('automationSummaryHourly', { count: Number(everyHours) })
                   : scheduleKind === 'once' ? t('automationSummaryOnce', { time: onceAt.replace('T', ' ').slice(0, 16) })
                   : t('automationSummaryAdvanced')}

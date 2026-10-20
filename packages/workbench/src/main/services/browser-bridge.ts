@@ -217,6 +217,16 @@ export function createBrowserBridge(deps: Deps) {
       return { owned, targets }
     }
 
+    /** Forget a session and, at Electron too, the frame sessions opened through it. */
+    function forget(sessionId: string): void {
+      ownSessions.delete(sessionId)
+      for (const [child, owned] of ownSessions) {
+        if (owned.parent !== sessionId) continue
+        forget(child)
+        void debug.sendCommand('Target.detachFromTarget', { sessionId: child }).catch(() => {})
+      }
+    }
+
     function emit(message: Record<string, unknown>, sessionId?: string): void {
       if (sessionId) {
         const owned = ownSessions.get(sessionId)
@@ -245,7 +255,7 @@ export function createBrowserBridge(deps: Deps) {
         const sessionId = String(params.sessionId)
         if (!ownSessions.has(sessionId) || ownSessions.get(sessionId)!.parent !== parent) throw new Error('Session is outside this tab')
         if (method === 'Target.detachFromTarget') {
-          ownSessions.delete(sessionId)
+          forget(sessionId)
           await debug.sendCommand(method, { sessionId })
           return {}
         }
@@ -281,7 +291,16 @@ export function createBrowserBridge(deps: Deps) {
     }
 
     const onMessage = (_event: unknown, method: string, params: Record<string, unknown>, sessionId?: string): void => {
-      if (method === 'Target.detachedFromTarget') ownSessions.delete(String(params.sessionId))
+      if (method === 'Target.detachedFromTarget') {
+        const detached = String(params.sessionId)
+        const owned = ownSessions.get(detached)
+        if (owned) {
+          forget(detached)
+          // Tell the client its frame session ended, as Chrome does, instead of letting
+          // its pending commands time out.
+          emit({ method, params: { sessionId: detached, targetId: owned.targetId } }, owned.parent)
+        }
+      }
       // Target lifecycle/events are managed by the bridge, never forwarded raw.
       if (method.startsWith('Target.')) return
       emit({ method, params }, sessionId)

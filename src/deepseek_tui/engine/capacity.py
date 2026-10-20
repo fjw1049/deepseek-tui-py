@@ -787,6 +787,7 @@ def prune_old_tool_results(
                 cfg.hard_clear_min_reclaim,
             )
     changed = 0
+    pruned_ids: set[str] = set()
     ages = _turn_ages(messages)
     for i, msg in enumerate(messages):
         if i >= boundary or msg.role != Role.TOOL:
@@ -810,6 +811,7 @@ def prune_old_tool_results(
                         block.model_copy(update={"content": cleared})
                     )
                     msg_changed = True
+                    pruned_ids.add(block.tool_use_id)
                 else:
                     new_blocks.append(block)
                 continue
@@ -838,15 +840,18 @@ def prune_old_tool_results(
                 if trimmed != content:
                     new_blocks.append(block.model_copy(update={"content": trimmed}))
                     msg_changed = True
+                    pruned_ids.add(block.tool_use_id)
                     continue
             new_blocks.append(block)
         if msg_changed:
             messages[i] = msg.model_copy(update={"content": new_blocks})
             changed += 1
-    if changed:
+    if pruned_ids:
         from deepseek_tui.protocol.messages import ToolUseBlock
 
-        if any(isinstance(block, ToolUseBlock) and block.name in {"cua_js", "cua_js_reset"}
+        # Only a pruned CUA result can have dropped runtime documentation.
+        if any(isinstance(block, ToolUseBlock) and block.id in pruned_ids
+               and block.name in {"cua_js", "cua_js_reset"}
                for message in messages for block in message.content):
             from deepseek_tui.cua.tools import add_documentation_reminder
 

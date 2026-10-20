@@ -537,10 +537,61 @@ async def test_native_recorder_discovers_new_tabs_and_reports_capture_failures(
             await asyncio.sleep(.05)
         if fail_capture:
             assert recorder.capture_warnings and 'tab-b' not in recorder._clients
+            # The blocked tab says why instead of looking busy forever.
+            assert recorder.tab_errors == {'tab-b': 'test capture unavailable'}
+            run.recorder = recorder
+            assert browser.state('thr_one')['workflow_tab_errors'] == recorder.tab_errors
+            bridge.tabs.pop('tab-b')
+            bridge.active = 'tab-a'
+            for _ in range(30):
+                if not recorder.tab_errors:
+                    break
+                await asyncio.sleep(.05)
+            assert recorder.tab_errors == {}
         else:
             assert 'tab-b' in recorder._clients and installed == ['tab-a', 'tab-b']
-            assert not recorder.capture_warnings
+            assert not recorder.capture_warnings and not recorder.tab_errors
         assert sync_frames.await_count >= 2
+    finally:
+        run.recorder = None
+        await recorder.close()
+        await browser.close_all()
+
+
+async def test_native_recorder_only_reports_tabs_opened_during_the_recording(
+        browser, bridge, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser import recording
+    from deepseek_tui.browser.workflows import recording_store
+
+    bridge.tabs['tab-old'] = {'url': 'https://example.test/old', 'title': 'Old'}
+    run = await browser.ensure('thr_one')
+    events = []
+    original = recording.WorkbenchRecordSession._append
+
+    def append(self, event):
+        events.append(event)
+        return original(self, event)
+
+    async def install(self, client, target_id):
+        await client.enable_domain('Runtime')
+
+    monkeypatch.setattr(recording.WorkbenchRecordSession, '_append', append)
+    monkeypatch.setattr(recording, 'evaluate', AsyncMock(return_value={
+        'url': 'https://example.test/', 'title': 'Example'}))
+    monkeypatch.setattr(recording.WorkbenchRecordSession, '_install_on_client', install)
+    monkeypatch.setattr(recording.WorkbenchRecordSession, '_sync_frames', AsyncMock())
+    recorder, _ = await recording.create_recording(run, recording_store(browser, 'thr_one'))
+    try:
+        bridge.tabs['tab-new'] = {'url': 'https://example.test/new', 'title': 'New'}
+        for _ in range(30):
+            if 'tab-new' in recorder._clients:
+                break
+            await asyncio.sleep(.05)
+        # Existing tabs are recorded if used, but were not opened by the demonstration.
+        assert {'tab-a', 'tab-old', 'tab-new'} <= set(recorder._clients)
+        assert [e['targetId'] for e in events if e.get('kind') == 'page_opened'] == ['tab-new']
     finally:
         await recorder.close()
         await browser.close_all()

@@ -306,7 +306,7 @@ it('preserves queued input when the current task is selected again', async () =>
   expect(provider.sendUserMessage).not.toHaveBeenCalled()
 })
 
-it.each([true, false])('sends once after delayed runtime release (completion before acknowledgement: %s)', async (completeEarly) => {
+it.each([true, false])('sends once, right after the stop is acknowledged (completion before acknowledgement: %s)', async (completeEarly) => {
   provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }])
   const pane = session()
   await pane.store.getState().selectThread('a')
@@ -314,8 +314,9 @@ it.each([true, false])('sends once after delayed runtime release (completion bef
   const id = pane.store.getState().queuedMessages[0].id
   let acknowledge!: () => void
   provider.interruptTurn.mockImplementation(() => new Promise<void>(resolve => { acknowledge = resolve }))
-  const active = vi.fn().mockResolvedValue(true)
-  Object.assign(provider, { isThreadTurnActive: active })
+  // The old turn is still tearing down; the runtime, not the client, waits for it.
+  Object.assign(provider, { isThreadTurnActive: vi.fn().mockResolvedValue(true) })
+  provider.sendUserMessage.mockResolvedValue({ turnId: 'turn-next' })
   const sending = pane.store.getState().sendQueuedMessageNow(id)
   await pane.store.getState().sendQueuedMessageNow(id)
   expect(provider.interruptTurn).toHaveBeenCalledTimes(1)
@@ -323,16 +324,19 @@ it.each([true, false])('sends once after delayed runtime release (completion bef
   if (completeEarly) sink.onTurnComplete({ turnId: 'turn-a', status: 'cancelled' })
   await Promise.resolve()
   expect(provider.sendUserMessage).not.toHaveBeenCalled()
+  // "Send now" stops the turn on purpose; the queue is not shown as paused meanwhile.
+  expect(pane.store.getState().queuePaused).toBe(false)
   acknowledge()
-  await vi.advanceTimersByTimeAsync(500)
-  if (!completeEarly) sink.onTurnComplete({ turnId: 'turn-a', status: 'cancelled' })
-  expect(provider.sendUserMessage).not.toHaveBeenCalled()
-  active.mockResolvedValue(false)
-  await vi.advanceTimersByTimeAsync(500)
   await sending
   expect(provider.sendUserMessage).toHaveBeenCalledTimes(1)
-  expect(pane.store.getState().queuedMessages).toEqual([])
-  expect(pane.store.getState().busy).toBe(true)
+  expect(pane.store.getState().blocks.some(b => b.kind === 'user' && b.text === 'next')).toBe(true)
+  // A late completion of the stopped turn must not end the new one.
+  if (!completeEarly) sink.onTurnComplete({ turnId: 'turn-a', status: 'cancelled' })
+  await vi.advanceTimersByTimeAsync(500)
+  expect(provider.sendUserMessage).toHaveBeenCalledTimes(1)
+  expect(pane.store.getState()).toMatchObject({
+    queuedMessages: [], busy: true, currentTurnId: 'turn-next', queuePaused: false
+  })
 })
 
 it('keeps queued messages stopped after a late completion event', async () => {
@@ -371,6 +375,76 @@ it('retains queued input when interrupt fails', async () => {
   expect(provider.sendUserMessage).not.toHaveBeenCalled()
   expect(pane.store.getState().queuedMessages).toHaveLength(1)
   expect(pane.store.getState().busy).toBe(true)
+  // The stopped queue is visible, so the user can resume it later.
+  expect(pane.store.getState().queuePaused).toBe(true)
+})
+
+it('shows a stopped queue as paused, keeps that with its chat, and resumes on request', async () => {
+  provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }])
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  await pane.store.getState().sendMessage('next', 'agent')
+  expect(pane.store.getState().queuePaused).toBe(false)
+  await pane.store.getState().interrupt()
+  expect(pane.store.getState().queuePaused).toBe(true)
+  await pane.store.getState().selectThread('b')
+  expect(pane.store.getState().queuePaused).toBe(false)
+  await pane.store.getState().selectThread('a')
+  expect(pane.store.getState()).toMatchObject({ queuePaused: true, queuedMessages: [{ text: 'next' }] })
+  const sink = provider.subscribeThreadEvents.mock.calls.at(-1)![2] as ThreadEventSink
+  sink.onTurnComplete({ turnId: 'turn-a', status: 'cancelled' })
+  await vi.advanceTimersByTimeAsync(500)
+  expect(provider.sendUserMessage).not.toHaveBeenCalled()
+  await pane.store.getState().resumeQueuedMessages()
+  expect(provider.sendUserMessage).toHaveBeenCalledTimes(1)
+  expect(pane.store.getState()).toMatchObject({ queuePaused: false, queuedMessages: [] })
+})
+
+it('hands a queued message to the runtime as soon as the turn completes', async () => {
+  provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }])
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  await pane.store.getState().sendMessage('next', 'agent')
+  // Teardown still holds the thread; no client-side wait before sending.
+  Object.assign(provider, { isThreadTurnActive: vi.fn().mockResolvedValue(true) })
+  provider.sendUserMessage.mockResolvedValue({ turnId: 'turn-next' })
+  const sink = provider.subscribeThreadEvents.mock.calls[0][2] as ThreadEventSink
+  sink.onTurnComplete({ turnId: 'turn-a', status: 'completed' })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(provider.sendUserMessage).toHaveBeenCalledTimes(1)
+  expect(pane.store.getState()).toMatchObject({ queuedMessages: [], currentTurnId: 'turn-next' })
+})
+
+it('keeps the queued message if the runtime still cannot start the turn', async () => {
+  provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }])
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  await pane.store.getState().sendMessage('next', 'agent')
+  provider.sendUserMessage.mockRejectedValue(new Error('Thread already has an active operation'))
+  const sink = provider.subscribeThreadEvents.mock.calls[0][2] as ThreadEventSink
+  sink.onTurnComplete({ turnId: 'turn-a', status: 'completed' })
+  await vi.advanceTimersByTimeAsync(1_000)
+  // Not lost, and not retried in a loop; the next completion drains it again.
+  expect(provider.sendUserMessage).toHaveBeenCalledTimes(1)
+  expect(pane.store.getState().queuedMessages.map(m => m.text)).toEqual(['next'])
+  expect(pane.store.getState().blocks.some(b => b.kind === 'user' && b.text === 'next')).toBe(false)
+})
+
+it('refetches a completed-turn reload that raced newer events instead of dropping it', async () => {
+  provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }])
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  let resolve!: (value: ReturnType<typeof snapshot>) => void
+  provider.getThreadDetail.mockImplementationOnce(() => new Promise(r => { resolve = r }))
+  const sink = provider.subscribeThreadEvents.mock.calls[0][2] as ThreadEventSink
+  sink.onTurnComplete({ turnId: 'turn-a' })
+  pane.store.setState({ lastSeq: 5 }) // e.g. a title update streamed meanwhile
+  const final = { kind: 'assistant', id: 'final', text: 'Done' }
+  provider.getThreadDetail.mockResolvedValue({ ...snapshot('a'), threadStatus: 'idle', latestSeq: 6, blocks: [final] })
+  resolve(snapshot('a'))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(pane.store.getState().lastSeq).toBe(6)
+  expect(pane.store.getState().blocks.map(b => b.id)).toContain('final')
 })
 
 it('ignores an old completion replayed after the next turn starts', async () => {

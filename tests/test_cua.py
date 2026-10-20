@@ -8,10 +8,38 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.config.models import Config, CuaConfig
+from deepseek_tui.cua import session as cua_session
 from deepseek_tui.cua.approval import approval_question, approval_response
 from deepseek_tui.cua.session import CuaSession, DesktopLease
 from deepseek_tui.cua.tools import CuaTool
 from deepseek_tui.tools.registry import ToolContext, ToolError, ToolResult
+
+VISION = {"model": "deepseek::deepseek-v4-flash-vision-exp"}
+
+
+@pytest.fixture(autouse=True)
+def fresh_runtime_cache(tmp_path, monkeypatch):
+    # Never contend with a real desktop session's lock.
+    monkeypatch.setattr(cua_session, "LOCK_DIR", tmp_path)
+    cua_session.reset_runtime_cache()
+    yield
+    cua_session.reset_runtime_cache()
+
+
+def _engine(tmp_path, installation, **config):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
+
+    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
+    engine._app_config = Config(cua=installation, **config)
+    return engine
+
+
+def _calls(tmp_path):
+    lines = (tmp_path / "calls.jsonl").read_text().splitlines()
+    return [entry for entry in map(json.loads, lines) if "args" in entry]
 
 
 @pytest.fixture
@@ -40,6 +68,9 @@ def test_approval_does_not_widen_scope(native):
     assert answer("once") == {"action": "accept", "content": {}}
     assert approval_response(native, None) == {"action": "cancel"}
     native["_meta"]["tool_params"]["app"] = "com.xingyuzhong.deepseekgui"
+    assert approval_question(native) is None
+    # An unpackaged (development) Workbench is Electron itself.
+    native["_meta"]["tool_params"]["app"] = "com.github.Electron"
     assert approval_question(native) is None
 
 
@@ -245,9 +276,31 @@ async def test_text_only_route_hides_cua_before_connecting(installation, tmp_pat
     monkeypatch.setattr(CuaSession, "connect", connect)
     engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
     engine._app_config = Config(cua=installation)
+    await engine._prepare_cua()
     tools = await engine._get_tools_with_mcp()
     assert not any(t["function"]["name"].startswith("cua_") for t in tools)
     assert "vision" in engine._cua_prompt()
+    connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_polled_context_estimate_never_starts_or_waits_for_cua(
+    installation, tmp_path, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    connect = AsyncMock()
+    monkeypatch.setattr(CuaSession, "connect", connect)
+    engine = _engine(tmp_path, installation, vision=VISION)
+    # A CUA call holding the session (e.g. waiting for a human) must not stall the estimate.
+    engine._cua_session = CuaSession(installation, tmp_path, "busy")
+    await engine._cua_session._operation_lock.acquire()
+    try:
+        tools = await asyncio.wait_for(engine._get_tools_with_mcp(), 1)
+        await asyncio.wait_for(engine.context_breakdown_live(), 1)
+    finally:
+        engine._cua_session._operation_lock.release()
+    assert not any(t["function"]["name"].startswith("cua_") for t in tools)
     connect.assert_not_awaited()
 
 
@@ -263,27 +316,67 @@ def test_vision_readiness_checks_helper_and_actual_route():
 
 
 @pytest.mark.asyncio
-async def test_failed_connection_has_backoff(installation, tmp_path, monkeypatch):
-    from unittest.mock import AsyncMock
+async def test_failed_connection_backoff_is_shared_by_conversations_and_children(
+    installation, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
 
-    from deepseek_tui.engine.handle import EngineHandle
-    from deepseek_tui.engine.orchestrator import Engine
+    from deepseek_tui.cua.subagent import prepare_subagent_cua
+    from deepseek_tui.tools.registry import ToolRegistry
 
-    connect = AsyncMock(side_effect=ToolError("offline"))
-    monkeypatch.setattr(CuaSession, "connect", connect)
-    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
-    engine._app_config = Config(
-        cua=installation, vision={"model": "deepseek::deepseek-v4-flash-vision-exp"}
-    )
+    attempts = []
+
+    def offline(installation):
+        attempts.append(installation)
+        raise ToolError("offline")
+
+    monkeypatch.setattr(CuaSession, "_paths", staticmethod(offline))
+    first = _engine(tmp_path, installation, vision=VISION)
+    second = _engine(tmp_path, installation, vision=VISION)
     try:
-        await engine._get_tools_with_mcp()
-        await engine._get_tools_with_mcp()
-        assert connect.await_count == 1
-        engine._cua_retry_after = 0
-        await engine._get_tools_with_mcp()
-        assert connect.await_count == 2
+        await first._prepare_cua()
+        await second._prepare_cua()
+        context = ToolContext(tmp_path)
+        child = await prepare_subagent_cua(
+            SimpleNamespace(id="child", cancel_token=asyncio.Event(),
+                            interrupt_event=asyncio.Event(), parent_cancel=None),
+            SimpleNamespace(config=first._app_config, manager=SimpleNamespace(parent_pause=None)),
+            context, ToolRegistry(), None, asyncio.Event(),
+        )
+        assert child is None
+        assert len(attempts) == 1
+        assert "offline" in second._cua_error and "retries in" in second._cua_error
+        assert "retries in" in context.metadata["cua_error"]
+        assert not second.tool_registry.contains("cua_js")
+        cua_session._RUNTIMES[cua_session._runtime_key(installation)]["retry_after"] = 0
+        await second._prepare_cua()
+        assert len(attempts) == 2
     finally:
-        await engine._close_cua()
+        await first._close_cua()
+        await second._close_cua()
+
+
+@pytest.mark.asyncio
+async def test_lazy_connection_failure_drops_stale_catalog(installation, tmp_path, monkeypatch):
+    first = _engine(tmp_path, installation, vision=VISION)
+    await first._prepare_cua()
+    await first._close_cua()
+
+    def missing(installation):
+        raise ToolError("LCU is not installed")
+
+    monkeypatch.setattr(CuaSession, "_paths", staticmethod(missing))
+    second = _engine(tmp_path, installation, vision=VISION)
+    await second._prepare_cua()
+    tool = second.tool_registry.get("cua_js")
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    with pytest.raises(ToolError, match="not installed"):
+        await tool.execute({"code": "observe"}, context)
+    # The next turn reports the runtime as unavailable instead of offering stale tools.
+    third = _engine(tmp_path, installation, vision=VISION)
+    await third._prepare_cua()
+    assert not third.tool_registry.contains("cua_js")
+    assert "not installed" in third._cua_prompt()
 
 
 @pytest.mark.asyncio
@@ -306,13 +399,16 @@ async def test_engine_stop_during_bootstrap_does_not_wait_for_timeout(
     engine._app_config = Config(cua=installation, vision={
         "model": "deepseek::deepseek-v4-flash-vision-exp"
     })
-    task = asyncio.create_task(engine._get_tools_with_mcp())
+    task = asyncio.create_task(engine._prepare_cua())
     await entered.wait()
     await engine.handle.cancel()
-    tools = await asyncio.wait_for(task, 1)
+    await asyncio.wait_for(task, 1)
+    tools = await engine._get_tools_with_mcp()
     assert not any(t["function"]["name"].startswith("cua_") for t in tools)
     assert engine._cua_session.process is None
-    assert engine._cua_retry_after == 0
+    # A stop is not a runtime failure and must not start the retry window.
+    runtime = cua_session._RUNTIMES.get(cua_session._runtime_key(installation), {})
+    assert "retry_after" not in runtime
 
 
 @pytest.mark.asyncio
@@ -350,6 +446,26 @@ def test_pruned_cua_history_explicitly_requires_documentation():
         ),
     )
     assert "rewriteDocumentation" in messages[-1].text_content()
+
+
+def test_pruning_other_tool_output_does_not_request_cua_documentation():
+    from deepseek_tui.engine.capacity import ToolPruneConfig, prune_old_tool_results
+    from deepseek_tui.protocol.messages import Message, ToolUseBlock
+
+    messages = [
+        Message.assistant_with_tools([ToolUseBlock(id="r", name="read_file", input={})]),
+        Message.tool_result("r", "file body\n" * 1000),
+        Message.assistant_with_tools([ToolUseBlock(id="c", name="cua_js", input={})]),
+        Message.tool_result("c", "short observation"),
+    ]
+    assert prune_old_tool_results(
+        messages,
+        config=ToolPruneConfig(
+            keep_last_n_turns=0, soft_trim_threshold=100, soft_trim_head=10, soft_trim_tail=10
+        ),
+    )
+    assert len(messages) == 4
+    assert not any("rewriteDocumentation" in m.text_content() for m in messages)
 
 
 @pytest.mark.asyncio
@@ -390,27 +506,96 @@ async def test_action_deadline_still_pauses_for_human_approval(session, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_engine_can_recover_after_idle_bridge_exit(installation, tmp_path):
-    from unittest.mock import AsyncMock
-
-    from deepseek_tui.engine.handle import EngineHandle
-    from deepseek_tui.engine.orchestrator import Engine
-
-    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
-    engine._app_config = Config(
-        cua=installation, vision={"model": "deepseek::deepseek-v4-flash-vision-exp"}
-    )
+@pytest.mark.parametrize("used", [False, True])
+async def test_engine_recovers_after_idle_bridge_exit(installation, tmp_path, used):
+    engine = _engine(tmp_path, installation, vision=VISION)
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
     try:
-        await engine._get_tools_with_mcp()
+        await engine._prepare_cua()
+        tool = engine.tool_registry.get("cua_js")
         session = engine._cua_session
+        if used:
+            await tool.execute({"code": "observe"}, context)
+            await session.end_turn()
         session.process.kill()
         await session.process.wait()
-        await engine._get_tools_with_mcp()
-        engine._cua_retry_after = 0
-        tools = await engine._get_tools_with_mcp()
-        assert any(t["function"]["name"] == "cua_js" for t in tools)
+        await engine._prepare_cua()
+        assert engine.tool_registry.contains("cua_js")
+        if used:
+            # Code that already ran lost its bindings; say so once, without executing.
+            with pytest.raises(ToolError, match="between calls"):
+                await tool.execute({"code": "oldApp.click()"}, context)
+        result = await tool.execute({"code": "fresh"}, context)
+        assert result.success
+        assert [call["args"]["code"] for call in _calls(tmp_path)] == (
+            ["observe", "fresh"] if used else ["fresh"]
+        )
     finally:
         await engine._close_cua()
+
+
+@pytest.mark.asyncio
+async def test_later_conversations_and_children_reuse_catalog_without_starting_lcu(
+    installation, tmp_path
+):
+    from types import SimpleNamespace
+
+    from deepseek_tui.cua.subagent import prepare_subagent_cua
+    from deepseek_tui.tools.registry import ToolRegistry
+
+    first = _engine(tmp_path, installation, vision=VISION)
+    second = _engine(tmp_path, installation, vision=VISION)
+    registry = ToolRegistry()
+    child = None
+    try:
+        await first._prepare_cua()
+        assert first._cua_session.process is not None
+        await second._prepare_cua()
+        assert second._cua_session.process is None
+        assert second.tool_registry.get("cua_js").input_schema() == (
+            first.tool_registry.get("cua_js").input_schema()
+        )
+        assert "Original fixture instructions" in second._cua_prompt()
+        context = ToolContext(tmp_path)
+        child = await prepare_subagent_cua(
+            SimpleNamespace(id="child", cancel_token=asyncio.Event(),
+                            interrupt_event=asyncio.Event(), parent_cancel=None),
+            SimpleNamespace(config=first._app_config, manager=SimpleNamespace(parent_pause=None)),
+            context, registry, None, asyncio.Event(),
+        )
+        assert child is not None and child.process is None
+        assert registry.contains("cua_js")
+        # The first real call connects lazily and runs once.
+        call = ToolContext(tmp_path, metadata={"cua_turn_id": "t2", "cua_call_id": "c2"})
+        result = await second.tool_registry.get("cua_js").execute({"code": "lazy"}, call)
+        assert result.success and second._cua_session.process is not None
+        assert [entry["args"]["code"] for entry in _calls(tmp_path)] == ["lazy"]
+    finally:
+        await first._close_cua()
+        await second._close_cua()
+        if child is not None:
+            await child.close()
+
+
+@pytest.mark.asyncio
+async def test_changed_runtime_instructions_reach_the_model_after_lazy_connect(
+    installation, tmp_path
+):
+    key = cua_session._runtime_key(installation)
+    probe = CuaSession(installation, tmp_path, "probe")
+    await probe.connect()
+    await probe.close()
+    instructions, tools = cua_session._RUNTIMES[key]["catalog"]
+    cua_session._RUNTIMES[key]["catalog"] = ("Stale instructions", tools)
+    session = CuaSession(installation, tmp_path, "s")
+    session.lease = DesktopLease(tmp_path / "desktop.lock")
+    try:
+        assert session.use_cached_catalog() and session.instructions == "Stale instructions"
+        result = await session.call("js", {"code": "hello"}, "t", "c")
+        assert result["content"][-1]["text"] == instructions
+        assert cua_session._RUNTIMES[key]["catalog"][0] == instructions
+    finally:
+        await session.close()
 
 
 @pytest.mark.asyncio
@@ -505,6 +690,46 @@ async def test_desktop_lease_is_held_across_calls_and_wait_is_cancellable(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_busy_desktop_times_out_clearly_without_dropping_the_connection(
+    installation, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cua_session, "LEASE_WAIT_SECONDS", 0.2)
+    holder = CuaSession(installation, tmp_path, "holder")
+    waiter = CuaSession(installation, tmp_path, "waiter")
+    try:
+        await holder.call("js", {"code": "holder"}, "turn-a", "a")
+        with pytest.raises(ToolError, match="in use by another computer-use task"):
+            await asyncio.wait_for(waiter.call("js", {"code": "blocked"}, "turn-b", "b"), 2)
+        assert waiter.process is not None and waiter.turn_id is None
+        assert not waiter.reset_reason
+        await holder.end_turn()
+        await waiter.call("js", {"code": "after"}, "turn-b", "c")
+        assert [entry["args"]["code"] for entry in _calls(tmp_path)] == ["holder", "after"]
+    finally:
+        await holder.close()
+        await waiter.close()
+
+
+@pytest.mark.asyncio
+async def test_reset_notice_only_follows_code_that_ran(session, tmp_path):
+    stop = asyncio.Event()
+    await session.run(session.connect, [stop])
+    monitor = session._monitor
+    stop.set()
+    await asyncio.wait_for(monitor, 2)
+    assert session.process is None
+    # Nothing ran in the discarded REPL, so the first call is not refused.
+    assert session.reset_reason == ""
+    stop.clear()
+    tool = CuaTool(session, session.descriptors[0], [stop])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        assert (await tool.execute({"code": "first"}, context)).success
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_crash_never_replays_action(session, tmp_path):
     try:
         with pytest.raises(ToolError):
@@ -574,6 +799,7 @@ async def test_engine_catalog_uses_upstream_schema_and_hides_host_tools(installa
         cua=installation, vision={"model": "deepseek::deepseek-v4-flash-vision-exp"}
     )
     try:
+        await engine._prepare_cua()
         tools = await engine._get_tools_with_mcp()
         definitions = {tool["function"]["name"]: tool["function"] for tool in tools}
         assert definitions["cua_js"]["description"] == "Original js"
@@ -581,6 +807,7 @@ async def test_engine_catalog_uses_upstream_schema_and_hides_host_tools(installa
         assert "cua_turn_ended" not in definitions
         assert "Original fixture instructions" in engine._cua_prompt()
         engine.mode = "plan"
+        await engine._prepare_cua()
         tools = await engine._get_tools_with_mcp()
         assert not any(t["function"]["name"].startswith("cua_") for t in tools)
     finally:
@@ -603,6 +830,28 @@ def test_cua_images_preserve_wire_bytes_and_coordinate_dimensions(tmp_path, monk
     wire = image_data_url(image, max_side=100)
     assert base64.b64decode(wire.split(",", 1)[1]) == data
     assert image.width == 2600
+
+
+def test_oversized_cua_screenshot_fits_provider_limit_at_the_same_pixel_size(
+    tmp_path, monkeypatch
+):
+    import base64
+    import io
+    import os
+
+    from PIL import Image
+
+    from deepseek_tui.media import CUA_RAW_IMAGE_BYTES, image_data_url, import_image
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path))
+    buffer = io.BytesIO()
+    Image.frombytes("RGB", (1400, 1000), os.urandom(1400 * 1000 * 3)).save(buffer, "PNG")
+    assert len(buffer.getvalue()) > CUA_RAW_IMAGE_BYTES
+    image = import_image(buffer.getvalue()).model_copy(update={"source": {"kind": "cua"}})
+    wire = base64.b64decode(image_data_url(image, max_side=100).split(",", 1)[1])
+    assert len(wire) <= CUA_RAW_IMAGE_BYTES
+    with Image.open(io.BytesIO(wire)) as encoded:
+        assert encoded.size == (1400, 1000)
 
 
 def test_mcp_execute_can_be_imported_first():

@@ -62,6 +62,8 @@ class WorkbenchAgent(BaseInstalledAgent):
             filename="instruction.txt",
         )
         await self.exec_as_root(environment, command="chmod 600 /installed-agent/private.json")
+        # The worker enforces the campaign budget; this outer limit only catches a hang.
+        budget = json.loads(private)["task_timeout_sec"] + 100
         logs = shlex.quote(str(self.environment_logs_dir))
         await self.exec_as_agent(
             environment,
@@ -71,7 +73,7 @@ class WorkbenchAgent(BaseInstalledAgent):
                 f"/installed-agent/private.json /installed-agent/instruction.txt {logs} "
                 f"> {logs}/worker-console.log 2>&1"
             ),
-            timeout_sec=21700,
+            timeout_sec=budget,
         )
         status = await environment.exec(command=f"cat {logs}/status.json")
         data = json.loads(status.stdout)

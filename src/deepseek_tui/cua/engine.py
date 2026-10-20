@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 
 from deepseek_tui.cua.approval import approval_question, approval_response
@@ -29,8 +28,6 @@ class CuaEngineMixin:
             for name in CUA_TOOLS:
                 self.tool_registry.remove(name)
             return
-        if time.monotonic() < getattr(self, "_cua_retry_after", 0):
-            return
         session = getattr(self, "_cua_session", None)
         if session is None:
 
@@ -52,24 +49,19 @@ class CuaEngineMixin:
                 ask,
             )
             self._cua_session = session
+        events = [self.handle.cancel_event, self.handle.pause.requested]
         try:
-            await session.run(
-                session.connect, [self.handle.cancel_event, self.handle.pause.requested]
-            )
-            register_tools(
-                self.tool_registry, session, [self.handle.cancel_event, self.handle.pause.requested]
-            )
+            # Only the first session in this process starts the runtime here; later
+            # ones expose its catalog and connect on their first cua_js call.
+            if not session.use_cached_catalog():
+                await session.run(session.connect, events)
+            register_tools(self.tool_registry, session, events)
             self._cua_error = ""
         except Exception as exc:
             await session.close()
             for name in CUA_TOOLS:
                 self.tool_registry.remove(name)
             self._cua_error = str(exc)
-            self._cua_retry_after = (
-                0
-                if self.handle.cancel_event.is_set() or self.handle.pause.requested.is_set()
-                else time.monotonic() + 30
-            )
 
     def _cua_prompt(self) -> str:
         if getattr(self, "_cua_error", ""):

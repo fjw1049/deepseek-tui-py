@@ -86,6 +86,28 @@ it('checks nested commands and still supports legitimate child and grandchild se
   } finally { h.socket.close() }
 })
 
+it('reports a detached frame session and forgets the sessions opened through it', async () => {
+  const h = await harness()
+  try {
+    const child = (await h.send('Target.attachToTarget', { targetId: 'child', flatten: false })).result.sessionId
+    await h.send('Target.sendMessageToTarget', { sessionId: child, message: JSON.stringify({
+      id: 1, method: 'Target.attachToTarget', params: { targetId: 'grandchild', flatten: false }
+    }) })
+    const tunneled = () => h.messages.filter(m => m.method === 'Target.receivedMessageFromTarget')
+    const grandchild = tunneled().map(m => JSON.parse(m.params.message)).find(m => m.id === 1).result.sessionId
+    // Frame events still travel up through both sessions before the detach.
+    h.debug.emit('message', {}, 'Runtime.consoleAPICalled', {}, grandchild)
+    expect(tunneled()).toHaveLength(2)
+    h.debug.emit('message', {}, 'Target.detachedFromTarget', { sessionId: child, targetId: 'child' })
+    expect(h.messages).toContainEqual({ method: 'Target.detachedFromTarget', params: { sessionId: child, targetId: 'child' } })
+    expect(h.debug.sendCommand).toHaveBeenCalledWith('Target.detachFromTarget', { sessionId: grandchild })
+    h.debug.emit('message', {}, 'Runtime.consoleAPICalled', {}, grandchild)
+    expect(tunneled()).toHaveLength(2)
+    const stale = await h.send('Target.sendMessageToTarget', { sessionId: child, message: JSON.stringify({ id: 2, method: 'Runtime.evaluate', params: {} }) })
+    expect(stale.error.message).toContain('outside')
+  } finally { h.socket.close() }
+})
+
 it('retains a connected browser until its last page connection closes', async () => {
   const h = await harness()
   expect(h.commands[0]).toEqual({ kind: 'retain', browserId: 'one', retained: true })

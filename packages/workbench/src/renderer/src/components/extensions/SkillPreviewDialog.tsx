@@ -59,11 +59,11 @@ export function SkillPreviewDialog({ skillName, title, skillsDir, onClose }: Pro
         <button
           type="button"
           title={t('pluginCloseDetail')}
+          aria-label={t('pluginCloseDetail')}
           onClick={onClose}
-          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-ds-border px-2.5 py-1.5 text-[12px] text-ds-muted hover:bg-ds-hover"
+          className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
         >
-          <X className="h-3.5 w-3.5" />
-          {t('pluginCloseDetail')}
+          <X className="h-4 w-4" />
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">

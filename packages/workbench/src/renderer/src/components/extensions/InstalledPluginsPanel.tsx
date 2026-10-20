@@ -503,7 +503,7 @@ function PluginDetailDrawer({
 
   return (
     <ResizableRightDrawer onClose={onClose}>
-        <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted px-1 py-3.5">
+        <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted pl-1 pr-5 py-3.5">
           <div className="flex min-w-0 items-start gap-3">
             <div
               className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
@@ -536,11 +536,11 @@ function PluginDetailDrawer({
           <button
             type="button"
             title={t('pluginCloseDetail')}
+            aria-label={t('pluginCloseDetail')}
             onClick={onClose}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-ds-border px-2.5 py-1.5 text-[12px] text-ds-muted hover:bg-ds-hover"
+            className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
           >
-            <X className="h-3.5 w-3.5" />
-            {t('pluginCloseDetail')}
+            <X className="h-4 w-4" />
           </button>
         </div>
 

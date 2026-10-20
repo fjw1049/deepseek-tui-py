@@ -1,39 +1,72 @@
+import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { AppSettingsPatch, AppSettingsV1 } from '@shared/app-settings'
+import { readTomlBool } from '@shared/toml-section'
+
+type InheritedCua = { enabled: boolean; chrome: boolean }
+
+/** The runtime reads ``[cua]`` from the user config only; an absent switch is off. */
+async function readInheritedCua(): Promise<InheritedCua> {
+  const { content } = await window.dsGui.getDeepseekConfigFile()
+  return {
+    enabled: readTomlBool(content ?? '', 'enabled', { section: 'cua' }) ?? false,
+    chrome: readTomlBool(content ?? '', 'chrome', { section: 'cua' }) ?? false
+  }
+}
 
 export function CuaSettingsPanel({ form, onUpdate }: {
   form: AppSettingsV1
   onUpdate: (patch: AppSettingsPatch) => void
 }): React.JSX.Element {
-  const zh = form.locale === 'zh'
+  const { t } = useTranslation('settings')
+  // Matches the runtime adapter: LCU computer use has no Windows support.
+  const supported = window.dsGui?.platform === 'darwin' || window.dsGui?.platform === 'linux'
+  // undefined while loading, null when the config file could not be read.
+  const [inherited, setInherited] = useState<InheritedCua | null | undefined>(undefined)
+  useEffect(() => {
+    if (!supported) return
+    let cancelled = false
+    readInheritedCua().then(
+      value => { if (!cancelled) setInherited(value) },
+      () => { if (!cancelled) setInherited(null) }
+    )
+    return () => { cancelled = true }
+  }, [supported])
+
+  if (!supported) {
+    return <div className="ds-llm-panel__section">
+      <h3 className="ds-llm-panel__section-title">{t('cuaTitle')}</h3>
+      <p className="ds-llm-card__meta">{t('cuaUnsupported')}</p>
+    </div>
+  }
+  const inheritLabel = (key: keyof InheritedCua): string => inherited === null
+    ? t('cuaInheritedUnknown')
+    : t('cuaInherited', { state: inherited === undefined ? '…' : t(inherited[key] ? 'cuaOn' : 'cuaOff') })
+  const enabled = form.cuaEnabled ?? inherited?.enabled
   return <div className="ds-llm-panel__section">
-    <h3 className="ds-llm-panel__section-title">{zh ? '电脑控制' : 'Computer use'}</h3>
-    <p className="ds-llm-card__meta">{zh
-      ? '通过本机 LCU 操作桌面应用。需要先安装 LCU 并授予系统权限；使用聊天中的停止按钮可立即请求停止控制。设置应用后在新聊天中使用。'
-      : 'Control desktop apps through local LCU. Install LCU and grant system permissions first. Use Stop in chat to request an immediate stop. Use a new chat after applying settings.'}</p>
+    <h3 className="ds-llm-panel__section-title">{t('cuaTitle')}</h3>
+    <p className="ds-llm-card__meta">{t('cuaDescription')}</p>
     <label className="ds-llm-card">
-      <span>{zh ? '启用电脑控制' : 'Enable computer use'}</span>
-      <select aria-label={zh ? '启用电脑控制' : 'Enable computer use'}
+      <span>{t('cuaEnable')}</span>
+      <select aria-label={t('cuaEnable')}
         value={form.cuaEnabled === undefined ? 'inherit' : String(form.cuaEnabled)}
         onChange={event => onUpdate({ cuaEnabled: event.target.value === 'true' })}>
-        <option value="inherit" disabled>{zh ? '继承配置文件（状态未读取）' : 'Inherited from config (state not read)'}</option>
-        <option value="false">{zh ? '关闭' : 'Off'}</option>
-        <option value="true">{zh ? '开启' : 'On'}</option>
+        <option value="inherit" disabled>{inheritLabel('enabled')}</option>
+        <option value="false">{t('cuaOff')}</option>
+        <option value="true">{t('cuaOn')}</option>
       </select>
     </label>
     <label className="ds-llm-card">
-      <span>{zh ? '允许连接外部 Chrome（需要扩展与站点授权）'
-        : 'Connect external Chrome (extension and site approval required)'}</span>
-      <select aria-label={zh ? '外部 Chrome' : 'External Chrome'}
+      <span>{t('cuaChrome')}</span>
+      <select aria-label={t('cuaChromeShort')}
         value={form.cuaChrome === undefined ? 'inherit' : String(form.cuaChrome)}
-        disabled={form.cuaEnabled === false}
+        disabled={enabled === false}
         onChange={event => onUpdate({ cuaChrome: event.target.value === 'true' })}>
-        <option value="inherit" disabled>{zh ? '继承配置文件（状态未读取）' : 'Inherited from config (state not read)'}</option>
-        <option value="false">{zh ? '关闭' : 'Off'}</option>
-        <option value="true">{zh ? '开启' : 'On'}</option>
+        <option value="inherit" disabled>{inheritLabel('chrome')}</option>
+        <option value="false">{t('cuaOff')}</option>
+        <option value="true">{t('cuaOn')}</option>
       </select>
     </label>
-    <p className="ds-llm-card__meta">{zh
-      ? '截图需要支持视觉的主模型，或已配置的视觉辅助模型。后端会在连接前检查已知的模型能力；不满足时不会提供电脑控制工具。'
-      : 'Screenshots require a vision-capable model or a configured vision helper. Known model capabilities are checked before connecting; incompatible routes do not expose computer-use tools.'}</p>
+    <p className="ds-llm-card__meta">{t('cuaVisionHint')}</p>
   </div>
 }

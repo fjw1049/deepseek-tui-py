@@ -10208,7 +10208,6 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   height: 40px;
   flex-shrink: 0;
   isolation: isolate;
-  transition: width 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Invisible hit area keeps the cluster open while crossing gaps between icons. */
@@ -10245,8 +10244,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   z-index: 2;
 }
 
+/* The fan floats over the row instead of widening it, so the text never shifts. */
 .ds-skill-source-stack:not([data-count='1']):is(:hover, .ds-skill-row:focus-within > *) {
-  width: var(--source-spread);
   z-index: 2;
 }
 

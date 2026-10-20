@@ -45,7 +45,11 @@ export function SkillSourceIcon({ path, size = 40 }: Props): ReactElement {
   )
 }
 
-export function SkillSourceStack({ paths }: { paths: readonly string[] }): ReactElement {
+export function SkillSourceStack({ paths, labelFor }: {
+  paths: readonly string[]
+  /** Names each icon's source on hover; the row already lists them as text. */
+  labelFor?: (path: string) => string
+}): ReactElement {
   const count = paths.length
   const size = count <= 1 ? 40 : 32
   const halfAngle = Math.min(18, Math.max(0, count - 1) * 5)
@@ -66,6 +70,7 @@ export function SkillSourceStack({ paths }: { paths: readonly string[] }): React
         <span
           key={`${filePath}:${index}`}
           className="ds-skill-source-stack__tile"
+          title={labelFor?.(filePath)}
           style={{
             '--source-index': index,
             '--source-angle': `${count <= 1 ? 0 : -halfAngle + index * 2 * halfAngle / (count - 1)}deg`

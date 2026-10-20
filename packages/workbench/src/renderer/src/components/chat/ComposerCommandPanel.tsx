@@ -87,7 +87,7 @@ function NoticeView({ notice }: { notice: Notice | null }): ReactElement | null 
   const tone =
     notice.tone === 'success'
         ? 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-200'
-        : 'border-ds-border bg-ds-main/60 text-ds-muted'
+        : 'border-ds-border bg-ds-subtle text-ds-muted'
   return <div className={`rounded-xl border px-3 py-2 text-[11px] ${tone}`}>{notice.text}</div>
 }
 
@@ -211,7 +211,7 @@ function ContextPanel({ blocks, model, runtimeReady, activeThread }: Props): Rea
       </div>
       <div className="grid grid-cols-2 gap-2">
         {rows.map(([label, value]) => (
-          <div key={label} className="rounded-xl bg-ds-main/60 px-3 py-2">
+          <div key={label} className="rounded-xl bg-ds-subtle px-3 py-2">
             <div className="text-[11px] text-ds-faint">{label}</div>
             <div className="mt-1 text-[13px] font-medium tabular-nums text-ds-ink">{formatTokenCount(value)}</div>
           </div>
@@ -280,7 +280,7 @@ function McpPanel({ runtimeReady }: { runtimeReady: boolean }): ReactElement {
   return (
     <div className="space-y-3">
       {servers.map((server) => (
-        <button key={server.id} type="button" onClick={() => void toggle(server.id, !server.enabled)} className="flex w-full items-center justify-between rounded-xl bg-ds-main/60 px-3 py-3 text-left">
+        <button key={server.id} type="button" onClick={() => void toggle(server.id, !server.enabled)} className="flex w-full items-center justify-between rounded-xl bg-ds-subtle px-3 py-3 text-left">
           <span className="min-w-0"><span className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><Plug className="h-4 w-4" />{server.id}</span><span className="mt-1 block truncate font-mono text-[10px] text-ds-faint">{server.summary}</span></span>
           <span className={server.enabled ? 'text-emerald-600' : 'text-ds-faint'}>{server.enabled ? 'On' : 'Off'}</span>
         </button>
@@ -326,7 +326,7 @@ function SkillsPanel({
           key={skill.name}
           type="button"
           onClick={() => pick(skill.name)}
-          className="block w-full rounded-xl bg-ds-main/60 px-3 py-2.5 text-left transition hover:bg-ds-hover"
+          className="block w-full rounded-xl bg-ds-subtle px-3 py-2.5 text-left transition hover:bg-ds-hover"
         >
           <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><Package className="h-4 w-4" />{skill.name}</div>
           {skill.description ? <div className="mt-1 text-[11px] text-ds-faint">{skill.description}</div> : null}
@@ -345,7 +345,7 @@ function DiffPanel({ blocks, onOpenDiff }: { blocks: ChatBlock[]; onOpenDiff: ()
   return (
     <div className="space-y-3">
       {changes.map((change) => (
-        <div key={change.id} className="flex items-center justify-between rounded-xl bg-ds-main/60 px-3 py-2.5">
+        <div key={change.id} className="flex items-center justify-between rounded-xl bg-ds-subtle px-3 py-2.5">
           <span className="flex min-w-0 items-center gap-2 truncate text-[12px] text-ds-ink">
             {change.path ? (
               <FileChip path={change.path} variant="list" skipValidation />
@@ -368,7 +368,7 @@ function ForkPanel({ activeThread, busy, runtimeReady, onFork, onClose }: Props)
   const [working, setWorking] = useState(false)
   return (
     <div className="space-y-4">
-      <div className="rounded-xl bg-ds-main/60 px-3 py-3">
+      <div className="rounded-xl bg-ds-subtle px-3 py-3">
         <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><GitFork className="h-4 w-4" />{activeThread?.title ?? 'No active thread'}</div>
         {activeThread ? <div className="mt-1 text-[11px] text-ds-faint">{activeThread.model}</div> : null}
       </div>
@@ -393,7 +393,7 @@ function HooksPanel(): ReactElement {
   }, [])
   return (
     <div className="space-y-3">
-      <div className="rounded-xl bg-ds-main/60 px-3 py-3">
+      <div className="rounded-xl bg-ds-subtle px-3 py-3">
         <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><Settings2 className="h-4 w-4" />Hooks configuration</div>
         <div className="mt-2 break-all font-mono text-[10px] text-ds-faint">{paths?.configPath ?? 'Loading…'} · [hooks]</div>
         <div className="mt-1 break-all font-mono text-[10px] text-ds-faint">{paths?.hooksDir ?? ''}</div>

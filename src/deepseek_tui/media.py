@@ -19,6 +19,8 @@ from deepseek_tui.config.paths import user_media_dir
 from deepseek_tui.protocol.messages import ImageBlock, Message, ToolResultBlock
 
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
+# Raw bytes whose base64 stays within the strictest common per-image limit (5 MiB).
+CUA_RAW_IMAGE_BYTES = 5 * 1024 * 1024 * 3 // 4
 MAX_IMAGE_PIXELS = 40_000_000
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"})
 
@@ -120,8 +122,11 @@ def _encode_image_data_url(block: ImageBlock, *, max_side: int = 2048) -> str:
         raise ValueError(f"Stored image failed integrity check: {block.asset_id}")
     image = _decode(data)
     if (block.source or {}).get("kind") == "cua" and block.crop is None:
-        # CUA screenshots are already encoded by the runtime. Preserve exact pixels/bytes.
-        return f"data:{block.mime_type};base64," + base64.b64encode(data).decode("ascii")
+        # CUA screenshots are already encoded by the runtime. Preserve exact pixels/bytes
+        # unless a provider's per-image limit would reject them; the re-encoding below
+        # keeps the pixel size (image_data_url disables downscaling for CUA).
+        if len(data) <= CUA_RAW_IMAGE_BYTES:
+            return f"data:{block.mime_type};base64," + base64.b64encode(data).decode("ascii")
     # Browser captures are already bounded JPEGs; PNG would inflate their wire size.
     if (block.mime_type == "image/jpeg" and block.crop is None
             and max(image.size) <= max_side and len(data) <= 2 * 1024 * 1024):
