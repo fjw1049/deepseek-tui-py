@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import type { CSSProperties, ReactElement } from 'react'
 import claudeSvg from '../../assets/provider-icons/claude.svg?raw'
 import codebuddySvg from '../../assets/provider-icons/codebuddy.svg?raw'
 import cursorSvg from '../../assets/provider-icons/cursor.svg?raw'
@@ -45,20 +45,33 @@ export function SkillSourceIcon({ path, size = 40 }: Props): ReactElement {
   )
 }
 
-export function skillSourceTileSize(count: number): number {
-  if (count <= 1) return 40
-  if (count === 2) return 28
-  if (count <= 4) return 26
-  return 20
-}
-
 export function SkillSourceStack({ paths }: { paths: readonly string[] }): ReactElement {
-  const shown = paths.slice(0, 6)
+  const count = paths.length
+  const size = count <= 1 ? 40 : 32
+  const halfAngle = Math.min(18, Math.max(0, count - 1) * 5)
   return (
-    <span className="ds-skill-source-stack" data-count={shown.length}>
-      {shown.map((filePath, index) => (
-        <span key={`${filePath}:${index}`} className="ds-skill-source-stack__tile">
-          <SkillSourceIcon path={filePath} size={skillSourceTileSize(shown.length)} />
+    <span
+      className="ds-skill-source-stack"
+      data-count={count}
+      style={{
+        '--source-count': count,
+        '--source-half-angle': `${halfAngle}deg`,
+        '--source-spread': `${size + 128 * Math.sin(halfAngle * Math.PI / 180)}px`,
+        '--source-size': `${size}px`
+      } as CSSProperties}
+      aria-hidden
+      title=""
+    >
+      {paths.map((filePath, index) => (
+        <span
+          key={`${filePath}:${index}`}
+          className="ds-skill-source-stack__tile"
+          style={{
+            '--source-index': index,
+            '--source-angle': `${count <= 1 ? 0 : -halfAngle + index * 2 * halfAngle / (count - 1)}deg`
+          } as CSSProperties}
+        >
+          <SkillSourceIcon path={filePath} size={size} />
         </span>
       ))}
     </span>

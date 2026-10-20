@@ -10150,111 +10150,75 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   width: 40px;
   height: 40px;
   flex-shrink: 0;
+  isolation: isolate;
+  transition: width 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Invisible hit area keeps the cluster open while crossing gaps between icons. */
+.ds-skill-source-stack::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -10px;
+  width: var(--source-spread);
+  height: 54px;
+  pointer-events: none;
 }
 
 .ds-skill-source-stack__tile {
+  --source-x: calc(64px * (sin(var(--source-angle)) + sin(var(--source-half-angle))));
+  --source-y: calc(64px * (cos(var(--source-half-angle)) - cos(var(--source-angle))));
   position: absolute;
+  top: calc((40px - var(--source-size)) / 2);
+  left: 0;
+  z-index: calc(var(--source-count) - var(--source-index));
+  transform-origin: 50% 50%;
+  transform: translateX(calc(var(--source-index) * 8px / max(1, var(--source-count) - 1)))
+    rotate(calc(var(--source-index) * 3deg));
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .ds-skill-source-stack[data-count='1'] .ds-skill-source-stack__tile {
-  inset: 0;
+  transform: none;
 }
 
-/* 2: half-overlap row, same silhouette as before. */
-.ds-skill-source-stack[data-count='2'] .ds-skill-source-stack__tile:nth-child(1) {
-  top: 6px;
-  left: 0;
+.ds-skill-row:has(.ds-skill-source-stack:hover),
+.ds-skill-row:focus-within {
+  position: relative;
   z-index: 2;
 }
 
-.ds-skill-source-stack[data-count='2'] .ds-skill-source-stack__tile:nth-child(2) {
-  top: 6px;
-  left: 14px;
-  z-index: 1;
-}
-
-/* 3–4: 2×2 square, each tile covers half of its neighbor. */
-.ds-skill-source-stack[data-count='3'] .ds-skill-source-stack__tile:nth-child(1),
-.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(1) {
-  top: 0;
-  left: 0;
-  z-index: 4;
-}
-
-.ds-skill-source-stack[data-count='3'] .ds-skill-source-stack__tile:nth-child(2),
-.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(2) {
-  top: 0;
-  left: 13px;
-  z-index: 3;
-}
-
-.ds-skill-source-stack[data-count='3'] .ds-skill-source-stack__tile:nth-child(3),
-.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(3) {
-  top: 13px;
-  left: 0;
+.ds-skill-source-stack:not([data-count='1']):is(:hover, .ds-skill-row:focus-within > *) {
+  width: var(--source-spread);
   z-index: 2;
 }
 
-.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(4) {
-  top: 13px;
-  left: 13px;
-  z-index: 1;
+.ds-skill-source-stack:not([data-count='1']):is(:hover, .ds-skill-row:focus-within > *)::before {
+  pointer-events: auto;
 }
 
-/* 5–6: 3×2 square, same half-overlap step. */
-.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(1),
-.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(1) {
-  top: 5px;
-  left: 0;
-  z-index: 6;
+.ds-skill-source-stack:not([data-count='1']):is(:hover, .ds-skill-row:focus-within > *) .ds-skill-source-stack__tile {
+  transform: translate(var(--source-x), var(--source-y)) rotate(var(--source-angle));
 }
 
-.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(2),
-.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(2) {
-  top: 5px;
-  left: 10px;
-  z-index: 5;
+.ds-skill-source-stack:not([data-count='1']):hover .ds-skill-source-stack__tile:hover {
+  z-index: 10;
+  transform: translate(var(--source-x), calc(var(--source-y) - 5px)) scale(1.12);
 }
 
-.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(3),
-.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(3) {
-  top: 5px;
-  left: 20px;
-  z-index: 4;
-}
-
-.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(4),
-.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(4) {
-  top: 15px;
-  left: 0;
-  z-index: 3;
-}
-
-.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(5),
-.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(5) {
-  top: 15px;
-  left: 10px;
-  z-index: 2;
-}
-
-.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(6) {
-  top: 15px;
-  left: 20px;
-  z-index: 1;
-}
-
-.ds-skill-source-stack[data-count='2'] .ds-skill-brand {
+.ds-skill-source-stack:not([data-count='1']) .ds-skill-brand {
   border-radius: 8px;
 }
 
-.ds-skill-source-stack[data-count='3'] .ds-skill-brand,
-.ds-skill-source-stack[data-count='4'] .ds-skill-brand {
-  border-radius: 7px;
-}
+@media (prefers-reduced-motion: reduce) {
+  .ds-skill-source-stack,
+  .ds-skill-source-stack__tile {
+    transition: none;
+  }
 
-.ds-skill-source-stack[data-count='5'] .ds-skill-brand,
-.ds-skill-source-stack[data-count='6'] .ds-skill-brand {
-  border-radius: 6px;
+  .ds-skill-source-stack:not([data-count='1']):hover .ds-skill-source-stack__tile:hover {
+    transform: translate(var(--source-x), var(--source-y)) rotate(var(--source-angle));
+  }
 }
 
 .ds-skill-brand {

@@ -146,7 +146,7 @@ function SkillRow({
         }
       }}
       title={t('skillPreviewHint')}
-      className="group flex cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70 focus:bg-ds-subtle/50 focus:outline-none"
+      className="ds-skill-row group flex cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70 focus:bg-ds-subtle/50 focus:outline-none"
     >
       <SkillSourceStack paths={sourcePaths} />
       <div className="min-w-0 flex-1">
