@@ -247,6 +247,8 @@ const SUBAGENT_LIVE_TEXT_MAX_CHARS = 8_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
 const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
+const stoppedQueues = new Set<string>()
+const sendingQueuedNow = new Set<string>()
 /** >0 while sendMessage owns the stream lifecycle (between abort and re-subscribe). */
 let sendsAwaitingSubscription = 0
 /** In-flight approval decisions — prevents double-submit before status flips. */
@@ -522,7 +524,9 @@ async function reloadActiveThreadBlocks(
       blocks,
       get().busy
     )
-    if (get().activeThreadId !== threadId) return
+    if (get().activeThreadId !== threadId ||
+        get().currentTurnUserId !== state.currentTurnUserId ||
+        get().lastSeq > latestSeq) return
     set((s) => ({
       // Same thread: keep unchanged block objects so settled turns stay memoised
       // instead of the whole transcript re-rendering after every turn.
@@ -1516,6 +1520,7 @@ function buildThreadEventSink(
       })
     },
     onTurnComplete: (payload) => {
+      if (payload?.turnId && get().currentTurnId && payload.turnId !== get().currentTurnId) return
       clearTurnCompletionProbe()
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
@@ -2522,15 +2527,32 @@ const store = create<ChatState>((set, get) => ({
   drainQueuedMessages: async () => {
     if (drainingQueuedMessages) return
     drainingQueuedMessages = true
+    const threadId = get().activeThreadId
     try {
       while (true) {
         const state = get()
         const next = state.queuedMessages[0]
+        if (disposed || state.activeThreadId !== threadId || (threadId && stoppedQueues.has(threadId))) return
         if (!next || state.busy || state.blocks.some(hasPendingRuntimeWork)) return
+        const provider = getProvider(state.providerId)
+        if (threadId && provider.isThreadTurnActive) {
+          // Cancellation acknowledgement and turn.completed can precede runtime teardown.
+          const active = await provider.isThreadTurnActive(threadId)
+          if (active) {
+            await new Promise(resolve => setTimeout(resolve, 250))
+            continue
+          }
+          const current = get()
+          if (disposed || current.activeThreadId !== threadId || stoppedQueues.has(threadId)) return
+          if (current.busy || current.blocks.some(hasPendingRuntimeWork)) return
+          if (current.queuedMessages[0]?.id !== next.id) continue
+        }
         const started = await get().sendMessage(next.text, next.mode, { queued: next })
         if (!started) return
         if (get().queuedMessages[0]?.id === next.id) return
       }
+    } catch (e) {
+      if (!disposed && get().activeThreadId === threadId) set({ error: formatRuntimeError(e) })
     } finally {
       drainingQueuedMessages = false
     }
@@ -2551,16 +2573,24 @@ const store = create<ChatState>((set, get) => ({
   },
 
   sendQueuedMessageNow: async (id) => {
+    const threadId = get().activeThreadId
+    if (!threadId || sendingQueuedNow.has(threadId)) return
     const reordered = moveQueuedMessageToFront(get().queuedMessages, id)
     if (!reordered) return
     set({ queuedMessages: reordered })
-    const { busy, currentTurnId, blocks } = get()
-    const hasPending = blocks.some(hasPendingRuntimeWork)
-    if (busy || currentTurnId || hasPending) {
-      await get().interrupt()
-    }
-    if (!get().busy && !get().blocks.some(hasPendingRuntimeWork)) {
-      void get().drainQueuedMessages()
+    sendingQueuedNow.add(threadId)
+    try {
+      const { busy, currentTurnId, blocks } = get()
+      if (busy || currentTurnId || blocks.some(hasPendingRuntimeWork)) {
+        await get().interrupt()
+      }
+      if (disposed || get().activeThreadId !== threadId) return
+      if (!get().busy && !get().blocks.some(hasPendingRuntimeWork)) {
+        stoppedQueues.delete(threadId)
+        await get().drainQueuedMessages()
+      }
+    } finally {
+      sendingQueuedNow.delete(threadId)
     }
   },
 
@@ -2661,6 +2691,7 @@ const store = create<ChatState>((set, get) => ({
     if (wantsGoalCreate) {
       return get().applyGoalCommand(trimmedText)
     }
+    if (!overrides?.queued && get().activeThreadId) stoppedQueues.delete(get().activeThreadId!)
     const now = Date.now()
     const queued = overrides?.queued
     const userBlockId = queued?.id ?? `u-${now}`
@@ -3899,6 +3930,7 @@ const store = create<ChatState>((set, get) => ({
   interrupt: async () => {
     const { activeThreadId, currentTurnId, providerId } = get()
     if (!activeThreadId) return
+    stoppedQueues.add(activeThreadId)
 
     const settleInterrupted = (s: ChatState): Partial<ChatState> => {
       const flushed = flushLiveBlocks(s, {
@@ -3930,9 +3962,13 @@ const store = create<ChatState>((set, get) => ({
     const p = getProvider(providerId)
     try {
       await p.interruptTurn(activeThreadId, currentTurnId)
+      if (get().activeThreadId !== activeThreadId ||
+          (get().currentTurnId && get().currentTurnId !== currentTurnId)) return
       clearBusyWatchdog()
       set((s) => settleInterrupted(s))
     } catch (e) {
+      if (get().activeThreadId !== activeThreadId ||
+          (get().currentTurnId && get().currentTurnId !== currentTurnId)) return
       const msg = formatRuntimeError(e)
       void window.dsGui.logError('interrupt', 'Failed to interrupt turn', { message: msg })
       // If the turn is already gone (409 turn_not_active), clear busy state

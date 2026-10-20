@@ -775,6 +775,10 @@ class RuntimeThreadManager:
 
     async def is_thread_turn_active(self, thread_id: str) -> bool:
         """Lightweight running check for background turn-completion polling."""
+        # Terminal events precede teardown; a new turn still cannot claim this lease.
+        async with self._thread_lease_guard:
+            if thread_id in self._thread_leases:
+                return True
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is not None and state.active_turn is not None:
