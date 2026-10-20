@@ -8877,6 +8877,18 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 /* ── Extensions pages (plugins / skills / connectors) ─────────────────────── */
+:root:not([data-theme='dark']) :is(.ds-plugin-page, .ds-automation-page, .ds-channel-page) {
+  --ds-surface-card: #ffffff;
+  --ds-card: #ffffff;
+  --ds-material-card: #ffffff;
+  --ds-material-card-hover: #ffffff;
+  --ds-material-control: #ffffff;
+}
+
+[data-theme='dark'] .ds-plugin-page input.ds-ext-search {
+  background-color: transparent;
+}
+
 .ds-ext-primary-action:active:not(:disabled) {
   transform: scale(0.97);
   transition: transform 80ms ease-out, filter 0ms;

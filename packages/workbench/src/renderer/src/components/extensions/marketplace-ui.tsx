@@ -27,16 +27,16 @@ export function MarketplaceKindSwitch({
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
-    <div role="group" aria-label={t('extensions')} className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-ds-subtle/60 p-1">
+    <div role="group" aria-label={t('extensions')} className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-ds-card p-1">
       {KIND_ITEMS.map((item) => (
         <button
           key={item.value}
           type="button"
           aria-pressed={item.value === value}
           onClick={() => onChange(item.value)}
-          className={`rounded-lg px-4 py-2 text-[13px] font-medium transition-colors ${
+          className={`relative rounded-lg px-4 py-2 text-[13px] font-medium transition-colors ${
             item.value === value
-              ? 'bg-ds-card text-ds-ink shadow-sm'
+              ? 'bg-ds-card text-ds-ink shadow-sm after:absolute after:bottom-1 after:left-1/2 after:h-0.5 after:w-5 after:-translate-x-1/2 after:rounded-full after:bg-current'
               : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
           }`}
         >

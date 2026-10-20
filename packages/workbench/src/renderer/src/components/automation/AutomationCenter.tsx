@@ -540,7 +540,7 @@ export function AutomationCenter({
               <div className="mb-5 flex flex-wrap items-center gap-2">
                 <label className="relative flex min-w-[240px] flex-1 items-center">
                   <Search
-                    className="pointer-events-none absolute left-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-faint"
+                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-faint"
                     strokeWidth={2}
                     aria-hidden
                   />
@@ -548,7 +548,7 @@ export function AutomationCenter({
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={t('automationSearchTasks')}
-                    className="min-w-0 w-full bg-transparent py-2 pl-6 text-[13px] text-ds-ink outline-none placeholder:text-ds-faint"
+                    className="min-w-0 w-full rounded-lg border border-ds-border bg-ds-card py-2 pl-9 pr-3 text-[13px] text-ds-ink outline-none placeholder:text-ds-faint"
                   />
                 </label>
                 <SettingsSelect
