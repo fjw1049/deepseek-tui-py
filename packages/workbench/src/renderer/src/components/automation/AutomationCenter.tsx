@@ -484,7 +484,7 @@ export function AutomationCenter({
             className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-[12px] ${
               notice
                   ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
-                  : 'bg-amber-50/80 text-amber-800 dark:bg-amber-950/20 dark:text-amber-200'
+                  : 'bg-blue-50 text-blue-700 dark:bg-blue-950/20 dark:text-blue-300'
             }`}
           >
             <Info className="h-3.5 w-3.5 shrink-0" />

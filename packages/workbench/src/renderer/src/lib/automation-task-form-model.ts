@@ -1,6 +1,6 @@
 import type { AutomationStatus, CreateAutomationInput } from './automation-runtime-client'
 
-export type AutomationScheduleKind = 'once' | 'hourly' | 'daily' | 'weekly' | 'custom'
+export type AutomationScheduleKind = 'once' | 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'custom'
 export type AutomationDeliveryMode = 'none' | 'feishu' | 'wecom' | 'email'
 /** Cron day-of-week tokens. */
 export type WeekdayToken = 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN'
@@ -32,6 +32,35 @@ export type AutomationSchedulePayload = {
   /** null for a one-shot job, which carries run_at instead. */
   schedule: string | null
   run_at?: string | null
+}
+
+/** Recognize only schedules that the simple controls can reproduce exactly. */
+export function restoreAutomationSchedule(cron: string | null): AutomationScheduleDraft {
+  const draft: AutomationScheduleDraft = {
+    kind: cron ? 'custom' : 'once', onceAt: '', everyHours: '1',
+    timeOfDay: '09:00', weekdays: ['MON', 'TUE', 'WED', 'THU', 'FRI'], customCron: cron ?? ''
+  }
+  if (!cron) return draft
+  const [minute, hour, day, month, weekday, extra] = cron.trim().split(/\s+/)
+  if (extra || day !== '*' || month !== '*') return draft
+  if (minute === '0' && weekday === '*') {
+    const interval = hour === '*' ? 1 : /^\*\/\d+$/.test(hour) ? Number(hour.slice(2)) : 0
+    if (interval >= 1 && interval <= 12 && 24 % interval === 0) {
+      return { ...draft, kind: 'hourly', everyHours: String(interval) }
+    }
+  }
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour) || Number(minute) > 59 || Number(hour) > 23) return draft
+  const timeOfDay = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`
+  if (weekday === '*') return { ...draft, kind: 'daily', timeOfDay }
+  if (weekday === '1-5' || weekday?.toUpperCase() === 'MON-FRI' || weekday?.toUpperCase() === 'MON,TUE,WED,THU,FRI') {
+    return { ...draft, kind: 'weekdays', timeOfDay }
+  }
+  const numericDays = ['SUN', ...ALL_WEEKDAYS]
+  const days = (weekday?.toUpperCase().split(',') ?? []).map(day => /^\d$/.test(day) ? numericDays[Number(day)] ?? day : day)
+  if (days.length && days.every(day => ALL_WEEKDAYS.includes(day as WeekdayToken))) {
+    return { ...draft, kind: 'weekly', timeOfDay, weekdays: days as WeekdayToken[] }
+  }
+  return draft
 }
 
 function parseTimeOfDay(value: string): { hour: number; minute: number } {
@@ -70,6 +99,11 @@ export function buildAutomationSchedulePayload(
   if (schedule.kind === 'daily') {
     const { hour, minute } = parseTimeOfDay(schedule.timeOfDay)
     return { schedule: `${minute} ${hour} * * *` }
+  }
+
+  if (schedule.kind === 'weekdays') {
+    const { hour, minute } = parseTimeOfDay(schedule.timeOfDay)
+    return { schedule: `${minute} ${hour} * * MON,TUE,WED,THU,FRI` }
   }
 
   if (schedule.kind === 'weekly') {

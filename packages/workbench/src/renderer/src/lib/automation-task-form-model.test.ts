@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildAutomationSchedulePayload,
   buildCreateAutomationInput,
+  restoreAutomationSchedule,
   deriveAutomationName
 } from './automation-task-form-model'
 
@@ -157,4 +158,31 @@ describe('automation task form model', () => {
   it('truncates derived names', () => {
     expect(deriveAutomationName('a'.repeat(60))).toBe(`${'a'.repeat(45)}...`)
   })
+})
+
+
+describe('restoreAutomationSchedule', () => {
+  it.each([
+    ['0 10 * * *', 'daily', '10:00', '1'],
+    ['30 9 * * MON,FRI', 'weekly', '09:30', '1'],
+    ['0 */3 * * *', 'hourly', '09:00', '3'],
+    ['0 * * * *', 'hourly', '09:00', '1']
+  ])('restores %s to editable controls without changing its meaning', (cron, kind, timeOfDay, everyHours) => {
+    const draft = restoreAutomationSchedule(cron)
+    expect(draft).toMatchObject({ kind, timeOfDay, everyHours })
+    expect(buildAutomationSchedulePayload(draft).schedule).toBe(cron)
+  })
+  it.each(['0 */5 * * *', '30 9 1 * *', '0 25 * * *'])('keeps unsupported schedules intact: %s', cron => {
+    expect(restoreAutomationSchedule(cron)).toMatchObject({ kind: 'custom', customCron: cron })
+  })
+})
+
+
+it.each(['0 9 * * 1-5', '0 9 * * MON-FRI', '0 9 * * MON,TUE,WED,THU,FRI'])('restores weekdays as a common frequency: %s', cron => {
+  const draft = restoreAutomationSchedule(cron)
+  expect(draft).toMatchObject({ kind: 'weekdays', timeOfDay: '09:00' })
+  expect(buildAutomationSchedulePayload(draft).schedule).toBe('0 9 * * MON,TUE,WED,THU,FRI')
+})
+it.each([['0 9 * * 1,5', ['MON', 'FRI']], ['0 9 * * 0,6', ['SUN', 'SAT']], ['0 9 * * 7', ['SUN']]])('restores numeric weekday selections: %s', (cron, weekdays) => {
+  expect(restoreAutomationSchedule(cron as string)).toMatchObject({ kind: 'weekly', weekdays })
 })
