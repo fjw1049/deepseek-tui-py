@@ -1,0 +1,32 @@
+import { appendFileSync } from 'node:fs';
+import { join } from 'node:path';
+export function createCuaClient({ cwd, onElicitation }) {
+  const record = event => appendFileSync(join(cwd, 'calls.jsonl'), JSON.stringify(event) + '\n');
+  return {
+    instructions: 'Original fixture instructions. Keep all of this.',
+    async connect() {},
+    publicTools() { return ['js', 'js_reset'].map(name => ({ name, description: `Original ${name}`,
+      inputSchema: { type: 'object', properties: { code: { type: 'string' } } } })); },
+    async call(name, args, context) {
+      record({ name, args, session: context.sessionId, turn: context.turnId, call: context.toolCallId,
+        hostTurn: context.metadata?.['deepseek/host-turn-id'] });
+      if (args.code === 'approve') {
+        const response = await onElicitation({ mode: 'form', message: 'Allow fixture?',
+          requestedSchema: { type: 'object', properties: {} },
+          _meta: { connector_id: 'computer-use', tool_params: { app: 'dev.fixture' }, persist: ['session'] },
+        }, { signal: context.signal });
+        return { content: [{ type: 'text', text: JSON.stringify(response) }], isError: response.action !== 'accept' };
+      }
+      if (args.code === 'hang') {
+        await new Promise((resolve, reject) => {
+          if (context.signal.aborted) { reject(new Error('aborted')); return; }
+          context.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      }
+      if (args.code === 'crash') process.exit(8);
+      return { content: [{ type: 'text', text: args.code ?? 'reset' }], isError: args.code === 'error' };
+    },
+    async turnEnded(context) { record({ end: context }); return {}; },
+    async close() { record({ close: true }); },
+  };
+}

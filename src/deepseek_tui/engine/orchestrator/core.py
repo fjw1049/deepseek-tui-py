@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
+from deepseek_tui.cua.engine import CuaEngineMixin
 from deepseek_tui.engine.capacity import (
     CompactionConfig,
     should_compact,
@@ -246,7 +247,7 @@ def _format_process_done(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
+class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     def __init__(
         self,
         handle: EngineHandle,
@@ -1077,6 +1078,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         trace = get_turn_latency(str(turn_id)) if turn_id else None
         build_start = now_ms() if trace is not None else None
 
+        await self._prepare_cua()
         native_tools = self.tool_registry.to_api_tools()
         mcp = self.mcp_manager
         profile = self.tool_profile or TOOL_PROFILE_FULL
@@ -1464,6 +1466,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     async def shutdown_session(self) -> None:
         """Release all owned resources, even when one release fails."""
         async with AsyncExitStack() as cleanup:
+            cleanup.push_async_callback(self._close_cua)
             if self.handle.hooks is not None:
                 cleanup.push_async_callback(self.handle.hooks.close)
             cleanup.push_async_callback(self.hook_executor.close)
@@ -2502,6 +2505,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if not result.cancelled:
                 self._user_turn_index += 1
         finally:
+            await self._finish_cua_turn()
             self._active_context_messages = None
             if goal_deadline_task is not None:
                 goal_deadline_task.cancel()
@@ -3156,6 +3160,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         )
 
         task_catalog = await self._get_tools_with_mcp()
+        system_prompt += self._cua_prompt()
         delivery = TaskDelivery(catalog={(t.get("function") or t)["name"] for t in task_catalog})
         self.tool_context.metadata["task_delivery"] = delivery
         tools = delivery.tools(task_catalog)

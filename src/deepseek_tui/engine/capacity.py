@@ -843,6 +843,14 @@ def prune_old_tool_results(
         if msg_changed:
             messages[i] = msg.model_copy(update={"content": new_blocks})
             changed += 1
+    if changed:
+        from deepseek_tui.protocol.messages import ToolUseBlock
+
+        if any(isinstance(block, ToolUseBlock) and block.name in {"cua_js", "cua_js_reset"}
+               for message in messages for block in message.content):
+            from deepseek_tui.cua.tools import add_documentation_reminder
+
+            add_documentation_reminder(messages)
     return changed
 
 

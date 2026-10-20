@@ -966,7 +966,16 @@ class ToolExecutionMixin:
 
         self._check_human_intervention()
         with self.handle.pause.tool_execution():
-            return await self.tool_registry.execute(tool_name, arguments, execution_context)
+            session = getattr(self, "_cua_session", None)
+            handed_off = tool_name == "agent" and session is not None and await session.handoff()
+            result = await self.tool_registry.execute(tool_name, arguments, execution_context)
+            if handed_off:
+                from dataclasses import replace
+                from deepseek_tui.cua.tools import HANDOFF_NOTICE
+
+                result = replace(result, content=result.content + "\n\n" + HANDOFF_NOTICE)
+                session.reset_reason = ""
+            return result
 
     async def _handle_approval_flow(
         self,

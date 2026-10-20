@@ -38,6 +38,12 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+class CuaConfig(BaseModel):
+    enabled: bool = False
+    installation: Path = Field(default_factory=lambda: Path.home() / ".local/share/lcu/current")
+    chrome: bool = False
+
+
 class ProviderConfig(BaseModel):
     protocol: Literal["openai", "anthropic"] | None = None
     # Anthropic Messages API block-level prompt caching. Disabled by default
@@ -69,6 +75,7 @@ class ProviderConfig(BaseModel):
     image_input: bool | None = None
     image_models: dict[str, bool] = Field(default_factory=dict)
     image_max_side: int = Field(default=2048, ge=512, le=8192)
+    image_detail_original: bool = False
     image_request_bytes: int = Field(default=20 * 1024 * 1024, ge=1024 * 1024)
 
 
@@ -362,6 +369,7 @@ class Config(BaseModel):
     # Cycle archive-and-replan, consumed by ``Engine.create``.
     cycle_enabled: bool = True
     vision: VisionConfig = Field(default_factory=VisionConfig)
+    cua: CuaConfig = Field(default_factory=CuaConfig)
 
     @model_validator(mode="before")
     @classmethod

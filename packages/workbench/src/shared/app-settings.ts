@@ -478,6 +478,8 @@ export type AppSettingsV1 = {
   defaultLlmProviderId: BuiltinLlmProviderId
   /** Provider-qualified native vision helper for text-only models. */
   visionModel?: string
+  cuaEnabled?: boolean
+  cuaChrome?: boolean
   /** Per-vendor API keys + models (built-in catalogue only). */
   llmProviders: Record<BuiltinLlmProviderId, LlmProviderConfigV1>
   customEndpoints: CustomEndpointV1[]
@@ -1447,6 +1449,8 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     iconAnimation: maybeSettings.iconAnimation === true,
     deepseek: llm.deepseek,
     defaultLlmProviderId: llm.defaultLlmProviderId,
+    cuaEnabled: typeof settings.cuaEnabled === 'boolean' ? settings.cuaEnabled : undefined,
+    cuaChrome: typeof settings.cuaChrome === 'boolean' ? settings.cuaChrome : undefined,
     visionModel: typeof settings.visionModel === 'string' ? settings.visionModel.trim() : undefined,
     llmProviders: llm.llmProviders,
     network: normalizeNetworkSettings(settings.network),

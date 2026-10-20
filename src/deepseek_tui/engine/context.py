@@ -250,6 +250,8 @@ def compact_tool_result_for_context(
 ) -> str:
     """Compact a tool result before inserting into the model transcript."""
     raw = output.content.strip()
+    if output.metadata.get("cua_runtime_content"):
+        return raw
     if tool_name == "browser_use" and isinstance((output.metadata or {}).get("browser"), dict):
         from deepseek_tui.browser.context import project_result
 

@@ -61,7 +61,7 @@ class ImageBlock(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     byte_size: int = Field(gt=0)
-    detail: Literal["auto", "low", "high"] = "auto"
+    detail: Literal["auto", "low", "high", "original"] = "auto"
     crop: tuple[int, int, int, int] | None = None
     source: dict[str, Any] | None = None
 

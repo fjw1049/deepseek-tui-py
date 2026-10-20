@@ -539,7 +539,7 @@ def apply_spillover(result: ToolResult, tool_id: str) -> ToolResult:
     Failures are logged
     and the original result is returned unchanged.
     """
-    if not result.success:
+    if not result.success or result.metadata.get("cua_runtime_content"):
         return result
     content = result.content or ""
     if len(content.encode("utf-8")) <= SPILLOVER_THRESHOLD_BYTES:

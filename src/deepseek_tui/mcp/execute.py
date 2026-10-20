@@ -48,7 +48,12 @@ def mcp_response_to_tool_result(
             if not isinstance(encoded, str) or len(encoded) > (MAX_IMAGE_BYTES * 4 // 3 + 4):
                 raise ToolError("MCP image exceeds the supported image size")
             try:
-                images.append(import_image(base64.b64decode(encoded, validate=True)))
+                image = import_image(base64.b64decode(encoded, validate=True))
+                meta = block.get("_meta")
+                detail = meta.get("codex/imageDetail") if isinstance(meta, dict) else None
+                if isinstance(detail, str) and detail in {"auto", "low", "high", "original"}:
+                    image = image.model_copy(update={"detail": detail})
+                images.append(image)
             except (ValueError, OSError) as exc:
                 raise ToolError(f"MCP image could not be read: {exc}") from exc
         elif (

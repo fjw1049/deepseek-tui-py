@@ -135,12 +135,30 @@ export function deepseekTuiConfigChanged(prev: AppSettingsV1, next: AppSettingsV
     llmProviderConfigChanged(prev, next) ||
     prev.locale !== next.locale ||
     prev.visionModel !== next.visionModel ||
+    prev.cuaEnabled !== next.cuaEnabled ||
+    prev.cuaChrome !== next.cuaChrome ||
     JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints)
   )
 }
 
 export function localeConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
   return prev.locale !== next.locale
+}
+
+async function syncCuaConfig(settings: AppSettingsV1): Promise<void> {
+  if (settings.cuaEnabled === undefined && settings.cuaChrome === undefined) return
+  const configPath = resolveDeepseekConfigPath()
+  let content = ''
+  try {
+    content = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const cua: Record<string, boolean> = {}
+  if (settings.cuaEnabled !== undefined) cua.enabled = settings.cuaEnabled
+  if (settings.cuaChrome !== undefined) cua.chrome = settings.cuaChrome
+  await mkdir(dirname(configPath), { recursive: true })
+  await writeFile(configPath, upsertTomlSections(content, { cua }), 'utf8')
 }
 
 async function syncVisionConfig(settings: AppSettingsV1): Promise<void> {
@@ -431,6 +449,9 @@ export async function syncDeepseekTuiConfig(
     for (const command of commands) {
       await runDeepseekCommand(launcher, command)
     }
+  }
+  if (!previous || previous.cuaEnabled !== settings.cuaEnabled || previous.cuaChrome !== settings.cuaChrome) {
+    await syncCuaConfig(settings)
   }
   if (!previous || previous.visionModel !== settings.visionModel) {
     await syncVisionConfig(settings)

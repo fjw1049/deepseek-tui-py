@@ -28,6 +28,7 @@ def build_chat_messages(
     model: str,
     reasoning_effort: str | None = None,
     image_max_side: int = 2048,
+    image_detail_original: bool = False,
 ) -> list[dict[str, Any]]:
     from deepseek_tui.media import image_data_url
 
@@ -87,7 +88,7 @@ def build_chat_messages(
                                 "type": "image_url",
                                 "image_url": {
                                     "url": image_data_url(b, max_side=image_max_side),
-                                    "detail": b.detail,
+                                    "detail": "high" if b.detail == "original" and not image_detail_original else b.detail,
                                 },
                             }
                         )
@@ -137,7 +138,7 @@ def build_chat_messages(
                                     "type": "image_url",
                                     "image_url": {
                                         "url": image_data_url(img, max_side=image_max_side),
-                                        "detail": img.detail,
+                                        "detail": "high" if img.detail == "original" and not image_detail_original else img.detail,
                                     },
                                 }
                                 for img in block.images

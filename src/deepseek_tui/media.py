@@ -100,6 +100,9 @@ def media_variant_scope() -> Iterator[None]:
 
 
 def image_data_url(block: ImageBlock, *, max_side: int = 2048) -> str:
+    if (block.source or {}).get("kind") == "cua":
+        # Preserve the runtime screenshot coordinate space for grounding.
+        max_side = max(block.width, block.height)
     cache = _wire_variants.get()
     key = (block.asset_id, block.crop, max_side)
     if cache is not None and key in cache:
@@ -116,6 +119,9 @@ def _encode_image_data_url(block: ImageBlock, *, max_side: int = 2048) -> str:
     if hashlib.sha256(data).hexdigest() != block.asset_id:
         raise ValueError(f"Stored image failed integrity check: {block.asset_id}")
     image = _decode(data)
+    if (block.source or {}).get("kind") == "cua" and block.crop is None:
+        # CUA screenshots are already encoded by the runtime. Preserve exact pixels/bytes.
+        return f"data:{block.mime_type};base64," + base64.b64encode(data).decode("ascii")
     # Browser captures are already bounded JPEGs; PNG would inflate their wire size.
     if (block.mime_type == "image/jpeg" and block.crop is None
             and max(image.size) <= max_side and len(data) <= 2 * 1024 * 1024):

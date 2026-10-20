@@ -1,3 +1,4 @@
+import { CuaSettingsPanel } from './CuaSettingsPanel'
 import {
   useCallback,
   useEffect,
@@ -357,6 +358,8 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
         </button>
         </div>
       </div>
+
+      <CuaSettingsPanel form={form} onUpdate={onUpdate} />
 
       {detail?.kind === 'builtin' ? (
         <BuiltinProviderDetailSheet

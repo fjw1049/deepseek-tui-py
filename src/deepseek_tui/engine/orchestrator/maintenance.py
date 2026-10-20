@@ -274,6 +274,10 @@ class SessionMaintenanceMixin:
         self._record_compaction_summary(result.summary_prompt)
         if result.success:
             from deepseek_tui.tools.plan_mode import sync_approved_plan_reminder
+            from deepseek_tui.cua.tools import add_documentation_reminder
+
+            if getattr(self, "_cua_session", None) is not None:
+                add_documentation_reminder(result.messages)
 
             sync_approved_plan_reminder(
                 result.messages,

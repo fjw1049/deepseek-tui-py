@@ -50,3 +50,4 @@ docs/DeepSeek-TUI-main/.claude/
 .claude/
 .ai-tracks/
 docs/*
+!docs/CUA.md

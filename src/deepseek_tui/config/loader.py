@@ -91,6 +91,7 @@ def read_env_overrides(environ: Mapping[str, str] | None = None) -> dict[str, An
 # an indirect bypass of this very filter. Only the pointer is stripped;
 # content of managed/user-designated files remains trusted.
 _PROJECT_SENSITIVE_KEYS = (
+    "cua",
     "approval_policy",
     "sandbox_mode",
     "allow_shell",

@@ -299,6 +299,10 @@ class DeepSeekClient(LLMClient):
                 image_max_side=self.media_config.effective_provider_config().image_max_side
                 if self.media_config
                 else 2048,
+                image_detail_original=bool(
+                    self.media_config
+                    and self.media_config.effective_provider_config().image_detail_original
+                ),
             ),
             "stream": request.stream,
         }

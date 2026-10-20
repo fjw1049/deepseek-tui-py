@@ -265,9 +265,19 @@ async def _execute_subagent_tool(
         if path_approved and path_prompt is not None
         else context
     )
+    if tool_name in {"cua_js", "cua_js_reset"}:
+        context.metadata["cua_call_id"] = tool_call_id
     try:
+        session = context.metadata.get("cua_session")
+        handed_off = tool_name == "agent" and session is not None and await session.handoff()
         with pause.tool_execution() if pause is not None else nullcontext():
             result = await registry.execute(tool_name, tool_input, execution_context)  # type: ignore[arg-type]
+        if handed_off:
+            from dataclasses import replace
+            from deepseek_tui.cua.tools import HANDOFF_NOTICE
+
+            result = replace(result, content=result.content + "\n\n" + HANDOFF_NOTICE)
+            session.reset_reason = ""
         if hook_executor:
             from dataclasses import replace
 
@@ -795,7 +805,19 @@ async def run_subagent_loop(
             )
         )
 
+    cua_session = None
     try:
+        from deepseek_tui.cua.subagent import prepare_subagent_cua
+        from deepseek_tui.cua.tools import HOST_GUIDANCE
+
+        cua_session = await prepare_subagent_cua(
+            agent, runtime, context, registry, effective_tools, cancel,
+        )
+        if cua_session is not None:
+            api_tools = registry.to_api_tools()
+            system_prompt += "\n\n" + HOST_GUIDANCE + "\n\n" + cua_session.instructions
+        elif context.metadata.get("cua_error"):
+            system_prompt += "\n\nComputer use unavailable: " + context.metadata["cua_error"]
         pause_generation_seen = 0
         while steps - attempt_start_steps < DEFAULT_MAX_STEPS:
             pause = getattr(runtime.manager, "parent_pause", None)
@@ -1174,6 +1196,11 @@ async def run_subagent_loop(
         _save_cancel_checkpoint()
         raise
     finally:
+        if cua_session is not None:
+            try:
+                await cua_session.end_turn(interrupted=_subagent_cancelled(cancel, agent))
+            finally:
+                await cua_session.close()
         if runtime.mailbox is not None and saw_usage:
             runtime.mailbox.send(MailboxMessage.token_usage(agent.id, effective_model, usage_totals))
 
