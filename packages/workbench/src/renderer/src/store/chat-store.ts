@@ -3867,7 +3867,7 @@ const store = create<ChatState>((set, get) => ({
 
   resolveUserInput: async (blockId, action) => {
     const { blocks, providerId, activeThreadId: originThreadId } = get()
-    const block = blocks.find((b) => b.id === blockId)
+    const block = blocks.find((b) => b.id === blockId && b.kind === 'user_input')
     if (!block || block.kind !== 'user_input' || block.status !== 'pending') return
     const decisionKey = `${originThreadId}:user_input:${blockId}`
     if (decisionSubmitInFlight.has(decisionKey)) return

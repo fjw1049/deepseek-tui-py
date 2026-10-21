@@ -94,3 +94,31 @@ it('preserves automation metadata for live report delivery', async () => {
   await new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 0, sink, controller.signal)
   expect(sink.onSystemStatus).toHaveBeenCalledWith('## Full report', 'report', undefined, metadata)
 })
+
+it('recognizes host authorization items without a tool payload', async () => {
+  const controller = new AbortController()
+  let emit!: (event: SseEventPayload) => void
+  const id = 'cua-permission-example'
+  const questions = [{ id: 'cua_permission', header: 'Permission', question: 'Allow TextEdit?', options: [{ label: 'Allow once', value: 'once', description: 'This request' }] }]
+  const sink: ThreadEventSink = {
+    onSeq: vi.fn(), onDeltas: vi.fn(), onUserMessage: vi.fn(), onTool: vi.fn(),
+    onApproval: vi.fn(), onUserInput: vi.fn(), onUserInputStatus: vi.fn(), onError: vi.fn(),
+    onTurnComplete: vi.fn(() => controller.abort())
+  }
+  vi.stubGlobal('dsGui', {
+    onSseEvent: (handler: typeof emit) => { emit = handler; return () => {} },
+    onSseEnd: () => () => {}, onSseError: () => () => {}, stopSse: async () => true,
+    startSse: async (_thread: string, _seq: number, streamId: string) => {
+      emit({ streamId, data: { event: 'item.started', payload: { item: {
+        id, kind: 'tool_call', status: 'in_progress', summary: 'request_user_input',
+        detail: JSON.stringify({ questions }), metadata: { tool_call_id: id }
+      } } } })
+      emit({ streamId, data: { event: 'user_input.required', payload: { id, request_id: id, questions } } })
+      emit({ streamId, data: { event: 'turn.completed', payload: { turn: { id: 'turn', thread_id: 'thread', status: 'completed' } } } })
+      return { streamId }
+    }
+  })
+  await new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 0, sink, controller.signal)
+  expect(sink.onTool).not.toHaveBeenCalled()
+  expect(sink.onUserInput).toHaveBeenCalledWith({ itemId: id, requestId: id, questions })
+})

@@ -84,3 +84,15 @@ it('restores an uncertain elevation from the server pending list', async () => {
   await useChatStore.getState().refreshPendingUserInputs()
   expect(useChatStore.getState().blocks[0]).toMatchObject({ status: 'pending', submissionFailed: false })
 })
+
+it('submits an authorization even when a legacy tool row has the same id', async () => {
+  const id = 'cua-permission-example'
+  useChatStore.setState({ blocks: [
+    { kind: 'tool', id, summary: 'request_user_input', status: 'running' },
+    { kind: 'user_input', id, requestId: id, questions: [], status: 'pending' }
+  ] as ChatBlock[] })
+  const answers = [{ id: 'cua_permission', label: 'Allow once', value: 'once' }]
+  await useChatStore.getState().resolveUserInput(id, { kind: 'submit', answers })
+  expect(provider.submitUserInputResponse).toHaveBeenCalledWith(id, answers)
+  expect(useChatStore.getState().blocks[1]).toMatchObject({ status: 'submitted', answers })
+})

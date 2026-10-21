@@ -1816,12 +1816,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 }
                 if (it && TOOL_ITEM_KINDS.has(it.kind)) {
                   const tool = readPayloadTool(payload)
-                  if (tool?.name === REQUEST_USER_INPUT_TOOL) {
-                    const questions = readUserInputQuestions(tool.input)
+                  if (tool?.name === REQUEST_USER_INPUT_TOOL || looksLikeUserInputToolItem(it)) {
+                    const questions = readUserInputQuestions(tool?.input) ?? readUserInputQuestionsFromItem(it)
                     if (questions) {
                       sink.onUserInput({
                         itemId: it.id,
-                        requestId: tool.id ?? it.id,
+                        requestId: tool?.id ?? toolCallIdFromItem(it) ?? it.id,
                         questions
                       })
                       return
