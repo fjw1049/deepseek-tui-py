@@ -69,3 +69,27 @@ it('keeps the toggle locked until the runtime confirms the change', async () => 
     expect(document.body.textContent).toContain('computerUseApplying')
   } finally { await act(async () => root.unmount()) }
 })
+
+it('lists always-allowed apps and revokes only the chosen identity', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const status = JSON.stringify({ supported: true, installed: true, enabled: true })
+  const notes = { name: 'Notes', bundleId: 'com.apple.Notes', installed: true }
+  const runtimeRequest = vi.fn(async (path: string) => ({
+    ok: true,
+    body: path === '/v1/cua/status' ? status
+      : JSON.stringify({ apps: path === '/v1/cua/apps/revoke' ? [] : [notes] })
+  }))
+  Object.assign(window, { dsGui: { platform: 'darwin', setSettings: vi.fn(), runtimeRequest } })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(ComputerUsePluginCard)))
+    await act(async () => host.querySelector('button')!.click())
+    expect(document.body.textContent).toContain('Notes')
+    const revoke = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'computerUseRevoke')!
+    await act(async () => revoke.click())
+    expect(runtimeRequest).toHaveBeenCalledWith('/v1/cua/apps/revoke', 'POST', JSON.stringify({ app: 'com.apple.Notes' }))
+    expect(document.body.textContent).toContain('computerUseApprovedAppsEmpty')
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+  } finally { await act(async () => root.unmount()) }
+})

@@ -772,6 +772,56 @@ async def cua_status(request: Request) -> dict[str, Any]:
     return {"supported": supported, "installed": installed, "enabled": config.enabled}
 
 
+async def _lcu_apps(request: Request, *args: str, timeout: float = 20) -> dict[str, Any]:
+    """Run ``lcu apps`` from the configured installation; never touches the desktop."""
+    from deepseek_tui.cua.session import CuaSession
+    from deepseek_tui.tools.registry import ToolError
+
+    config = runtime_from_request(request).config.cua
+    try:
+        _, _, executable = await asyncio.to_thread(CuaSession._paths, config.installation)
+    except (OSError, ToolError) as exc:
+        raise api_error(409, str(exc), error="cua_unavailable") from exc
+    process = await asyncio.create_subprocess_exec(
+        str(executable), "apps", *args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(process.communicate(), timeout)
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.wait()
+        raise api_error(504, "lcu apps timed out", error="cua_apps_timeout") from exc
+    if process.returncode != 0:
+        message = (err or out).decode(errors="replace").strip() or "lcu apps failed"
+        raise api_error(502, message[:500], error="cua_apps_failed")
+    return {"stdout": out.decode(errors="replace")}
+
+
+@router_mcp.get("/cua/apps")
+async def cua_apps(request: Request) -> dict[str, Any]:
+    """Apps the runtime may always control (its own approval file; no Touch ID needed)."""
+    result = await _lcu_apps(request, "list", "--json")
+    try:
+        apps = json.loads(result["stdout"])["apps"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise api_error(502, "Unexpected lcu apps output", error="cua_apps_failed") from exc
+    keys = ("name", "bundleId", "installed", "risk", "blocked")
+    return {"apps": [{k: app.get(k) for k in keys} for app in apps if isinstance(app, dict)]}
+
+
+@router_mcp.post("/cua/apps/revoke")
+async def cua_apps_revoke(request: Request) -> dict[str, Any]:
+    """Revoke one always-allowed app; LCU itself asks the owner for Touch ID or a password."""
+    app = (await body(request)).get("app")
+    current = await cua_apps(request)
+    # Only identities LCU just listed: never forward free text as command arguments.
+    if not isinstance(app, str) or app not in {a["bundleId"] for a in current["apps"]}:
+        raise api_error(400, "Unknown approved app", error="cua_app_unknown")
+    await _lcu_apps(request, "revoke", app, timeout=180)
+    return await cua_apps(request)
+
+
 @router_mcp.post("/mcp/startup")
 async def mcp_startup(request: Request) -> dict[str, Any]:
     runtime = runtime_from_request(request)

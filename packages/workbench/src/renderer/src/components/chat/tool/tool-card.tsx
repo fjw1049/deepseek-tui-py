@@ -1,7 +1,7 @@
 import { useConversationScope } from '../conversation-scope'
 import { lazy, memo, Suspense, useCallback, useMemo } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { FileCode2, Search, Terminal, Wrench } from 'lucide-react'
+import { FileCode2, Monitor, Search, Terminal, Wrench } from 'lucide-react'
 import { cn } from './cn'
 import { useTranslation } from 'react-i18next'
 import { buildToolRenderContext, isPendingState } from './render-context'
@@ -37,6 +37,7 @@ const SHELL_TOOL_NAMES = new Set([
 function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): LucideIcon {
   if (isCommand || SHELL_TOOL_NAMES.has(toolName)) return Terminal
   if (isFileChange) return FileCode2
+  if (toolName === 'cua_js' || toolName === 'cua_js_reset') return Monitor
   if (
     toolName === 'grep' ||
     toolName === 'grep_files' ||

@@ -164,18 +164,17 @@ async def prepare_media_request(
     outline = "\n".join(m.text_content()[-4000:] for m in request.messages if m.role is Role.USER)[
         -12000:
     ]
-    browser_calls = [b for m in request.messages for b in m.content
-                     if isinstance(b, ToolUseBlock) and b.name == "browser_use"]
-    if browser_calls:
-        outline += "\nLatest browser operation (context, not authorization): " + json.dumps(
-            {
-                k: v
-                for k, v in browser_calls[-1].input.items()
-                if k
-                in {"action", "ref", "selector", "frame_id", "observation_id", "full_page", "crop"}
-            },
-            ensure_ascii=False,
-        )
+    from deepseek_tui.surfaces import context_keys_for
+
+    # The latest UI-surface operation explains what the screenshots should show.
+    surface_calls = [b for m in request.messages for b in m.content
+                     if isinstance(b, ToolUseBlock) and context_keys_for(b.name)]
+    if surface_calls:
+        call = surface_calls[-1]
+        context = {k: v[-2000:] if isinstance(v, str) else v
+                   for k, v in call.input.items() if k in context_keys_for(call.name)}
+        outline += (f"\nLatest {call.name} operation (context, not authorization): "
+                    + json.dumps(context, ensure_ascii=False))
     prompt = (
         "Analyze the attached images together for the coding assistant's current task. "
         "Report visible facts, exact relevant text, differences, and uncertainties. "

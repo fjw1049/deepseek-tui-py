@@ -2,7 +2,14 @@ import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { SquareGrid } from './SquareGrid'
 
-export type TurnActivityKind = 'Waiting' | 'Thinking' | 'Responding' | 'Browser' | 'Tool' | 'User' | 'Subagent'
+export type TurnActivityKind = 'Waiting' | 'Thinking' | 'Responding' | 'Browser' | 'Desktop' | 'Tool' | 'User' | 'Subagent'
+
+/** UI surfaces the agent drives directly (mirrors src/deepseek_tui/surfaces.py), in priority order. */
+const SURFACE_ACTIVITY: ReadonlyArray<[string, TurnActivityKind]> = [
+  ['browser_use', 'Browser'],
+  // The agent is driving the user's real mouse and keyboard: say so plainly.
+  ['cua_js', 'Desktop']
+]
 
 /** Inputs are projections of runtime events, independent of disclosure/content layout. */
 export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUser = false }: {
@@ -22,8 +29,8 @@ export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUse
     return 'Subagent'
   }
   const running = blocks.filter((block) => block.kind === 'tool' && block.status === 'running')
-  if (running.some((block) => block.kind === 'tool' && block.meta?.tool_name === 'browser_use')) {
-    return 'Browser'
+  for (const [toolName, activity] of SURFACE_ACTIVITY) {
+    if (running.some((block) => block.kind === 'tool' && block.meta?.tool_name === toolName)) return activity
   }
   return running.length ? 'Tool' : 'Waiting'
 }

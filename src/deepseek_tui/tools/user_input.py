@@ -87,9 +87,12 @@ class RequestUserInputTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Request information, a decision, or a manual browser action. "
-            "Omit options for a free-text answer. For action, supply reason and surface=browser; "
-            "the existing browser takeover UI pauses the task, without a second question card. "
+            "Request information, a decision, or a manual browser or desktop action. "
+            "Omit options for a free-text answer. For action, supply reason and surface: "
+            "surface=browser uses the existing browser takeover UI, which pauses the task, "
+            "without a second question card; surface=desktop (when computer use is "
+            "available) releases the desktop and asks the user to do one step on their "
+            "computer, after which you must observe again. "
             "Never request passwords or verification codes in chat. Use as the only tool call. "
             "Must be handled by the engine — direct execution is an error."
         )
@@ -103,7 +106,7 @@ class RequestUserInputTool(ToolSpec):
                     "description": "Defaults to information; action requests manual takeover.",
                 },
                 "surface": {
-                    "type": "string", "enum": ["browser"],
+                    "type": "string", "enum": ["browser", "desktop"],
                     "description": "Required for action: where the human takes over.",
                 },
                 "reason": {

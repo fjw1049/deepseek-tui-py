@@ -79,6 +79,13 @@ async def test_focus_extension_is_named_and_bounded_by_catalog(context):
     assert state.allows("read_file") and not state.allows("exec_shell")
 
 
+def test_browser_phase_keeps_computer_use_available(context):
+    # A web-to-desktop task must not have to request its own desktop surface.
+    state = context.metadata["task_delivery"]
+    assert state.allows("cua_js") and state.allows("cua_js_reset")
+    assert not state.allows("exec_shell")
+
+
 def test_free_text_question_and_invalid_single_choice():
     question = {"header": "Order", "id": "order", "question": "What is the order number?"}
     assert validate_user_input_request({"questions": [question]})[0].options == []
@@ -89,7 +96,9 @@ def test_free_text_question_and_invalid_single_choice():
 async def test_action_uses_only_takeover_wait(context):
     request = AsyncMock(return_value={"success": True, "content": "Paused"})
     context.metadata["request_browser_assistance"] = request
-    engine = SimpleNamespace(tool_context=context, mode="agent", handle=EngineHandle())
+    engine = SimpleNamespace(
+        tool_context=context, mode="agent", handle=EngineHandle(), _release_cua=AsyncMock()
+    )
     result = await ToolExecutionMixin._await_user_input(
         engine,
         "ask",
@@ -105,7 +114,9 @@ async def test_action_uses_only_takeover_wait(context):
 
 
 async def test_information_wait_needs_no_browser(context):
-    engine = SimpleNamespace(tool_context=context, mode="agent", handle=EngineHandle())
+    engine = SimpleNamespace(
+        tool_context=context, mode="agent", handle=EngineHandle(), _release_cua=AsyncMock()
+    )
     engine._await_user_input_raw = lambda *a, **kw: ToolExecutionMixin._await_user_input_raw(
         engine, *a, **kw
     )
@@ -126,6 +137,8 @@ async def test_information_wait_needs_no_browser(context):
         engine.handle.pending_user_inputs["ask"].set_result({"answers": {"order": "123"}})
         assert (await asyncio.wait_for(task, 1)).success
         assert not engine.handle.pending_user_inputs
+        # The desktop is never held while a person is being asked.
+        engine._release_cua.assert_awaited_once_with()
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

@@ -808,14 +808,19 @@ async def run_subagent_loop(
     cua_session = None
     try:
         from deepseek_tui.cua.subagent import prepare_subagent_cua
-        from deepseek_tui.cua.tools import HOST_GUIDANCE
 
         cua_session = await prepare_subagent_cua(
             agent, runtime, context, registry, effective_tools, cancel,
         )
         if cua_session is not None:
+            from deepseek_tui.engine.prompts import render_action_surfaces
+            from deepseek_tui.surfaces import cua_surfaces
+
             api_tools = registry.to_api_tools()
-            system_prompt += "\n\n" + HOST_GUIDANCE + "\n\n" + cua_session.instructions
+            system_prompt += (
+                "\n\n" + render_action_surfaces(cua_surfaces(runtime.config.cua))
+                + "\n\n" + cua_session.instructions
+            )
         elif context.metadata.get("cua_error"):
             system_prompt += "\n\nComputer use unavailable: " + context.metadata["cua_error"]
         pause_generation_seen = 0

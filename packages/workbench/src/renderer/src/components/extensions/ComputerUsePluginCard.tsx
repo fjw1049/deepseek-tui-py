@@ -19,6 +19,54 @@ async function readCuaStatus(): Promise<Status> {
   return value
 }
 
+type ApprovedApp = { name: string; bundleId: string; installed?: boolean }
+
+async function cuaAppsRequest(path: string, body?: unknown): Promise<ApprovedApp[]> {
+  const response = body === undefined
+    ? await window.dsGui.runtimeRequest(path, 'GET')
+    : await window.dsGui.runtimeRequest(path, 'POST', JSON.stringify(body))
+  if (!response.ok) throw new Error('Apps unavailable')
+  const value = JSON.parse(response.body) as { apps?: ApprovedApp[] }
+  if (!Array.isArray(value?.apps)) throw new Error('Invalid apps')
+  return value.apps.filter(app => typeof app?.bundleId === 'string')
+}
+
+/** The runtime's always-allowed apps; revoking asks the owner for Touch ID in LCU. */
+function ApprovedApps(): React.JSX.Element {
+  const { t } = useTranslation('common')
+  const [apps, setApps] = useState<ApprovedApp[] | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    let live = true
+    cuaAppsRequest('/v1/cua/apps').then(list => { if (live) setApps(list) }, () => { if (live) setError(true) })
+    return () => { live = false }
+  }, [])
+  const revoke = async (bundleId: string): Promise<void> => {
+    setPending(bundleId)
+    setError(false)
+    try { setApps(await cuaAppsRequest('/v1/cua/apps/revoke', { app: bundleId })) }
+    catch { setError(true) }
+    finally { setPending(null) }
+  }
+  return <section className="mt-5">
+    <h3 className="text-sm font-medium text-ds-text">{t('computerUseApprovedApps')}</h3>
+    {apps === null && !error ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseChecking')}</p> : null}
+    {apps?.length === 0 ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseApprovedAppsEmpty')}</p> : null}
+    {apps?.length ? <ul className="mt-2 divide-y divide-ds-border rounded-md border border-ds-border">
+      {apps.map(app => <li key={app.bundleId} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+        <span className="min-w-0 truncate text-ds-text" title={app.bundleId}>{app.name || app.bundleId}</span>
+        <button type="button" disabled={pending !== null} onClick={() => void revoke(app.bundleId)}
+          className="shrink-0 text-ds-muted hover:text-ds-text disabled:opacity-40">
+          {pending === app.bundleId ? t('computerUseUpdating') : t('computerUseRevoke')}
+        </button>
+      </li>)}
+    </ul> : null}
+    {apps?.length ? <p className="mt-2 text-xs text-ds-muted">{t('computerUseRevokeHint')}</p> : null}
+    {error ? <p role="alert" className="mt-2 text-sm text-ds-danger">{t('computerUseAppsError')}</p> : null}
+  </section>
+}
+
 export function ComputerUsePluginCard(): React.JSX.Element {
   const { t } = useTranslation('common')
   const operationInFlight = useRef(false)
@@ -75,6 +123,7 @@ export function ComputerUsePluginCard(): React.JSX.Element {
     {status?.supported && !status.installed ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseInstallHint')}</p> : null}
     {applied ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseApplying')}</p> : null}
     {error ? <p role="alert" className="mt-2 text-sm text-ds-danger">{t('computerUseError')}</p> : null}
+    {status?.installed && window.dsGui.platform === 'darwin' ? <ApprovedApps /> : null}
     <div className="mt-6 flex items-center justify-between border-t border-ds-border pt-4">
       <span className="text-xs text-ds-muted">{t('computerUseBuiltin')}</span>
     </div>

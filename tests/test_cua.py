@@ -4,6 +4,7 @@ import asyncio
 import json
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -302,6 +303,24 @@ async def test_polled_context_estimate_never_starts_or_waits_for_cua(
         engine._cua_session._operation_lock.release()
     assert not any(t["function"]["name"].startswith("cua_") for t in tools)
     connect.assert_not_awaited()
+
+
+def test_prompt_surfaces_follow_cua_readiness_without_connecting(installation, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
+
+    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
+    engine._app_config = Config(cua=installation)
+    engine.default_model = "deepseek-v4-pro"
+    assert engine._cua_surfaces() == frozenset()  # text-only route, no helper
+    engine.default_model = "deepseek-flash"
+    assert engine._cua_surfaces() == {"desktop"}
+    engine._app_config = Config(cua=installation.model_copy(update={"chrome": True}))
+    assert engine._cua_surfaces() == {"desktop", "chrome"}
+    engine.mode = "plan"
+    assert engine._cua_surfaces() == frozenset()
 
 
 def test_vision_readiness_checks_helper_and_actual_route():
@@ -907,3 +926,82 @@ async def test_child_runtime_approval_emits_card_and_keeps_once_scope(
         assert event.tool_call_id == handler.request_approval.call_args.args[0]
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+async def test_desktop_assistance_releases_desktop_and_requires_fresh_observation(
+    installation, tmp_path
+):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
+
+    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
+    engine._app_config = Config()
+    action = {"kind": "action", "surface": "desktop", "reason": "请在弹窗里输入验证码"}
+    with pytest.raises(ToolError, match="unavailable"):
+        await engine._await_user_input("ask", action)
+
+    engine._app_config = Config(cua=installation)
+    engine.default_model = "deepseek-flash"
+    session = SimpleNamespace(end_turn=AsyncMock(), close=AsyncMock(), reset_reason="stale")
+    engine._cua_session = session
+    task = asyncio.create_task(engine._await_user_input("ask", action))
+    for _ in range(50):
+        if "ask" in engine.handle.pending_user_inputs:
+            break
+        await asyncio.sleep(0.01)
+    session.end_turn.assert_awaited_once()
+    session.close.assert_awaited_once()
+    assert session.reset_reason == ""
+    engine.handle.pending_user_inputs["ask"].set_result(
+        {"answers": [{"question_id": "desktop_action", "label": "我已完成"}]}
+    )
+    result = await asyncio.wait_for(task, 1)
+    payload = json.loads(result.content)
+    assert result.success and payload["choice"] == "done"
+    assert "observe" in payload["instructions"] and "not a verified" in payload["instructions"]
+
+
+def test_desktop_assistance_answers_map_to_choices():
+    from deepseek_tui.cua.tools import desktop_action_question, desktop_action_result
+
+    question = desktop_action_question("Approve the dialog", "en")
+    assert [o["label"] for o in question["options"]] == ["Done", "Skip this step"]
+    assert desktop_action_result(question, {"answers": [{"value": "Skip this step"}]})[
+        "choice"
+    ] == "skip"
+    typed = desktop_action_result(question, {"answers": {"desktop_action": "code is on my phone"}})
+    assert typed["choice"] == "information" and typed["user_text"] == "code is on my phone"
+    assert desktop_action_result(question, {"cancelled": True})["choice"] == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_unattended_runs_decline_app_access_instead_of_waiting(
+    installation, native, tmp_path
+):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
+
+    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
+    engine._app_config = Config(cua=installation)
+    engine.default_model = "deepseek-flash"
+    engine.tool_context.metadata["unattended"] = True
+    cua_session.reset_runtime_cache()
+    try:
+        await engine._prepare_cua()
+        assert await asyncio.wait_for(engine._cua_session.on_approval(native), 1) == {
+            "action": "cancel"
+        }
+        assert not engine.handle.pending_user_inputs
+        assert "unattended" in engine._cua_prompt()
+        with pytest.raises(ToolError, match="Nobody is watching"):
+            await engine._await_user_input(
+                "ask", {"kind": "action", "surface": "desktop", "reason": "approve"}
+            )
+    finally:
+        await engine._close_cua()
+        cua_session.reset_runtime_cache()

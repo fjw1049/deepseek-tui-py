@@ -128,3 +128,18 @@ it('uses the structured tool name when the summary has no parseable prefix', () 
   expect(ctx.toolName).toBe('write_file')
   expect(ctx.label).toBe('写入文件')
 })
+
+describe('computer-use tool cards', () => {
+  const block = (input: Record<string, unknown>): ToolBlock => ({
+    kind: 'tool', id: 'cua_1', summary: 'cua_js', status: 'success', toolKind: 'tool_call',
+    meta: { tool_name: 'cua_js', tool_input: input }
+  })
+
+  it('labels the step with its user-facing title, falling back to the code', () => {
+    const titled = buildToolRenderContext(block({ code: 'await app.click(3)', title: '打开备忘录' }))
+    expect(titled.label).toBe('电脑控制')
+    expect(titled.description).toBe('打开备忘录')
+    expect(buildToolRenderContext(block({ code: 'await cua.getState()' })).description)
+      .toBe('await cua.getState()')
+  })
+})

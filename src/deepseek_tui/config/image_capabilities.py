@@ -16,8 +16,11 @@ class ImageCapability:
 
 
 # Verified 2026-09-10: https://api-docs.deepseek.com/guides/vision/
+# deepseek-flash (DeepSeek-V4.1-Flash) verified 2026-10-22 on the same page and
+# /quick_start/pricing; legacy names stay as declared until docs confirm them.
 # Never extend these declarations to model prefixes or third-party endpoints.
 _DEEPSEEK_IMAGES = {
+    "deepseek-flash": True,
     "deepseek-v4-flash-vision-exp": True,
     "deepseek-v4-flash": False,
     "deepseek-v4-pro": False,

@@ -6,15 +6,15 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from deepseek_tui.surfaces import surface_tools
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
 
 FINALIZATION_TIMEOUT_SECONDS = 60
 FINALIZATION_MAX_TOKENS = 4096
 
 CONTROL_TOOLS = {"finish_task", "request_task_tools"}
-FOCUS_TOOLS = CONTROL_TOOLS | {
-    "browser_use",
-    "browser_skill",
+# Every UI surface stays usable in the phase, so one task can span web and desktop.
+FOCUS_TOOLS = CONTROL_TOOLS | surface_tools() | {
     "request_user_input",
     "checklist",
     "CreateGoal",

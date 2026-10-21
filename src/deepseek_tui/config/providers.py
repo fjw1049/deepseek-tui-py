@@ -64,7 +64,14 @@ def canonical_model_name(model: str) -> str | None:
 
 
 _CURRENT_DEEPSEEK_V4_ALIASES = frozenset(
-    {"deepseek-chat", "deepseek-reasoner", "deepseek-r1", "deepseek-v3", "deepseek-v3.2"}
+    {
+        "deepseek-chat",
+        "deepseek-reasoner",
+        "deepseek-r1",
+        "deepseek-v3",
+        "deepseek-v3.2",
+        "deepseek-flash",
+    }
 )
 
 

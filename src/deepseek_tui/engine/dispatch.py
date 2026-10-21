@@ -880,6 +880,8 @@ async def _run_task_engine_turn(
     engine.tool_context.trust_mode = task.trust_mode
     engine.tool_context.active_task_id = task.id
     engine.tool_context.metadata["task_id"] = task.id
+    # Detached runs have no UI for questions: anything that needs a person must fail fast.
+    engine.tool_context.metadata["unattended"] = True
     # Engine.create attaches SubAgentRuntime before the task id is known;
     # bind it now so nested sub-agents inherit the nest-depth guard.
     sub_mgr = engine.tool_context.subagent_manager

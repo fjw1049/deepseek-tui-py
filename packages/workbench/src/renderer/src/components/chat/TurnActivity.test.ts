@@ -10,6 +10,7 @@ it('uses event states for waiting, model, tools and human gates, never history t
   expect(resolveTurnActivity({ ...base, stream: 'thinking' })).toBe('Thinking')
   expect(resolveTurnActivity({ ...base, stream: 'responding' })).toBe('Responding')
   expect(resolveTurnActivity({ ...base, blocks: [browser] })).toBe('Browser')
+  expect(resolveTurnActivity({ ...base, blocks: [{ ...browser, meta: { tool_name: 'cua_js' } }] })).toBe('Desktop')
   expect(resolveTurnActivity({ ...base, blocks: [{ ...browser, meta: { tool_name: 'read_file' } }] })).toBe('Tool')
   expect(resolveTurnActivity({ ...base, blocks: [{ ...browser, status: 'success' }] })).toBe('Waiting')
   expect(resolveTurnActivity({ ...base, blocks: [{ kind: 'reasoning', id: 'old', text: 'old' }] })).toBe('Waiting')

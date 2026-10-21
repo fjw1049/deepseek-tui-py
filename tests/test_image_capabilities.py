@@ -8,6 +8,7 @@ from deepseek_tui.config.models import Config, ProviderConfig, VisionConfig
     "model, expected",
     [
         ("deepseek-v4-flash-vision-exp", True),
+        ("deepseek-flash", True),
         ("deepseek-v4-flash", False),
         ("deepseek-future-model", None),
         ("random-vision-model", None),

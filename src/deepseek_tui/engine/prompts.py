@@ -408,6 +408,7 @@ def build_system_prompt(
     project_context_enabled: bool = True,
     automations_guidelines: bool = False,
     browser_guidelines: bool = False,
+    surfaces: frozenset[str] = frozenset(),
     auto_approve: bool | None = None,
 ) -> str:
     """Build the full system prompt for the engine.
@@ -501,8 +502,10 @@ def build_system_prompt(
             "only the user can provide."
         )
 
-    if browser_guidelines and mode in (AppMode.AGENT, AppMode.YOLO):
-        full_prompt += "\n\n" + _get("browser.md").strip()
+    # Each available surface brings its guide (browser.md, computer_use.md).
+    surfaces = surfaces | ({"browser"} if browser_guidelines else frozenset())
+    if surfaces and mode in (AppMode.AGENT, AppMode.YOLO):
+        full_prompt += "\n\n" + render_action_surfaces(surfaces)
 
     # Short lane hint only (peer style: details stay in cron_* tool
     # descriptions). Injected when cron tools are registered — never a
@@ -596,6 +599,25 @@ AUTOMATIONS_LANE_HINT = (
     "List/delete with `cron_list` / `cron_delete`. Tell the user jobs are "
     "managed in the Workbench sidebar Automations page."
 )
+
+
+def render_action_surfaces(surfaces: frozenset[str]) -> str:
+    """Cross-surface routing, then each available surface's own guide."""
+    from deepseek_tui.surfaces import SURFACES
+
+    available = [s for s in SURFACES if s.id in surfaces]
+    tiers = [
+        "Workspace tools and the shell: files, data, builds and command-line tools.",
+        "Connected service tools: SaaS data and actions.",
+    ]
+    web = [s.route for s in available if s.tier == "web"]
+    if web:
+        tiers.append("Web pages: " + "; ".join(web) + ".")
+    tiers += [f"Desktop apps: {s.route}." for s in available if s.tier == "desktop"]
+    numbered = "\n".join(f"{i}. {text}" for i, text in enumerate(tiers, 1))
+    parts = [_get("surfaces.md").strip().replace("{tiers}", numbered)]
+    parts += [_get(s.guide).strip() for s in available if s.guide]
+    return "\n\n".join(parts)
 
 
 def handoff_path(workspace: Path) -> Path:

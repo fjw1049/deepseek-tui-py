@@ -121,6 +121,8 @@ const TOOL_NAME_LABELS: Record<string, string> = {
   agent_wait: '等待子代理',
   apply_patch: '应用补丁',
   checklist: '待办清单',
+  cua_js: '电脑控制',
+  cua_js_reset: '重置电脑控制',
   delegate_to_agent: '委派子代理',
   edit_file: '编辑文件',
   exec_shell: '执行命令',
@@ -256,6 +258,12 @@ export function describeToolCallTarget(
   if (toolName === 'glob_file_search' || toolName === 'file_search') {
     const query = glob || pattern
     return query || (path ? compactPath(path) : '')
+  }
+  if (toolName === 'cua_js') {
+    // The runtime contract's `title` is the user-facing step; code is the fallback.
+    const title = firstString(input, ['title'])
+    const code = firstString(input, ['code'])
+    return title || (code ? summarizeProcessText(code, 72) : '')
   }
   if (toolName === 'fetch_url' || url) return url || ''
   if (toolName === 'web_search') return pattern || ''

@@ -596,6 +596,34 @@ async def test_deepseek_text_model_can_use_official_vision_helper(monkeypatch):
     assert all(not message_images(message) for message in projected.messages)
 
 
+async def test_deepseek_flash_receives_pixels_directly():
+    request = MessageRequest(
+        model="deepseek-flash",
+        messages=[Message.user("color?", images=[import_image(image_bytes())])],
+    )
+    assert await prepare_media_request(request, Config()) is request
+
+
+async def test_vision_helper_sees_latest_computer_use_code(monkeypatch):
+    stub = VisionStub()
+    monkeypatch.setattr("deepseek_tui.client.factory.build_llm_client", lambda cfg: stub)
+    config = Config(vision=VisionConfig(model="deepseek::deepseek-flash"))
+    image = import_image(image_bytes()).model_copy(update={"source": {"kind": "cua"}})
+    request = MessageRequest(
+        model="deepseek-v4-pro",
+        messages=[
+            Message.user("Rename the note"),
+            Message.assistant_with_tools(
+                [ToolUseBlock(id="c", name="cua_js", input={"code": "await notes.click(3)"})]
+            ),
+            Message.user("screen", images=[image]),
+        ],
+    )
+    await prepare_media_request(request, config)
+    assert stub.requests[0].model == "deepseek-flash"
+    assert "await notes.click(3)" in stub.requests[0].messages[0].text_content()
+
+
 def test_bounded_jpeg_preserves_original_wire_bytes():
     raw = image_bytes(format="JPEG", size=(1200, 760))
     block = import_image(raw)

@@ -20,6 +20,7 @@ def test_unknown_model_default_is_500k_not_128k() -> None:
 
 def test_known_models_keep_their_own_windows() -> None:
     assert context_window_for_model("deepseek-v4-pro") == 1_000_000
+    assert context_window_for_model("deepseek-flash") == 1_000_000
     assert context_window_for_model("gpt-4o") == 128_000
     assert context_window_for_model("claude-sonnet") == 200_000
 

@@ -165,3 +165,39 @@ def test_browser_guidance_is_capability_and_mode_scoped():
     assert "## Browser Tasks" not in build_system_prompt(
         mode=AppMode.PLAN, browser_guidelines=True, project_context_enabled=False
     )
+
+
+def test_action_surfaces_list_only_available_surfaces_in_tier_order():
+    from deepseek_tui.engine.prompts import AppMode
+
+    assert "## Action Surfaces" not in build_system_prompt(project_context_enabled=False)
+    desktop = build_system_prompt(
+        override="Custom base", surfaces=frozenset({"desktop"}), project_context_enabled=False
+    )
+    assert "## Action Surfaces" in desktop and "## Computer Use" in desktop
+    assert "Desktop apps: `cua_js`" in desktop and "Web pages:" not in desktop
+    assert "## Browser Tasks" not in desktop and "{tiers}" not in desktop
+    # Matches the runtime's own rule: GUI apps are not scripted unless the user asks.
+    assert "Do not drive GUI apps with `osascript`" in desktop
+    both = build_system_prompt(
+        override="Custom base",
+        browser_guidelines=True,
+        surfaces=frozenset({"browser", "desktop", "chrome"}),
+        project_context_enabled=False,
+    )
+    assert (
+        both.index("Workspace tools and the shell")
+        < both.index("Web pages: the Workbench browser")
+        < both.index("the user's own Chrome")
+        < both.index("Desktop apps:")
+        < both.index("## Browser Tasks")
+        < both.index("## Computer Use")
+        < both.index("## Runtime Authority Boundary")
+    )
+    assert both.count("## Browser Tasks") == 1
+    web = build_system_prompt(browser_guidelines=True, project_context_enabled=False)
+    assert "## Action Surfaces" in web
+    assert "Desktop apps:" not in web and "## Computer Use" not in web
+    assert "## Action Surfaces" not in build_system_prompt(
+        mode=AppMode.PLAN, surfaces=frozenset({"desktop"}), project_context_enabled=False
+    )

@@ -2324,6 +2324,10 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 checkpoint_messages,
                 model=op.model or self.default_model,
             )
+            browser_available = (
+                self.tool_registry.contains("browser_use")
+                and self.tool_context.metadata.get("browser_service") is not None
+            )
             sys_prompt = build_system_prompt(
                 op.system_prompt,
                 mode=_resolve_app_mode(self.mode),
@@ -2349,9 +2353,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 workspace=self.tool_context.working_directory,
                 locale_tag=self.reply_locale,
                 automations_guidelines=self.tool_registry.contains("cron_create"),
-                browser_guidelines=(
-                    self.tool_registry.contains("browser_use")
-                    and self.tool_context.metadata.get("browser_service") is not None
+                browser_guidelines=browser_available,
+                surfaces=(
+                    frozenset({"browser"} if browser_available else ()) | self._cua_surfaces()
                 ),
                 auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
             )

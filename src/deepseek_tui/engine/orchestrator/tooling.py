@@ -1267,6 +1267,10 @@ class ToolExecutionMixin:
         kind = input_data.get("kind", "information")
         if not isinstance(kind, str) or kind not in {"information", "decision", "action"}:
             raise ToolError("Unknown user input kind")
+        if kind == "action" and input_data.get("surface") == "desktop":
+            return await self._await_desktop_action(tool_call_id, input_data)
+        # Never hold the desktop while waiting on a person.
+        await self._release_cua()
         if kind == "action":
             if (self.mode or "agent") != "agent":
                 raise ToolError("Manual browser action is unavailable outside agent mode")
@@ -1313,6 +1317,36 @@ class ToolExecutionMixin:
         import json as _json
 
         return ToolResult(content=_json.dumps(response, ensure_ascii=False), success=True)
+
+    async def _await_desktop_action(
+        self, tool_call_id: str, input_data: dict[str, Any]
+    ) -> ToolResult:
+        """Hand the desktop to the user for one step, then require a fresh observation."""
+        import json
+
+        from deepseek_tui.cua.tools import desktop_action_question, desktop_action_result
+
+        reason = input_data.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ToolError("Manual desktop action requires a non-empty reason")
+        if (self.mode or "agent") != "agent" or "desktop" not in self._cua_surfaces():
+            raise ToolError("Desktop assistance is unavailable: computer use is not enabled here")
+        if self.tool_context.metadata.get("unattended"):
+            raise ToolError("Nobody is watching this run; report the step that needs the user")
+        # The user is about to change the screen: old bindings must not survive.
+        await self._release_cua(reset=True)
+        question = desktop_action_question(reason.strip(), getattr(self, "reply_locale", "zh"))
+        response = await self._await_user_input_raw(
+            tool_call_id, [question], purpose="desktop_action"
+        )
+        if response is None:
+            return ToolResult(
+                content="Desktop assistance cancelled (turn cancelled)", success=False
+            )
+        return ToolResult(
+            content=json.dumps(desktop_action_result(question, response), ensure_ascii=False),
+            success=True,
+        )
 
     async def _await_user_input_raw(
         self,

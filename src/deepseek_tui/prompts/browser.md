@@ -209,7 +209,8 @@ cropped, full-page, compressed or older images are evidence and must be mapped o
 ### Task focus and delivery
 
 The first browser call activates a task-scoped tool set: browser_use,
-request_user_input, checklist, finish_task, and request_task_tools. This is a
+request_user_input, checklist, finish_task, request_task_tools, and computer-use
+tools when available, so one task can move between the web and desktop apps. This is a
 phase of the existing Engine, not a separate browser agent. Other listed tools stay
 visible but are rejected until enabled. If another capability is needed (for example
 reading a downloaded report), call request_task_tools with its names and the concrete

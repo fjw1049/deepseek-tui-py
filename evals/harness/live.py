@@ -25,6 +25,76 @@ if TYPE_CHECKING:
     from evals.harness import HarnessContext
 
 
+# Stand-ins for the catalog the CUA runtime supplies at connect time (its js /
+# js_reset contract). Decision probes never execute tools, so no runtime starts.
+_COMPUTER_USE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "cua_js",
+            "description": (
+                "Run JavaScript in the persistent computer-use REPL to observe and operate "
+                "desktop apps (and Chrome when enabled). The first call returns the API guide."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "JavaScript with top-level await."},
+                    "timeout_ms": {"type": "number"},
+                    "title": {"type": "string", "description": "Short user-facing description."},
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cua_js_reset",
+            "description": "Clear the computer-use REPL bindings.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
+
+
+_CATALOG: tuple[list[dict], str, str] | None = None
+
+
+async def _computer_use_catalog(cfg) -> tuple[list[dict], str, str]:
+    """The installed runtime's own catalog (connect only, no desktop action), else stand-ins.
+
+    The runtime text stays in memory; it is never written into the repository.
+    """
+    global _CATALOG
+    if _CATALOG is None:
+        from deepseek_tui.cua.session import CuaSession
+
+        session = CuaSession(cfg.cua, Path.cwd(), "eval-catalog", None)
+        try:
+            await session.connect()
+            _CATALOG = (
+                [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "cua_" + d["name"],
+                            "description": d["description"],
+                            "parameters": d["inputSchema"],
+                        },
+                    }
+                    for d in session.descriptors
+                ],
+                session.instructions,
+                "runtime",
+            )
+        except Exception:  # noqa: BLE001 - no runtime here: probe with the stand-ins
+            _CATALOG = (_COMPUTER_USE_TOOLS, "", "stand-in")
+        finally:
+            await session.close()
+    return _CATALOG
+
+
 def _workspace(context: HarnessContext) -> Path:
     return Path(context.workspace).resolve()
 
@@ -74,11 +144,22 @@ async def run_live_decision(case: EvalCase, context: HarnessContext) -> EvalObse
     mode = AppMode(str(case.input.get("mode", "agent")))
     registry = build_default_registry(cfg, mode=mode.value)
     tools = registry.to_api_tools()
+    surfaces = frozenset(case.input.get("surfaces", ()))
+    catalog = "none"
+    runtime_instructions = ""
+    if "desktop" in surfaces:
+        cua_tools, runtime_instructions, catalog = await _computer_use_catalog(cfg)
+        tools = [*tools, *cua_tools]  # never mutate the registry cache
     system_prompt = build_system_prompt(
         mode=mode,
         workspace=workspace,
         project_context_enabled=bool(case.input.get("project_context", False)),
+        browser_guidelines="browser" in surfaces,
+        surfaces=surfaces,
     )
+    if runtime_instructions:
+        # Same placement as the engine: runtime instructions follow the system prompt.
+        system_prompt += "\n\n" + runtime_instructions
     if context.prompt_suffix:
         system_prompt += "\n\n" + context.prompt_suffix
     request = MessageRequest(
@@ -135,6 +216,7 @@ async def run_live_decision(case: EvalCase, context: HarnessContext) -> EvalObse
         evidence=[
             f"model={request.model}",
             f"system_hash={hashlib.sha256(system_prompt.encode()).hexdigest()}",
+            f"cua_catalog={catalog}",
         ],
         usage=usage_data,
     )
