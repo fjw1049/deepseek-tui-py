@@ -481,3 +481,27 @@ export async function syncDeepseekTuiConfig(
     await syncCustomEndpointConfig(settings, previous)
   }
 }
+
+export function deepseekLaunchConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
+  const a = prev.deepseek
+  const b = next.deepseek
+  return (
+    prev.cuaEnabled !== next.cuaEnabled ||
+    prev.cuaChrome !== next.cuaChrome ||
+    prev.visionModel !== next.visionModel ||
+    a.binaryPath !== b.binaryPath ||
+    a.port !== b.port ||
+    a.autoStart !== b.autoStart ||
+    a.apiKey !== b.apiKey ||
+    a.baseUrl !== b.baseUrl ||
+    a.runtimeToken !== b.runtimeToken ||
+    a.approvalPolicy !== b.approvalPolicy ||
+    a.sandboxMode !== b.sandboxMode ||
+    // Builtin llmProviders (keys / models / context_windows) are synced into
+    // config.toml; without a restart the in-memory Config keeps stale provider
+    // tables → empty Bearer on switch + 128k instead of the configured window.
+    llmProviderConfigChanged(prev, next) ||
+    JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints) ||
+    JSON.stringify(a.extraCorsOrigins) !== JSON.stringify(b.extraCorsOrigins)
+  )
+}

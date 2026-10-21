@@ -1,3 +1,4 @@
+import { createRuntimeLifecycleQueue, interruptRuntimeStreams, type RuntimeStream } from './runtime-lifecycle'
 import { writeNetworkSettings } from './network-settings'
 import {
   app,
@@ -61,9 +62,9 @@ import { createBrowserBridge, type BrowserBridge } from './services/browser-brid
 import { installMainWindowNavigationGuards } from './services/main-window-guards'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
+  deepseekLaunchConfigChanged,
   deepseekTuiConfigChanged,
   ensureAutomationsFeatureEnabled,
-  llmProviderConfigChanged,
   localeConfigChanged,
   readTopLevelApiKeyFromToml,
   resolveDeepseekConfigPath,
@@ -198,10 +199,7 @@ function installMediaPermissionHandler(): void {
   })
 }
 
-type SseControllerState = {
-  controller: AbortController
-  stoppedByClient: boolean
-}
+type SseControllerState = RuntimeStream
 
 type TurnCompleteNotificationPayload = {
   kind?: 'browser-assistance'
@@ -457,15 +455,11 @@ function safeWebContentsSend(
 }
 
 function abortAllSseStreams(): void {
-  for (const state of sseControllers.values()) {
-    state.stoppedByClient = true
-    state.controller.abort()
-  }
-  sseControllers.clear()
+  interruptRuntimeStreams(sseControllers)
 }
 
-let runtimeEnsurePromise: Promise<void> | null = null
-let runtimeSettingsApplyPromise: Promise<void> | null = null
+const runRuntimeLifecycle = createRuntimeLifecycleQueue()
+let runtimeSettingsRevision = 0
 
 const runtimeReadyCache = createRuntimeReadyCache({
   onTrace: (event, reason) => traceStartup(`runtime-ready:${event}${reason ? ` ${reason}` : ''}`)
@@ -474,79 +468,34 @@ function invalidateRuntimeReady(reason: string): void {
   runtimeReadyCache.invalidate(reason)
 }
 
-function queueRuntimeSettingsApply(prev: AppSettingsV1, next: AppSettingsV1): void {
-  if (
-    !deepseekTuiConfigChanged(prev, next) &&
-    !runtimeStartupConfigChanged(prev, next) &&
-    !webSearchConfigChanged(prev, next)
-  ) {
-    return
-  }
-
+async function queueRuntimeSettingsApply(prev: AppSettingsV1, next: AppSettingsV1): Promise<void> {
+  if (!deepseekTuiConfigChanged(prev, next) && !runtimeStartupConfigChanged(prev, next) && !webSearchConfigChanged(prev, next)) return
+  runtimeSettingsRevision += 1
   invalidateRuntimeReady('settings-apply:queued')
-  const previousTask = runtimeSettingsApplyPromise ?? Promise.resolve()
-  const task = previousTask
-    .catch(() => undefined)
-    .then(async () => {
-      if (deepseekTuiConfigChanged(prev, next)) {
-        await syncDeepseekTuiConfig(next, prev)
-      }
-      await restartManagedRuntimeForSettingsChange(prev, next)
-    })
-    .catch((error: unknown) => {
-      logWarn('settings-apply', 'Failed to apply DeepSeek runtime settings in background', {
-        message: error instanceof Error ? error.message : String(error)
-      })
-    })
-    .finally(() => {
-      if (runtimeSettingsApplyPromise === task) {
-        runtimeSettingsApplyPromise = null
-      }
-    })
-
-  runtimeSettingsApplyPromise = task
+  await runRuntimeLifecycle(async () => {
+    invalidateRuntimeReady('settings-apply:started')
+    if (deepseekTuiConfigChanged(prev, next)) await syncDeepseekTuiConfig(next, prev)
+    await restartManagedRuntimeForSettingsChange(prev, next)
+  })
 }
 
-async function waitForQueuedRuntimeSettingsApply(): Promise<void> {
-  if (!runtimeSettingsApplyPromise) return
-  await runtimeSettingsApplyPromise
-}
-
-async function ensureRuntime(settings: AppSettingsV1): Promise<void> {
-  if (runtimeEnsurePromise) return runtimeEnsurePromise
-
-  // Scheduled-task UI needs the automation manager; flip the feature flags
-  // before the ready-cache short-circuit so a stale Runtime is restarted.
-  const automationsFeature = await ensureAutomationsFeatureEnabled()
-  if (automationsFeature.changed && isDeepseekChildRunning()) {
-    runtimeReadyCache.invalidate('automations-feature-enabled')
-    abortAllSseStreams()
-    await stopDeepseekChildAndWait()
-  }
-
-  if (
-    !automationsFeature.changed &&
-    !runtimeSettingsApplyPromise &&
-    (!settings.deepseek.autoStart || isDeepseekChildRunning()) &&
-    runtimeReadyCache.isFresh()
-  ) {
-    return
-  }
-  const ensured = ensureRuntimeOnce(settings)
-  runtimeEnsurePromise = ensured
-    .catch((error) => {
-      emitStartupPhase(
-        'offline',
-        error instanceof Error ? error.message : String(error)
-      )
-      throw error
-    })
-    .finally(() => {
-      runtimeEnsurePromise = null
-    })
-  // A (re)started runtime forgets the browser bridge; tell it again.
-  void ensured.then(() => browserBridge?.announce(), () => {})
-  return runtimeEnsurePromise
+async function ensureRuntime(_settings: AppSettingsV1): Promise<void> {
+  return runRuntimeLifecycle(async () => {
+    // Load after queued settings writes/restarts, never launch from an old snapshot.
+    const settings = await store.load()
+    const automationsFeature = await ensureAutomationsFeatureEnabled()
+    if (automationsFeature.changed && isDeepseekChildRunning()) {
+      invalidateRuntimeReady('automations-feature-enabled')
+      abortAllSseStreams()
+      await stopDeepseekChildAndWait()
+    }
+    if (!automationsFeature.changed && (!settings.deepseek.autoStart || isDeepseekChildRunning()) && runtimeReadyCache.isFresh()) return
+    await ensureRuntimeOnce(settings)
+    void browserBridge?.announce()
+  }).catch(error => {
+    emitStartupPhase('offline', error instanceof Error ? error.message : String(error))
+    throw error
+  })
 }
 
 async function runtimeOfflineMessage(settings: AppSettingsV1): Promise<string> {
@@ -557,8 +506,6 @@ async function runtimeOfflineMessage(settings: AppSettingsV1): Promise<string> {
 }
 
 async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
-  await waitForQueuedRuntimeSettingsApply()
-
   const hasApiKey = Boolean(resolveConfiguredApiKey(settings))
   const runtimeToken = settings.deepseek.runtimeToken?.trim() ?? ''
   emitStartupPhase('runtime-check')
@@ -819,27 +766,6 @@ function showMainWindowIfHidden(): void {
   mainWindow.focus()
 }
 
-function deepseekLaunchConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
-  const a = prev.deepseek
-  const b = next.deepseek
-  return (
-    a.binaryPath !== b.binaryPath ||
-    a.port !== b.port ||
-    a.autoStart !== b.autoStart ||
-    a.apiKey !== b.apiKey ||
-    a.baseUrl !== b.baseUrl ||
-    a.runtimeToken !== b.runtimeToken ||
-    a.approvalPolicy !== b.approvalPolicy ||
-    a.sandboxMode !== b.sandboxMode ||
-    // Builtin llmProviders (keys / models / context_windows) are synced into
-    // config.toml; without a restart the in-memory Config keeps stale provider
-    // tables → empty Bearer on switch + 128k instead of the configured window.
-    llmProviderConfigChanged(prev, next) ||
-    JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints) ||
-    JSON.stringify(a.extraCorsOrigins) !== JSON.stringify(b.extraCorsOrigins)
-  )
-}
-
 function runtimeStartupConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
   return deepseekLaunchConfigChanged(prev, next)
 }
@@ -862,6 +788,9 @@ async function restartManagedRuntimeForSettingsChange(
     return
   }
 
+  emitStartupPhase('runtime-spawn', 'Applying runtime settings')
+  invalidateRuntimeReady('settings-restart')
+  console.info('[deepseek-gui] applying settings: restarting runtime')
   abortAllSseStreams()
 
   // Even when the child isn't ours (e.g., reclaimed external runtime), a
@@ -875,8 +804,7 @@ async function restartManagedRuntimeForSettingsChange(
   if (samePort) {
     const reclaimed = await reclaimDeepseekPort(prev.deepseek.port)
     if (!reclaimed.ok) {
-      console.warn('[deepseek-gui] runtime restart skipped:', reclaimed.message)
-      return
+      throw new Error(reclaimed.message)
     }
   }
 
@@ -891,20 +819,30 @@ async function restartManagedRuntimeForSettingsChange(
       MANAGED_RUNTIME_STARTUP_TIMEOUT_MS
     )
     if (!healthy) {
-      console.warn('[deepseek-gui] runtime restart did not become healthy after settings change')
+      throw new Error('Runtime did not become healthy after settings change')
     }
+    const threadApi = await probeThreadApi(next)
+    if (!threadApi.ok) throw runtimeJsonError(threadApi.error, threadApi.message)
+    runtimeReadyCache.markReady()
+    emitStartupPhase('runtime-ready')
+    void browserBridge?.announce()
   } catch (e) {
-    console.warn('[deepseek-gui] runtime restart failed after settings change:', e)
+    invalidateRuntimeReady('settings-restart-failed')
+    emitStartupPhase('offline', e instanceof Error ? e.message : String(e))
+    throw e
   }
 }
 
 async function runtimeRequest(
   settings: AppSettingsV1,
   pathAndQuery: string,
-  init: { method?: string; body?: string; headers?: Record<string, string> }
+  init: { method?: string; body?: string; headers?: Record<string, string> },
+  retryAfterSettingsChange = true
 ): Promise<{ ok: boolean; status: number; body: string }> {
+  const settingsRevision = runtimeSettingsRevision
   try {
     await ensureRuntime(settings)
+    settings = await store.load()
     const base = getRuntimeBaseUrl(settings.deepseek.port)
     const pathNorm = pathAndQuery.startsWith('/') ? pathAndQuery : `/${pathAndQuery}`
     const url = `${base}${pathNorm}`
@@ -957,6 +895,11 @@ async function runtimeRequest(
     }
     return { ok: res.ok, status: res.status, body: text }
   } catch (e) {
+    // A read already in flight may be interrupted by an intentional restart.
+    // Replay only GETs, once; writes must never be duplicated.
+    if (retryAfterSettingsChange && (init.method ?? 'GET') === 'GET' && settingsRevision !== runtimeSettingsRevision) {
+      return runtimeRequest(await store.load(), pathAndQuery, init, false)
+    }
     const message = e instanceof Error ? e.message : String(e)
     const isAbort = e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')
     // Synthesize HTTP-like status codes so callers can branch on connectivity
@@ -1160,7 +1103,7 @@ app.whenReady().then(async () => {
         })
       }
     }
-    queueRuntimeSettingsApply(prev, saved)
+    await queueRuntimeSettingsApply(prev, saved)
     return saved
   }
 
@@ -1260,7 +1203,10 @@ app.whenReady().then(async () => {
       sseControllers.delete(id)
     }
     const ac = new AbortController()
-    const state: SseControllerState = { controller: ac, stoppedByClient: false }
+    const state: SseControllerState = {
+      controller: ac, stoppedByClient: false,
+      notifyEnd: () => { safeWebContentsSend(event.sender, 'runtime:sse-end', { streamId: id }) }
+    }
     sseControllers.set(id, state)
     const base = getRuntimeBaseUrl(s.deepseek.port)
     const token = resolveEffectiveRuntimeToken(s)
@@ -1331,7 +1277,7 @@ app.whenReady().then(async () => {
         safeWebContentsSend(wc, 'runtime:sse-error', { streamId: id, message: msg })
         logError('sse', `SSE stream error for thread ${request.threadId}`, { message: msg, streamId: id })
       } finally {
-        sseControllers.delete(id)
+        if (sseControllers.get(id) === state) sseControllers.delete(id)
       }
     })().catch((e) => {
       if (state.stoppedByClient || ac.signal.aborted) return

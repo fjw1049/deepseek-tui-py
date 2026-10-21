@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { JsonSettingsStore } from './settings-store'
-import { deepseekTuiConfigChanged, syncDeepseekTuiConfig, syncCuaConfig } from './deepseek-config'
+import { deepseekLaunchConfigChanged, deepseekTuiConfigChanged, syncDeepseekTuiConfig, syncCuaConfig } from './deepseek-config'
 
 const originalHome = process.env.DEEPSEEK_HOME
 afterEach(() => {
@@ -27,6 +27,16 @@ it('writes explicit CUA choices and preserves installation and unrelated setting
   await syncDeepseekTuiConfig({ ...next, cuaEnabled: false }, next)
   text = await readFile(config, 'utf8')
   expect(text).toContain('enabled = false')
+})
+
+it('requires a backend restart for CUA and vision changes in both directions', async () => {
+  const previous = await new JsonSettingsStore({ home: await mkdtemp(join(tmpdir(), 'ds-cua-restart-')) }).load()
+  expect(deepseekLaunchConfigChanged(previous, { ...previous })).toBe(false)
+  for (const patch of [{ cuaEnabled: true }, { cuaChrome: true }, { visionModel: 'visual::model' }]) {
+    const next = { ...previous, ...patch }
+    expect(deepseekLaunchConfigChanged(previous, next)).toBe(true)
+    expect(deepseekLaunchConfigChanged(next, previous)).toBe(true)
+  }
 })
 
 it('automatically enables an installed runtime but preserves an explicit opt-out', async () => {
