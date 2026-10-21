@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { ComputerUsePluginCard } from './ComputerUsePluginCard'
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-vi.mock('./use-plugin-now', () => ({ usePluginNow: vi.fn() }))
+vi.mock('./start-chat-with-plugin', () => ({ usePluginNow: vi.fn() }))
 vi.mock('../../lib/settings-snapshot', () => ({ cacheSettingsSnapshot: vi.fn() }))
 
 it.each([false, true])('reports component availability and saves opt-out: installed=%s', async installed => {

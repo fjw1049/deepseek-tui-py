@@ -3,7 +3,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { PluginDetailDrawer, type PluginRow } from './InstalledPluginsPanel'
-vi.mock('./use-plugin-now', () => ({ usePluginNow: vi.fn() }))
+vi.mock('./start-chat-with-plugin', () => ({ usePluginNow: vi.fn() }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh' } }) }))
 
 it('shows a concise introduction without reading rules without redundant management actions', async () => {

@@ -1,4 +1,4 @@
-import { usePluginNow } from './use-plugin-now'
+import { usePluginNow } from './start-chat-with-plugin'
 import { PluginDescription } from './PluginDescription'
 import { PluginListItem } from './PluginListItem'
 import { PluginIcon } from './PluginIcon'

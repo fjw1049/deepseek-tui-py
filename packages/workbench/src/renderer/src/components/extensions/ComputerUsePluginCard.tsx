@@ -1,4 +1,4 @@
-import { usePluginNow } from './use-plugin-now'
+import { usePluginNow } from './start-chat-with-plugin'
 import { PluginDescription } from './PluginDescription'
 import { createPortal } from 'react-dom'
 import { PluginListItem } from './PluginListItem'

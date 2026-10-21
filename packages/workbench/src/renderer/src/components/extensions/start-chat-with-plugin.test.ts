@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ createThread: vi.fn(), setState: vi.fn() }))
 vi.mock('../../store/chat-store', () => ({ useChatStore: { getState: () => ({ runtimeConnection: 'ready', createThread: mocks.createThread }), setState: mocks.setState } }))
-import { usePluginNow } from './use-plugin-now'
+import { usePluginNow } from './start-chat-with-plugin'
 
 it('selects the composer plugin only after creating the chat, without sending a turn', async () => {
   mocks.createThread.mockResolvedValue('thread')
