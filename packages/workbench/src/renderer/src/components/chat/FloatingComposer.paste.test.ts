@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { FloatingComposer } from './FloatingComposer'
 import { useChatStore } from '../../store/chat-store'
+import i18n from '../../i18n'
 vi.mock('./ReasoningEffortSelector', () => ({ ReasoningEffortSelector: () => null }))
 const initial = useChatStore.getState()
 let host: HTMLDivElement, root: ReturnType<typeof createRoot>
@@ -23,7 +24,7 @@ beforeEach(() => {
   vi.stubGlobal('dsGui', { writePasteTextFile: vi.fn(() => new Promise(resolve => resolves.push(resolve))) })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); useChatStore.setState(initial, true); vi.unstubAllGlobals() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); useChatStore.setState(initial, true); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 function paste() {
   const event = new Event('paste', { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'clipboardData', { value: { files: [], getData: () => 'long paste\n'.repeat(1000) } })
@@ -97,4 +98,47 @@ it('shows a paused queue with a resume action instead of the auto-send hint', as
   expect(resume).toBeTruthy()
   await act(async () => resume.click())
   expect(onResumeQueuedMessages).toHaveBeenCalledOnce()
+})
+
+it.each([
+  { supported: true, installed: true, enabled: true, visible: true },
+  { supported: true, installed: true, enabled: false, visible: false },
+  { supported: true, installed: false, enabled: true, visible: false },
+  { supported: false, installed: true, enabled: true, visible: false },
+  { visible: false }
+])('lists usable built-in CUA alongside ordinary plugins: %j', async ({ visible, ...status }) => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 900, height: 100, x: 0, y: 0, top: 0, left: 0, right: 900, bottom: 100, toJSON: () => ({}) })
+  const runtimeRequest = vi.fn(async (path: string) => {
+    if (path === '/v1/cua/status') {
+      if (!('supported' in status)) throw new Error('Status unavailable')
+      return { ok: true, body: JSON.stringify(status) }
+    }
+    return { ok: true, body: JSON.stringify({ plugins: [
+      { name: 'data-analysis', enabled: true, trusted: true },
+      { name: 'disabled-plugin', enabled: false }
+    ] }) }
+  })
+  vi.stubGlobal('dsGui', { runtimeRequest })
+  const onSend = vi.fn().mockResolvedValue(true)
+  await act(async () => root.render(createElement(FloatingComposer, { ...props, hasActiveThread: false, input: 'Open Notes', onSend })))
+  await act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.t('composerPlusMenu')}"]`)!.click())
+  await act(async () => Array.from(host.querySelectorAll('button')).find(button => button.textContent === i18n.t('composerPlusPlugins'))!.click())
+  expect(host.textContent).toContain('data-analysis')
+  expect(host.textContent).not.toContain('disabled-plugin')
+  if (visible) {
+    const search = host.querySelector<HTMLInputElement>(`input[placeholder="${i18n.t('composerPluginSearchPlaceholder')}"]`)!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'CUA')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(host.textContent).not.toContain('data-analysis')
+  }
+  const cua = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('computer-use'))
+  expect(Boolean(cua)).toBe(visible)
+  if (cua) {
+    await act(async () => cua.click())
+    await act(async () => host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    expect(onSend).toHaveBeenCalled()
+    expect(onSend.mock.calls[0][0]).toBe(`${i18n.t('computerUseTaskPrefix')} Open Notes`)
+  }
 })

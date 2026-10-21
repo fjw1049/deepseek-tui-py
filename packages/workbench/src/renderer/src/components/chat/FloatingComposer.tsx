@@ -430,6 +430,7 @@ export function FloatingComposer({
       const title = displayPluginName(plugin.name).toLowerCase()
       return (
         plugin.name.toLowerCase().includes(q) ||
+        (plugin.name === 'computer-use' && 'cua'.includes(q)) ||
         title.includes(q) ||
         (plugin.description ?? '').toLowerCase().includes(q)
       )
@@ -1040,9 +1041,15 @@ export function FloatingComposer({
     const qs = effectiveWorkspaceRoot
       ? `?workspace=${encodeURIComponent(effectiveWorkspaceRoot)}`
       : ''
-    void window.dsGui
-      .runtimeRequest(`/v1/plugins${qs}`, 'GET')
-      .then((result) => {
+    void Promise.all([
+      window.dsGui.runtimeRequest(`/v1/plugins${qs}`, 'GET'),
+      window.dsGui.runtimeRequest('/v1/cua/status', 'GET').then(result => {
+        if (!result.ok) return false
+        const status = JSON.parse(result.body)
+        return status?.supported === true && status.installed === true && status.enabled === true
+      }).catch(() => false)
+    ])
+      .then(([result, cuaAvailable]) => {
         if (!result.ok) {
           // Keep pluginsLoaded false so a later open can retry after a blip.
           return
@@ -1057,7 +1064,10 @@ export function FloatingComposer({
             }>
           }
           setComposerPlugins(
-            (parsed.plugins ?? [])
+            [
+              ...(cuaAvailable ? [{ name: 'computer-use', description: t('computerUseSummary'), trusted: true, enabled: true }] : []),
+              ...(parsed.plugins ?? [])
+            ]
               .filter((p) => p.enabled !== false)
               .map((p) => ({
                 name: p.name,
@@ -1075,7 +1085,7 @@ export function FloatingComposer({
       .finally(() => {
         setPluginsLoading(false)
       })
-  }, [runtimeReady, pluginsLoaded, pluginsLoading, effectiveWorkspaceRoot])
+  }, [runtimeReady, pluginsLoaded, pluginsLoading, effectiveWorkspaceRoot, t])
 
   const handlePickPlugin = (name: string): void => {
     // Hold the plugin as an inline chip; `@plugin:<name> ` is prepended only at
