@@ -753,6 +753,25 @@ async def list_jobs(request: Request) -> dict[str, object]:
 router_mcp = APIRouter(prefix="/v1")
 
 
+@router_mcp.get("/cua/status")
+async def cua_status(request: Request) -> dict[str, Any]:
+    """Inspect installed components without connecting or requesting desktop access."""
+    import sys
+    from deepseek_tui.cua.session import CuaSession
+    from deepseek_tui.tools.registry import ToolError
+
+    config = runtime_from_request(request).config.cua
+    supported = sys.platform in {"darwin", "linux"}
+    installed = False
+    if supported:
+        try:
+            await asyncio.to_thread(CuaSession._paths, config.installation)
+            installed = True
+        except (OSError, ToolError):
+            pass
+    return {"supported": supported, "installed": installed, "enabled": config.enabled}
+
+
 @router_mcp.post("/mcp/startup")
 async def mcp_startup(request: Request) -> dict[str, Any]:
     runtime = runtime_from_request(request)

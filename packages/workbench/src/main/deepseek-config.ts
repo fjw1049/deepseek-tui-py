@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, isAbsolute, join } from 'node:path'
 import type { AppSettingsV1 } from '../shared/app-settings'
 import {
   BUILTIN_LLM_PROVIDER_IDS,
@@ -8,7 +9,7 @@ import {
   normalizeCustomModelContextWindow,
   resolveProviderDefaultModel
 } from '../shared/app-settings'
-import { readTomlBool, upsertTomlSections } from '../shared/toml-section'
+import { readTomlBool, readTomlString, upsertTomlSections } from '../shared/toml-section'
 import {
   resolveDeepseekConfigPath,
   resolveDeepseekPaths,
@@ -145,8 +146,7 @@ export function localeConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): b
   return prev.locale !== next.locale
 }
 
-async function syncCuaConfig(settings: AppSettingsV1): Promise<void> {
-  if (settings.cuaEnabled === undefined && settings.cuaChrome === undefined) return
+export async function syncCuaConfig(settings: AppSettingsV1): Promise<void> {
   const configPath = resolveDeepseekConfigPath()
   let content = ''
   try {
@@ -156,7 +156,22 @@ async function syncCuaConfig(settings: AppSettingsV1): Promise<void> {
   }
   const cua: Record<string, boolean> = {}
   if (settings.cuaEnabled !== undefined) cua.enabled = settings.cuaEnabled
+  else if (readTomlBool(content, 'enabled', { section: 'cua' }) === null &&
+    (process.platform === 'darwin' || process.platform === 'linux')) {
+    const installation = readTomlString(content, 'installation', { section: 'cua' }) ??
+      join(homedir(), '.local/share/lcu/current')
+    const root = installation.startsWith('~/') ? join(homedir(), installation.slice(2)) : installation
+    try {
+      const node = (await readFile(join(root, 'node-path'), 'utf8')).trim()
+      if (isAbsolute(node) && (await Promise.all([
+        stat(node), stat(join(root, 'bin/lcu')), stat(join(root, 'adapters/client.mjs'))
+      ])).every(file => file.isFile())) cua.enabled = true
+    } catch (error) {
+      if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+    }
+  }
   if (settings.cuaChrome !== undefined) cua.chrome = settings.cuaChrome
+  if (!Object.keys(cua).length) return
   await mkdir(dirname(configPath), { recursive: true })
   await writeFile(configPath, upsertTomlSections(content, { cua }), 'utf8')
 }
