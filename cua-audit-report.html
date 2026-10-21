@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CUA 功能审核报告 · deepseek-tui-py</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1f2430;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --accent-soft: #eff4ff;
+    --green: #059669;
+    --green-soft: #ecfdf5;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --red: #b91c1c;
+    --red-soft: #fef2f2;
+    --code-bg: #0f172a;
+    --code-ink: #e2e8f0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.75;
+    font-size: 15px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  header.hero {
+    background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #3b82f6 100%);
+    color: #fff; border-radius: 16px; padding: 36px 40px; margin-bottom: 32px;
+  }
+  header.hero h1 { font-size: 26px; margin-bottom: 8px; }
+  header.hero p { opacity: .92; font-size: 14.5px; }
+  .hero .tags { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .hero .tag {
+    background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.3);
+    padding: 3px 12px; border-radius: 999px; font-size: 12.5px;
+  }
+
+  nav.toc {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 24px; margin-bottom: 32px;
+    display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px;
+  }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  section { margin-bottom: 36px; }
+  h2 {
+    font-size: 20px; margin-bottom: 16px; padding-left: 12px;
+    border-left: 4px solid var(--accent); line-height: 1.4;
+  }
+  h3 { font-size: 16px; margin: 22px 0 10px; color: #111827; }
+  p { margin-bottom: 10px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 26px; margin-bottom: 16px;
+  }
+  ul.plain { padding-left: 22px; margin-bottom: 10px; }
+  ul.plain li { margin-bottom: 6px; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .88em;
+    background: #eef1f5; border: 1px solid #e2e6ec; border-radius: 5px;
+    padding: 1px 6px; color: #334155;
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-ink); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; font-size: 12.8px; line-height: 1.7;
+    margin: 12px 0; font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  pre .c { color: #7dd3fc; }
+  pre .k { color: #fbbf24; }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 600; white-space: nowrap; }
+  td code { white-space: nowrap; }
+
+  .verdict {
+    background: var(--green-soft); border: 1px solid #a7f3d0; border-radius: 12px;
+    padding: 18px 22px; margin-bottom: 16px;
+  }
+  .verdict h3 { margin-top: 0; color: var(--green); }
+  .note {
+    background: var(--amber-soft); border: 1px solid #fde68a; border-radius: 12px;
+    padding: 18px 22px; margin-bottom: 16px;
+  }
+  .note h3 { margin-top: 0; color: var(--amber); }
+  .danger {
+    background: var(--red-soft); border: 1px solid #fecaca; border-radius: 12px;
+    padding: 18px 22px; margin-bottom: 16px;
+  }
+  .danger h3 { margin-top: 0; color: var(--red); }
+
+  .layers { display: flex; flex-direction: column; gap: 0; margin: 18px 0; }
+  .layer {
+    border-radius: 10px; padding: 12px 20px; color: #fff;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .layer .no {
+    width: 26px; height: 26px; border-radius: 50%; background: rgba(255,255,255,.22);
+    display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .layer .t { font-weight: 600; white-space: nowrap; }
+  .layer .d { font-size: 12.8px; opacity: .92; }
+  .layer .f { font-size: 11.5px; opacity: .8; font-family: "SF Mono", Menlo, monospace; margin-left: auto; white-space: nowrap; }
+  .arrow-down { text-align: center; color: #94a3b8; font-size: 17px; line-height: 1.25; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .mini {
+    background: var(--accent-soft); border: 1px solid #d4e2ff; border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .mini h4 { font-size: 13.8px; margin-bottom: 6px; color: #1e40af; }
+  .mini p { font-size: 13px; color: #374151; margin: 0; }
+
+  .step { display: flex; gap: 14px; margin-bottom: 2px; }
+  .step .n {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 13.5px; font-weight: 700; flex-shrink: 0; margin-top: 2px;
+  }
+  .step .body { padding-bottom: 16px; border-left: 2px dashed #cbd5e1; margin-left: -14px; padding-left: 28px; flex: 1; }
+  .step:last-child .body { border-left-color: transparent; }
+  .step h4 { font-size: 14.5px; margin-bottom: 4px; }
+  .step p { font-size: 13.5px; color: #374151; margin-bottom: 4px; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 48px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>🖥️ CUA 功能审核报告</h1>
+  <p>deepseek-tui-py · LCU 桌面控制集成（<code style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3);color:#fff">src/deepseek_tui/cua/</code>）· build_1020 · 2026-10-20</p>
+  <div class="tags">
+    <span class="tag">✅ 33/33 测试通过</span>
+    <span class="tag">核心代码 838 行</span>
+    <span class="tag">安全设计 12 项护栏</span>
+    <span class="tag">结论：设计合格，无阻塞缺陷</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#s1">1. 总览</a>
+  <a href="#s2">2. 五层架构</a>
+  <a href="#s3">3. 一次调用的完整流程</a>
+  <a href="#s4">4. 会话生命周期</a>
+  <a href="#s5">5. 桌面锁</a>
+  <a href="#s6">6. 人工接管与取消</a>
+  <a href="#s7">7. 授权审批</a>
+  <a href="#s8">8. 安全护栏清单</a>
+  <a href="#s9">9. 子代理协作</a>
+  <a href="#s10">10. 审核结论</a>
+</nav>
+
+<!-- ================= 1 ================= -->
+<section id="s1">
+  <h2>1. 总览：这个 CUA 是什么</h2>
+  <div class="card">
+    <p>CUA（Computer Use Agent，电脑使用代理）让模型能够<b>直接操控你的桌面应用</b>——点按钮、打字、截屏、读窗口内容。本项目没有自己实现桌面操作 API，而是接入 <b>LCU runtime</b>（本机安装的 CUA 运行时），只做一层"宿主适配"：</p>
+    <ul class="plain">
+      <li>对模型只暴露两个工具：<code>cua_js</code> 和 <code>cua_js_reset</code>——就是 LCU 原生的 <code>js</code> / <code>js_reset</code>，参数、描述、文档<b>全部来自运行时实时下发</b>，本地不维护第二套 API 副本（避免两份文档漂移）。</li>
+      <li>现有的 <code>browser_use</code> 管 Workbench 内置浏览器；CUA 管桌面应用（可选接管外部 Chrome）。两者互斥同一表面。</li>
+      <li>整条链路上有 12 项安全护栏（第 8 节），核心哲学只有一句话：<b>"宁可重连重观察，绝不盲目重放一个可能已经执行过的点击"</b>。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= 2 ================= -->
+<section id="s2">
+  <h2>2. 五层架构：数据怎么流动</h2>
+  <div class="card">
+    <div class="layers">
+      <div class="layer" style="background:linear-gradient(90deg,#1e40af,#3b82f6)">
+        <span class="no">1</span><span class="t">引擎集成层</span>
+        <span class="d">每轮准备、视觉预检、失败退避、系统提示注入</span>
+        <span class="f">cua/engine.py · CuaEngineMixin</span>
+      </div>
+      <div class="arrow-down">▼</div>
+      <div class="layer" style="background:linear-gradient(90deg,#0e7490,#06b6d4)">
+        <span class="no">2</span><span class="t">工具层</span>
+        <span class="d">把运行时目录包装成 cua_js / cua_js_reset，处理超大输出、图片标记</span>
+        <span class="f">cua/tools.py · CuaTool</span>
+      </div>
+      <div class="arrow-down">▼</div>
+      <div class="layer" style="background:linear-gradient(90deg,#047857,#10b981)">
+        <span class="no">3</span><span class="t">会话层</span>
+        <span class="d">JSONL 请求/应答、授权桥、桌面锁、空闲监控、轮次生命周期</span>
+        <span class="f">cua/session.py · CuaSession</span>
+      </div>
+      <div class="arrow-down">▼</div>
+      <div class="layer" style="background:linear-gradient(90deg,#7c2d12,#f59e0b)">
+        <span class="no">4</span><span class="t">Node 桥接进程</span>
+        <span class="d">stdin/stdout 按行分帧 JSON，elicitation 转发，AbortController 中断</span>
+        <span class="f">cua/bridge.mjs</span>
+      </div>
+      <div class="arrow-down">▼</div>
+      <div class="layer" style="background:linear-gradient(90deg,#334155,#64748b)">
+        <span class="no">5</span><span class="t">LCU 共享客户端 → 原生 CUA runtime</span>
+        <span class="d">createCuaClient，真正驱动 macOS / X11 桌面</span>
+        <span class="f">~/.local/share/lcu/current</span>
+      </div>
+    </div>
+    <p style="margin-top:14px"><b>为什么中间要有一个 Node 子进程？</b>LCU 客户端是 Node 模块，Python 进程无法直接 import。桥接进程是<b>纯宿主侧</b>的：模型代码只能到达 <code>client.call</code>，永远摸不到桥本身的生命周期接口。stdout 只输出分帧 JSON，stderr 被 Python 侧静默排空（运行时日志可能含桌面数据，绝不回显进聊天）。</p>
+  </div>
+</section>
+
+<!-- ================= 3 ================= -->
+<section id="s3">
+  <h2>3. 一次工具调用的完整流程（通俗版）</h2>
+  <div class="card">
+    <p>假设模型要打开"备忘录"并输入文字，它调用 <code>cua_js</code>，参数是一段 JS 代码。从上到下走一遍：</p>
+    <div class="step"><div class="n">1</div><div class="body">
+      <h4>每轮开始：引擎准备会话（<code>_prepare_cua</code>）</h4>
+      <p>引擎在取工具列表时检查：CUA 开了吗？计划模式吗？当前模型<b>支持看图吗</b>（不支持则查 <code>vision.model</code> 辅助路由，两者都不行就不暴露工具）？上次连接失败还在 30 秒退避期内吗？全过关才建立 <code>CuaSession</code> 并注册 <code>cua_js</code> / <code>cua_js_reset</code>。</p>
+    </div></div>
+    <div class="step"><div class="n">2</div><div class="body">
+      <h4>工具执行入口：三道前置检查（<code>CuaTool.execute</code>）</h4>
+      <p>① 有没有 <code>reset_reason</code>（之前被人工接管/断连过）？有就直接拒绝，提示"从文档化的入口重新观察"。② 包一层 <code>session.run()</code>，把"停止/暂停"事件监听挂上。③ 拿到宿主轮次 ID 和调用 ID 传入（模型无法伪造生命周期通知）。</p>
+    </div></div>
+    <div class="step"><div class="n">3</div><div class="body">
+      <h4>会话层拿锁、建运行段（<code>CuaSession.call</code>）</h4>
+      <p>进程内互斥 → 确保连接活着 → <b>获取跨进程桌面文件锁</b>（整个轮次持有，不是单次点击）→ 生成新的运行段 ID <code>"turn-id:cua:随机hex"</code>，宿主轮次 ID 放进 metadata。为什么不直接用轮次 ID？因为原生 runtime 记得住已结束的 ID，接管恢复后复用会被拒。</p>
+    </div></div>
+    <div class="step"><div class="n">4</div><div class="body">
+      <h4>JSONL 消息进桥，桥调 LCU 客户端</h4>
+      <p>Python 写一行 JSON 到桥进程 stdin；桥解析后调 <code>client.call(name, args, context)</code>，每个调用挂一个 <code>AbortController</code>（后面中断用）。应答写回一行 JSON，Python 按 <code>id</code> 配对唤醒等待中的 Future。</p>
+    </div></div>
+    <div class="step"><div class="n">5</div><div class="body">
+      <h4>途中可能弹出授权卡片（elicitation）</h4>
+      <p>LCU 要访问"备忘录" → 原生 runtime 发起授权请求 → 桥转发给 Python → 走宿主审批 UI 弹卡片给<b>你</b>。你点"允许一次"才放行（详见第 7 节）。等待期间动作超时被冻结——人在考虑，不应该倒计时。</p>
+    </div></div>
+    <div class="step"><div class="n">6</div><div class="body">
+      <h4>结果回来：转成工具结果 + 后处理</h4>
+      <p>截图走现有图片管线（原始字节不重编码，标记来源 <code>kind:"cua"</code>）；文本超 64 KiB 就<b>完整落盘</b>并返回读取路径，绝不截一半冒充完整文档；运行时文档变了就把新文档附加到结果里。单次失败立即 <code>end_turn(interrupted)</code> + 关连接——因为不知道那个点击到底执行了没有。</p>
+    </div></div>
+    <div class="step"><div class="n">7</div><div class="body">
+      <h4>本轮结束：收尾（<code>_finish_cua_turn</code>）</h4>
+      <p>用户取消则发 <code>interrupt</code> + <code>endTurn(Interrupt)</code> 并关闭连接；正常结束发 <code>endTurn(Stop)</code>，释放桌面锁，但<b>连接保留</b>到下一轮复用（REPL 里的 JS 变量还在）。</p>
+    </div></div>
+  </div>
+</section>
+
+<!-- ================= 4 ================= -->
+<section id="s4">
+  <h2>4. 会话与轮次生命周期</h2>
+  <div class="card">
+    <h3>两个"轮次 ID"各管各的</h3>
+    <table>
+      <tr><th>字段</th><th>谁生成</th><th>作用</th></tr>
+      <tr><td><code>turn_id</code>（宿主轮次）</td><td>引擎</td><td>贯穿同一宿主轮次的稳定身份，放在 metadata 的 <code>deepseek/host-turn-id</code></td></tr>
+      <tr><td><code>runtime_turn_id</code></td><td><code>f"{turn_id}:cua:{uuid4}"</code></td><td>原生 runtime 眼中的"运行段"。每次重新取得桌面都换新的，因为 runtime 记得已结束的 ID，拒绝复活旧轮次</td></tr>
+    </table>
+    <h3>状态机（简化）</h3>
+<pre>
+<span class="c">── 未连接 ──────────────────────────────────────────────</span>
+  connect()            成功 → 记下 instructions + 工具目录（必须是 js/js_reset，变了就报错）
+<span class="c">── 已连接（空闲）───────────────────────────────────────</span>
+  call() 首次          取桌面锁 + 生成 runtime_turn_id
+<span class="c">── 持有桌面（轮次中）─────────────────────────────────────</span>
+  call() 后续          复用同一 runtime_turn_id（REPL 变量延续）
+  end_turn()           发 endTurn(Stop) → 释放锁，连接保留
+  异常/超时/崩溃        endTurn(Interrupt) + close() → 整个丢弃，绝不带状态重连
+<span class="c">── 关闭 ────────────────────────────────────────────────</span>
+  close()              发 close → 关 stdin → 5 秒等退出 → 否则 kill → 释放锁、清空一切
+</pre>
+    <p><b>关键设计：不确定即丢弃。</b>超时、桥进程崩溃、断连，任何"不知道动作执行了没有"的情况，都不重试、不重放，直接整段会话报废，下次重新观察。配套的 <code>reset_reason</code> 会在下一次调用时把原因告诉模型并强制重新观察。</p>
+  </div>
+</section>
+
+<!-- ================= 5 ================= -->
+<section id="s5">
+  <h2>5. 桌面锁：同一台电脑同一时间只有一个"手"</h2>
+  <div class="card">
+    <p><code>DesktopLease</code>（session.py:21）用 <code>flock</code> 在 <code>/tmp/deepseek-cua-&lt;uid&gt;.lock</code> 上做<b>跨进程互斥</b>：</p>
+    <ul class="plain">
+      <li><b>锁的粒度是"轮次"</b>，不是单次点击——从观察、操作到验证结果全程持有。注释原话："Hold through observe/action/verify, not merely through individual clicks"。两次工具调用之间的空档也不放。</li>
+      <li>抢不到就 10Hz 自旋等待（可被取消）；<code>O_NOFOLLOW</code> 防符号链接劫持，<code>fstat</code> 校验属主，权限 0600。</li>
+      <li>它<b>只约束本适配器的会话之间</b>（主任务 vs 子任务、多个进程实例），不阻止你本人或其他软件操作电脑——所以才需要第 6 节的"人工接管"检测。</li>
+      <li>父任务派派子任务前先 <code>handoff()</code>：结束轮次、关连接、放锁，让子任务能接手桌面。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= 6 ================= -->
+<section id="s6">
+  <h2>6. 人工接管与取消：覆盖"空档期"的监控器</h2>
+  <div class="card">
+    <p>难点：用户按"停止"或点"接管"时，模型可能正闲着（两次调用之间），也可能正卡在一个长操作上。<code>session.run()</code> + <code>_watch()</code> 组合覆盖两种情况：</p>
+    <div class="grid2">
+      <div class="mini">
+        <h4>空闲时发生接管</h4>
+        <p>监控任务挂在取消/暂停事件上，事件一到：置 <code>reset_reason</code> → 发 <code>interrupt</code> + <code>endTurn(Interrupt)</code> → 关连接。下一次调用直接被拒，提示旧变量已失效、需重新观察。</p>
+      </div>
+      <div class="mini">
+        <h4>操作进行中发生接管</h4>
+        <p>监控器标记当前操作任务为"被打断的"并 cancel 它；操作内部把 CancelledError 翻译成 ToolError（"结果可能未知，重新观察后再继续"），同时触发 close。外部真取消（比如任务被杀）则原样向上抛。</p>
+      </div>
+    </div>
+    <p style="margin-top:12px">两个细节值得点名表扬：</p>
+    <ul class="plain">
+      <li><b>初始化也能被打断</b>——连接建立卡住 120 秒时按停止，立即中断，不用等超时（有专门回归测试）。</li>
+      <li><b>等待人工授权不冻结控制通道</b>——桥的设计让 <code>interrupt</code>/<code>endTurn</code>/<code>close</code> 不排队等一个正在等人点的调用；同时动作类请求的超时会在"有授权挂起"时暂停计时，但控制类请求照常倒计时（"人可以慢慢想，关机不能等"）。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= 7 ================= -->
+<section id="s7">
+  <h2>7. 授权审批：三层不放大原则</h2>
+  <div class="card">
+    <p>原生 runtime 通过 elicitation 问"允许访问 X 吗"。Python 侧 <code>approval.py</code> 决定怎么呈现、怎么回答，处处<b>fail-closed（认不出就取消）</b>：</p>
+    <table>
+      <tr><th>规则</th><th>实现</th></tr>
+      <tr><td><b>只认两种形态</b></td><td>原生应用授权（connector 为 computer-use + app ID）；浏览器授权必须 <code>scheme://netloc</code> 精确原始 origin（带路径的、非 http(s) 的、schema 带 required 字段的——全部取消）</td></tr>
+      <tr><td><b>宿主自我授权直接拒</b></td><td>app 是 Workbench 自己（<code>com.xingyuzhong.deepseekgui</code>）时连问题都不出——防止模型给自己授权</td></tr>
+      <tr><td><b>范围不放大</b></td><td>上游说支持 persist:["session"] 才显示"本次会话"选项；上游没给"始终允许"就选不了"始终允许"。回答映射回上游自己的语义，宿主侧的"会话级批准"不会变成上游的"永久授权"</td></tr>
+      <tr><td><b>子代理只转发单次</b></td><td>子任务的授权卡片即使你在宿主选了"会话允许"，转达给 runtime 的也只是单次 accept——子任务没有资格开长期授权</td></tr>
+      <tr><td><b>默认取消</b></td><td>超时、取消、异常、答非所问——一律 <code>{"action":"cancel"}</code></td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ================= 8 ================= -->
+<section id="s8">
+  <h2>8. 安全护栏清单（12 项）</h2>
+  <div class="card">
+    <table>
+      <tr><th>#</th><th>护栏</th><th>位置</th><th>防什么</th></tr>
+      <tr><td>1</td><td>桌面文件锁（跨进程）</td><td><code>session.py:21</code></td><td>两个会话同时抢鼠标键盘</td></tr>
+      <tr><td>2</td><td>不确定即丢弃，绝不重放</td><td><code>session.py:325</code></td><td>超时/断连后重放点击导致重复提交</td></tr>
+      <tr><td>3</td><td>reset_reason 强制重新观察</td><td><code>tools.py:79</code></td><td>接管后用失效变量继续操作</td></tr>
+      <tr><td>4</td><td>每次取桌面换新运行段 ID</td><td><code>session.py:303</code></td><td>复活原生 runtime 已结束的轮次</td></tr>
+      <tr><td>5</td><td>授权 fail-closed + 范围不放大</td><td><code>approval.py</code></td><td>提示注入提权、授权越滚越大</td></tr>
+      <tr><td>6</td><td>宿主应用自我授权拒绝</td><td><code>approval.py:24</code></td><td>模型给自己开权限</td></tr>
+      <tr><td>7</td><td>视觉能力预检</td><td><code>readiness.py</code></td><td>文本模型瞎操作桌面</td></tr>
+      <tr><td>8</td><td>&gt;64KiB 输出完整落盘不截断</td><td><code>tools.py:108</code></td><td>半份 API 文档被当完整文档</td></tr>
+      <tr><td>9</td><td>压缩/裁剪后强制重读文档提醒</td><td><code>tools.py:32</code></td><td>上下文压缩丢文档后盲操作</td></tr>
+      <tr><td>10</td><td>项目级配置不能开启/改路径</td><td><code>_PROJECT_SENSITIVE_KEYS</code></td><td>仓库里塞恶意配置劫持桌面</td></tr>
+      <tr><td>11</td><td>stderr 静默排空</td><td><code>session.py:285</code></td><td>运行时日志里的桌面数据泄进聊天</td></tr>
+      <tr><td>12</td><td>失败 30 秒退避（用户停止不退避）</td><td><code>engine.py:68</code></td><td>普通任务反复等待不可用 runtime</td></tr>
+    </table>
+    <p style="margin-top:8px">此外：截图是<b>证据不是指令</b>（提示注入防护写进 HOST_GUIDANCE）；输入成功≠任务完成，必须观察验证；模型不能伪造生命周期通知（轮次/调用 ID 由宿主注入）。</p>
+  </div>
+</section>
+
+<!-- ================= 9 ================= -->
+<section id="s9">
+  <h2>9. 子代理协作：共享桌面，不共享 REPL</h2>
+  <div class="card">
+    <p><code>subagent.py</code> 的 <code>prepare_subagent_cua</code> 给每个子代理建<b>独立的</b> CuaSession：</p>
+    <ul class="plain">
+      <li><b>共享</b>：桌面锁（同一把，谁持有谁用）、原生 runtime、授权体系。</li>
+      <li><b>不共享</b>：REPL（JS 变量隔离）、父任务的授权记录、宿主轮次身份（子任务有自己的 <code>cua_turn_id</code>）。</li>
+      <li>父任务调用 <code>agent</code> 工具委派前先 <code>handoff()</code> 放锁关连接；子任务结果带 <code>HANDOFF_NOTICE</code>，明确告诉父任务"旧变量失效，重新观察"。</li>
+      <li>子任务的取消事件链更长：自己的 token + 父的 cancel + 中断事件 + 父的暂停，全挂进监控器。</li>
+      <li>LCU 装不上、模型不支持视觉——子任务不启动 CUA 但<b>不阻塞子任务本身</b>，只在 metadata 里记 cua_error。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= 10 ================= -->
+<section id="s10">
+  <h2>10. 审核结论</h2>
+  <div class="verdict">
+    <h3>✅ 总体：设计合格，实现严谨，无阻塞缺陷</h3>
+    <ul class="plain" style="margin-top:8px">
+      <li><b>33/33 专项测试通过</b>（本机实跑验证），覆盖：桥接协议、权限范围、授权等待时取消、锁竞争、崩溃不重放、停止清理、工具目录、配置隔离、截图尺寸、退避、压缩提醒、子代理审批。</li>
+      <li>文档（docs/CUA.md）与实现一致，且如实记录了验证边界（Linux / Chrome 页面操作 / 模型自主任务未覆盖）——没有夸大。</li>
+      <li>测试是"真协议级"的：fixtures/cua/client.mjs 模拟 LCU 客户端记录调用序列，断言的是行为（ID 结构、Interrupt/Stop 事件、锁释放），不是实现细节。</li>
+    </ul>
+  </div>
+  <div class="note">
+    <h3>⚠️ 三处边界观察（均不构成 bug，记录备查）</h3>
+    <ul class="plain" style="margin-top:8px">
+      <li><b>授权在 0.25s 轮询片内完成仍计入动作超时</b>（<code>session.py:208-214</code>）：超时冻结按 0.25s 粒度采样，一个起止都落在同片内的人工等待最多多扣 0.25s。上界固定且极小，可忽略。</li>
+      <li><b>_watch 竞态窗口</b>（<code>session.py:112-114</code>）：操作在"检查未完成"与"cancel"之间自行完成时，结果正常返回而非报"被打断"。但 reset_reason 已置位，下一次调用必被拦下强制重观察——安全语义未破。</li>
+      <li><b>锁等待无上限自旋</b>：另一进程长期持锁时 acquire 以 10Hz 无限等待（可取消）。这是刻意的仲裁语义，不是缺陷；若未来出现多会话常驻，可考虑加公告/通知。</li>
+    </ul>
+  </div>
+  <div class="danger">
+    <h3>📋 已知的真实边界（来自 docs/CUA.md 自述，非本次审核发现）</h3>
+    <ul class="plain" style="margin-top:8px">
+      <li>Linux（X11）与 Chrome 网页内点击/输入未经真实运行时验证。</li>
+      <li>脚本化集成测试 ≠ 模型自主完成业务任务的端到端验证。</li>
+      <li>CUA 无法阻止你本人在模型操作期间动鼠标——这正是"人工接管"路径存在的原因。</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>文件地图（审阅入口）</h3>
+    <table>
+      <tr><th>文件</th><th>行数</th><th>职责</th></tr>
+      <tr><td>src/deepseek_tui/cua/session.py</td><td>401</td><td>会话/锁/监控/轮次生命周期（核心）</td></tr>
+      <tr><td>src/deepseek_tui/cua/tools.py</td><td>146</td><td>工具包装、64KiB 落盘、图片标记、提醒</td></tr>
+      <tr><td>src/deepseek_tui/cua/engine.py</td><td>95</td><td>引擎集成：准备/退避/提示/收尾</td></tr>
+      <tr><td>src/deepseek_tui/cua/approval.py</td><td>88</td><td>授权问题生成与应答映射（fail-closed）</td></tr>
+      <tr><td>src/deepseek_tui/cua/subagent.py</td><td>79</td><td>子代理独立会话与审批转发</td></tr>
+      <tr><td>src/deepseek_tui/cua/readiness.py</td><td>28</td><td>视觉能力预检</td></tr>
+      <tr><td>src/deepseek_tui/cua/bridge.mjs</td><td>95</td><td>Node 桥：分帧 JSON、elicitation、中断</td></tr>
+      <tr><td>tests/test_cua.py</td><td>660</td><td>33 项专项测试（全部通过）</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>审核于 build_1020（a5496aac 之后）· 由 Claude 生成 · 测试命令：<code>.venv/bin/python -m pytest tests/test_cua.py</code></footer>
+</div>
+</body>
+</html>
