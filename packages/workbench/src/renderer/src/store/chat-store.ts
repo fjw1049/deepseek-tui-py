@@ -1336,7 +1336,7 @@ function buildThreadEventSink(
           ...(syncComposer ? { composerMode: nextComposerMode } : {})
         }
       }),
-    onSystemStatus: (text, itemId, severity) =>
+    onSystemStatus: (text, itemId, severity, automation) =>
       set((s) => {
         const trimmed = text.trim()
         // Sub-agent handoff chrome is filtered in the runtime too; keep this as
@@ -1355,7 +1355,8 @@ function buildThreadEventSink(
               id: itemId,
               createdAt: new Date().toISOString(),
               text,
-              severity
+              severity,
+              automation
             }
           ]
         }

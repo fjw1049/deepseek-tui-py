@@ -1265,8 +1265,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         if (it.kind === 'status' && isPluginMountStatusItem(it)) continue
         // Sub-agent handoff waits are orchestrator chrome (status bar / dock).
         if (it.kind === 'status' && isInternalSubagentHandoffStatusItem(it)) continue
-        const text = it.summary || it.kind
-        blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })
+        const automation = ['automation_result', 'automation_delivery'].includes(String(it.metadata?.source))
+          ? (it.metadata ?? undefined) : undefined
+        const text = automation ? (it.detail || it.summary || it.kind) : (it.summary || it.kind)
+        blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text, automation })
       }
     }
     for (const turn of detail.turns ?? []) {
@@ -1887,7 +1889,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   sink.onSystemStatus
                 ) {
                   const text = it.detail ?? it.summary ?? it.kind
-                  sink.onSystemStatus(text, it.id)
+                  const automation = ['automation_result', 'automation_delivery'].includes(String(it.metadata?.source))
+                    ? (it.metadata ?? undefined) : undefined
+                  if (automation) sink.onSystemStatus(text, it.id, undefined, automation)
+                  else sink.onSystemStatus(text, it.id)
                   return
                 }
                 if (it?.kind === 'error') {

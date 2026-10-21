@@ -2403,5 +2403,15 @@
   "browserCookieStatus_partial": "已同步，部分登录信息未导入",
   "browserCookieStatus_save_failed": "保存失败，下次可能需要重新登录",
   "browserCookieStatus_cleared": "登录数据已清除",
-  "browserCookieStatus_apply_failed": "已保存，重新打开浏览器后生效"
+  "browserCookieStatus_apply_failed": "已保存，重新打开浏览器后生效",
+  "automationResultTitle": "自动化结果",
+  "automationViewReport": "查看报告",
+  "automationHideReport": "收起报告",
+  "automationNoReport": "本次运行没有生成报告。",
+  "automationRunFailed": "运行失败",
+  "automationRunRunning": "运行中",
+  "automationRunQueued": "等待运行",
+  "automationRunCanceled": "已取消",
+  "automationDeliveryIssue": "发送失败",
+  "automationWecomMissing": "企业微信发送失败：尚未配置机器人 Webhook。"
 }

@@ -179,7 +179,7 @@ export type ChatBlock =
     }
   | { kind: 'reasoning'; id: string; createdAt?: string; text: string; narration?: string }
   | ToolBlock
-  | { kind: 'system'; id: string; createdAt?: string; text: string; severity?: 'error' }
+  | { kind: 'system'; id: string; createdAt?: string; text: string; severity?: 'error'; automation?: Record<string, unknown> }
   | {
       kind: 'approval'
       id: string
@@ -457,7 +457,7 @@ export type ThreadEventSink = {
   /** Optional: thread metadata changed (title / archived). */
   onThreadUpdated?(ev: ThreadUpdatedPayload): void
   /** Optional: runtime status line (sub-agent wait, compaction, etc.). */
-  onSystemStatus?(text: string, itemId: string, severity?: 'error'): void
+  onSystemStatus?(text: string, itemId: string, severity?: 'error', automation?: Record<string, unknown>): void
   /** Optional: delegate / fanout sub-agent progress cards. */
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
   /** Optional: live streamed text from a running sub-agent. */

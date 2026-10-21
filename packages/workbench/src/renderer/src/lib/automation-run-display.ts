@@ -50,3 +50,16 @@ export function formatRunDeliveryStatus(
 
   return '—'
 }
+
+/** A delivery failure does not establish whether execution succeeded. */
+export function formatRunStatus(run: AutomationRunRecord, t: Translate): string {
+  if (run.status === 'failed' && (run.delivery_error || /delivery failed/i.test(run.error || ''))) {
+    return t('automationDeliveryIssue')
+  }
+  const labels: Record<string, string> = {
+    completed: 'automationCompleted', succeeded: 'automationCompleted', success: 'automationCompleted',
+    failed: 'automationRunFailed', error: 'automationRunFailed', running: 'automationRunRunning',
+    queued: 'automationRunQueued', canceled: 'automationRunCanceled'
+  }
+  return labels[run.status] ? t(labels[run.status]) : run.status
+}

@@ -62,3 +62,35 @@ it('stops reconnecting and asks the owner to reload when replay is unavailable',
   expect(sink.onResyncRequired).toHaveBeenCalledTimes(1)
   expect(sink.onError).not.toHaveBeenCalled()
 })
+
+it('restores full automation reports and their source instead of the truncated summary', async () => {
+  const metadata = { source: 'automation_result', run_id: 'run_1' }
+  vi.stubGlobal('dsGui', { runtimeRequest: async () => ({ ok: true, body: JSON.stringify({
+    thread: { id: 'thread', status: 'idle' }, latest_seq: 2, turns: [],
+    items: [{ id: 'report', kind: 'status', summary: '[Daily] truncated...', detail: '[Daily] ## Full report', metadata }]
+  }) }) })
+  const detail = await new DeepseekRuntimeProvider().getThreadDetail('thread')
+  expect(detail.blocks).toContainEqual(expect.objectContaining({ text: '[Daily] ## Full report', automation: metadata }))
+})
+
+it('preserves automation metadata for live report delivery', async () => {
+  const controller = new AbortController()
+  let emit!: (event: SseEventPayload) => void
+  const metadata = { source: 'automation_result', run_id: 'run_1' }
+  const sink: ThreadEventSink = {
+    onSeq: vi.fn(), onDeltas: vi.fn(), onUserMessage: vi.fn(), onTool: vi.fn(),
+    onApproval: vi.fn(), onUserInput: vi.fn(), onUserInputStatus: vi.fn(), onError: vi.fn(),
+    onSystemStatus: vi.fn(), onTurnComplete: vi.fn(() => controller.abort())
+  }
+  vi.stubGlobal('dsGui', {
+    onSseEvent: (handler: typeof emit) => { emit = handler; return () => {} },
+    onSseEnd: () => () => {}, onSseError: () => () => {}, stopSse: async () => true,
+    startSse: async (_thread: string, _seq: number, streamId: string) => {
+      emit({ streamId, data: { event: 'item.completed', payload: { item: { id: 'report', kind: 'status', detail: '## Full report', metadata } } } })
+      emit({ streamId, data: { event: 'turn.completed', payload: { turn: { id: 'turn', thread_id: 'thread', status: 'completed' } } } })
+      return { streamId }
+    }
+  })
+  await new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 0, sink, controller.signal)
+  expect(sink.onSystemStatus).toHaveBeenCalledWith('## Full report', 'report', undefined, metadata)
+})

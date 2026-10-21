@@ -30,7 +30,7 @@ import {
   type AutomationRecord,
   type AutomationRunRecord
 } from '../../lib/automation-runtime-client'
-import { formatRunDeliveryStatus } from '../../lib/automation-run-display'
+import { formatRunDeliveryStatus, formatRunStatus } from '../../lib/automation-run-display'
 import { ALL_WEEKDAYS } from '../../lib/automation-task-form-model'
 import {
   automationCardPreview,
@@ -111,7 +111,7 @@ const TEMPLATES: TaskTemplate[] = [
 ]
 
 function runTone(status: string): string {
-  if (status === 'succeeded' || status === 'success')
+  if (status === 'completed' || status === 'succeeded' || status === 'success')
     return 'text-emerald-700 dark:text-emerald-300'
   if (status === 'failed' || status === 'error') return 'text-red-700 dark:text-red-300'
   if (status === 'running') return 'text-accent'
@@ -738,7 +738,7 @@ export function AutomationCenter({
                       className="grid min-w-[700px] grid-cols-[minmax(140px,1.5fr)_80px_150px_150px_80px] items-center gap-3 border-b border-ds-border-muted px-4 py-3 text-[12px] last:border-b-0"
                     >
                       <span className="truncate text-ds-ink">{run.automationName}</span>
-                      <span className={`font-medium ${runTone(run.status)}`}>{run.status}</span>
+                      <span className={`font-medium ${runTone(run.status)}`}>{formatRunStatus(run, t)}</span>
                       <span className="text-ds-muted">
                         {formatAutomationWhen(run.scheduled_for)}
                       </span>
@@ -854,7 +854,7 @@ export function AutomationCenter({
                   <div key={run.id} className="py-3 text-[12px]">
                     <div className="flex items-center justify-between gap-3">
                       <span className={`font-semibold ${runTone(run.status)}`}>
-                        {run.status}
+                        {formatRunStatus(run, t)}
                       </span>
                       <span className="text-ds-faint">
                         {formatAutomationWhen(run.created_at)}
@@ -882,13 +882,6 @@ export function AutomationCenter({
                         {formatRunDeliveryStatus(run, selected, t)}
                       </div>
                     </dl>
-                    {run.task_id && (
-                      <div className="mt-1 truncate font-mono text-[11px] text-ds-faint">
-                        Task {run.task_id}
-                        {run.thread_id ? ` · Thread ${run.thread_id}` : ''}
-                        {run.turn_id ? ` · Turn ${run.turn_id}` : ''}
-                      </div>
-                    )}
                     {onOpenThread && ['completed', 'failed', 'canceled'].includes(run.status) && (
                       <button
                         type="button"
@@ -899,10 +892,24 @@ export function AutomationCenter({
                         {discussionRunId === run.id ? t('automationOpeningDiscussion') : t('automationDiscussResult')}
                       </button>
                     )}
-                    {run.error && (
-                      <div className="mt-2 rounded bg-red-500/10 px-2 py-1.5 text-red-700 dark:text-red-200">
-                        {run.error}
+                    {(run.error || run.delivery_error) && (
+                      <div className="mt-3 rounded-lg bg-red-500/5 px-3 py-2 text-[12px] text-red-700 dark:text-red-200">
+                        {/WeCom webhook key missing/i.test(run.delivery_error || run.error || '')
+                          ? t('automationWecomMissing')
+                          : (run.delivery_error || /delivery failed/i.test(run.error || ''))
+                            ? t('automationDeliveryIssue') : t('automationRunFailed')}
                       </div>
+                    )}
+                    {(run.task_id || run.thread_id || run.turn_id || run.error || run.delivery_error) && (
+                      <details className="mt-3 text-[11px] text-ds-faint">
+                        <summary className="cursor-pointer hover:text-ds-ink">{t('executionDetails')}</summary>
+                        <div className="mt-2 space-y-1 break-all font-mono">
+                          {run.task_id && <div>Task {run.task_id}</div>}
+                          {run.thread_id && <div>Thread {run.thread_id}</div>}
+                          {run.turn_id && <div>Turn {run.turn_id}</div>}
+                          {(run.error || run.delivery_error) && <pre className="whitespace-pre-wrap">{[...new Set([run.error, run.delivery_error].filter(Boolean))].join('\n')}</pre>}
+                        </div>
+                      </details>
                     )}
                   </div>
                 ))

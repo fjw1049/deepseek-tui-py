@@ -2403,5 +2403,15 @@
   "browserCookieStatus_partial": "Synced; some sign-ins were not imported",
   "browserCookieStatus_save_failed": "Could not save. You may need to sign in again.",
   "browserCookieStatus_cleared": "Saved sign-ins cleared",
-  "browserCookieStatus_apply_failed": "Saved. Reopen the browser to apply."
+  "browserCookieStatus_apply_failed": "Saved. Reopen the browser to apply.",
+  "automationResultTitle": "Automation result",
+  "automationViewReport": "View report",
+  "automationHideReport": "Hide report",
+  "automationNoReport": "This run did not produce a report.",
+  "automationRunFailed": "Run failed",
+  "automationRunRunning": "Running",
+  "automationRunQueued": "Queued",
+  "automationRunCanceled": "Canceled",
+  "automationDeliveryIssue": "Delivery failed",
+  "automationWecomMissing": "WeCom delivery failed: configure the robot webhook."
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AutomationRecord, AutomationRunRecord } from './automation-runtime-client'
-import { formatRunDeliveryStatus } from './automation-run-display'
+import { formatRunDeliveryStatus, formatRunStatus } from './automation-run-display'
 
 const t = (key: string) => key
 
@@ -71,3 +71,10 @@ describe('automation-run-display', () => {
     expect(formatRunDeliveryStatus(run, automationWithFeishu, t)).toBe('automationRunDelivered')
   })
 })
+
+ it('labels delivery failures without claiming execution succeeded', () => {
+   const run: AutomationRunRecord = { id: 'r', automation_id: 'a', scheduled_for: '', created_at: '', status: 'failed', error: 'delivery failed after 5 attempts' }
+   expect(formatRunStatus(run, t)).toBe('automationDeliveryIssue')
+   expect(formatRunStatus({ ...run, error: 'execution crashed' }, t)).toBe('automationRunFailed')
+   expect(formatRunStatus({ ...run, status: 'completed', delivery_error: 'timeout' }, t)).toBe('automationCompleted')
+ })

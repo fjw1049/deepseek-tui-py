@@ -1,3 +1,4 @@
+import { AutomationResultCard } from './AutomationResultCard'
 import { TurnActivity, resolveTurnActivity, type TurnActivityKind } from './TurnActivity'
 import { useBrowserAssistanceStore } from '../../store/browser-assistance-store'
 import { copyText } from '../../lib/copy-text'
@@ -1192,7 +1193,9 @@ function MessageTurn({
 
       {isSystemOnlyTurn ? (
         <div className="flex flex-col items-center gap-1 py-1">
-          {systemBlocks.map((b) => (
+          {systemBlocks.map((b) => b.automation ? (
+            <AutomationResultCard key={b.id} block={b} />
+          ) : (
             <div
               key={b.id}
               className="max-w-full rounded-full border border-ds-border-muted bg-ds-card/60 px-3 py-1 text-center text-[12px] text-ds-faint"
@@ -1234,7 +1237,9 @@ function MessageTurn({
 
           {systemBlocks.length > 0 ? (
             <div className="flex flex-col gap-1">
-              {systemBlocks.map((b) => (
+              {systemBlocks.map((b) => b.automation ? (
+                <AutomationResultCard key={b.id} block={b} />
+              ) : (
                 <div
                   key={b.id}
                   className="rounded-md border border-ds-border-muted bg-ds-card/60 px-3 py-1.5 text-[12px] text-ds-faint"
@@ -2008,6 +2013,7 @@ function ProcessStreamEntry({
   }
   if (block.kind === 'subagent') return <SubagentBubble block={block} />
   if (block.kind === 'system') {
+    if (block.automation) return <AutomationResultCard block={block} />
     return <p role={block.severity === 'error' ? 'alert' : undefined} className={block.severity === 'error'
       ? 'rounded-xl border border-red-300/70 bg-red-50 p-3 text-[13px] leading-6 text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200'
       : 'text-[12px] text-ds-faint'}>{block.text}</p>
