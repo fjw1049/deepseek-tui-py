@@ -34,7 +34,7 @@ it('shows a concise introduction without reading rules without redundant managem
   }
 })
 
-it('lets an installed plugin with hooks be trusted and updated', async () => {
+it('lets an installed plugin with hooks be trusted', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   Object.assign(window, { dsGui: {} })
   const plugin: PluginRow = { name: 'my-hooks', version: '1', description: 'd', path: '/p', scope: 'user', enabled: true, trusted: false, permissions: [], components: { skills: false, rules: false, hooks: true, mcp_servers: false, commands: false, agents: false } }
@@ -42,14 +42,12 @@ it('lets an installed plugin with hooks be trusted and updated', async () => {
   document.body.append(host)
   const root = createRoot(host)
   const onTrust = vi.fn()
-  const onUpdate = vi.fn()
   try {
-    await act(async () => root.render(createElement(PluginDetailDrawer, { detail: { kind: 'installed', key: 'user:my-hooks', plugin }, busy: false, installed: true, onClose: vi.fn(), onTrust, onUpdate })))
+    await act(async () => root.render(createElement(PluginDetailDrawer, { detail: { kind: 'installed', key: 'user:my-hooks', plugin }, busy: false, installed: true, onClose: vi.fn(), onTrust })))
     const button = (label: string) => [...host.querySelectorAll('button')].find(b => b.textContent === label)!
     await act(async () => button('pluginSysTrustAction').click())
-    await act(async () => button('pluginSysUpdateAction').click())
     expect(onTrust).toHaveBeenCalledOnce()
-    expect(onUpdate).toHaveBeenCalledOnce()
+    expect(host.textContent).not.toContain('pluginSysUpdateAction')
   } finally {
     await act(async () => root.unmount())
     host.remove()
