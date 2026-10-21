@@ -149,6 +149,31 @@ export function PluginsView({
     [refresh, t, workspaceRoot]
   )
 
+  const handleTrust = useCallback(
+    async (plugin: PluginRow) => {
+      if (!plugin.trusted) {
+        const perms = plugin.permissions.length
+          ? `\n\n${t('pluginSysPermissions')}: ${plugin.permissions.join(', ')}`
+          : ''
+        const ok = await confirmAsync(t('pluginSysTrustConfirm', { name: plugin.name }) + perms)
+        if (!ok) return
+      }
+      void mutate(plugin, `/v1/plugins/${encodeURIComponent(plugin.name)}/action`, 'POST', {
+        action: plugin.trusted ? 'untrust' : 'trust'
+      })
+    },
+    [mutate, t]
+  )
+
+  const handleUpdate = useCallback(
+    (plugin: PluginRow) => {
+      void mutate(plugin, `/v1/plugins/${encodeURIComponent(plugin.name)}/action`, 'POST', {
+        action: 'update'
+      })
+    },
+    [mutate]
+  )
+
   const handleRemove = useCallback(
     async (plugin: PluginRow) => {
       const ok = await confirmAsync(t('pluginSysRemoveConfirm', { name: plugin.name }), { destructive: true })
@@ -338,6 +363,8 @@ export function PluginsView({
           marketplacesLoading={marketplacesLoading}
           busyMarketplace={busyMarketplace}
           query={query}
+          onTrust={(plugin) => void handleTrust(plugin)}
+          onUpdate={handleUpdate}
           onRemove={handleRemove}
           onMarketplaceInstall={(entry) => void handleMarketplaceInstall(entry)}
           onMarketplaceAdd={handleMarketplaceAdd}

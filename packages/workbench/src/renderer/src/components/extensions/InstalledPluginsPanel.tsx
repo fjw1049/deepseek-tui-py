@@ -88,6 +88,8 @@ type Props = {
   busyMarketplace: string | null
   query: string
   onRemove: (plugin: PluginRow) => void
+  onTrust: (plugin: PluginRow) => void
+  onUpdate: (plugin: PluginRow) => void
   onMarketplaceInstall: (entry: RegistryEntry) => void
   onMarketplaceAdd: (spec: string) => Promise<boolean>
   onMarketplaceUpdate: (name: string) => void
@@ -136,6 +138,8 @@ export function InstalledPluginsPanel({
   busyMarketplace,
   query,
   onRemove,
+  onTrust,
+  onUpdate,
   onMarketplaceInstall,
   onMarketplaceAdd,
   onMarketplaceUpdate,
@@ -271,6 +275,8 @@ export function InstalledPluginsPanel({
                     )
               }
               onClose={() => setDetail(null)}
+              onTrust={detail.kind === 'installed' ? () => onTrust(detail.plugin) : undefined}
+              onUpdate={detail.kind === 'installed' ? () => onUpdate(detail.plugin) : undefined}
               onInstall={
                 detail.kind === 'registry'
                   ? () => onMarketplaceInstall(detail.entry)
@@ -286,12 +292,14 @@ export function InstalledPluginsPanel({
   )
 }
 
-export function PluginDetailDrawer({ detail, busy, installed, onClose, onInstall }: {
+export function PluginDetailDrawer({ detail, busy, installed, onClose, onInstall, onTrust, onUpdate }: {
   detail: DetailTarget
   busy: boolean
   installed: boolean
   onClose: () => void
   onInstall?: () => void
+  onTrust?: () => void
+  onUpdate?: () => void
 }): ReactElement {
   const { t, i18n } = useTranslation('common')
   const plugin = detail.kind === 'installed' ? detail.plugin : null
@@ -310,7 +318,10 @@ export function PluginDetailDrawer({ detail, busy, installed, onClose, onInstall
     {hasExecutable && !plugin?.trusted ? <p className="mt-4 text-sm leading-6 text-ds-muted">{t('pluginPermissionNotice')}</p> : null}
     <div className="mt-6 flex items-center justify-between border-t border-ds-border pt-4">
       <span className="text-xs text-ds-muted">{plugin ? t(plugin.enabled ? 'pluginDetailEnabledOn' : 'pluginDetailEnabledOff') : installed ? t('pluginSysInstalled') : ''}</span>
-      {!plugin ? <button type="button" disabled={busy || installed} onClick={onInstall} className={actionClass}>{t(installed ? 'pluginSysInstalled' : 'pluginSysInstall')}</button> : null}
+      {!plugin ? <button type="button" disabled={busy || installed} onClick={onInstall} className={actionClass}>{t(installed ? 'pluginSysInstalled' : 'pluginSysInstall')}</button> : <div className="flex gap-2">
+        {hasExecutable && onTrust ? <button type="button" disabled={busy} onClick={onTrust} className={actionClass}>{t(plugin.trusted ? 'pluginSysUntrustAction' : 'pluginSysTrustAction')}</button> : null}
+        {onUpdate && plugin.scope !== 'claude' && plugin.scope !== 'override' ? <button type="button" disabled={busy} onClick={onUpdate} className={actionClass}>{t('pluginSysUpdateAction')}</button> : null}
+      </div>}
     </div>
   </PluginDialog>
 }
