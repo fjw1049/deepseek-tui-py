@@ -139,6 +139,7 @@ export type ChatState = {
   pinnedCollapsed: boolean
   scrollToBlockId: string | null
   /** Session-level mounted plugin (drives the composer chip). null = none. */
+  pendingPluginSelection: string | null
   activePlugin: ActivePluginMeta | null
   /** Current structured goal for the active thread. null = none. */
   currentGoal: import('../agent/types').GoalSnapshotJson | null

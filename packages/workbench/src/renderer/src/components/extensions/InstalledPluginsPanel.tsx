@@ -1,27 +1,25 @@
+import { usePluginNow } from './use-plugin-now'
+import { PluginDescription } from './PluginDescription'
+import { PluginListItem } from './PluginListItem'
+import { PluginIcon } from './PluginIcon'
 import type { ReactElement } from 'react'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  AlertCircle,
   Check,
   Download,
   Loader2,
   Plus,
   RefreshCw,
-  Shield,
-  ShieldCheck,
   Store,
-  Trash2,
-  X
+  Trash2
 } from 'lucide-react'
-import { MarketplaceContentTabs, MarketplaceDocMarkdown } from './marketplace-ui'
-import { ResizableRightDrawer } from './ResizableRightDrawer'
+import { MarketplaceContentTabs } from './marketplace-ui'
+import { PluginDialog } from './PluginDialog'
 import {
-  pluginDisplayDetail,
   pluginDisplaySummary,
   pluginDisplayTitle,
-  pluginVisual
 } from './plugin-presentation'
 
 export type PluginRow = {
@@ -89,14 +87,13 @@ type Props = {
   marketplacesLoading: boolean
   busyMarketplace: string | null
   query: string
-  onTrust: (plugin: PluginRow) => void
-  onUpdate: (plugin: PluginRow) => void
   onRemove: (plugin: PluginRow) => void
   onMarketplaceInstall: (entry: RegistryEntry) => void
   onMarketplaceAdd: (spec: string) => Promise<boolean>
   onMarketplaceUpdate: (name: string) => void
   onMarketplaceRemove: (name: string) => void
   onMarketplacePluginInstall: (spec: string) => void
+  builtinPlugin?: ReactElement
   headerRight?: ReactElement
 }
 
@@ -105,53 +102,6 @@ const CARD_CLASS =
 
 function pluginKey(plugin: PluginRow): string {
   return `${plugin.scope}:${plugin.name}`
-}
-
-function scopeLabel(scope: string, t: (key: string) => string): string {
-  switch (scope) {
-    case 'user':
-      return t('pluginSysScopeUser')
-    case 'project':
-      return t('pluginSysScopeProject')
-    case 'claude':
-      return t('pluginSysScopeClaude')
-    case 'override':
-      return t('pluginSysScopeOverride')
-    default:
-      return scope
-  }
-}
-
-function componentKeys(components: PluginRow['components']): string[] {
-  return (
-    [
-      components.skills ? 'skills' : null,
-      components.rules ? 'rules' : null,
-      components.agents ? 'agents' : null,
-      components.commands ? 'commands' : null,
-      components.hooks ? 'hooks' : null,
-      components.mcp_servers ? 'mcp' : null
-    ] as const
-  ).filter((v) => v != null)
-}
-
-function componentLabel(key: string, t: (key: string) => string): string {
-  switch (key) {
-    case 'skills':
-      return t('pluginComponentSkills')
-    case 'rules':
-      return t('pluginComponentRules')
-    case 'agents':
-      return t('pluginComponentAgents')
-    case 'commands':
-      return t('pluginComponentCommands')
-    case 'hooks':
-      return t('pluginComponentHooks')
-    case 'mcp':
-      return t('pluginComponentMcp')
-    default:
-      return key
-  }
 }
 
 function MetaChips({ items }: { items: string[] }): ReactElement | null {
@@ -170,42 +120,6 @@ function MetaChips({ items }: { items: string[] }): ReactElement | null {
   )
 }
 
-function TrustSwitch({
-  checked,
-  disabled,
-  onChange
-}: {
-  checked: boolean
-  disabled?: boolean
-  onChange: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  return (
-    <button
-      type="button"
-      aria-label={t('pluginSysTrustAction')}
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={(event) => {
-        event.stopPropagation()
-        onChange()
-      }}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-        checked
-          ? 'bg-emerald-500 shadow-sm'
-          : 'border border-ds-border bg-neutral-300 shadow-inner dark:border-neutral-500 dark:bg-neutral-600'
-      } ${disabled ? 'opacity-40' : 'cursor-pointer'}`}
-    >
-      <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-          checked ? 'left-[22px]' : 'left-0.5'
-        } ${checked ? '' : 'ring-1 ring-black/10 dark:ring-white/20'}`}
-      />
-    </button>
-  )
-}
-
 export function InstalledPluginsPanel({
   plugins,
   loading,
@@ -221,15 +135,14 @@ export function InstalledPluginsPanel({
   marketplacesLoading,
   busyMarketplace,
   query,
-  onTrust,
-  onUpdate,
   onRemove,
   onMarketplaceInstall,
   onMarketplaceAdd,
   onMarketplaceUpdate,
   onMarketplaceRemove,
   onMarketplacePluginInstall,
-  headerRight
+  headerRight,
+  builtinPlugin
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [tab, setTab] = useState<PluginTab>('installed')
@@ -262,36 +175,26 @@ export function InstalledPluginsPanel({
       {tabItems.length > 1 ? (
         <MarketplaceContentTabs value={tab} onChange={setTab} items={tabItems} trailing={headerRight} />
       ) : (
-        <div className="flex items-center justify-between gap-3 border-b border-ds-border-muted px-1 py-3">
-          <div className="text-[13px] font-medium text-ds-ink">{t('skillTabInstalled')} <span className="ml-2 text-ds-faint">{plugins.length}</span></div>
+        <div className="flex items-center justify-between gap-3 px-3 pb-5 pt-3">
+          <div className="text-[13px] font-medium text-ds-ink">{t('pluginCollectionTitle')} <span className="ml-2 text-ds-faint">{plugins.length + (builtinPlugin ? 1 : 0)}</span></div>
           {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
         </div>
       )}
 
       {tab === 'installed' ? (
-        loading && plugins.length === 0 ? (
-          <div className="flex items-center gap-2 px-5 py-8 text-[13px] text-ds-muted">
-            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-            {t('skillsLoading')}
-          </div>
-        ) : plugins.length === 0 ? (
-          <div className="px-5 py-10 text-center text-[13px] text-ds-faint">{t('pluginSysEmpty')}</div>
-        ) : (
-          <div>
-            <ul className="divide-y divide-ds-border-muted">
-              {plugins.map((plugin) => (
-                <PluginCard
-                  key={pluginKey(plugin)}
-                  plugin={plugin}
-                  busy={busyName === plugin.name}
-                  onOpenDetails={() => openInstalled(plugin)}
-                  onTrust={() => onTrust(plugin)}
-                  onRemove={() => onRemove(plugin)}
-                />
-              ))}
-            </ul>
-          </div>
-        )
+        <>
+          <ul className="ds-plugin-grid">
+            {builtinPlugin}
+            {plugins.map((plugin) => (
+              <PluginCard key={pluginKey(plugin)} plugin={plugin} busy={busyName === plugin.name} onRemove={() => onRemove(plugin)} onOpenDetails={() => openInstalled(plugin)} />
+            ))}
+          </ul>
+          {loading ? <div role="status" className="flex items-center gap-2 px-3 py-8 text-sm text-ds-muted">
+            <Loader2 className="size-4 animate-spin" />{t('skillsLoading')}
+          </div> : !plugins.length && !builtinPlugin ? <p className="px-3 py-10 text-sm text-ds-muted">
+            {t(query.trim() ? 'pluginNoResults' : 'pluginSysEmpty')}
+          </p> : null}
+        </>
       ) : marketplaceEnabled ? (
         <>
           <RegisteredMarketplacesSection
@@ -368,20 +271,6 @@ export function InstalledPluginsPanel({
                     )
               }
               onClose={() => setDetail(null)}
-              onTrust={
-                detail.kind === 'installed' ? () => onTrust(detail.plugin) : undefined
-              }
-              onUpdate={
-                detail.kind === 'installed' ? () => onUpdate(detail.plugin) : undefined
-              }
-              onRemove={
-                detail.kind === 'installed'
-                  ? () => {
-                      onRemove(detail.plugin)
-                      setDetail(null)
-                    }
-                  : undefined
-              }
               onInstall={
                 detail.kind === 'registry'
                   ? () => onMarketplaceInstall(detail.entry)
@@ -397,390 +286,33 @@ export function InstalledPluginsPanel({
   )
 }
 
-function PluginDetailDrawer({
-  detail,
-  busy,
-  installed,
-  onClose,
-  onTrust,
-  onUpdate,
-  onRemove,
-  onInstall
-}: {
+export function PluginDetailDrawer({ detail, busy, installed, onClose, onInstall }: {
   detail: DetailTarget
   busy: boolean
   installed: boolean
   onClose: () => void
-  onTrust?: () => void
-  onUpdate?: () => void
-  onRemove?: () => void
   onInstall?: () => void
 }): ReactElement {
   const { t, i18n } = useTranslation('common')
-  const [rules, setRules] = useState<Array<{ name: string; content: string }>>([])
-  const [rulesLoading, setRulesLoading] = useState(false)
-  const [rulesError, setRulesError] = useState<string | null>(null)
-  const installedPath = detail.kind === 'installed' ? detail.plugin.path : ''
-
-  useEffect(() => {
-    if (!installedPath || typeof window.dsGui?.readPluginRules !== 'function') {
-      setRules([])
-      setRulesError(null)
-      setRulesLoading(false)
-      return
-    }
-    let cancelled = false
-    setRulesLoading(true)
-    setRulesError(null)
-    setRules([])
-    void window.dsGui
-      .readPluginRules(installedPath)
-      .then((result) => {
-        if (cancelled) return
-        if (result.ok) {
-          setRules(result.files)
-        } else {
-          setRulesError(result.message ?? t('pluginRulesError'))
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setRulesError(error instanceof Error ? error.message : String(error))
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setRulesLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [installedPath, t])
-
-  const name =
-    detail.kind === 'installed'
-      ? detail.plugin.name
-      : detail.kind === 'registry'
-        ? detail.entry.name
-        : detail.entry.name
-  const title = pluginDisplayTitle(name, i18n.language)
-  const visual = pluginVisual(name)
-  const Icon = visual.icon
-  const description =
-    detail.kind === 'installed'
-      ? detail.plugin.description
-      : detail.kind === 'registry'
-        ? detail.entry.description
-        : detail.entry.description
-  const version =
-    detail.kind === 'installed'
-      ? detail.plugin.version
-      : detail.kind === 'registry'
-        ? detail.entry.version
-        : detail.entry.version
-  const permissions =
-    detail.kind === 'installed'
-      ? detail.plugin.permissions
-      : detail.kind === 'registry'
-        ? detail.entry.permissions
-        : []
-  const summary = pluginDisplaySummary(name, i18n.language, description)
-  const packageDetail = pluginDisplayDetail(name, i18n.language, description)
-  const showPackageDesc = packageDetail.length > 0 && packageDetail !== summary
-  const componentsList =
-    detail.kind === 'installed'
-      ? componentKeys(detail.plugin.components).map((key) => componentLabel(key, t))
-      : detail.kind === 'registry'
-        ? detail.entry.components
-        : detail.entry.category
-          ? [detail.entry.category]
-          : []
-  const hasExecutable =
-    detail.kind === 'installed' &&
-    (detail.plugin.components.hooks || detail.plugin.components.mcp_servers)
-  const managedElsewhere =
-    detail.kind === 'installed' &&
-    (detail.plugin.scope === 'claude' || detail.plugin.scope === 'override')
-
-  return (
-    <ResizableRightDrawer onClose={onClose}>
-        <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted pl-1 pr-5 py-3.5">
-          <div className="flex min-w-0 items-start gap-3">
-            <div
-              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
-            >
-              <Icon className="h-5 w-5" strokeWidth={1.9} />
-            </div>
-            <div className="min-w-0">
-              <h2 className="truncate text-[16px] font-semibold text-ds-ink">{title}</h2>
-              <p className="mt-1 truncate font-mono text-[12px] text-ds-muted">
-                {name}
-                {version ? ` · v${version}` : ''}
-              </p>
-              {detail.kind === 'installed' ? (
-                <p className="mt-1 text-[12px] text-ds-faint">
-                  {scopeLabel(detail.plugin.scope, t)}
-                  {' · '}
-                  {detail.plugin.enabled
-                    ? t('pluginDetailEnabledOn')
-                    : t('pluginDetailEnabledOff')}
-                  {' · '}
-                  {hasExecutable
-                    ? detail.plugin.trusted
-                      ? t('pluginSysTrusted')
-                      : t('pluginSysUntrusted')
-                    : t('pluginDetailContentOnly')}
-                </p>
-              ) : null}
-            </div>
-          </div>
-          <button
-            type="button"
-            title={t('pluginCloseDetail')}
-            aria-label={t('pluginCloseDetail')}
-            onClick={onClose}
-            className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
-          {detail.kind === 'installed' ? (
-            <div className="mb-5 flex flex-wrap items-center gap-2">
-              {hasExecutable ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={onTrust}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[12px] font-medium text-ds-ink hover:bg-ds-hover disabled:opacity-50"
-                >
-                  {detail.plugin.trusted ? (
-                    <Shield className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  ) : (
-                    <ShieldCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  )}
-                  {detail.plugin.trusted
-                    ? t('pluginSysUntrustAction')
-                    : t('pluginSysTrustAction')}
-                </button>
-              ) : null}
-              {managedElsewhere ? null : (
-                <>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={onUpdate}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[12px] font-medium text-ds-ink hover:bg-ds-hover disabled:opacity-50"
-                  >
-                    {busy ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    )}
-                    {t('pluginSysUpdateAction')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={onRemove}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-ds-card px-3 py-2 text-[12px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    {t('pluginSysRemoveAction')}
-                  </button>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className="mb-5">
-              <button
-                type="button"
-                disabled={busy || installed}
-                onClick={onInstall}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-2 text-[12px] font-medium text-accent transition hover:bg-accent/20 disabled:opacity-50"
-              >
-                {busy ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                ) : installed ? (
-                  <Check className="h-3.5 w-3.5" strokeWidth={2.25} />
-                ) : (
-                  <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-                )}
-                {installed ? t('pluginSysInstalled') : t('pluginSysInstall')}
-              </button>
-            </div>
-          )}
-
-          <h3 className="text-[12px] font-semibold text-ds-faint">{t('pluginDetailAbout')}</h3>
-          <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-ds-ink">
-            {summary || '—'}
-          </p>
-          {showPackageDesc ? (
-            <>
-              <h3 className="mt-4 text-[12px] font-semibold text-ds-faint">
-                {t('pluginDetailPackageDesc')}
-              </h3>
-              <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-ds-muted">
-                {packageDetail}
-              </p>
-            </>
-          ) : null}
-
-          {detail.kind === 'installed' ? (
-            <div className="mt-5">
-              <h3 className="text-[12px] font-semibold tracking-[0.02em] text-ds-faint">
-                {t('pluginRulesTitle')}
-              </h3>
-              {rulesLoading ? (
-                <div className="mt-3 flex items-center gap-2 text-[13px] text-ds-muted">
-                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                  {t('skillsLoading')}
-                </div>
-              ) : rulesError ? (
-                <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.9} />
-                  <span className="min-w-0 break-words">{rulesError}</span>
-                </div>
-              ) : rules.length === 0 ? (
-                <p className="mt-2 text-[13px] text-ds-faint">{t('pluginRulesEmpty')}</p>
-              ) : (
-                <div className="mt-4 space-y-10">
-                  {rules.map((file) => (
-                    <div key={file.name}>
-                      {rules.length > 1 ? (
-                        <p className="ds-marketplace-doc-file">{file.name}</p>
-                      ) : null}
-                      <MarketplaceDocMarkdown content={file.content} />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          {hasExecutable && detail.kind === 'installed' && !detail.plugin.trusted ? (
-            <p className="mt-5 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-800 dark:text-amber-200">
-              {t('pluginSysUntrustedHint')}
-            </p>
-          ) : null}
-
-          <dl className="mt-5 grid grid-cols-2 gap-3 border-y border-ds-border-muted py-4 text-[12px]">
-            {detail.kind === 'installed' ? (
-              <>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginDetailScope')}</dt>
-                  <dd className="mt-1 text-ds-ink">{scopeLabel(detail.plugin.scope, t)}</dd>
-                </div>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginDetailVersion')}</dt>
-                  <dd className="mt-1 text-ds-ink">{version ? `v${version}` : '—'}</dd>
-                </div>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginDetailEnabled')}</dt>
-                  <dd className="mt-1 text-ds-ink">
-                    {detail.plugin.enabled
-                      ? t('pluginDetailEnabledOn')
-                      : t('pluginDetailEnabledOff')}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginDetailTrust')}</dt>
-                  <dd className="mt-1 text-ds-ink">
-                    {hasExecutable
-                      ? detail.plugin.trusted
-                        ? t('pluginSysTrusted')
-                        : t('pluginSysUntrusted')
-                      : t('pluginDetailContentOnly')}
-                  </dd>
-                </div>
-                <div className="col-span-2">
-                  <dt className="text-ds-faint">{t('pluginDetailPath')}</dt>
-                  <dd className="mt-1 break-all font-mono text-[11px] text-ds-ink">
-                    {detail.plugin.path || '—'}
-                  </dd>
-                </div>
-              </>
-            ) : detail.kind === 'registry' ? (
-              <>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginDetailVersion')}</dt>
-                  <dd className="mt-1 text-ds-ink">{version ? `v${version}` : '—'}</dd>
-                </div>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginSysPermissions')}</dt>
-                  <dd className="mt-1 text-ds-ink">
-                    {t('pluginDetailPermCount', { count: permissions.length })}
-                  </dd>
-                </div>
-                <div className="col-span-2">
-                  <dt className="text-ds-faint">{t('pluginDetailSource')}</dt>
-                  <dd className="mt-1 break-all font-mono text-[11px] text-ds-ink">
-                    {detail.entry.source}
-                  </dd>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginDetailVersion')}</dt>
-                  <dd className="mt-1 text-ds-ink">{version ? `v${version}` : '—'}</dd>
-                </div>
-                <div>
-                  <dt className="text-ds-faint">{t('pluginDetailSource')}</dt>
-                  <dd className="mt-1 break-all font-mono text-[11px] text-ds-ink">
-                    {detail.entry.spec}
-                  </dd>
-                </div>
-              </>
-            )}
-          </dl>
-
-          <h3 className="mt-5 text-[13px] font-semibold text-ds-ink">
-            {t('pluginDetailComponents')}
-            {componentsList.length > 0 ? (
-              <span className="ml-1.5 font-normal text-ds-faint">({componentsList.length})</span>
-            ) : null}
-          </h3>
-          {componentsList.length === 0 ? (
-            <p className="mt-2 text-[12px] text-ds-muted">—</p>
-          ) : (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {componentsList.map((label) => (
-                <span
-                  key={label}
-                  className="inline-flex items-center rounded-full border border-ds-border-muted px-2.5 py-1 text-[12px] text-ds-ink"
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-          )}
-
-          <h3 className="mt-5 text-[13px] font-semibold text-ds-ink">
-            {t('pluginSysPermissions')}
-            {permissions.length > 0 ? (
-              <span className="ml-1.5 font-normal text-ds-faint">
-                ({t('pluginDetailPermCount', { count: permissions.length })})
-              </span>
-            ) : null}
-          </h3>
-          {permissions.length === 0 ? (
-            <p className="mt-2 text-[12px] text-ds-muted">{t('pluginDetailNoPermissions')}</p>
-          ) : (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {permissions.map((perm) => (
-                <span
-                  key={perm}
-                  className="inline-flex items-center rounded-full border border-ds-border-muted px-2.5 py-1 font-mono text-[11px] text-ds-ink"
-                >
-                  {perm}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-    </ResizableRightDrawer>
-  )
+  const plugin = detail.kind === 'installed' ? detail.plugin : null
+  const entry = detail.kind === 'installed' ? detail.plugin : detail.entry
+  const permissions = detail.kind === 'installed' ? detail.plugin.permissions : detail.kind === 'registry' ? detail.entry.permissions : []
+  const hasExecutable = plugin && (plugin.components.hooks || plugin.components.mcp_servers)
+  const copyKey = { 'deep-research': 'pluginResearch', 'data-analysis': 'pluginData', 'document-process': 'pluginDocument' }[entry.name]
+  const actionClass = 'rounded-lg border border-ds-border px-3 py-2 text-sm hover:bg-ds-hover disabled:opacity-50'
+  return <PluginDialog pluginId={entry.name} title={pluginDisplayTitle(entry.name, i18n.language)}
+    summary={pluginDisplaySummary(entry.name, i18n.language, entry.description)} onClose={onClose}>
+    {copyKey ? <PluginDescription copyKey={copyKey} /> : null}
+    {permissions.length > 0 ? <div className="mt-5 text-sm">
+      <h3 className="font-medium">{t('pluginSysPermissions')}</h3>
+      <p className="mt-2 break-words text-ds-muted">{permissions.join(' · ')}</p>
+    </div> : null}
+    {hasExecutable && !plugin?.trusted ? <p className="mt-4 text-sm leading-6 text-ds-muted">{t('pluginPermissionNotice')}</p> : null}
+    <div className="mt-6 flex items-center justify-between border-t border-ds-border pt-4">
+      <span className="text-xs text-ds-muted">{plugin ? t(plugin.enabled ? 'pluginDetailEnabledOn' : 'pluginDetailEnabledOff') : installed ? t('pluginSysInstalled') : ''}</span>
+      {!plugin ? <button type="button" disabled={busy || installed} onClick={onInstall} className={actionClass}>{t(installed ? 'pluginSysInstalled' : 'pluginSysInstall')}</button> : null}
+    </div>
+  </PluginDialog>
 }
 
 function RegisteredMarketplacesSection({
@@ -950,8 +482,6 @@ function MarketplacePluginCard({
   onOpenDetails: () => void
 }): ReactElement {
   const { t, i18n } = useTranslation('common')
-  const visual = pluginVisual(entry.name)
-  const Icon = visual.icon
   const title = pluginDisplayTitle(entry.name, i18n.language)
   const summary = pluginDisplaySummary(entry.name, i18n.language, entry.description)
   const actionLabel = installed ? t('pluginSysInstalled') : t('pluginSysInstall')
@@ -961,11 +491,7 @@ function MarketplacePluginCard({
   return (
     <li className={CARD_CLASS}>
       <div className="flex min-h-0 flex-1 items-start gap-3">
-        <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
-        >
-          <Icon className="h-5 w-5" strokeWidth={1.9} />
-        </div>
+        <PluginIcon pluginId={entry.name} />
         <div className="min-w-0 flex-1">
           <button type="button" onClick={onOpenDetails} className="min-w-0 text-left">
             <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink hover:text-accent">
@@ -1031,8 +557,6 @@ function MarketplaceCard({
   onOpenDetails: () => void
 }): ReactElement {
   const { t, i18n } = useTranslation('common')
-  const visual = pluginVisual(entry.name)
-  const Icon = visual.icon
   const title = pluginDisplayTitle(entry.name, i18n.language)
   const summary = pluginDisplaySummary(entry.name, i18n.language, entry.description)
   const actionLabel = installed ? t('pluginSysInstalled') : t('pluginSysInstall')
@@ -1045,11 +569,7 @@ function MarketplaceCard({
   return (
     <li className={CARD_CLASS}>
       <div className="flex min-h-0 flex-1 items-start gap-3">
-        <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
-        >
-          <Icon className="h-5 w-5" strokeWidth={1.9} />
-        </div>
+        <PluginIcon pluginId={entry.name} />
         <div className="min-w-0 flex-1">
           <button type="button" onClick={onOpenDetails} className="min-w-0 text-left">
             <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink hover:text-accent">
@@ -1101,60 +621,16 @@ function MarketplaceCard({
   )
 }
 
-function PluginCard({
-  plugin,
-  busy,
-  onOpenDetails,
-  onTrust,
-  onRemove
-}: {
-  plugin: PluginRow
+function PluginCard({ plugin, busy, onRemove, onOpenDetails }: {
   busy: boolean
-  onOpenDetails: () => void
-  onTrust: () => void
   onRemove: () => void
+  plugin: PluginRow
+  onOpenDetails: () => void
 }): ReactElement {
-  const { t, i18n } = useTranslation('common')
-  const visual = pluginVisual(plugin.name)
-  const Icon = visual.icon
-  const title = pluginDisplayTitle(plugin.name, i18n.language)
-  const summary = pluginDisplaySummary(plugin.name, i18n.language, plugin.description)
-  const hasExecutable = plugin.components.hooks || plugin.components.mcp_servers
-  const managedElsewhere = plugin.scope === 'claude' || plugin.scope === 'override'
-  const metaLeft = [
-    plugin.version ? `v${plugin.version}` : null,
-    scopeLabel(plugin.scope, t),
-    hasExecutable && !plugin.trusted ? t('pluginSysUntrusted') : null
-  ]
-    .filter(Boolean)
-    .join(' · ')
-  const removeLabel = t('pluginSysRemoveAction')
-
-  return (
-    <li className="group flex items-center gap-3 rounded-lg px-2 py-5 transition-colors hover:bg-ds-subtle/50 sm:gap-4 sm:px-3">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent/[0.08] text-accent">
-        <Icon className="h-5 w-5" strokeWidth={1.8} />
-      </div>
-      <button type="button" onClick={onOpenDetails} className="min-w-0 flex-1 text-left" aria-label={`${title} · ${t('pluginDetailsAction')}`}>
-        <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink group-hover:text-accent">{title}</h3>
-        <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-ds-muted" title={summary}>{summary || '—'}</p>
-        <div className="mt-1.5 flex items-center gap-2 text-[12px] text-ds-faint" title={hasExecutable && !plugin.trusted ? t('pluginSysUntrustedHint') : undefined}>
-          <span>{metaLeft}</span>
-          {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : null}
-        </div>
-      </button>
-      <div className="flex shrink-0 items-center gap-2">
-        {hasExecutable ? <TrustSwitch checked={plugin.trusted} disabled={busy} onChange={onTrust} /> : null}
-        <button type="button" onClick={onOpenDetails} className="hidden rounded-lg px-3 py-2 text-[12px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink sm:block">
-          {t('pluginDetailsAction')}
-        </button>
-        {managedElsewhere ? null : (
-          <button type="button" disabled={busy} onClick={onRemove} title={removeLabel} aria-label={removeLabel}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-ds-faint transition hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950/30">
-            <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </button>
-        )}
-      </div>
-    </li>
-  )
+  const { i18n } = useTranslation('common')
+  return <PluginListItem pluginId={plugin.name}
+    title={pluginDisplayTitle(plugin.name, i18n.language)}
+    summary={pluginDisplaySummary(plugin.name, i18n.language, plugin.description)}
+    onOpen={onOpenDetails} busy={busy} onUse={() => void usePluginNow(plugin.name)}
+    onRemove={plugin.scope === 'claude' || plugin.scope === 'override' ? undefined : onRemove} />
 }

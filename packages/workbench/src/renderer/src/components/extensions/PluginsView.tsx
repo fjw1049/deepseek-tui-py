@@ -14,6 +14,8 @@ import {
   type PluginRow,
   type RegistryEntry
 } from './InstalledPluginsPanel'
+import { ComputerUsePluginCard } from './ComputerUsePluginCard'
+import { pluginDisplayTitle, pluginDisplaySummary } from './plugin-presentation'
 import { confirmAsync } from '../../lib/confirm-dialog'
 
 /** Plugins are bundles of rules + skills + hooks + MCP servers managed by the
@@ -26,7 +28,7 @@ export function PluginsView({
   onCreateClose,
   createHost
 }: MarketplacePanelProps): ReactElement {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const [plugins, setPlugins] = useState<PluginRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -145,31 +147,6 @@ export function PluginsView({
       }
     },
     [refresh, t, workspaceRoot]
-  )
-
-  const handleTrust = useCallback(
-    async (plugin: PluginRow) => {
-      if (!plugin.trusted) {
-        const perms = plugin.permissions.length
-          ? `\n\n${t('pluginSysPermissions')}: ${plugin.permissions.join(', ')}`
-          : ''
-        const ok = await confirmAsync(t('pluginSysTrustConfirm', { name: plugin.name }) + perms)
-        if (!ok) return
-      }
-      void mutate(plugin, `/v1/plugins/${encodeURIComponent(plugin.name)}/action`, 'POST', {
-        action: plugin.trusted ? 'untrust' : 'trust'
-      })
-    },
-    [mutate, t]
-  )
-
-  const handleUpdate = useCallback(
-    (plugin: PluginRow) => {
-      void mutate(plugin, `/v1/plugins/${encodeURIComponent(plugin.name)}/action`, 'POST', {
-        action: 'update'
-      })
-    },
-    [mutate]
   )
 
   const handleRemove = useCallback(
@@ -311,9 +288,9 @@ export function PluginsView({
     const q = query.trim().toLowerCase()
     if (!q) return plugins
     return plugins.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
+      (p) => [p.name, p.description, pluginDisplayTitle(p.name, i18n.language), pluginDisplaySummary(p.name, i18n.language, p.description)].some(value => value.toLowerCase().includes(q))
     )
-  }, [plugins, query])
+  }, [plugins, query, i18n.language])
 
   const installedNames = useMemo(() => new Set(plugins.map((p) => p.name.toLowerCase())), [plugins])
 
@@ -343,8 +320,10 @@ export function PluginsView({
 
       {notice ? <NoticeView notice={notice} onDismiss={() => setNotice(null)} /> : null}
 
-      <div className="mt-6">
+      <div className="mt-10">
         <InstalledPluginsPanel
+          builtinPlugin={(!query.trim() || `computer use cua ${t('computerUseTitle')}`.toLowerCase().includes(query.trim().toLowerCase()))
+            ? <ComputerUsePluginCard /> : undefined}
           plugins={filtered}
           loading={loading}
           busyName={busyName}
@@ -359,8 +338,6 @@ export function PluginsView({
           marketplacesLoading={marketplacesLoading}
           busyMarketplace={busyMarketplace}
           query={query}
-          onTrust={handleTrust}
-          onUpdate={handleUpdate}
           onRemove={handleRemove}
           onMarketplaceInstall={(entry) => void handleMarketplaceInstall(entry)}
           onMarketplaceAdd={handleMarketplaceAdd}

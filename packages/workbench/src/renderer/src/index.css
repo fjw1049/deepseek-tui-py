@@ -12479,3 +12479,14 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
     padding-right: 0;
   }
 }
+
+/* Plugin rows share the same hierarchy, including the built-in desktop tool. */
+.ds-plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 48px;
+}
+.ds-plugin-page { container-type: inline-size; }
+@container (max-width: 680px) {
+  .ds-plugin-grid { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}

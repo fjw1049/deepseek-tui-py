@@ -31,8 +31,8 @@ const KNOWN: Record<string, PluginVisual> = {
   'deep-research': {
     title: { zh: '深入研究', en: 'Deep Research' },
     blurb: {
-      zh: '多轮检索与综合分析，适合调研报告、竞品对比与开放式问题深挖。',
-      en: 'Multi-step research and synthesis for reports, comparisons, and open-ended questions.'
+      zh: '检索资料、交叉验证，形成有依据的研究报告',
+      en: 'Research sources and synthesize evidence-backed reports'
     },
     detail: {
       zh: [
@@ -52,8 +52,8 @@ const KNOWN: Record<string, PluginVisual> = {
   'data-analysis': {
     title: { zh: '数据分析', en: 'Data Analysis' },
     blurb: {
-      zh: '读取表格与数据文件，做清洗、统计、可视化和结论提炼。',
-      en: 'Load tables and datasets for cleaning, stats, charts, and insight summaries.'
+      zh: '分析表格与数据，发现规律并生成图表',
+      en: 'Explore data, discover patterns, and create charts'
     },
     detail: {
       zh: [
@@ -115,8 +115,8 @@ const KNOWN: Record<string, PluginVisual> = {
   'document-skills': {
     title: { zh: '文档技能', en: 'Document Skills' },
     blurb: {
-      zh: 'Word / Excel / PPTX / PDF 的创建、读写、编辑与转换，覆盖日常办公文档产出。',
-      en: 'Create, read, edit, and convert Word, Excel, PPTX, and PDF for everyday office work.'
+      zh: '创建与编辑 Word、Excel、PPT 和 PDF',
+      en: 'Create and edit Word, Excel, PowerPoint, and PDF files'
     },
     detail: {
       zh: [
@@ -209,6 +209,14 @@ const FALLBACK_TILES = [
 
 export function pluginVisual(pluginId: string): PluginVisual {
   const key = pluginId.trim().toLowerCase()
+  if (key === 'document-process') return {
+    ...KNOWN['document-skills'],
+    title: { zh: '文档处理', en: 'Document Processing' },
+    detail: {
+      zh: KNOWN['document-skills'].detail.zh.replaceAll('document-skills', 'document-process'),
+      en: KNOWN['document-skills'].detail.en.replaceAll('document-skills', 'document-process')
+    }
+  }
   const known = KNOWN[key]
   if (known) return known
   const hash = [...key].reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
@@ -222,6 +230,7 @@ export function pluginVisual(pluginId: string): PluginVisual {
 }
 
 export function pluginDisplayTitle(pluginId: string, locale: string): string {
+  if (pluginId === 'computer-use') return locale.toLowerCase().startsWith('zh') ? '电脑控制' : 'Computer use'
   const visual = pluginVisual(pluginId)
   return locale.toLowerCase().startsWith('zh') ? visual.title.zh : visual.title.en
 }

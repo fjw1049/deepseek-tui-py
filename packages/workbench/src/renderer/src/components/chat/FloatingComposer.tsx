@@ -377,6 +377,16 @@ export function FloatingComposer({
   // `@plugin:<name> ` on send. After send the chip is cleared and the
   // persistent scenario state arrives from the backend via `activePlugin`.
   const [focusPlugin, setFocusPlugin] = useState<string | null>(null)
+  const pendingPluginSelection = useChatStore(s => s.pendingPluginSelection)
+  useEffect(() => {
+    if (!pendingPluginSelection || !paneFocused) return
+    setFocusPlugin(pendingPluginSelection)
+    setFocusSkill(null)
+    setFocusConnector(null)
+    useChatStore.setState({ pendingPluginSelection: null })
+    textareaRef.current?.focus()
+  }, [pendingPluginSelection, paneFocused])
+
   const footerLayoutOpts = useMemo(
     () => ({
       dense: compactChrome,
@@ -1441,7 +1451,7 @@ export function FloatingComposer({
       : focusConnector
         ? `@${focusConnector}`
         : focusPlugin
-          ? `@plugin:${focusPlugin}`
+          ? focusPlugin === 'computer-use' ? t('computerUseTaskPrefix') : `@plugin:${focusPlugin}`
           : ''
     // With picks, the focus prefix must stay at the very start of the wire
     // message (runtime detects `/name` / `@name` by line head); nesting it

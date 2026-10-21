@@ -1674,6 +1674,7 @@ const store = create<ChatState>((set, get) => ({
   pinnedCollapsed: false,
   scrollToBlockId: null,
   activePlugin: null,
+  pendingPluginSelection: null,
   currentGoal: null,
   usageRefreshKey: 0,
   workspaceDirtyTick: 0,

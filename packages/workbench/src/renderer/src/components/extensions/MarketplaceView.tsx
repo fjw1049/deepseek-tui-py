@@ -35,20 +35,15 @@ export function MarketplaceView(): ReactElement {
 
   return (
     <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-5 py-8 sm:px-10 sm:py-10">
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="ds-ext-page-title text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">
-            {t('extensions')}
+            {t(kind === 'plugins' ? 'plugins' : 'extensions')}
           </h1>
-        </div>
-        <p className="mt-2 max-w-3xl text-[14px] leading-6 text-ds-muted">{t('marketplaceIntro')}</p>
-
-        <div className="mt-7 flex flex-wrap items-center gap-4">
-          <MarketplaceKindSwitch value={kind} onChange={setMarketplaceKind} />
           <MarketplaceSearchCreate
             query={query}
             onQueryChange={setQuery}
-            placeholder={t('marketplaceSearch')}
+            placeholder={t(kind === 'plugins' ? 'pluginSearchPlaceholder' : 'marketplaceSearch')}
             createOpen={createOpen}
             onCreateToggle={() => setCreateOpen((open) => !open)}
             createLabel={t('pluginCreate')}
@@ -57,6 +52,12 @@ export function MarketplaceView(): ReactElement {
               setCreateHost(node)
             }}
           />
+        </div>
+        <p className="mt-2 max-w-3xl text-[14px] leading-6 text-ds-muted">{t(kind === 'plugins' ? 'pluginCollectionIntro' : 'marketplaceIntro')}</p>
+
+        <div className="mt-7 flex flex-wrap items-center gap-4">
+          <MarketplaceKindSwitch value={kind} onChange={setMarketplaceKind} />
+
 
         </div>
 
