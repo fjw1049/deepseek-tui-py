@@ -72,9 +72,9 @@ describe('automation-run-display', () => {
   })
 })
 
- it('labels delivery failures without claiming execution succeeded', () => {
-   const run: AutomationRunRecord = { id: 'r', automation_id: 'a', scheduled_for: '', created_at: '', status: 'failed', error: 'delivery failed after 5 attempts' }
-   expect(formatRunStatus(run, t)).toBe('automationDeliveryIssue')
+ it('labels execution status without letting delivery failures mask it', () => {
+   const run: AutomationRunRecord = { id: 'r', automation_id: 'a', scheduled_for: '', created_at: '', status: 'failed', error: 'delivery failed after 5 attempts', delivery_error: 'timeout' }
+   expect(formatRunStatus(run, t)).toBe('automationRunFailed')
    expect(formatRunStatus({ ...run, error: 'execution crashed' }, t)).toBe('automationRunFailed')
    expect(formatRunStatus({ ...run, status: 'completed', delivery_error: 'timeout' }, t)).toBe('automationCompleted')
  })

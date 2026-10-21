@@ -317,6 +317,40 @@ async def test_delivery_gives_up_after_max_attempts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exhausted_delivery_keeps_failed_run_execution_error() -> None:
+    """Giving up on delivery must not mask why the run itself failed."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from deepseek_tui.automation.pipeline import (
+        _MAX_DELIVERY_ATTEMPTS,
+        try_deliver_completed_run,
+    )
+
+    automation = _sample_automation(
+        delivery={"mode": "feishu", "to": "oc_test", "best_effort": False}
+    )
+    run = AutomationRunRecord(
+        id="r1",
+        automation_id="a1",
+        scheduled_for="2026-05-28T08:00:00+00:00",
+        status=AutomationRunStatus.FAILED,
+        created_at="2026-05-28T08:00:00+00:00",
+        error="Tool crashed while writing the report",
+        delivery_attempts=_MAX_DELIVERY_ATTEMPTS - 1,
+    )
+    with patch(
+        "deepseek_tui.automation.pipeline._FeishuSink.deliver",
+        AsyncMock(side_effect=RuntimeError("feishu down")),
+    ):
+        ok = await try_deliver_completed_run(automation, run, MagicMock())
+
+    assert ok is True
+    assert run.delivery_done is True
+    assert run.delivery_error == "feishu down"
+    assert run.error == "Tool crashed while writing the report"
+
+
+@pytest.mark.asyncio
 async def test_best_effort_delivery_failure_is_not_reported_as_sent() -> None:
     from unittest.mock import AsyncMock, patch
 

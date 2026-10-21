@@ -892,14 +892,18 @@ export function AutomationCenter({
                         {discussionRunId === run.id ? t('automationOpeningDiscussion') : t('automationDiscussResult')}
                       </button>
                     )}
-                    {(run.error || run.delivery_error) && (
-                      <div className="mt-3 rounded-lg bg-red-500/5 px-3 py-2 text-[12px] text-red-700 dark:text-red-200">
-                        {/WeCom webhook key missing/i.test(run.delivery_error || run.error || '')
-                          ? t('automationWecomMissing')
-                          : (run.delivery_error || /delivery failed/i.test(run.error || ''))
-                            ? t('automationDeliveryIssue') : t('automationRunFailed')}
-                      </div>
-                    )}
+                    {(() => {
+                      // Status reflects execution; delivery problems are reported separately.
+                      const executionFailed = run.status === 'failed' || run.status === 'error'
+                      const delivery = run.delivery_error || (/delivery failed/i.test(run.error || '') ? run.error : '')
+                      if (!executionFailed && !delivery) return null
+                      return (
+                        <div className="mt-3 space-y-1 rounded-lg bg-red-500/5 px-3 py-2 text-[12px] text-red-700 dark:text-red-200">
+                          {executionFailed && <div>{t('automationRunFailed')}</div>}
+                          {delivery && <div>{/WeCom webhook key missing/i.test(delivery) ? t('automationWecomMissing') : t('automationDeliveryIssue')}</div>}
+                        </div>
+                      )
+                    })()}
                     {(run.task_id || run.thread_id || run.turn_id || run.error || run.delivery_error) && (
                       <details className="mt-3 text-[11px] text-ds-faint">
                         <summary className="cursor-pointer hover:text-ds-ink">{t('executionDetails')}</summary>

@@ -424,9 +424,11 @@ async def try_deliver_completed_run(
             # Out of retries: stop re-hammering the channel and record why.
             run.delivery_done = True
             run.delivery_error = str(exc) or type(exc).__name__
-            run.error = (
-                f"delivery failed after {run.delivery_attempts} attempts: {exc}"
-            )
+            # Keep a failed run's execution error; delivery_error carries this one.
+            if not run.error:
+                run.error = (
+                    f"delivery failed after {run.delivery_attempts} attempts: {exc}"
+                )
             logger.warning(
                 "[automation][delivery] giving up automation=%s mode=%s attempts=%d",
                 automation.id,
