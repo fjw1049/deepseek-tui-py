@@ -468,14 +468,20 @@ function invalidateRuntimeReady(reason: string): void {
   runtimeReadyCache.invalidate(reason)
 }
 
-async function queueRuntimeSettingsApply(prev: AppSettingsV1, next: AppSettingsV1): Promise<void> {
+/** Settings are already saved; the restart runs behind the lifecycle queue so
+ *  saving never waits on (or fails because of) a runtime restart. */
+function queueRuntimeSettingsApply(prev: AppSettingsV1, next: AppSettingsV1): void {
   if (!deepseekTuiConfigChanged(prev, next) && !runtimeStartupConfigChanged(prev, next) && !webSearchConfigChanged(prev, next)) return
   runtimeSettingsRevision += 1
   invalidateRuntimeReady('settings-apply:queued')
-  await runRuntimeLifecycle(async () => {
+  void runRuntimeLifecycle(async () => {
     invalidateRuntimeReady('settings-apply:started')
     if (deepseekTuiConfigChanged(prev, next)) await syncDeepseekTuiConfig(next, prev)
     await restartManagedRuntimeForSettingsChange(prev, next)
+  }).catch((error: unknown) => {
+    logWarn('settings-apply', 'Failed to apply DeepSeek runtime settings in background', {
+      message: error instanceof Error ? error.message : String(error)
+    })
   })
 }
 
@@ -1103,7 +1109,7 @@ app.whenReady().then(async () => {
         })
       }
     }
-    await queueRuntimeSettingsApply(prev, saved)
+    queueRuntimeSettingsApply(prev, saved)
     return saved
   }
 
