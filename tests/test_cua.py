@@ -1005,3 +1005,68 @@ async def test_unattended_runs_decline_app_access_instead_of_waiting(
     finally:
         await engine._close_cua()
         cua_session.reset_runtime_cache()
+
+
+@pytest.mark.asyncio
+async def test_missing_api_error_points_back_to_the_documentation(session, tmp_path):
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        result = await tool.execute({"code": "throw:app.screenshot is not a function"}, context)
+        assert not result.success
+        assert result.content.startswith("app.screenshot is not a function")
+        assert "rewriteDocumentation" in result.content
+        other = await tool.execute({"code": "throw:Accessibility error"}, context)
+        assert "rewriteDocumentation" not in other.content
+    finally:
+        await session.close()
+
+
+GUIDE = "## Computer Use\n" + "Use cua.getApp(id) and observe before acting.\n" * 200
+
+
+def _cua_exchange(call_id, code, result):
+    from deepseek_tui.protocol.messages import Message, Role, ToolUseBlock
+
+    use = Message(role=Role.ASSISTANT, content=[
+        ToolUseBlock(id=call_id, name="cua_js", input={"code": code})])
+    return [use, Message.tool_result(call_id, result)]
+
+
+def test_reconnect_guide_is_collapsed_while_the_earlier_copy_is_in_context():
+    from deepseek_tui.cua.tools import collapse_repeated_texts
+
+    messages = [*_cua_exchange("first", "await cua.getState()", GUIDE + "\nApps: Notes"),
+                *_cua_exchange("again", "await cua.getApp('notes')", GUIDE + "\nWindow: Notes")]
+    collapse_repeated_texts(messages, 2, [GUIDE])
+    latest = messages[-1].content[0].content
+    assert GUIDE not in latest and latest.endswith("\nWindow: Notes")
+    assert "first" in latest  # names where the full text is
+    assert GUIDE in messages[1].content[0].content
+
+
+def test_guide_is_kept_whole_when_the_earlier_copy_is_gone_or_requested():
+    from deepseek_tui.cua.tools import collapse_repeated_texts
+
+    pruned = [*_cua_exchange("first", "await cua.getState()", "[pruned]"),
+              *_cua_exchange("again", "await cua.getApp('notes')", GUIDE)]
+    collapse_repeated_texts(pruned, 2, [GUIDE])
+    assert pruned[-1].content[0].content == GUIDE
+    asked = [*_cua_exchange("first", "await cua.getState()", GUIDE),
+             *_cua_exchange("docs", "await cua.rewriteDocumentation()", GUIDE)]
+    collapse_repeated_texts(asked, 2, [GUIDE])
+    assert asked[-1].content[0].content == GUIDE
+
+
+@pytest.mark.asyncio
+async def test_large_runtime_text_blocks_are_remembered(session, tmp_path):
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        await tool.execute({"code": GUIDE}, context)
+        await tool.execute({"code": "small"}, context)
+        assert session.large_texts == [GUIDE]
+    finally:
+        await session.close()

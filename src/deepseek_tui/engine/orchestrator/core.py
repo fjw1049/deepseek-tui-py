@@ -3665,6 +3665,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 if any(getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error"))
             )
             messages.extend(tool_results)
+            cua_session = getattr(self, "_cua_session", None)
+            if cua_session is not None and cua_session.large_texts:
+                from deepseek_tui.cua.tools import collapse_repeated_texts
+
+                collapse_repeated_texts(messages, len(tool_results), cua_session.large_texts)
 
             if self.handle.pause.paused or model_generation != self.handle.pause.generation:
                 round_idx -= 1

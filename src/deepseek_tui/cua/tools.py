@@ -12,6 +12,9 @@ from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, 
 from deepseek_tui.utils import current_tool, current_turn
 
 MAX_CUA_TEXT_BYTES = 64 * 1024
+# Runtime text blocks this large are remembered so a verbatim repeat can be shortened.
+REPEATED_TEXT_MIN_BYTES = 4096
+MAX_REMEMBERED_TEXTS = 8
 HANDOFF_NOTICE = (
     "[CUA session reset for desktop handoff. Old JavaScript variables and element references "
     "are invalid. Start with a documented CUA entry point and observe again before acting.]"
@@ -72,6 +75,42 @@ def desktop_action_result(question: dict[str, Any], response: dict[str, Any]) ->
     }
 
 
+def collapse_repeated_texts(messages, new: int, texts: list[str]) -> None:
+    """Shorten a large runtime text that the newest CUA results repeat from earlier context.
+
+    Every new connection makes the runtime return its first-call guide again (about 24 KB)
+    while the earlier copy is still above. Only a copy present right now is referenced;
+    when pruning or compaction later drops it, add_documentation_reminder asks for a fresh
+    read. An explicit rewriteDocumentation call always keeps its result whole.
+    """
+    from deepseek_tui.protocol.messages import ToolResultBlock, ToolUseBlock
+
+    if new <= 0 or not texts:
+        return
+    calls = {b.id: b for m in messages for b in m.content if isinstance(b, ToolUseBlock)}
+    earlier = [b for m in messages[:-new] for b in m.content if isinstance(b, ToolResultBlock)]
+    for index in range(len(messages) - new, len(messages)):
+        message, blocks, changed = messages[index], [], False
+        for block in message.content:
+            call = calls.get(getattr(block, "tool_use_id", ""))
+            if (isinstance(block, ToolResultBlock) and call is not None
+                    and call.name in {"cua_js", "cua_js_reset"}
+                    and "rewriteDocumentation" not in str(call.input.get("code", ""))):
+                content = block.content
+                for text in texts:
+                    source = next((b.tool_use_id for b in earlier if text in b.content), None)
+                    if source and text in content:
+                        content = content.replace(text, (
+                            f"[Same {len(text)}-character runtime text as the result of tool "
+                            f"call {source} above; not repeated.]"
+                        ))
+                if content != block.content:
+                    block, changed = block.model_copy(update={"content": content}), True
+            blocks.append(block)
+        if changed:
+            messages[index] = message.model_copy(update={"content": blocks})
+
+
 def add_documentation_reminder(messages) -> None:
     from deepseek_tui.protocol.messages import Message, MessageOrigin
 
@@ -129,6 +168,11 @@ class CuaTool(ToolSpec):
             lambda: self.session.call(self.descriptor["name"], input_data, turn, call_id),
             self.cancel_events,
         )
+        for item in payload.get("content") or []:
+            text = item.get("text") if isinstance(item, dict) else None
+            if isinstance(text, str) and len(text.encode("utf-8")) >= REPEATED_TEXT_MIN_BYTES:
+                texts = self.session.large_texts
+                texts[:] = [t for t in texts if t != text][-(MAX_REMEMBERED_TEXTS - 1):] + [text]
         result = mcp_response_to_tool_result(self.name(), payload)
         images = [
             image.model_copy(
@@ -148,6 +192,12 @@ class CuaTool(ToolSpec):
         result = replace(
             result, images=images, metadata={**result.metadata, "cua_runtime_content": True}
         )
+        if not result.success and "is not a function" in result.content:
+            # JavaScript's own TypeError: the model guessed an API.
+            result = replace(result, content=result.content + (
+                "\nThat API does not exist. Use only the APIs in the documentation returned by "
+                "the first call; await cua.rewriteDocumentation() shows it again."
+            ))
         if len(result.content.encode("utf-8")) > MAX_CUA_TEXT_BYTES:
             from deepseek_tui.tools.runtime import write_spillover
 

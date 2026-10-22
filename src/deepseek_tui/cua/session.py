@@ -107,6 +107,8 @@ class CuaSession:
         self.reset_reason = ""
         # True once model code has run in this connection's REPL.
         self._bound = False
+        # Large text blocks the runtime returned, newest last; outlives reconnects.
+        self.large_texts: list[str] = []
 
     def use_cached_catalog(self) -> bool:
         """Adopt a catalog this process already received, without starting the runtime."""

@@ -24,6 +24,7 @@ export function createCuaClient({ cwd, onElicitation }) {
         });
       }
       if (args.code === 'crash') process.exit(8);
+      if (args.code?.startsWith('throw:')) return { content: [{ type: 'text', text: args.code.slice(6) }], isError: true };
       return { content: [{ type: 'text', text: args.code ?? 'reset' }], isError: args.code === 'error' };
     },
     async turnEnded(context) { record({ end: context }); return {}; },
