@@ -13,6 +13,8 @@ from fastapi import Request
 from fastapi import APIRouter
 from pydantic import BaseModel
 import os
+import re
+import sys
 from fastapi import BackgroundTasks
 from pydantic import Field
 from fastapi.responses import StreamingResponse
@@ -772,8 +774,8 @@ async def cua_status(request: Request) -> dict[str, Any]:
     return {"supported": supported, "installed": installed, "enabled": config.enabled}
 
 
-async def _lcu_apps(request: Request, *args: str, timeout: float = 20) -> dict[str, Any]:
-    """Run ``lcu apps`` from the configured installation; never touches the desktop."""
+async def _lcu(request: Request, *args: str, timeout: float = 20) -> dict[str, Any]:
+    """Run an ``lcu`` subcommand from the configured installation; never touches the desktop."""
     from deepseek_tui.cua.session import CuaSession
     from deepseek_tui.tools.registry import ToolError
 
@@ -783,7 +785,7 @@ async def _lcu_apps(request: Request, *args: str, timeout: float = 20) -> dict[s
     except (OSError, ToolError) as exc:
         raise api_error(409, str(exc), error="cua_unavailable") from exc
     process = await asyncio.create_subprocess_exec(
-        str(executable), "apps", *args,
+        str(executable), *args,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
@@ -791,9 +793,9 @@ async def _lcu_apps(request: Request, *args: str, timeout: float = 20) -> dict[s
     except asyncio.TimeoutError as exc:
         process.kill()
         await process.wait()
-        raise api_error(504, "lcu apps timed out", error="cua_apps_timeout") from exc
+        raise api_error(504, f"lcu {args[0]} timed out", error="cua_apps_timeout") from exc
     if process.returncode != 0:
-        message = (err or out).decode(errors="replace").strip() or "lcu apps failed"
+        message = (err or out).decode(errors="replace").strip() or f"lcu {args[0]} failed"
         raise api_error(502, message[:500], error="cua_apps_failed")
     return {"stdout": out.decode(errors="replace")}
 
@@ -801,7 +803,7 @@ async def _lcu_apps(request: Request, *args: str, timeout: float = 20) -> dict[s
 @router_mcp.get("/cua/apps")
 async def cua_apps(request: Request) -> dict[str, Any]:
     """Apps the runtime may always control (its own approval file; no Touch ID needed)."""
-    result = await _lcu_apps(request, "list", "--json")
+    result = await _lcu(request, "apps", "list", "--json")
     try:
         apps = json.loads(result["stdout"])["apps"]
     except (ValueError, KeyError, TypeError) as exc:
@@ -818,8 +820,46 @@ async def cua_apps_revoke(request: Request) -> dict[str, Any]:
     # Only identities LCU just listed: never forward free text as command arguments.
     if not isinstance(app, str) or app not in {a["bundleId"] for a in current["apps"]}:
         raise api_error(400, "Unknown approved app", error="cua_app_unknown")
-    await _lcu_apps(request, "revoke", app, timeout=180)
+    await _lcu(request, "apps", "revoke", app, timeout=180)
     return await cua_apps(request)
+
+
+_PRIVACY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
+_PRIVACY_PANES = {
+    "accessibility": _PRIVACY_PANE + "Accessibility",
+    "screen": _PRIVACY_PANE + "ScreenCapture",
+}
+# e.g. "  Accessibility: ChatGPT Computer Use (/Applications/ChatGPT.app/.../X.app)"
+_PRIVACY_ENTRY = re.compile(r"^\s+(Accessibility|Screen[^:]*): (.+?) \((/.+\.app)\)$")
+
+
+@router_mcp.get("/cua/permissions")
+async def cua_permissions(request: Request) -> dict[str, Any]:
+    """The macOS privacy entries the runtime needs, as ``lcu doctor`` names them."""
+    if sys.platform != "darwin":
+        return {"permissions": []}
+    result = await _lcu(request, "doctor", "--non-interactive")
+    permissions = []
+    for line in result["stdout"].splitlines():
+        if match := _PRIVACY_ENTRY.match(line):
+            kind = "accessibility" if match[1] == "Accessibility" else "screen"
+            permissions.append({"id": kind, "name": match[2], "path": match[3]})
+    return {"permissions": permissions}
+
+
+@router_mcp.post("/cua/permissions/open")
+async def cua_permissions_open(request: Request) -> dict[str, Any]:
+    """Select the app in Finder (ready to drag in) and open its Settings pane on top."""
+    kind = (await body(request)).get("id")
+    listed = (await cua_permissions(request))["permissions"]
+    entry = next((p for p in listed if p["id"] == kind), None)
+    if entry is None:
+        raise api_error(400, "Unknown permission", error="cua_permission_unknown")
+    # -R only reveals: never launch the bundle.
+    for target in (["-R", entry["path"]], [_PRIVACY_PANES[entry["id"]]]):
+        process = await asyncio.create_subprocess_exec("open", *target)
+        await process.wait()
+    return {"ok": True}
 
 
 @router_mcp.post("/mcp/startup")

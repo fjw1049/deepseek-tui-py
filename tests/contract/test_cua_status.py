@@ -51,3 +51,47 @@ async def test_cua_apps_lists_and_revokes_only_listed_identities(client, monkeyp
     assert revoked.status_code == 200 and revoked.json() == {'apps': []}
     assert 'apps revoke com.apple.Notes' in calls.read_text()
     assert '--unattended' not in calls.read_text()
+
+
+@pytest.mark.asyncio
+async def test_cua_permissions_name_entries_and_open_only_listed_ones(
+    client, monkeypatch, tmp_path
+):
+    import asyncio
+
+    helper = '/Applications/ChatGPT.app/Contents/Resources/x/Codex Computer Use.app'
+    lcu = tmp_path / 'lcu'
+    lcu.write_text(
+        '#!/bin/sh\n'
+        'echo "Review these entries in System Settings > Privacy & Security:"\n'
+        f'echo "  Accessibility: ChatGPT Computer Use ({helper})"\n'
+        'echo "  Screen & System Audio Recording, or Screen Recording: '
+        'ChatGPT (/Applications/ChatGPT.app)"\n'
+    )
+    lcu.chmod(0o755)
+    monkeypatch.setattr('sys.platform', 'darwin')
+    monkeypatch.setattr(CuaSession, '_paths', staticmethod(lambda _: ('node', 'client', lcu)))
+    opened = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def exec_(program, *args, **kwargs):
+        if program == 'open':
+            opened.append(list(args))
+            return await real_exec('true')
+        return await real_exec(program, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', exec_)
+
+    listed = await client.get('/v1/cua/permissions')
+    assert listed.json() == {'permissions': [
+        {'id': 'accessibility', 'name': 'ChatGPT Computer Use', 'path': helper},
+        {'id': 'screen', 'name': 'ChatGPT', 'path': '/Applications/ChatGPT.app'},
+    ]}
+    unknown = await client.post('/v1/cua/permissions/open', json={'id': '/bin/sh'})
+    assert unknown.status_code == 400
+    opening = await client.post('/v1/cua/permissions/open', json={'id': 'screen'})
+    assert opening.status_code == 200
+    assert opened == [
+        ['-R', '/Applications/ChatGPT.app'],
+        ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'],
+    ]

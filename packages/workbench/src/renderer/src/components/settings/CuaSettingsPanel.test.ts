@@ -13,13 +13,15 @@ vi.mock('react-i18next', () => ({
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const getDeepseekConfigFile = vi.fn()
+const runtimeRequest = vi.fn()
 const onUpdate = vi.fn()
 let host: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
   vi.clearAllMocks()
-  Object.assign(window, { dsGui: { platform: 'darwin', getDeepseekConfigFile } })
+  runtimeRequest.mockResolvedValue({ ok: true, body: '{"permissions": []}' })
+  Object.assign(window, { dsGui: { platform: 'darwin', getDeepseekConfigFile, runtimeRequest } })
   host = document.createElement('div')
   root = createRoot(host)
 })
@@ -66,4 +68,22 @@ it('explains instead of offering controls on unsupported platforms', async () =>
   expect(await render({})).toHaveLength(0)
   expect(host.textContent).toContain('cuaUnsupported')
   expect(getDeepseekConfigFile).not.toHaveBeenCalled()
+})
+
+it('lists the macOS permissions the runtime needs and opens the matching pane', async () => {
+  getDeepseekConfigFile.mockResolvedValue({ content: '[cua]\nenabled = true\n' })
+  runtimeRequest.mockResolvedValue({ ok: true, body: JSON.stringify({ permissions: [
+    { id: 'accessibility', name: 'ChatGPT Computer Use', path: '/x.app' },
+    { id: 'screen', name: 'ChatGPT', path: '/y.app' }
+  ] }) })
+  await render({})
+  const buttons = [...host.querySelectorAll('button')]
+  expect(host.textContent).toContain('cuaPermissionAccessibility')
+  expect(host.textContent).toContain('cuaPermissionScreen')
+  await act(async () => buttons[1]!.click())
+  expect(runtimeRequest).toHaveBeenLastCalledWith('/v1/cua/permissions/open', 'POST', '{"id":"screen"}')
+  // Turned off: no permission guidance.
+  runtimeRequest.mockClear()
+  await render({ cuaEnabled: false })
+  expect(host.querySelectorAll('button')).toHaveLength(0)
 })

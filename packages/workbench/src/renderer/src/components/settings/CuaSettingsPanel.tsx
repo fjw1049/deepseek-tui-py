@@ -15,6 +15,44 @@ async function readInheritedCua(): Promise<InheritedCua> {
   }
 }
 
+type PrivacyEntry = { id: 'accessibility' | 'screen'; name: string }
+
+async function readPrivacyEntries(): Promise<PrivacyEntry[]> {
+  const response = await window.dsGui.runtimeRequest('/v1/cua/permissions', 'GET')
+  if (!response.ok) throw new Error('Permissions unavailable')
+  const value = JSON.parse(response.body) as { permissions?: PrivacyEntry[] }
+  if (!Array.isArray(value?.permissions)) throw new Error('Invalid permissions')
+  return value.permissions
+}
+
+/** macOS grants belong to the runtime's own signed apps; name them and open their panes. */
+function SystemPermissions(): React.JSX.Element | null {
+  const { t } = useTranslation('settings')
+  const [entries, setEntries] = useState<PrivacyEntry[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let live = true
+    readPrivacyEntries().then(list => { if (live) setEntries(list) }, () => { if (live) setFailed(true) })
+    return () => { live = false }
+  }, [])
+  const open = (id: PrivacyEntry['id']): void => {
+    window.dsGui.runtimeRequest('/v1/cua/permissions/open', 'POST', JSON.stringify({ id }))
+      .then(response => { if (!response.ok) setFailed(true) }, () => setFailed(true))
+  }
+  if (failed) return <p className="ds-llm-card__meta">{t('cuaPermissionsUnavailable')}</p>
+  if (!entries?.length) return null
+  return <>
+    {entries.map(entry => <div className="ds-llm-card" key={entry.id}>
+      <span>{t(entry.id === 'accessibility' ? 'cuaPermissionAccessibility' : 'cuaPermissionScreen',
+        { name: entry.name })}</span>
+      <button type="button" className="ds-llm-sheet__btn" onClick={() => open(entry.id)}>
+        {t('cuaPermissionOpen')}
+      </button>
+    </div>)}
+    <p className="ds-llm-card__meta">{t('cuaPermissionsHint')}</p>
+  </>
+}
+
 export function CuaSettingsPanel({ form, onUpdate }: {
   form: AppSettingsV1
   onUpdate: (patch: AppSettingsPatch) => void
@@ -81,5 +119,6 @@ export function CuaSettingsPanel({ form, onUpdate }: {
     </label>
     <p className="ds-llm-card__meta">{t('cuaAutoAllowAppsHint')}</p>
     <p className="ds-llm-card__meta">{t('cuaVisionHint')}</p>
+    {window.dsGui?.platform === 'darwin' && enabled !== false ? <SystemPermissions /> : null}
   </div>
 }
