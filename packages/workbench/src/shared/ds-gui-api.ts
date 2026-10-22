@@ -294,7 +294,6 @@ export type DsGuiApi = {
   notifyAppearanceApplied: () => Promise<void>
   /** macOS only. false means custom blur fell back to the system material. */
   setWindowMaterial: (input: import('./appearance').WindowMaterial) => Promise<boolean>
-  startupWindowDrag: (action: 'start' | 'move' | 'end') => void
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
   transcribeAudio: (payload: {
     audio: ArrayBuffer

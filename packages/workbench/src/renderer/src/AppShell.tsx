@@ -1,13 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useChatStore } from './store/chat-store'
 import i18n from './i18n'
-import { StartupWindowDragRegions } from './components/StartupWindowDragRegions'
+import appIconUrl from './assets/brand/app-icon.svg'
 
 const Workbench = lazy(() =>
   import('./components/Workbench').then((module) => ({ default: module.Workbench }))
-)
-const KineticGrid = lazy(() =>
-  import('./components/KineticGrid').then((module) => ({ default: module.KineticGrid }))
 )
 
 type RevealPhase = 'waiting' | 'revealing' | 'live'
@@ -18,7 +15,7 @@ const REVEAL_MS = 580
 /** Blank board fade-out (matches ds-startup-blank-exit in index.css). Once it
  *  finishes the board is unmounted, even though the shell keeps entering — so
  *  there's no transparent-but-mounted board lingering on top after the
- *  kinetic grid has faded. */
+ *  icon has faded. */
 const BLANK_EXIT_MS = 200
 
 /** A brief entrance keeps a fast handshake from flashing the board. */
@@ -26,7 +23,7 @@ const MIN_BLANK_MS = 300
 
 /**
  * Survives Vite Fast Refresh / HMR remounts of this module. Without this, every
- * AppShell hot update replays the kinetic-grid blank board and feels like a full
+ * AppShell hot update replays the blank board and feels like a full
  * app restart back to the greeting screen.
  */
 let coldStartCeremonyDone = false
@@ -37,12 +34,15 @@ function StartupBlank({ exiting = false }: { exiting?: boolean }): React.ReactEl
       className={`ds-startup-blank${exiting ? ' ds-startup-blank--exit' : ''}`}
       aria-hidden
     >
-      <Suspense fallback={null}>
-        <KineticGrid draggable={!exiting} />
-      </Suspense>
-      <StartupWindowDragRegions />
+      <img src={appIconUrl} alt="" draggable={false} className="ds-startup-icon" />
     </div>
   )
+}
+
+/** Commits only with the Suspense content, never with its fallback. */
+function ShellMounted({ onMounted }: { onMounted: (mounted: boolean) => void }): null {
+  useEffect(() => onMounted(true), [onMounted])
+  return null
 }
 
 export default function AppShell(): React.ReactElement {
@@ -55,8 +55,11 @@ export default function AppShell(): React.ReactElement {
   )
   const [shellModulesReady, setShellModulesReady] = useState(coldStartCeremonyDone)
   const [blankGone, setBlankGone] = useState(coldStartCeremonyDone)
+  /** lazy() suspends on first render even when the module is already loaded,
+   *  so reveal waits for Workbench itself, not its loading fallback. */
+  const [shellMounted, setShellMounted] = useState(coldStartCeremonyDone)
   /** Once true, the cold-start ceremony never runs again — reconnect/checking
-   *  must not unmount Workbench or replay the kinetic grid. */
+   *  must not unmount Workbench or replay the startup board. */
   const [startupGateDone, setStartupGateDone] = useState(coldStartCeremonyDone)
   const gateStartedRef = useRef(coldStartCeremonyDone)
   const mountedAtRef = useRef<number>(performance.now())
@@ -74,8 +77,7 @@ export default function AppShell(): React.ReactElement {
     (initialSetupOpen || runtimeConnection === 'ready' || runtimeConnection === 'offline')
 
   useEffect(() => {
-    // Prefetch shell + kinetic grid while the blank board is up so reveal isn't empty
-    // and the mesh is ready before MIN_BLANK_MS elapses on a fast handshake.
+    // Prefetch the shell while the blank board is up so reveal isn't empty.
     let cancelled = false
     // Workbench statically imports navigation pages: revealing it means those
     // components are ready too, with no first-click lazy boundary.
@@ -85,7 +87,6 @@ export default function AppShell(): React.ReactElement {
       () => { if (!cancelled) setShellModulesReady(true) }
     )
     void import('./components/chat/StreamdownAssistant').catch(() => undefined)
-    void import('./components/KineticGrid')
     if (typeof window.dsGui?.getStartupPhase === 'function') {
       void window.dsGui.getStartupPhase().then(setStartupPhase).catch(() => undefined)
     }
@@ -108,7 +109,7 @@ export default function AppShell(): React.ReactElement {
   }, [boot, setStartupPhase])
 
   useEffect(() => {
-    if (startupGateDone || gateStartedRef.current || !canEnterShell) return
+    if (startupGateDone || gateStartedRef.current || !canEnterShell || !shellMounted) return
     gateStartedRef.current = true
 
     const reduced =
@@ -122,8 +123,8 @@ export default function AppShell(): React.ReactElement {
       return
     }
 
-    // Hold the board (and its kinetic grid) until MIN_BLANK_MS has elapsed, so a
-    // fast runtime handshake doesn't flash the animation for a single frame.
+    // Hold the board until MIN_BLANK_MS has elapsed, so a fast runtime
+    // handshake doesn't flash it for a single frame.
     const heldFor = performance.now() - mountedAtRef.current
     const holdRemaining = Math.max(0, MIN_BLANK_MS - heldFor)
     const timers = timersRef.current
@@ -138,7 +139,7 @@ export default function AppShell(): React.ReactElement {
         setStartupGateDone(true)
       }, REVEAL_MS)
     }, holdRemaining)
-  }, [canEnterShell, startupGateDone])
+  }, [canEnterShell, shellMounted, startupGateDone])
 
   useEffect(() => {
     return () => {
@@ -168,6 +169,7 @@ export default function AppShell(): React.ReactElement {
         >
           <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{i18n.t('common:startupRenderer')}</div>}>
             <Workbench />
+            <ShellMounted onMounted={setShellMounted} />
           </Suspense>
         </div>
       ) : null}

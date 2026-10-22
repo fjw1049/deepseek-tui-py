@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, use } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 
 const startup = vi.hoisted(() => {
   let ready!: () => void
   const pending = new Promise<void>((resolve) => { ready = resolve })
-  return { pending, ready, boot: vi.fn(), setStartupPhase: vi.fn() }
+  let painted!: () => void
+  const content = new Promise<void>((resolve) => { painted = resolve })
+  return { pending, ready, content, painted, boot: vi.fn(), setStartupPhase: vi.fn() }
 })
 vi.mock('./store/chat-store', () => ({ useChatStore: (select: (s: unknown) => unknown) => select({
   boot: startup.boot, setStartupPhase: startup.setStartupPhase,
@@ -14,10 +16,12 @@ vi.mock('./store/chat-store', () => ({ useChatStore: (select: (s: unknown) => un
 }) }))
 vi.mock('./i18n', () => ({ default: { t: (key: string) => key } }))
 vi.mock('./components/chat/StreamdownAssistant', () => ({}))
-vi.mock('./components/KineticGrid', () => ({ KineticGrid: () => null }))
 vi.mock('./components/Workbench', async () => {
   await startup.pending
-  return { Workbench: () => createElement('div', { 'data-testid': 'workbench' }, 'home') }
+  return { Workbench: () => {
+    use(startup.content)
+    return createElement('div', { 'data-testid': 'workbench' }, 'home')
+  } }
 })
 import AppShell from './AppShell'
 
@@ -33,6 +37,12 @@ it('keeps startup visible until the shell and its navigation modules are ready',
     await act(async () => {
       startup.ready()
       await startup.pending
+    })
+    // Module loaded but Workbench still suspended: keep the board over the fallback.
+    expect(container.querySelector('.ds-startup-blank')).not.toBeNull()
+    await act(async () => {
+      startup.painted()
+      await startup.content
     })
     expect(container.querySelector('[data-testid="workbench"]')).not.toBeNull()
     expect(container.querySelector('.ds-startup-blank')).toBeNull()

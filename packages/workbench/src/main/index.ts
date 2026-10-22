@@ -13,7 +13,6 @@ import {
   shell
 } from 'electron'
 import { installAppMenu } from './app-menu'
-import { registerStartupWindowDrag } from './startup-window-drag'
 import { createWindowMaterialApplier, parseWindowMaterial, type WindowMaterialAddon } from './window-material'
 import { parseSharedConversationLink } from '../shared/share-link'
 import { existsSync } from 'node:fs'
@@ -1159,7 +1158,6 @@ app.whenReady().then(async () => {
     getBrowserBridge: () => browserBridge
   })
   ipcMain.handle('startup:phase:get', async () => currentStartupPhase)
-  registerStartupWindowDrag(() => mainWindow)
   // Renderer signals that the persisted theme/appearance has been applied to
   // the DOM — safe to reveal the window without a light-palette flash.
   ipcMain.handle('window:appearance-applied', async () => {

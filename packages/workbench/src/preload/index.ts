@@ -18,7 +18,6 @@ const api = {
     ipcRenderer.invoke('settings:set', partial),
   notifyAppearanceApplied: () => ipcRenderer.invoke('window:appearance-applied'),
   setWindowMaterial: (input) => ipcRenderer.invoke('window:set-material', input),
-  startupWindowDrag: (action) => ipcRenderer.send('window:startup-drag', action),
   transcribeAudio: (payload) => ipcRenderer.invoke('asr:transcribe', payload),
   getAsrConfig: () => ipcRenderer.invoke('asr:config:read'),
   setAsrConfig: (config) => ipcRenderer.invoke('asr:config:write', config),
