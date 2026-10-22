@@ -22,6 +22,7 @@ from deepseek_tui.engine.dispatch import (
     should_parallelize_tool_batch,
 )
 from deepseek_tui.engine.tool_dedup import ToolCallDeduplicator
+from deepseek_tui.engine.ui_progress import UiProgress, observation_of
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
@@ -52,6 +53,7 @@ from deepseek_tui.tools.plan_mode import (
 )
 from deepseek_tui.protocol.messages import Message, ToolUseBlock
 from deepseek_tui.protocol.responses import ToolCall
+from deepseek_tui.surfaces import focus_tools, task_tools
 from deepseek_tui.tools.approval import (
     ApprovalCacheStatus,
     ApprovalDecision,
@@ -89,6 +91,7 @@ class ToolExecutionMixin:
 
     # Populated by Engine.__init__; declared here for type-checkers / mixins.
     _tool_dedup: ToolCallDeduplicator
+    _ui_progress: UiProgress
 
     async def _emit_tool_failure(self, tool_call: ToolCall, error_msg: str) -> None:
         """Emit a failed tool result so the UI/runtime can close the tool item."""
@@ -531,6 +534,11 @@ class ToolExecutionMixin:
             self.tool_context.metadata.setdefault("image_assets", {})[image.asset_id] = (
                 image.model_dump()
             )
+        if tool_call.name in task_tools():
+            observation = await asyncio.to_thread(observation_of, result)
+            output_for_context += self._ui_progress.record(tool_call.name, observation)
+        elif tool_call.name == REQUEST_USER_INPUT_NAME and result.success:
+            self._ui_progress.reset()  # the person may have changed what the screen shows
         output_for_context = self._tool_dedup.decorate_execute_content(decision, output_for_context)
         results.append(
             Message.tool_result(
@@ -773,8 +781,12 @@ class ToolExecutionMixin:
             if not delivery.allows(tool_name):
                 raise ToolError("Tool is outside this task's browser phase; "
                                 "request_task_tools with the task dependency first")
-            if tool_name == "browser_use":
+            # Without finish_task in this catalog the turn could never be delivered.
+            if tool_name in task_tools() and "finish_task" in delivery.catalog:
                 delivery.active = True
+                delivery.focused = delivery.focused or tool_name in focus_tools()
+        if tool_name in task_tools() and (blocked := self._ui_progress.blocked_content(tool_name)):
+            raise ToolError(blocked)
 
         hook_ctx = self._lifecycle_hook_context(
             tool_name=tool_name,

@@ -1,4 +1,4 @@
-"""Task-scoped browser focus and evidence-backed delivery, owned by the Engine."""
+"""Evidence-backed delivery for UI tasks and the browser's task focus, owned by the Engine."""
 
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ FOCUS_TOOLS = CONTROL_TOOLS | surface_tools() | {
 
 @dataclass
 class TaskDelivery:
+    # A UI task is under way: the turn ends through finish_task.
     active: bool = False
+    # The task also narrows the tool set (surfaces with focus=True).
+    focused: bool = False
     extra_tools: set[str] = field(default_factory=set)
     evidence: set[str] = field(default_factory=set)
     outcome: dict[str, Any] | None = None
@@ -38,7 +41,7 @@ class TaskDelivery:
     def allows(self, name: str) -> bool:
         if self.active and self.stop_reminded:
             return name == "finish_task"
-        return not self.active or name in FOCUS_TOOLS | self.extra_tools
+        return not self.focused or name in FOCUS_TOOLS | self.extra_tools
 
     def tools(self, catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Focus is enforced at execution (allows); keeping the advertised list
@@ -55,7 +58,7 @@ class TaskDelivery:
 def _state(context: ToolContext) -> TaskDelivery:
     state = context.metadata.get("task_delivery")
     if not isinstance(state, TaskDelivery) or not state.active:
-        raise ToolError("No active browser task")
+        raise ToolError("No active UI task")
     return state
 
 
@@ -126,8 +129,8 @@ class FinishTaskTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Submit the actual final answer for the whole user task, not an intermediate browser "
-            "step. Call alone. status=completed requires evidence and no remaining work. "
+            "Submit the actual final answer for the whole user task, not an intermediate step. "
+            "Call alone. status=completed requires evidence and no remaining work. "
             "Use partial/blocked with concrete remaining items when unable to finish. Evidence "
             "references must copy evidence_ref from successful tool results, never action_id "
             "or observation_id. Explain "

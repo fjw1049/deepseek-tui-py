@@ -15,7 +15,8 @@ from deepseek_tui.tools.user_input import validate_user_input_request
 
 @pytest.fixture
 def context(tmp_path):
-    state = TaskDelivery(active=True, catalog={"browser_use", "read_file"}, evidence={"tool:read"})
+    state = TaskDelivery(active=True, focused=True, catalog={"browser_use", "read_file"},
+                         evidence={"tool:read"})
     run = SimpleNamespace(owner="agent", assistance=None, unresolved={})
     return ToolContext(
         working_directory=tmp_path,

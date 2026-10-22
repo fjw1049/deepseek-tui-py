@@ -470,6 +470,10 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
 
         # Turn-local same-args anti-loop (reset at each _run_conversation).
         self._tool_dedup = ToolCallDeduplicator()
+        from deepseek_tui.engine.ui_progress import UiProgress
+
+        # Turn-local: UI observations that show nothing new (reset per turn and handoff).
+        self._ui_progress = UiProgress()
         self._mcp_tools_cache: list[dict[str, Any]] | None = None
         self.tool_profile: str | None = None
         # Issue #756: parent turn resumes when direct children complete.
@@ -3174,6 +3178,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         self._active_api_tools = tools
         self.turn_counter += 1
         self._tool_dedup.reset_turn()
+        self._ui_progress.reset()
         step_error_count = 0
         consecutive_tool_error_steps = 0
         # Cycle boundary check (opt-in). When the active input grows past
@@ -3240,6 +3245,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 delivery.outcome = None
                 delivery.stop_reminded = delivery.finalization_attempted = False
                 delivery.draft_answer = ""
+                self._ui_progress.reset()  # the person changed what the screen shows
                 from deepseek_tui.engine import reminders
 
                 messages.append(reminders.reminder_message(
@@ -3510,12 +3516,12 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 from deepseek_tui.engine.events import TextDeltaEvent
 
                 answer = (
-                    "浏览器任务尚未完成。模型请求失败，无法继续核验和整理结果。"
-                    "已执行的浏览器操作及回执保留在本次记录中；恢复后需要重新观察页面再继续。"
+                    "界面任务尚未完成。模型请求失败，无法继续核验和整理结果。"
+                    "已执行的操作及回执保留在本次记录中；恢复后需要重新观察界面再继续。"
                     if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                    "The browser task is incomplete because the model request failed. "
-                    "Browser operations and receipts remain in this turn's history. "
-                    "Observe the page again before continuing."
+                    "The UI task is incomplete because the model request failed. "
+                    "Operations and receipts remain in this turn's history. "
+                    "Observe the interface again before continuing."
                 )
                 outcome = {"status": "blocked", "answer": answer,
                            "evidence": sorted(delivery.evidence),

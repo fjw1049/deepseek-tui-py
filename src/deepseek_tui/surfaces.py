@@ -20,6 +20,11 @@ class Surface:
     guide: str | None = None  # prompts/<guide> injected while the surface is available
     # Call arguments a vision helper may see as context for this surface's screenshots.
     context_keys: tuple[str, ...] = ()
+    # Tools that belong to the surface without operating it; they never start a task.
+    aux_tools: frozenset[str] = frozenset()
+    # Operating it also narrows the turn to the task-scoped tool set. Off where the
+    # surface is routinely a step inside other work (checking a native UI you build).
+    focus: bool = False
 
 
 CUA_TOOLS = frozenset({"cua_js", "cua_js_reset"})
@@ -33,6 +38,8 @@ SURFACES: tuple[Surface, ...] = (
         guide="browser.md",
         context_keys=("action", "ref", "selector", "frame_id", "observation_id", "full_page",
                       "crop"),
+        aux_tools=frozenset({"browser_skill"}),
+        focus=True,
     ),
     Surface(
         "chrome",
@@ -56,6 +63,16 @@ SURFACES: tuple[Surface, ...] = (
 
 def surface_tools() -> frozenset[str]:
     return frozenset().union(*(surface.tools for surface in SURFACES))
+
+
+def task_tools() -> frozenset[str]:
+    """Tools whose use makes the turn a UI task that ends with an evidence-backed delivery."""
+    return frozenset().union(*(s.tools - s.aux_tools for s in SURFACES))
+
+
+def focus_tools() -> frozenset[str]:
+    """Task tools whose use also narrows the turn's tool set."""
+    return frozenset().union(*(s.tools - s.aux_tools for s in SURFACES if s.focus))
 
 
 def context_keys_for(tool_name: str) -> tuple[str, ...]:
