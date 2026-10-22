@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb, CircleStop, Radar } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb, CircleStop } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
 import { buildPreviewPickerCleanupScript, buildPreviewPickerInjectScript, extractWebviewConsoleMessage, parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
@@ -10,7 +10,7 @@ import { isHtmlPreviewPath } from '@shared/html-preview'
 import { BrowserCookieSync, type CookieSyncState } from './BrowserCookieSync'
 import { BrowserViewport } from './BrowserViewport'
 import { formatAutomationApiError } from '../lib/automation-runtime-client'
-import { DEFAULT_DEV_PREVIEW_URL, isLocalPreviewUrl, normalizeBrowseUrlInput } from '@shared/dev-preview-url'
+import { DEFAULT_DEV_PREVIEW_URL, normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
 import './browser-workspace.css'
 import { respondToAssistance } from './BrowserAssistance'
@@ -67,11 +67,6 @@ export async function browserRequest<T>(threadId: string, suffix = '', body?: un
 
 /** The browser before a conversation exists; agents never act in it. */
 export const PREVIEW_BROWSER_ID = 'workbench-preview'
-const AUTO_FOLLOW_STORAGE_KEY = 'deepseekgui.devPreview.autoFollow'
-
-function readAutoFollow(): boolean {
-  try { return window.localStorage.getItem(AUTO_FOLLOW_STORAGE_KEY) === 'true' } catch { return false }
-}
 
 type BrowserWorkspaceProps = {
   threadId: string | null; visible?: boolean; blocks?: ChatBlock[]
@@ -150,9 +145,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     return () => window.clearTimeout(timer)
   }, [notice])
   const detectedUrls = useMemo(() => extractDetectedDevPreviewUrls(blocks), [blocks])
-  const [autoFollow, setAutoFollow] = useState(readAutoFollow)
-  useEffect(() => { try { window.localStorage.setItem(AUTO_FOLLOW_STORAGE_KEY, String(autoFollow)) } catch { /* optional */ } }, [autoFollow])
-  const followedUrls = useRef(new Set<string>())
   const filePath = remote ? (state?.url ? previewFiles[state.url.split('#')[0]] : undefined) : activeTab?.filePath ?? undefined
   const canInspect = !!filePath && isHtmlPreviewPath(filePath) && !!onPreviewPick
   const inspectedPage = remote ? state?.url : activeTab?.id
@@ -367,7 +359,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
     finally { transferring.current = false; if (alive.current) { setPending(false); setControlTarget(null) } }
   }
-  const openPreview = useCallback(async (target: string, source?: string | null, background = false): Promise<void> => {
+  const openPreview = useCallback(async (target: string, source?: string | null): Promise<void> => {
     const normalized = normalizeBrowseUrlInput(target)
     if (!normalized) { setError(t('browserInvalidUrl')); return }
     if (!remote) {
@@ -380,7 +372,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         if (source) updatePageTab(threadId, existing.id, { filePath: source })
       } else if (blank) {
         navigatePageTab(threadId, blank.id, normalized, source ?? null)
-      } else openPageTab(threadId, normalized, { filePath: source ?? null, select: !background })
+      } else openPageTab(threadId, normalized, { filePath: source ?? null })
       setWaitingPreview(null)
       return
     }
@@ -398,13 +390,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     void openPreview(preferredUrl, preferredFilePath)
     onPreferredUrlConsumed?.()
   }, [visible, fresh, polled, preferredUrl, preferredFilePath, pending, openPreview, onPreferredUrlConsumed, remote])
-  const latestDetectedUrl = detectedUrls[0]
-  useEffect(() => {
-    if (!autoFollow || !latestDetectedUrl || !isLocalPreviewUrl(latestDetectedUrl)) return
-    if (!visible || !polled || (remote && (!fresh || pending)) || followedUrls.current.has(latestDetectedUrl)) return
-    followedUrls.current.add(latestDetectedUrl)
-    void openPreview(latestDetectedUrl, null, true)
-  }, [autoFollow, latestDetectedUrl, visible, fresh, polled, pending, openPreview, remote])
   async function openDevTools(): Promise<void> {
     if (!remote) { try { pageWebview(activeTab?.id)?.openDevTools() } catch { /* not attached yet */ } return }
     try {
@@ -537,7 +522,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !userControls : !pageOpen} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !image : !pageOpen || copying} aria-busy={copying} onClick={() => void copyScreenshot()}><Copy size={15} />{t('browserCopyScreenshot')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!pageUrl || !normalizeBrowseUrlInput(pageUrl)} onClick={() => { if (pageUrl) void window.dsGui.openExternal(pageUrl).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" aria-pressed={autoFollow} onClick={() => setAutoFollow(value => !value)}><Radar size={15} />{t('browserAutoFollow')}{autoFollow ? ' ✓' : ''}</button>
             {/* Workbench tabs stay open; ending only matters for a task or a private browser. */}
             {remote || state?.task_running ? <>
               <div className="ds-browser-menu-divider" role="separator" />

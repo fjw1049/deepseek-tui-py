@@ -2012,8 +2012,6 @@
   "browserOpenDefault": "Open localhost:5173",
   "browserMore": "More browser options",
   "browserOpenExternal": "Open in system browser",
-  "browserAutoFollow": "Auto-open local preview URLs from chat (e.g. localhost:5173)",
-  "browserAutoFollowShort": "Follow",
   "browserInvalidUrl": "Enter a local/LAN address, or a public https URL.",
   "browserLoadFailed": "Page failed to load",
   "filePreviewTitle": "File preview",

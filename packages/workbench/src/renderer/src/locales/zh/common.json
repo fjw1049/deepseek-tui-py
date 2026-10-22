@@ -1996,8 +1996,6 @@
   "browserOpenDefault": "打开 localhost:5173",
   "browserMore": "更多浏览器功能",
   "browserOpenExternal": "在系统浏览器打开",
-  "browserAutoFollow": "对话出现本地预览地址时自动打开（如 localhost:5173）",
-  "browserAutoFollowShort": "跟链",
   "browserInvalidUrl": "请输入本地/局域网地址，或公网 https 网址。",
   "browserLoadFailed": "页面加载失败",
   "filePreviewTitle": "文件预览",

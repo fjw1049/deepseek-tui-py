@@ -674,21 +674,6 @@ it('loads typed addresses in the active Workbench tab and offers ending only for
   } finally { await h.close() }
 })
 
-it('auto-follows local preview URLs from chat only when enabled', async () => {
-  window.localStorage.removeItem('deepseekgui.devPreview.autoFollow')
-  const h = mount()
-  const blocks = [{ kind: 'assistant', id: 'a1', text: '预览地址 http://localhost:3000/' }] as never
-  const opened = () => h.request.mock.calls.some(([, , body]) => body?.includes('http://localhost:3000/'))
-  try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', blocks })))
-    expect(opened()).toBe(false)
-    await h.click('browserMore')
-    await h.click('browserAutoFollow')
-    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'new_tab', url: 'http://localhost:3000/', generation: 2 }))
-    expect(window.localStorage.getItem('deepseekgui.devPreview.autoFollow')).toBe('true')
-  } finally { window.localStorage.removeItem('deepseekgui.devPreview.autoFollow'); await h.close() }
-})
-
 it('places the Workbench tab under the page area in layout pixels when the UI is scaled', async () => {
   const layer = document.createElement('div')
   layer.className = 'ds-browser-page-layer'
@@ -752,21 +737,6 @@ it('copies one screenshot of a Workbench tab at a time', async () => {
     expect(copy).toHaveBeenCalledExactlyOnceWith(5)
     expect(h.container.textContent).toContain('browserScreenshotCopied')
   } finally { await h.close() }
-})
-
-it('auto-follows a new local preview behind the page the user is reading', async () => {
-  window.localStorage.setItem('deepseekgui.devPreview.autoFollow', 'true')
-  const h = mount({ active: true, surface: 'native', owner: 'user', generation: 2, log: [], artifacts: [] })
-  try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
-    await act(async () => updatePageTab('one', nativeTab('one').id, { url: 'https://docs.example/' }))
-    const reading = nativeTab('one').id
-    const blocks = [{ kind: 'assistant', id: 'a1', text: '预览地址 http://localhost:3000/' }] as never
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', blocks })))
-    const session = useBrowserPagesStore.getState().sessions.one!
-    expect(session.tabs.map(tab => tab.url)).toEqual(['https://docs.example/', 'http://localhost:3000/'])
-    expect(session.activeTabId).toBe(reading)
-  } finally { window.localStorage.removeItem('deepseekgui.devPreview.autoFollow'); await h.close() }
 })
 
 it('keeps trying to bind the visible tabs until Workbench has announced its bridge', async () => {
