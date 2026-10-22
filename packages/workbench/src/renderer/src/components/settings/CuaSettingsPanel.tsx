@@ -3,14 +3,15 @@ import { useTranslation } from 'react-i18next'
 import type { AppSettingsPatch, AppSettingsV1 } from '@shared/app-settings'
 import { readTomlBool } from '@shared/toml-section'
 
-type InheritedCua = { enabled: boolean; chrome: boolean }
+type InheritedCua = { enabled: boolean; chrome: boolean; autoAllowApps: boolean }
 
 /** The runtime reads ``[cua]`` from the user config only; an absent switch is off. */
 async function readInheritedCua(): Promise<InheritedCua> {
   const { content } = await window.dsGui.getDeepseekConfigFile()
   return {
     enabled: readTomlBool(content ?? '', 'enabled', { section: 'cua' }) ?? false,
-    chrome: readTomlBool(content ?? '', 'chrome', { section: 'cua' }) ?? false
+    chrome: readTomlBool(content ?? '', 'chrome', { section: 'cua' }) ?? false,
+    autoAllowApps: readTomlBool(content ?? '', 'auto_allow_apps', { section: 'cua' }) ?? false
   }
 }
 
@@ -67,6 +68,18 @@ export function CuaSettingsPanel({ form, onUpdate }: {
         <option value="true">{t('cuaOn')}</option>
       </select>
     </label>
+    <label className="ds-llm-card">
+      <span>{t('cuaAutoAllowApps')}</span>
+      <select aria-label={t('cuaAutoAllowAppsShort')}
+        value={form.cuaAutoAllowApps === undefined ? 'inherit' : String(form.cuaAutoAllowApps)}
+        disabled={enabled === false}
+        onChange={event => onUpdate({ cuaAutoAllowApps: event.target.value === 'true' })}>
+        <option value="inherit" disabled>{inheritLabel('autoAllowApps')}</option>
+        <option value="false">{t('cuaOff')}</option>
+        <option value="true">{t('cuaOn')}</option>
+      </select>
+    </label>
+    <p className="ds-llm-card__meta">{t('cuaAutoAllowAppsHint')}</p>
     <p className="ds-llm-card__meta">{t('cuaVisionHint')}</p>
   </div>
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import uuid
 
-from deepseek_tui.cua.approval import approval_question
+from deepseek_tui.cua.approval import approval_question, auto_allow_response
 from deepseek_tui.cua.session import CuaSession
 from deepseek_tui.cua.tools import CUA_TOOLS, register_tools
 
@@ -28,6 +28,8 @@ async def prepare_subagent_cua(agent, runtime, context, registry, allowed_tools,
         from deepseek_tui.tools.approval import ApprovalDecision, build_approval_request
         from deepseek_tui.tools.registry import ToolCapability
 
+        if config.auto_allow_apps and (allowed := auto_allow_response(params)):
+            return allowed
         question = approval_question(params)
         handler = getattr(runtime, "approval_handler", None)
         if question is None or handler is None:

@@ -42,6 +42,8 @@ class CuaConfig(BaseModel):
     enabled: bool = False
     installation: Path = Field(default_factory=lambda: Path.home() / ".local/share/lcu/current")
     chrome: bool = False
+    # Answer native-app approvals for the user (per runtime session); sites still ask.
+    auto_allow_apps: bool = False
 
 
 class ProviderConfig(BaseModel):

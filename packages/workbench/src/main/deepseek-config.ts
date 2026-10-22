@@ -138,6 +138,7 @@ export function deepseekTuiConfigChanged(prev: AppSettingsV1, next: AppSettingsV
     prev.visionModel !== next.visionModel ||
     prev.cuaEnabled !== next.cuaEnabled ||
     prev.cuaChrome !== next.cuaChrome ||
+    prev.cuaAutoAllowApps !== next.cuaAutoAllowApps ||
     JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints)
   )
 }
@@ -171,6 +172,7 @@ export async function syncCuaConfig(settings: AppSettingsV1): Promise<void> {
     }
   }
   if (settings.cuaChrome !== undefined) cua.chrome = settings.cuaChrome
+  if (settings.cuaAutoAllowApps !== undefined) cua.auto_allow_apps = settings.cuaAutoAllowApps
   if (!Object.keys(cua).length) return
   await mkdir(dirname(configPath), { recursive: true })
   await writeFile(configPath, upsertTomlSections(content, { cua }), 'utf8')
@@ -465,7 +467,8 @@ export async function syncDeepseekTuiConfig(
       await runDeepseekCommand(launcher, command)
     }
   }
-  if (!previous || previous.cuaEnabled !== settings.cuaEnabled || previous.cuaChrome !== settings.cuaChrome) {
+  if (!previous || previous.cuaEnabled !== settings.cuaEnabled || previous.cuaChrome !== settings.cuaChrome ||
+    previous.cuaAutoAllowApps !== settings.cuaAutoAllowApps) {
     await syncCuaConfig(settings)
   }
   if (!previous || previous.visionModel !== settings.visionModel) {
@@ -488,6 +491,7 @@ export function deepseekLaunchConfigChanged(prev: AppSettingsV1, next: AppSettin
   return (
     prev.cuaEnabled !== next.cuaEnabled ||
     prev.cuaChrome !== next.cuaChrome ||
+    prev.cuaAutoAllowApps !== next.cuaAutoAllowApps ||
     prev.visionModel !== next.visionModel ||
     a.binaryPath !== b.binaryPath ||
     a.port !== b.port ||

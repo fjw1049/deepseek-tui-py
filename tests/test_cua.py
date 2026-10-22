@@ -10,7 +10,7 @@ import pytest
 
 from deepseek_tui.config.models import Config, CuaConfig
 from deepseek_tui.cua import session as cua_session
-from deepseek_tui.cua.approval import approval_question, approval_response
+from deepseek_tui.cua.approval import approval_question, approval_response, auto_allow_response
 from deepseek_tui.cua.session import CuaSession, DesktopLease
 from deepseek_tui.cua.tools import CuaTool
 from deepseek_tui.tools.registry import ToolContext, ToolError, ToolResult
@@ -73,6 +73,18 @@ def test_approval_does_not_widen_scope(native):
     # An unpackaged (development) Workbench is Electron itself.
     native["_meta"]["tool_params"]["app"] = "com.github.Electron"
     assert approval_question(native) is None
+
+
+def test_auto_allow_accepts_native_apps_only(native):
+    assert auto_allow_response(native) == {
+        "action": "accept", "content": {}, "_meta": {"persist": "session"}
+    }
+    native["_meta"]["persist"] = []
+    assert auto_allow_response(native) == {"action": "accept", "content": {}}
+    native["_meta"]["tool_params"]["app"] = "com.xingyuzhong.deepseekgui"
+    assert auto_allow_response(native) is None
+    native["_meta"] = {"tool_name": "access_browser_origin", "origin": "https://example.com"}
+    assert auto_allow_response(native) is None
 
 
 def test_browser_exact_origin_and_unknown_forms(native):
@@ -975,6 +987,29 @@ def test_desktop_assistance_answers_map_to_choices():
     typed = desktop_action_result(question, {"answers": {"desktop_action": "code is on my phone"}})
     assert typed["choice"] == "information" and typed["user_text"] == "code is on my phone"
     assert desktop_action_result(question, {"cancelled": True})["choice"] == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_auto_allow_skips_the_card_even_unattended(installation, native, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
+
+    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
+    installation.auto_allow_apps = True
+    engine._app_config = Config(cua=installation)
+    engine.default_model = "deepseek-flash"
+    engine.tool_context.metadata["unattended"] = True
+    try:
+        await engine._prepare_cua()
+        assert await asyncio.wait_for(engine._cua_session.on_approval(native), 1) == {
+            "action": "accept", "content": {}, "_meta": {"persist": "session"}
+        }
+        assert not engine.handle.pending_user_inputs
+        assert "unattended" not in engine._cua_prompt()
+    finally:
+        await engine._close_cua()
 
 
 @pytest.mark.asyncio

@@ -480,6 +480,7 @@ export type AppSettingsV1 = {
   visionModel?: string
   cuaEnabled?: boolean
   cuaChrome?: boolean
+  cuaAutoAllowApps?: boolean
   /** Per-vendor API keys + models (built-in catalogue only). */
   llmProviders: Record<BuiltinLlmProviderId, LlmProviderConfigV1>
   customEndpoints: CustomEndpointV1[]
@@ -1451,6 +1452,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     defaultLlmProviderId: llm.defaultLlmProviderId,
     cuaEnabled: typeof settings.cuaEnabled === 'boolean' ? settings.cuaEnabled : undefined,
     cuaChrome: typeof settings.cuaChrome === 'boolean' ? settings.cuaChrome : undefined,
+    cuaAutoAllowApps: typeof settings.cuaAutoAllowApps === 'boolean' ? settings.cuaAutoAllowApps : undefined,
     visionModel: typeof settings.visionModel === 'string' ? settings.visionModel.trim() : undefined,
     llmProviders: llm.llmProviders,
     network: normalizeNetworkSettings(settings.network),

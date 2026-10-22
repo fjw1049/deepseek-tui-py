@@ -10,6 +10,11 @@ HOST_APP_ID = "com.xingyuzhong.deepseekgui"
 HOST_APP_IDS = {HOST_APP_ID.lower(), "com.github.electron"}
 
 
+def _native_app(meta: dict[str, Any]) -> str | None:
+    app = (meta.get("tool_params") or {}).get("app")
+    return app if meta.get("connector_id") == "computer-use" and isinstance(app, str) else None
+
+
 def approval_question(params: dict[str, Any]) -> dict[str, Any] | None:
     meta = params.get("_meta") or params.get("meta") or {}
     schema = params.get("requestedSchema") or {}
@@ -21,9 +26,9 @@ def approval_question(params: dict[str, Any]) -> dict[str, Any] | None:
         or not isinstance(params.get("message"), str)
     ):
         return None
-    app = (meta.get("tool_params") or {}).get("app")
-    native = meta.get("connector_id") == "computer-use" and isinstance(app, str)
-    if native and app.lower() in HOST_APP_IDS:
+    app = _native_app(meta)
+    native = app is not None
+    if app is not None and app.lower() in HOST_APP_IDS:
         return None
     # Browser requests must carry an exact origin; unfamiliar shapes fail closed.
     origin = meta.get("origin")
@@ -88,3 +93,16 @@ def approval_response(params: dict[str, Any], response: dict[str, Any] | None) -
                 result["_meta"] = {"persist": value}
             return result
     return {"action": "cancel"}
+
+
+def auto_allow_response(params: dict[str, Any]) -> dict[str, Any] | None:
+    """Accept a native-app request without asking; None leaves it to the user."""
+    meta = params.get("_meta") or params.get("meta") or {}
+    if approval_question(params) is None or _native_app(meta) is None:
+        return None
+    result: dict[str, Any] = {"action": "accept", "content": {}}
+    # Session scope covers the rest of this runtime session without writing a
+    # permanent grant, so turning the setting off takes effect on restart.
+    if "session" in meta.get("persist", []):
+        result["_meta"] = {"persist": "session"}
+    return result

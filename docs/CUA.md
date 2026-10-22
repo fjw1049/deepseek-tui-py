@@ -13,6 +13,9 @@ Workbench 通过 LCU 官方共享客户端连接本机 CUA runtime，向模型�
 macOS 上卡片详情列出“始终允许的应用”（`/v1/cua/apps`，读取 `lcu apps list --json`），
 可逐个撤销（`/v1/cua/apps/revoke`）。撤销只接受刚列出的 bundle id，由 LCU 要求
 Touch ID 或登录密码；不提供“始终允许”入口，长期授权仍只能在授权卡片上由用户选择。
+设置页“自动允许控制所有应用”（`[cua] auto_allow_apps = true`）开启后，原生应用请求由宿主
+按“本次会话”自动批准，不弹授权卡片，无人值守任务同样生效；不写入“始终允许”名单，
+关闭后重启即恢复询问。Workbench 与终端自身仍禁止控制，Chrome 站点授权仍逐个询问。
 本版本不提供自动下载或安装 LCU。
 
 ## 安装和开启

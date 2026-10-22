@@ -16,12 +16,13 @@ it('writes explicit CUA choices and preserves installation and unrelated setting
   const config = join(home, 'config.toml')
   await writeFile(config, 'api_key = "untouched"\n[cua]\ninstallation = "/custom/lcu/current"\n')
   const previous = await new JsonSettingsStore({ home }).load()
-  const next = { ...previous, cuaEnabled: true, cuaChrome: true }
+  const next = { ...previous, cuaEnabled: true, cuaChrome: true, cuaAutoAllowApps: true }
   expect(deepseekTuiConfigChanged(previous, next)).toBe(true)
   await syncDeepseekTuiConfig(next, previous)
   let text = await readFile(config, 'utf8')
   expect(text).toContain('enabled = true')
   expect(text).toContain('chrome = true')
+  expect(text).toContain('auto_allow_apps = true')
   expect(text).toContain('installation = "/custom/lcu/current"')
   expect(text).toContain('api_key = "untouched"')
   await syncDeepseekTuiConfig({ ...next, cuaEnabled: false }, next)
@@ -32,7 +33,7 @@ it('writes explicit CUA choices and preserves installation and unrelated setting
 it('requires a backend restart for CUA and vision changes in both directions', async () => {
   const previous = await new JsonSettingsStore({ home: await mkdtemp(join(tmpdir(), 'ds-cua-restart-')) }).load()
   expect(deepseekLaunchConfigChanged(previous, { ...previous })).toBe(false)
-  for (const patch of [{ cuaEnabled: true }, { cuaChrome: true }, { visionModel: 'visual::model' }]) {
+  for (const patch of [{ cuaEnabled: true }, { cuaChrome: true }, { cuaAutoAllowApps: true }, { visionModel: 'visual::model' }]) {
     const next = { ...previous, ...patch }
     expect(deepseekLaunchConfigChanged(previous, next)).toBe(true)
     expect(deepseekLaunchConfigChanged(next, previous)).toBe(true)

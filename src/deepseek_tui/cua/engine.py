@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from deepseek_tui.cua.approval import approval_question, approval_response
+from deepseek_tui.cua.approval import approval_question, approval_response, auto_allow_response
 from deepseek_tui.cua.session import CuaSession
 from deepseek_tui.cua.tools import CUA_TOOLS, register_tools
 
@@ -32,6 +32,8 @@ class CuaEngineMixin:
         if session is None:
 
             async def ask(params):
+                if config.auto_allow_apps and (allowed := auto_allow_response(params)):
+                    return allowed
                 question = approval_question(params)
                 # Nobody can answer a detached run; only always-allowed apps stay usable.
                 if question is None or self.tool_context.metadata.get("unattended"):
@@ -85,11 +87,14 @@ class CuaEngineMixin:
         session = getattr(self, "_cua_session", None)
         if session is None or self.mode == "plan":
             return ""
+        config = getattr(getattr(self, "_app_config", None), "cua", None)
         unattended = (
             "\n\nThis run is unattended: app access requests are declined automatically, so "
             "computer use works only with apps the user already always-allows. When a step "
             "needs a person, stop and report exactly what remains."
-            if self.tool_context.metadata.get("unattended") else ""
+            if self.tool_context.metadata.get("unattended")
+            and not (config and config.auto_allow_apps)
+            else ""
         )
         # Host guidance lives in prompts/computer_use.md (with the routing section);
         # only the runtime's own instructions and live run state are appended here.
