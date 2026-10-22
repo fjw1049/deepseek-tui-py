@@ -34,7 +34,7 @@ function StartupShell(): React.ReactElement {
       <StartupWindowDragRegions />
       <div className="ds-glass flex items-center gap-2 rounded-full px-4 py-2 text-[13px]">
         <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden />
-        <span>Loading DeepSeek GUI...</span>
+        <span>Loading Dayu...</span>
       </div>
     </div>
   )

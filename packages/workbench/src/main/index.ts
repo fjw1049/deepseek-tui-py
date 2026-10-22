@@ -279,7 +279,7 @@ async function showTurnCompleteNotification(
     return { ok: true, shown: false, reason: 'unsupported' }
   }
 
-  const title = normalizeNotificationText(payload.title, 'DeepSeek GUI', 80)
+  const title = normalizeNotificationText(payload.title, 'Dayu', 80)
   const body = normalizeNotificationText(payload.body, 'Conversation complete.', 180)
 
   try {
@@ -712,7 +712,7 @@ function createWindow(): void {
       const ready = await waitForDevRenderer(devUrl)
       if (!ready) {
         dialog.showErrorBox(
-          'DeepSeek Workbench dev server',
+          'Dayu dev server',
           `Could not reach the Vite dev server at ${devUrl}.\n\n` +
             'Ensure port 5173 is free, then run ./scripts/dev-workbench.sh again.\n' +
             'Do not open the runtime API port (7878) in a browser — that is not the GUI.'
@@ -728,7 +728,7 @@ function createWindow(): void {
   void loadRenderer().catch((error) => {
     const message = error instanceof Error ? error.message : String(error)
     console.error('[workbench] failed to load renderer:', error)
-    dialog.showErrorBox('DeepSeek Workbench failed to load UI', message)
+    dialog.showErrorBox('Dayu failed to load UI', message)
   })
 
   mainWindow.webContents.on('did-fail-load', (_event, code, description, validatedURL) => {
@@ -736,7 +736,7 @@ function createWindow(): void {
     if (validatedURL.startsWith(devUrl)) {
       console.error('[workbench] renderer load failed:', code, description, validatedURL)
       dialog.showErrorBox(
-        'DeepSeek Workbench UI failed to load',
+        'Dayu UI failed to load',
         `${description} (${code})\n${validatedURL}\n\n` +
           'If you opened http://127.0.0.1:7878 in a browser, that is the API — use the Electron window instead.'
       )
@@ -1347,7 +1347,7 @@ app.whenReady().then(async () => {
 }).catch((error) => {
   const message = error instanceof Error ? error.message : String(error)
   console.error('[deepseek-gui] startup failed:', error)
-  dialog.showErrorBox('DeepSeek GUI failed to start', message)
+  dialog.showErrorBox('Dayu failed to start', message)
   app.quit()
 })
 
