@@ -465,6 +465,8 @@ export type DsGuiApi = {
   openExternal: (url: string) => Promise<void>
   openTerminal: (path: string) => Promise<void>
   showItemInFolder: (path: string) => Promise<void>
+  /** Whether Workbench's built-in browser holds any cookie. */
+  hasBrowserCookies?: () => Promise<boolean>
   onAssistanceNotificationClick?: (handler: (threadId: string) => void) => () => void
   showTurnCompleteNotification: (
     payload: TurnCompleteNotificationPayload

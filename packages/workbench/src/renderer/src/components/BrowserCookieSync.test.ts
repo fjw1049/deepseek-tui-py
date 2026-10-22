@@ -12,7 +12,11 @@ const confirm = vi.hoisted(() => vi.fn<(message: string) => Promise<boolean>>())
 vi.mock('../lib/confirm-dialog', () => ({ confirmAsync: confirm }))
 
 let sitesResponse: () => unknown
-beforeEach(() => { localStorage.clear(); sitesResponse = () => ({ sites: chromeSites }) })
+let nativeCookies = false
+beforeEach(() => {
+  localStorage.clear(); sessionStorage.clear(); sitesResponse = () => ({ sites: chromeSites }); nativeCookies = false
+  Object.assign(window, { dsGui: { platform: 'linux', hasBrowserCookies: async () => nativeCookies } })
+})
 
 const initial: CookieSyncState = { consent: 'pending', profile: null, status: 'idle', count: 0, skipped: 0 }
 const chromeSites = [
@@ -21,40 +25,51 @@ const chromeSites = [
   { site: 'bank.test', count: 2, sensitive: true }
 ]
 
-async function mount(profiles = [{ id: 'Default', name: 'Personal' }], state = initial, manage = false, anchor?: DOMRect, agentBusy = false, selectedSites: string[] = []) {
+async function mount(profiles = [{ id: 'Default', name: 'Personal' }], state = initial, manage = false, anchor?: DOMRect, agentBusy = false, selectedSites: string[] = [], blank = false) {
   let saved = state
   let selected = selectedSites
   api.mockReset().mockImplementation(async (_thread, path: string, body) => {
     if (path.startsWith('/cookie-sync/sites')) return sitesResponse()
-    if (body) saved = { ...saved, consent: body.action === 'skip' ? 'skipped' : body.action === 'disable' ? 'disabled' : 'enabled',
+    if (body?.action === 'clear') saved = { ...saved, has_saved_cookies: false, status: 'cleared', count: 0, domains: 0 }
+    else if (body) saved = { ...saved, consent: body.action === 'skip' ? 'skipped' : body.action === 'disable' ? 'disabled' : 'enabled',
       profile: body.profile ?? saved.profile, status: body.action === 'skip' ? 'idle' : 'synced', count: 2, domains: 1 }
     if (body?.sites) selected = body.sites
-    return { ...saved, profiles, selected_sites: selected }
+    return { ...saved, has_saved_cookies: saved.has_saved_cookies || saved.count > 0, profiles, selected_sites: selected }
   })
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)
   const close = vi.fn()
+  let requestUpdate = (): void => {}
   function Harness() {
     const [open, setOpen] = useState(manage)
-    return createElement(BrowserCookieSync, { threadId: 'one', generation: 4, manage: open, anchor, agentBusy,
+    const [updateRequest, setUpdateRequest] = useState(0)
+    requestUpdate = () => setUpdateRequest(count => count + 1)
+    return createElement(BrowserCookieSync, { threadId: 'one', generation: 4, manage: open, anchor, agentBusy, blank, updateRequest,
       onOpen: () => setOpen(true), onClose: () => { close(); setOpen(false) } })
   }
   await act(async () => root.render(createElement(Harness)))
   const button = (text: string): HTMLButtonElement => [...host.querySelectorAll('button')].find(b => b.textContent === text || b.getAttribute('aria-label') === text)!
   const site = (name: string): HTMLInputElement => [...host.querySelectorAll('label')].find(l => l.textContent?.startsWith(name))!.querySelector('input')!
   const check = async (name: string): Promise<void> => { await act(async () => site(name).click()) }
-  return { host, root, button, site, check, close, unmount: async () => { await act(async () => root.unmount()); host.remove() } }
+  const update = async (): Promise<void> => { await act(async () => requestUpdate()) }
+  return { host, root, button, site, check, close, update, unmount: async () => { await act(async () => root.unmount()); host.remove() } }
 }
 
-it('asks once, selects the only source, and sends no cookie values through the UI', async () => {
-  const h = await mount()
+const invite = (selectedSites: string[] = []) => mount(undefined, initial, false, undefined, false, selectedSites, true)
+
+it('invites on an empty tab, selects the only source, and sends no cookie values through the UI', async () => {
+  const h = await invite()
   try {
     expect(api).toHaveBeenCalledTimes(1)
-    expect(h.host.textContent).toContain('browserCookieInvite')
+    expect(h.host.textContent).toContain('browserCookieInviteTitle')
     expect(h.host.textContent).not.toContain('browserCookieHint')
-    await act(async () => h.button('browserCookieSetup').click())
+    await act(async () => h.button('browserCookieInviteImport').click())
     expect(h.host.querySelector('[role=dialog]')).not.toBeNull()
-    expect(h.host.textContent).toContain('browserCookieHint')
+    // Opened from the invitation it is a focused import dialog, without the management options.
+    expect(h.host.querySelector('.ds-browser-cookie-modal')).not.toBeNull()
+    expect(h.host.textContent).toContain('browserCookieImportTitle')
+    expect(h.host.textContent).toContain('browserCookieImportHint')
+    expect(h.host.textContent).not.toContain('browserCookieClear')
     expect(h.host.querySelector('select')).toBeNull()
     // Nothing is preselected: only checked sites are imported.
     expect(h.button('browserCookieEnableEmpty').disabled).toBe(true)
@@ -198,9 +213,9 @@ for (const status of ['synced', 'partial', 'unavailable']) {
 }
 
 it('closes settings with Escape without granting consent', async () => {
-  const h = await mount()
+  const h = await invite()
   try {
-    await act(async () => h.button('browserCookieSetup').click())
+    await act(async () => h.button('browserCookieInviteImport').click())
     expect(document.activeElement).toBe(h.button('browserCookieDismiss'))
     await act(async () => h.host.querySelector('[role=dialog]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
     expect(h.host.querySelector('[role=dialog]')).toBeNull()
@@ -220,30 +235,97 @@ it('removes successful import feedback after four seconds', async () => {
   } finally { vi.useRealTimers(); await h.unmount() }
 })
 
-it('persists skipping from the compact invitation', async () => {
-  const h = await mount()
+it('hides the invitation for this launch on Not now, and for good on Do not show again', async () => {
+  const later = await invite()
+  await act(async () => later.button('browserCookieInviteLater').click())
+  expect(later.host.textContent).toBe('')
+  expect(api.mock.calls.every(call => !call[2])).toBe(true)
+  await later.unmount()
+  const relaunch = await invite()
+  try { expect(relaunch.host.textContent).toBe('') } finally { await relaunch.unmount() }
+  sessionStorage.clear()
+  const again = await invite()
+  await act(async () => again.button('browserCookieInviteNever').click())
+  await again.unmount()
+  sessionStorage.clear()
+  const never = await invite()
+  try { expect(never.host.textContent).toBe('') } finally { await never.unmount() }
+})
+
+it('does not treat closing settings opened from the menu as Not now', async () => {
+  const h = await mount(undefined, initial, true, undefined, false, [], true)
   try {
-    await act(async () => h.button('browserCookieSkip').click())
-    expect(api).toHaveBeenCalledWith('one', '/cookie-sync', { action: 'skip', generation: 4 })
+    await act(async () => h.button('browserCookieDismiss').click())
+    expect(h.host.textContent).toContain('browserCookieInviteTitle')
+    await act(async () => h.button('browserCookieInviteImport').click())
+    await act(async () => h.button('browserCookieCancel').click())
     expect(h.host.textContent).toBe('')
   } finally { await h.unmount() }
 })
 
-for (const state of [{ ...initial, has_saved_cookies: true }, { ...initial, count: 2 }, { ...initial, consent: 'skipped' as const }]) {
-  it('stays quiet when login data exists or the invitation was skipped', async () => {
-    const h = await mount(undefined, state)
-    try { expect(h.host.textContent).toBe('') } finally { await h.unmount() }
-  })
-}
+it('invites again on the same empty tab after clearing login data', async () => {
+  nativeCookies = true
+  confirm.mockReset().mockResolvedValue(true)
+  const h = await mount(undefined, initial, true, undefined, false, [], true)
+  try {
+    nativeCookies = false
+    await act(async () => h.button('browserCookieClear').click())
+    expect(api.mock.calls.filter(call => call[2]).at(-1)?.[2].action).toBe('clear')
+    expect(h.host.textContent).toContain('browserCookieFeedback_cleared')
+    await act(async () => h.button('browserCookieDismiss').click())
+    expect(h.host.textContent).toContain('browserCookieInviteTitle')
+  } finally { await h.unmount() }
+})
 
-it('does not repeat an ignored invitation after reopening, but permits manual setup', async () => {
-  const first = await mount()
-  expect(first.host.textContent).toContain('browserCookieInvite')
-  await first.unmount()
-  const second = await mount()
-  try { expect(second.host.textContent).toBe('') } finally { await second.unmount() }
-  const manual = await mount(undefined, initial, true)
-  try { expect(manual.button('browserCookieEnableEmpty')).toBeDefined() } finally { await manual.unmount() }
+it('keeps inviting while the built-in browser has no cookies, even after a past skip', async () => {
+  for (const state of [initial, { ...initial, consent: 'skipped' as const }]) {
+    const h = await mount(undefined, state, false, undefined, false, [], true)
+    try { expect(h.host.textContent).toContain('browserCookieInviteTitle') } finally { await h.unmount() }
+  }
+})
+
+it('stays quiet when cookies exist, outside an empty tab, or without Chrome', async () => {
+  nativeCookies = true
+  const native = await invite()
+  try { expect(native.host.textContent).toBe('') } finally { await native.unmount() }
+  nativeCookies = false
+  const saved = await mount(undefined, { ...initial, has_saved_cookies: true }, false, undefined, false, [], true)
+  try { expect(saved.host.textContent).toBe('') } finally { await saved.unmount() }
+  const page = await mount()
+  try { expect(page.host.textContent).toBe('') } finally { await page.unmount() }
+  const noChrome = await mount([], initial, false, undefined, false, [], true)
+  try { expect(noChrome.host.textContent).toBe('') } finally { await noChrome.unmount() }
+})
+
+it('updates configured sites in place from the menu', async () => {
+  const h = await mount(undefined, { ...initial, consent: 'enabled', profile: 'Default', status: 'synced' }, false, undefined, false, ['example.test'])
+  try {
+    await h.update()
+    expect(api.mock.calls.filter(call => call[2]).at(-1)?.[2]).toEqual({ action: 'sync', generation: 4 })
+    expect(h.host.querySelector('[role=dialog]')).toBeNull()
+    expect(h.host.querySelector('[role=status]')?.textContent).toContain('browserCookieFeedback_synced')
+  } finally { await h.unmount() }
+})
+
+it('does not replay an earlier update request when the panel mounts again', async () => {
+  await mount(undefined, { ...initial, consent: 'enabled', profile: 'Default', status: 'synced' }, false, undefined, false, ['example.test']).then(h => h.unmount())
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const open = vi.fn()
+  try {
+    await act(async () => root.render(createElement(BrowserCookieSync, { threadId: 'one', generation: 4, manage: false, updateRequest: 3, onOpen: open, onClose: () => {} })))
+    expect(open).not.toHaveBeenCalled()
+    expect(api.mock.calls.every(call => !call[2])).toBe(true)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})
+
+it('opens the import panel when updating before any site was chosen', async () => {
+  const h = await mount()
+  try {
+    await h.update()
+    expect(h.host.querySelector('[role=dialog]')).not.toBeNull()
+    expect(api.mock.calls.every(call => !call[2])).toBe(true)
+  } finally { await h.unmount() }
 })
 
 it('anchors the panel below and right-aligned with its source and dismisses on outside click', async () => {

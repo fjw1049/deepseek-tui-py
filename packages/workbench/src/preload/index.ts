@@ -208,6 +208,7 @@ const api = {
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   openTerminal: (path) => ipcRenderer.invoke('shell:open-terminal', path),
   showItemInFolder: (path) => ipcRenderer.invoke('shell:show-item-in-folder', path),
+  hasBrowserCookies: () => ipcRenderer.invoke('browser:has-cookies'),
   onAssistanceNotificationClick: (handler) => {
     const wrapped = (_event: Electron.IpcRendererEvent, threadId: string): void => handler(threadId)
     ipcRenderer.on('notification:browser-assistance-click', wrapped)

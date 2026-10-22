@@ -33,7 +33,7 @@
 .ds-shared-browser { pointer-events: auto; }
 .ds-shared-browser.is-native { background: transparent; pointer-events: none; }
 .ds-shared-browser.is-native .ds-browser-chrome { background: var(--ds-bg-sidebar); }
-.ds-shared-browser.is-native :is(.ds-browser-chrome, .ds-browser-status, .ds-browser-feedback, .ds-browser-empty, .ds-browser-shield, .ds-browser-cookie-settings, .ds-browser-cookie-toast) { pointer-events: auto; }
+.ds-shared-browser.is-native :is(.ds-browser-chrome, .ds-browser-status, .ds-browser-feedback, .ds-browser-empty, .ds-browser-shield, .ds-browser-cookie-settings, .ds-browser-cookie-toast, .ds-browser-cookie-invite, .ds-browser-cookie-modal) { pointer-events: auto; }
 .ds-shared-browser.is-native .ds-browser-empty { background: var(--ds-bg-sidebar); }
 .ds-browser-shield { position: absolute; inset: 0; cursor: not-allowed; }
 .ds-browser-empty-action { border-radius: 999px; background: var(--ds-accent); color: var(--ds-accent-foreground); padding: 8px 16px; font-size: 12.5px; font-weight: 600; }
@@ -58,7 +58,27 @@
 .ds-browser-notice button { flex-shrink: 0; color: var(--ds-text); }
 .ds-shared-browser button[aria-pressed="true"].ds-dev-browser__icon-btn { color: var(--ds-accent); background: var(--ds-surface-hover); }
 
-.ds-browser-cookie-invite { flex-shrink: 0; flex-wrap: wrap; }
+/* Chrome's mark, drawn in CSS: three sectors around a white ring and a blue center. */
+.ds-chrome-logo { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle closest-side, #1a73e8 0 38%, #fff 39% 49%, transparent 50%), conic-gradient(from -60deg, #ea4335 0 120deg, #fbbc04 0 240deg, #34a853 0); }
+.ds-chrome-logo.is-large { width: 40px; height: 40px; margin-bottom: 8px; box-shadow: 0 1px 3px rgb(0 0 0 / 12%); }
+/* Above the empty page, below the toolbar (5) and the page area's status and feedback (1, later in order). */
+.ds-browser-cookie-invite { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; padding: 96px 16px 16px; overflow: auto; background: color-mix(in srgb, #000 22%, var(--ds-bg-sidebar)); }
+.ds-browser-cookie-invite-card { display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 440px; padding: 28px 28px 24px; border-radius: 16px; background: var(--ds-surface-card); box-shadow: 0 12px 40px rgb(0 0 0 / 18%), 0 0 0 1px rgb(0 0 0 / 4%); text-align: center; color: var(--ds-text); font-size: 13px; -webkit-app-region: no-drag; animation: ds-cookie-rise 180ms ease-out; }
+.ds-browser-cookie-invite-card h3 { font-size: 18px; font-weight: 650; letter-spacing: -.01em; line-height: 1.35; }
+.ds-browser-cookie-invite-card p { margin-top: 8px; color: var(--ds-text-muted); line-height: 1.65; }
+.ds-browser-cookie-invite-card ul { align-self: stretch; display: flex; flex-direction: column; gap: 12px; margin: 22px 4px 26px; text-align: left; }
+.ds-browser-cookie-invite-card li { display: flex; align-items: center; gap: 10px; line-height: 1.5; }
+.ds-browser-cookie-invite-card li > svg { flex-shrink: 0; color: var(--ds-text-muted); }
+.ds-browser-cookie-invite-card footer { align-self: stretch; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ds-cookie-invite-never { margin-right: auto; padding: 4px 0; color: var(--ds-text-muted); text-decoration: underline; text-underline-offset: 3px; }
+.ds-cookie-invite-never:hover { color: var(--ds-text); }
+@keyframes ds-cookie-rise { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .ds-browser-cookie-invite-card, .ds-browser-cookie-settings.is-modal { animation: none; } }
+/* Shared buttons: a quiet secondary and a high-contrast primary, as in the system dialogs. */
+.ds-cookie-invite-later, .ds-cookie-button { min-height: 32px; padding: 6px 14px; border-radius: 8px; background: var(--ds-surface-hover); color: var(--ds-text); font-weight: 500; transition: background 120ms ease; }
+.ds-cookie-invite-later:hover, .ds-cookie-button:hover:not(:disabled) { background: color-mix(in srgb, var(--ds-text) 12%, var(--ds-surface-card)); }
+.ds-cookie-invite-import, .ds-cookie-primary { min-height: 32px; padding: 6px 16px; border-radius: 8px; background: var(--ds-text); color: var(--ds-bg-canvas); font-weight: 500; transition: opacity 120ms ease; }
+.ds-cookie-invite-import:hover, .ds-cookie-primary:hover:not(:disabled) { opacity: .86; }
 .ds-browser-cookie-settings { position: absolute; top: 12px; right: 12px; width: 280px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); z-index: 100; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--ds-border); border-radius: 12px; box-shadow: 0 8px 28px rgb(0 0 0 / 18%); overflow: hidden; background: var(--ds-bg-sidebar); font-size: 12px; }
 .ds-browser-cookie-settings > header { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--ds-border-muted); }
 .ds-browser-cookie-settings-body { overflow: auto; padding: 14px; line-height: 1.6; }
@@ -78,8 +98,25 @@
 .ds-cookie-site-count { color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
 .ds-cookie-site-group { margin: 6px 10px 2px; padding-top: 6px; border-top: 1px solid var(--ds-border-muted); color: var(--ds-danger); font-size: 11px; }
 .ds-cookie-status { margin: 0 0 12px; color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
-.ds-cookie-primary { flex: 1; min-height: 32px; padding: 6px 12px; border-radius: 7px; background: var(--ds-accent); color: var(--ds-accent-foreground); font-weight: 500; }
-.ds-cookie-primary:active { opacity: .8; }
+.ds-cookie-primary:active, .ds-cookie-invite-import:active { opacity: .75; }
+.ds-cookie-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+/* Opened from the invitation: a centered dialog over the browser pane. */
+.ds-browser-cookie-modal { position: absolute; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgb(0 0 0 / 28%); }
+.ds-browser-cookie-settings.is-modal { position: relative; top: auto; right: auto; width: 460px; max-width: 100%; max-height: 100%; border: 0; border-radius: 16px; background: var(--ds-surface-card); box-shadow: 0 16px 48px rgb(0 0 0 / 24%), 0 0 0 1px rgb(0 0 0 / 5%); font-size: 13px; animation: ds-cookie-rise 160ms ease-out; }
+.ds-browser-cookie-settings.is-modal > header { padding: 20px 20px 4px 24px; }
+.ds-browser-cookie-settings.is-modal strong { font-size: 17px; font-weight: 650; }
+.ds-browser-cookie-settings.is-modal .ds-browser-cookie-settings-body { padding: 14px 24px 24px; }
+.ds-browser-cookie-settings.is-modal .ds-cookie-site-all { background: var(--ds-surface-card); }
+.ds-browser-cookie-settings.is-modal .ds-cookie-actions { margin-top: 20px; }
+.ds-cookie-source { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; }
+.ds-cookie-source > span:first-child { flex-shrink: 0; }
+.ds-cookie-source-box { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--ds-surface-card); }
+.ds-cookie-source-browser { flex-shrink: 0; font-weight: 500; }
+.ds-cookie-source-profile { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ds-text-muted); }
+.ds-cookie-source-box select { flex: 1; min-width: 0; padding-right: 22px; appearance: none; border: 0; background: transparent; color: var(--ds-text-muted); cursor: pointer; }
+.ds-cookie-source-box select:focus-visible { outline: none; }
+.ds-cookie-source-box:focus-within { border-color: var(--ds-accent); }
+.ds-cookie-source-box > svg { position: absolute; right: 12px; color: var(--ds-text-muted); pointer-events: none; }
 .ds-browser-cookie-settings button:disabled { opacity: .4; cursor: default; }
 .ds-browser-cookie-settings :is(button, summary, select):focus-visible { outline: 2px solid var(--ds-accent); outline-offset: 2px; }
 .ds-cookie-details { margin-top: 14px; border-top: 1px solid var(--ds-border-muted); padding-top: 10px; color: var(--ds-text-muted); }

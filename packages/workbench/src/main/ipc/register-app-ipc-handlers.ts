@@ -1,4 +1,4 @@
-import { dialog, ipcMain, shell, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, session, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
@@ -7,6 +7,7 @@ import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'n
 import extract from 'extract-zip'
 import { z } from 'zod'
 import type { AppSettingsPatch, AppSettingsV1 } from '../../shared/app-settings'
+import { DEV_BROWSER_PARTITION } from '../../shared/browser-bridge'
 import type {
   DeepseekRuntimeDiagnosticIssue,
   DeepseekRuntimeDiagnosticsResult,
@@ -1529,6 +1530,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const result = await openPathInFinder(target)
     if (!result.ok) throw new Error(result.message)
   })
+  ipcMain.handle('browser:has-cookies', async () =>
+    (await session.fromPartition(DEV_BROWSER_PARTITION).cookies.get({})).length > 0
+  )
   ipcMain.handle('notification:turn-complete', async (_, payload: unknown) =>
     showTurnCompleteNotification(
       parseIpcPayload('notification:turn-complete', notificationPayloadSchema, payload)

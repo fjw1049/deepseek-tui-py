@@ -122,6 +122,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   } })
   const [cookieSettings, setCookieSettings] = useState(false)
   const [cookieAnchor, setCookieAnchor] = useState<DOMRect | null>(null)
+  const [cookieUpdate, setCookieUpdate] = useState(0)
   const menuRoot = useRef<HTMLDivElement>(null)
   const menuButton = useRef<HTMLButtonElement>(null)
   const [fresh, setFresh] = useState(false)
@@ -478,7 +479,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   return <div className={`ds-shared-browser${remote ? '' : ' is-native'}${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
     {visible ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
       agentBusy={!!state?.active && state.owner !== 'user' && !!state.task_running}
-      manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
+      blank={!remote && !inputHeld && !pageOpen} updateRequest={cookieUpdate}
+      manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? menuButton.current?.getBoundingClientRect() ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
     <div className="ds-dev-browser__chrome ds-browser-chrome">
       <div className="ds-dev-browser__tabs">
         <div className="ds-dev-browser__tab-scroll" aria-label={t('browserTabs')}>
@@ -524,6 +526,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
               } else if (e.key === 'Tab') setMore(false)
             }}>
             <button type="button" role="menuitem" className="ds-dock-menu-item" aria-haspopup="dialog" onClick={event => { setCookieAnchor(menuButton.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()); setCookieSettings(true) }}><Globe2 size={15} />{t('browserCookieManage')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setCookieUpdate(count => count + 1)}><RotateCw size={15} />{t('browserCookieUpdate')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
