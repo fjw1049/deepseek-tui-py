@@ -331,6 +331,28 @@ it.each([
   } finally { await h.close() }
 })
 
+it('minimizes the status beside the menu and brings it back when the agent takes over', async () => {
+  const h = mount()
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('.ds-browser-status [role="status"]')?.textContent).toContain('browserUserControl')
+    await h.click('browserControlMinimize')
+    expect(h.container.querySelector('.ds-browser-status')).toBeNull()
+    const restore = h.container.querySelector<HTMLButtonElement>('.ds-browser-status-restore')!
+    expect(restore.nextElementSibling?.className).toBe('ds-browser-menu-anchor')
+    expect(restore.title).toBe('browserUserControl')
+    await h.click('browserControlRestore')
+    expect(h.container.querySelector('.ds-browser-status')).not.toBeNull()
+    await h.click('browserControlMinimize')
+    h.request.mockImplementation(async () => ({ ok: true, status: 200, body: JSON.stringify({ active: true, owner: 'agent', task_running: true, generation: 3, log: [], artifacts: [] }) }))
+    await act(async () => new Promise(resolve => setTimeout(resolve, 100)))
+    const bar = h.container.querySelector('.ds-browser-status')!
+    expect(bar.classList.contains('is-agent')).toBe(true)
+    expect(bar.querySelector('.ds-browser-status-minimize')).toBeNull()
+    expect(h.container.querySelector('.ds-browser-status-restore')).toBeNull()
+  } finally { await h.close() }
+})
+
 it('disables screenshot input while frames are missing or polling fails', async () => {
   vi.useFakeTimers()
   const h = mount()

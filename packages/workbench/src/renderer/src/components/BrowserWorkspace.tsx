@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb, CircleStop } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
@@ -68,6 +68,13 @@ export async function browserRequest<T>(threadId: string, suffix = '', body?: un
 /** The browser before a conversation exists; agents never act in it. */
 export const PREVIEW_BROWSER_ID = 'workbench-preview'
 
+/** A status capsule heading for its toolbar dock. */
+function DockIcon(): ReactElement {
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="1.5" y="9" width="8.5" height="5" rx="2.5" /><path d="M9 7 14 2M10.5 2H14v3.5" />
+  </svg>
+}
+
 type BrowserWorkspaceProps = {
   threadId: string | null; visible?: boolean; blocks?: ChatBlock[]
   preferredUrl?: string | null; preferredFilePath?: string | null; externalError?: string | null
@@ -106,6 +113,11 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const [more, setMore] = useState(false)
   const controlOptionsId = useId()
   const [controlOpen, setControlOpen] = useState(false)
+  const [controlMinimized, setControlMinimized] = useState(false)
+  const [controlLeaving, setControlLeaving] = useState(false)
+  const controlRestore = useRef<HTMLButtonElement>(null)
+  const controlDock = useRef<DOMRect | null>(null)
+  const controlFlight = useRef<Animation | null>(null)
   const controlRoot = useRef<HTMLElement>(null)
   const controlButton = useRef<HTMLButtonElement>(null)
   const [controlPosition, setControlPosition] = useState({ x: 0.5, y: 0 })
@@ -444,6 +456,31 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const needsAttention = !!(unresolvedReceipt || state?.dialog || state?.file_chooser || waitingPreview || error || connectionError || state?.error)
   const needsHelp = state?.assistance?.status === 'pending'
   const controlTone = needsHelp || needsAttention ? 'attention' : state?.owner === 'user' ? 'human' : state?.active && state.task_running ? 'agent' : 'idle'
+  // Agent activity and anything waiting on the user always bring the status back.
+  const controlForced = controlTone === 'agent' || controlTone === 'attention'
+  useEffect(() => { if (controlForced) setControlMinimized(false) }, [controlForced])
+  const controlHidden = controlMinimized && !controlForced
+  const controlWasHidden = useRef(controlHidden)
+  // The status shrinks into its toolbar dock and grows back out of it.
+  useLayoutEffect(() => {
+    if (controlWasHidden.current === controlHidden) return
+    controlWasHidden.current = controlHidden
+    controlFlight.current?.cancel()
+    const panel = controlRoot.current
+    if (controlHidden) {
+      controlDock.current = controlRestore.current?.getBoundingClientRect() ?? null
+      if (panel?.contains(document.activeElement)) controlRestore.current?.focus()
+    } else setControlLeaving(false)
+    const dock = controlDock.current
+    if (!panel || !dock || typeof panel.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setControlLeaving(false); return }
+    const rect = panel.getBoundingClientRect()
+    const open = `translate(0px, 0px) ${panel.style.transform} scale(1)`
+    const docked = `translate(${dock.left + dock.width / 2 - rect.left - rect.width / 2}px, ${dock.top + dock.height / 2 - rect.top - rect.height / 2}px) ${panel.style.transform} scale(${Math.min(1, dock.width / rect.width)})`
+    const flight = panel.animate(controlHidden ? [{ transform: open, opacity: 1 }, { transform: docked, opacity: 0 }] : [{ transform: docked, opacity: 0 }, { transform: open, opacity: 1 }],
+      { duration: 260, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' })
+    controlFlight.current = flight
+    if (controlHidden) void flight.finished.then(() => setControlLeaving(false), () => {})
+  }, [controlHidden])
   const controlTitle = controlTarget === 'user' ? 'browserPausing' : controlTarget === 'agent' ? 'browserResuming'
     : controlTarget === 'stopped' ? 'browserWorking' : state?.task_pausing ? 'browserTaskPausing'
     : state?.transferring || capturePending ? 'browserWorking' : requiresReview || needsHelp ? 'browserWaitingForYou' : hasConnectionProblem ? 'browserConnectionProblem' : !state?.active ? 'browserIdle'
@@ -496,6 +533,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         <input className="ds-dev-browser__omnibox" aria-label={t('browserAddressPlaceholder')} placeholder={t('browserAddressPlaceholder')} value={url} disabled={!addressEnabled} onChange={(e) => setUrl(e.target.value)} />
         <button className="ds-dev-browser__icon-btn" aria-label={t('browserOpen')} title={t('browserOpen')} disabled={!addressEnabled || !url.trim()}><ArrowRight size={13} /></button>
         {canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={remote ? !userControls : !canBrowse} onClick={() => setInspect(!inspect)}><MousePointer2 size={15} /></button> : null}
+        {controlHidden ? <button ref={controlRestore} type="button" className={`ds-dev-browser__icon-btn ds-browser-status-restore is-${controlTone}`} aria-label={t('browserControlRestore')} title={t(controlTitle)} onClick={() => setControlMinimized(false)}>
+          <span className="ds-browser-status-mini" aria-hidden="true"><span className="ds-browser-status-dot" /><span className="ds-browser-status-mini-line" /></span></button> : null}
         <div className="ds-browser-menu-anchor" ref={menuRoot}>
           <button ref={menuButton} type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserMore')} title={t('browserMore')} aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(!more)}><MoreHorizontal size={16} /></button>
           {more ? <div className="ds-dock-menu" role="menu" aria-label={t('browserMore')}
@@ -540,12 +579,13 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       <button disabled={pending} onClick={() => void suggestion('accept')}>{t('browserSuggestAccept')}</button>
       <button disabled={pending} onClick={() => void suggestion('dismiss')}>{t('browserSuggestDismiss')}</button></div> : null}
 
-    <header ref={controlRoot} className={`ds-browser-status is-${controlTone}`} style={{
+    {controlHidden && !controlLeaving ? null : <header ref={controlRoot} className={`ds-browser-status is-${controlTone}${controlHidden ? ' is-leaving' : ''}`} aria-hidden={controlHidden || undefined} style={{
       left: `calc(${controlPosition.x * 100}% + ${8 - controlPosition.x * 16}px)`,
       top: `calc(${controlPosition.y * 100}% + ${8 - controlPosition.y * 16}px)`,
       transform: `translate(${-controlPosition.x * 100}%, ${-controlPosition.y * 100}%)`
     }} aria-label={t('browserControlLabel')}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setControlOpen(false) }}>
+      <div className="ds-browser-status-bar">
       <button ref={controlButton} type="button" className="ds-browser-status-trigger" aria-expanded={controlOpen}
         aria-controls={controlOptionsId}
         onPointerDown={event => {
@@ -585,6 +625,9 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         </span>
         <ChevronDown size={14} aria-hidden="true" className={controlOpen ? 'is-open' : ''} />
       </button>
+      {controlForced ? null : <button type="button" className="ds-browser-status-minimize" aria-label={t('browserControlMinimize')} title={t('browserControlMinimize')}
+        onClick={() => { setControlOpen(false); setControlMinimized(true); setControlLeaving(true) }}><DockIcon /></button>}
+      </div>
       {controlOpen ? <div id={controlOptionsId} className="ds-browser-control-details">
         <p>{t(controlHint)}</p>
         {state?.active && !(requiresReview && state.owner === 'user') && (!hasConnectionProblem || requiresReview)
@@ -632,7 +675,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       <details><summary>{t('browserTechnicalDetails')}</summary><pre>{error || connectionError || state?.error}</pre></details>
     </div> : null}
       </div> : null}
-    </header>
+    </header>}
       {remote && image ? <BrowserViewport image={image} enabled={!!userControls && frameFresh && !controlOpen && !more && !state.dialog} reviewOnly={!!unresolvedReceipt} resizeEnabled={!!userControls && frameFresh && !controlOpen && !more && !state.video_recording} generation={state.generation ?? 0}
         sceneId={state.scene?.scene_id} inspect={inspect && canInspect} onInspectCancel={() => setInspect(false)} width={state.viewport?.width ?? 1200} height={state.viewport?.height ?? 760} label={t('browserLiveView')}
         send={async (body) => {

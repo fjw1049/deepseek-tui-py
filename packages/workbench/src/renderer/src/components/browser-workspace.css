@@ -139,6 +139,21 @@
 .ds-browser-control-details .ds-browser-control { width: 100%; }
 
 .ds-browser-status-trigger:active { cursor: grabbing; }
+.ds-browser-status-bar { display: flex; align-items: center; gap: 2px; }
+.ds-browser-status-bar > .ds-browser-status-trigger { flex: 1; width: auto; }
+.ds-browser-status-minimize { display: grid; width: 24px; height: 24px; flex-shrink: 0; place-items: center; border-radius: 6px; color: var(--ds-text-muted); }
+.ds-browser-status-minimize:hover { background: var(--ds-surface-hover); color: var(--ds-text); }
+.ds-browser-status.is-leaving { pointer-events: none; }
+.ds-browser-status-restore { --control-color: var(--ds-text-muted); animation: ds-browser-status-dock 180ms 160ms ease-out backwards; }
+.ds-browser-status-restore.is-human { --control-color: var(--ds-accent); }
+/* A miniature of the floating status: its dot and a stroke for the title. */
+.ds-browser-status-mini { display: flex; width: 20px; height: 11px; align-items: center; gap: 2px; padding: 0 3px; border: 1.5px solid color-mix(in srgb, var(--control-color) 65%, transparent); border-radius: 999px; }
+.ds-browser-status-mini .ds-browser-status-dot { width: 4px; height: 4px; }
+.ds-browser-status-mini-line { flex: 1; height: 1.5px; border-radius: 1px; background: color-mix(in srgb, var(--control-color) 65%, transparent); }
+.ds-browser-status-restore.is-human .ds-browser-status-dot { animation: ds-browser-status-breathe 2.4s ease-in-out infinite; }
+@keyframes ds-browser-status-dock { from { opacity: 0; transform: scale(.6); } }
+@keyframes ds-browser-status-breathe { 50% { opacity: .35; transform: scale(.75); } }
+@media (prefers-reduced-motion: reduce) { .ds-browser-status-restore, .ds-browser-status-restore .ds-browser-status-dot { animation: none; } }
 
 .ds-browser-attention { color: var(--ds-warning); font-size: 11px; font-weight: 500; }
 .ds-browser-control-details .ds-browser-notice { flex-wrap: wrap; padding: 10px 0; border-bottom: 0; border-top: 1px solid var(--ds-border-muted); margin-top: 10px; }
