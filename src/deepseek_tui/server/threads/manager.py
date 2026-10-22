@@ -52,6 +52,7 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
     TurnStartedEvent,
     UserInputRequiredEvent,
+    UserInputResolvedEvent,
 )
 from deepseek_tui.server.agent_segments import (
     AGENT_SEGMENT_KEY,
@@ -6707,6 +6708,50 @@ class RuntimeThreadManager:
                         "questions": event.questions,
                     },
                 )
+
+            elif isinstance(event, UserInputResolvedEvent):
+                import json as _json
+
+                self._pending_user_inputs.pop(event.tool_call_id, None)
+                # Close the row created for tool-less prompts (e.g. CUA
+                # permission) — otherwise it stays IN_PROGRESS forever and
+                # thread reload resurrects a pending card. Rows for real tool
+                # calls live under item_* ids and close via ToolResultEvent.
+                try:
+                    row = self.store.load_item(event.tool_call_id)
+                except FileNotFoundError:
+                    row = None
+                if row is not None and row.status == TurnItemLifecycleStatus.IN_PROGRESS:
+                    now = datetime.now(timezone.utc)
+                    response = event.response
+                    cancelled = response is None or bool(response.get("cancelled"))
+                    row.ended_at = now
+                    row.status = (
+                        TurnItemLifecycleStatus.CANCELED
+                        if cancelled
+                        else TurnItemLifecycleStatus.COMPLETED
+                    )
+                    if isinstance(response, dict):
+                        merged_detail: dict[str, Any] = {}
+                        try:
+                            existing_detail = _json.loads(row.detail or "")
+                            if isinstance(existing_detail, dict):
+                                merged_detail = existing_detail
+                        except Exception:  # noqa: BLE001 — keep prior detail
+                            pass
+                        merged_detail.update(response)
+                        row.detail = _json.dumps(merged_detail, ensure_ascii=False)
+                        row.summary = summarize_text(
+                            f"request_user_input: {row.detail}", SUMMARY_LIMIT
+                        )
+                    self.store.save_item(row)
+                    await self._emit_event(
+                        thread_id,
+                        turn_id,
+                        row.id,
+                        "item.failed" if cancelled else "item.completed",
+                        {"item": row.model_dump(mode="json")},
+                    )
 
             elif isinstance(event, SubAgentTextDeltaEvent):
                 # Live sub-agent text: batched into item.delta rows with a

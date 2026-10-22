@@ -705,6 +705,27 @@ async function syncRuntimePendingApprovals(
     const merged = mergePendingUserInputBlocks(nextBlocks, userInputs)
     nextBlocks = merged.blocks
     scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
+    // The runtime no longer waits on a request whose submission failed here:
+    // the answer either landed (e.g. resolved elsewhere) or the prompt is
+    // gone. Reconcile off the uncertain-error card instead of docking it
+    // forever — "Check status" is the user's confirmation path.
+    const liveRequestIds = new Set(userInputs.map((item) => item.requestId))
+    let reconciled = false
+    const swept = nextBlocks.map((block): ChatBlock => {
+      if (
+        block.kind !== 'user_input' ||
+        block.status !== 'error' ||
+        !block.submissionFailed ||
+        liveRequestIds.has(block.requestId)
+      ) {
+        return block
+      }
+      reconciled = true
+      return block.answers?.length
+        ? { ...block, status: 'submitted' as const, submissionFailed: false, errorMessage: undefined }
+        : { ...block, status: 'cancelled' as const, submissionFailed: false, errorMessage: undefined }
+    })
+    if (reconciled) nextBlocks = swept
   }
   return { blocks: nextBlocks, scrollToBlockId }
 }
@@ -3866,6 +3887,24 @@ const store = create<ChatState>((set, get) => ({
     }
   },
 
+  dismissDecisionError: (blockId) => {
+    set((s) => ({
+      blocks: s.blocks.map((b): ChatBlock => {
+        if (b.id !== blockId) return b
+        if (
+          b.kind !== 'approval' &&
+          b.kind !== 'elevation' &&
+          b.kind !== 'user_input' &&
+          b.kind !== 'evolution'
+        ) {
+          return b
+        }
+        if (b.status !== 'error' || !b.submissionFailed) return b
+        return { ...b, submissionFailed: false }
+      })
+    }))
+  },
+
   resolveUserInput: async (blockId, action) => {
     const { blocks, providerId, activeThreadId: originThreadId } = get()
     const block = blocks.find((b) => b.id === blockId && b.kind === 'user_input')
@@ -4014,6 +4053,7 @@ if (options.appView) {
     'resumeQueuedMessages',
     'rewindAndResend', 'rewindToMessage', 'restoreCodeAt', 'resolvePublishConflicts', 'compactActiveThread',
     'resolveApproval', 'resolveEvolution', 'resolveElevation', 'resolveUserInput', 'refreshPendingUserInputs',
+    'dismissDecisionError',
     'setComposerModel', 'setComposerMode', 'setComposerReasoningEffort', 'scrollToBlock', 'clearScrollTarget'
   ] as const
   for (const key of actionKeys) {

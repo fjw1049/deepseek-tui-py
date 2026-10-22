@@ -20,6 +20,7 @@ export function PendingDecisionPanel({ blocks }: { blocks: ChatBlock[] }): React
   const assistance = useBrowserAssistanceStore(s => s.items)
   const connectionError = useBrowserAssistanceStore(s => s.connectionError)
   const refresh = useChatStore((s) => s.refreshPendingUserInputs)
+  const dismiss = useChatStore((s) => s.dismissDecisionError)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(true)
   const [checking, setChecking] = useState(false)
@@ -57,10 +58,13 @@ export function PendingDecisionPanel({ blocks }: { blocks: ChatBlock[] }): React
               onRespond={(choice, text) => respondToAssistance(block.request.thread_id, block.request.id, choice, text)} />
             {connectionError ? <p role="status" className="px-3 py-2 text-xs text-ds-danger">{t('browserAssistConnection')}</p> : null}
           </> : block.status === 'error' ? <FeedbackNotice tone="warning" title={t('feedbackSubmissionUncertain')} message={t('decisionSubmissionUncertain')} details={block.errorMessage} actions={
-            <button type="button" disabled={checking} className="min-h-8 rounded-lg bg-ds-ink px-3 py-1 text-[12px] font-medium text-ds-card disabled:opacity-50" onClick={() => {
-              setChecking(true)
-              void refresh().finally(() => setChecking(false))
-            }}>{t(checking ? 'decisionChecking' : 'decisionCheckStatus')}</button>
+            <div className="flex items-center gap-2">
+              <button type="button" disabled={checking} className="min-h-8 rounded-lg bg-ds-ink px-3 py-1 text-[12px] font-medium text-ds-card disabled:opacity-50" onClick={() => {
+                setChecking(true)
+                void refresh().finally(() => setChecking(false))
+              }}>{t(checking ? 'decisionChecking' : 'decisionCheckStatus')}</button>
+              <button type="button" className="min-h-8 rounded-lg border border-ds-border px-3 py-1 text-[12px] font-medium text-ds-muted transition hover:text-ds-ink" onClick={() => dismiss(block.id)}>{t('decisionDismiss')}</button>
+            </div>
           } /> : block.kind === 'approval' ? <ApprovalBubble block={block} /> : block.kind === 'elevation' ? <ElevationBubble block={block} /> : block.kind === 'user_input' ? <UserInputBubble block={block} /> : null}
         </div>)}
       </div>

@@ -16,7 +16,11 @@ from deepseek_tui.server.threads import (
     TurnRecord,
 )
 from deepseek_tui.server.threads import _ActiveThreadState
-from deepseek_tui.engine.events import TurnCompleteEvent, UserInputRequiredEvent
+from deepseek_tui.engine.events import (
+    TurnCompleteEvent,
+    UserInputRequiredEvent,
+    UserInputResolvedEvent,
+)
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.tools.registry import ToolContext
 
@@ -79,6 +83,88 @@ async def test_monitor_turn_user_input_required_event_log(
     payload = ui_events[0].payload
     assert payload["request_id"] == "uinp_monitor"
     assert payload["questions"] == questions
+
+
+@pytest.mark.asyncio
+async def test_tool_less_user_input_row_closed_on_resolve(
+    runtime_app: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CUA-style prompts (no ToolCallEvent) persist an orphan row keyed by
+    tool_call_id; UserInputResolvedEvent must close it or thread reload
+    resurrects a pending card forever."""
+    import json
+
+    from deepseek_tui.server.threads import TurnItemLifecycleStatus
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(
+        TurnRecord(
+            id=turn_id,
+            thread_id=thread.id,
+            status=RuntimeTurnStatus.IN_PROGRESS,
+            input_summary="test",
+            created_at=now,
+            started_at=now,
+        )
+    )
+    questions = [
+        {
+            "id": "cua_permission",
+            "header": "授权",
+            "question": "Allow Computer Use?",
+            "options": [{"label": "Allow", "description": ""}],
+        }
+    ]
+    answers = [{"id": "cua_permission", "label": "Allow", "value": "allow"}]
+
+    stub_engine = SimpleNamespace(tool_context=ToolContext(working_directory=manager.workspace))
+    engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
+
+    async def pump() -> None:
+        await handle.emit(
+            UserInputRequiredEvent(
+                tool_call_id="cua-permission-test1", questions=questions
+            )
+        )
+        await handle.emit(
+            UserInputResolvedEvent(
+                tool_call_id="cua-permission-test1", response={"answers": answers}
+            )
+        )
+        await handle.emit(TurnCompleteEvent(assistant_message=None))
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+    finally:
+        await pump_task
+        engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await engine_task
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
+
+    row = manager.store.load_item("cua-permission-test1")
+    assert row.status == TurnItemLifecycleStatus.COMPLETED
+    assert row.ended_at is not None
+    detail = json.loads(row.detail or "{}")
+    assert detail["questions"] == questions
+    assert detail["answers"] == answers
+
+    events = manager.events_since(thread.id, 0)
+    closed = [
+        e
+        for e in events
+        if e.event == "item.completed" and e.item_id == "cua-permission-test1"
+    ]
+    assert len(closed) == 1
 
 
 @pytest.mark.asyncio

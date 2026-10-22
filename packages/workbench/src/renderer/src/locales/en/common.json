@@ -2141,6 +2141,7 @@
   "decisionSubmissionUncertain": "Submission could not be confirmed. Your input is retained. Check the server status before retrying.",
   "decisionCheckStatus": "Check status",
   "decisionChecking": "Checking…",
+  "decisionDismiss": "Dismiss",
   "automationRunsPartialFailure": "Run history failed to load for {{failed}} of {{total}} tasks. Available previous records are retained. Retry refresh.",
   "mcpImportSummary": "Added {{added}}, already present {{skipped}}, failed {{failed}}.",
   "mcpImportRetryFailed": "Retry failed items",
@@ -2469,5 +2470,6 @@
   "computerUseUpdating": "Applying…",
   "pluginUseNow": "Use now",
   "computerUseTaskPrefix": "Use computer control to complete this task:",
-  "pluginUninstall": "Uninstall"
+  "pluginUninstall": "Uninstall",
+  "userInputExpired": "This request expired because its turn ended."
 }

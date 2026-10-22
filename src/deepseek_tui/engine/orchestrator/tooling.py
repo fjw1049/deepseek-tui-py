@@ -30,6 +30,7 @@ from deepseek_tui.engine.events import (
     SandboxDeniedEvent,
     ToolResultEvent,
     UserInputRequiredEvent,
+    UserInputResolvedEvent,
 )
 from deepseek_tui.engine.tools import (
     PLAN_MODE_TOOL_ALLOWLIST,
@@ -1372,8 +1373,15 @@ class ToolExecutionMixin:
             done, _ = await asyncio.wait({future, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
             if future not in done:
                 future.cancel()
+                await self.handle.emit(
+                    UserInputResolvedEvent(tool_call_id=tool_call_id, response=None)
+                )
                 return None
-            return future.result()
+            response = future.result()
+            await self.handle.emit(
+                UserInputResolvedEvent(tool_call_id=tool_call_id, response=response)
+            )
+            return response
         finally:
             cancel_wait.cancel()
             self.handle.pending_user_inputs.pop(tool_call_id, None)

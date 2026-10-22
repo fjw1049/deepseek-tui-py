@@ -2141,6 +2141,7 @@
   "decisionSubmissionUncertain": "提交未能确认，已保留你的输入。请先检查服务端状态，再决定是否重试。",
   "decisionCheckStatus": "检查状态",
   "decisionChecking": "正在检查…",
+  "decisionDismiss": "忽略",
   "automationRunsPartialFailure": "{{total}} 个任务中有 {{failed}} 个运行记录加载失败；已保留可用的旧记录。请重试刷新。",
   "mcpImportSummary": "新增 {{added}} 项，已存在 {{skipped}} 项，失败 {{failed}} 项。",
   "mcpImportRetryFailed": "重试失败项",
@@ -2469,5 +2470,6 @@
   "computerUseUpdating": "正在应用…",
   "pluginUseNow": "立即使用",
   "computerUseTaskPrefix": "请使用电脑控制完成以下任务：",
-  "pluginUninstall": "卸载"
+  "pluginUninstall": "卸载",
+  "userInputExpired": "该请求已过期：所属轮次已结束。"
 }

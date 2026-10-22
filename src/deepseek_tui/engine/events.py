@@ -176,6 +176,15 @@ class UserInputRequiredEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class UserInputResolvedEvent:
+    """A pending user-input wait finished (answered, dismissed, or aborted)."""
+
+    tool_call_id: str
+    # Raw response payload; None when the wait ended via turn cancel.
+    response: dict[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ModeChangedEvent:
     """Interaction mode changed mid-session (enter/exit plan mode)."""
 
@@ -248,6 +257,7 @@ EngineEvent = (
     | SubAgentTextDeltaEvent
     | SessionActivityEvent
     | UserInputRequiredEvent
+    | UserInputResolvedEvent
     | ModeChangedEvent
     | GoalUpdatedEvent
     | PluginMountEvent

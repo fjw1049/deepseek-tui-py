@@ -248,6 +248,8 @@ export type ChatState = {
   ) => Promise<void>
   /** Re-fetch bridged task / in-turn user-input prompts for the active thread. */
   refreshPendingUserInputs: () => Promise<void>
+  /** Acknowledge a submission-failed decision card so it leaves the dock. */
+  dismissDecisionError: (blockId: string) => void
   selectInspectorItem: (id: string | null) => void
   syncGitCommitSelection: (allPaths: string[]) => void
   toggleGitCommitPath: (path: string, allPaths: string[]) => void

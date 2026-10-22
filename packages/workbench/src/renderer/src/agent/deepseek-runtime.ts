@@ -1,3 +1,4 @@
+import i18n from '../i18n'
 import { requestTaskResume } from '../lib/resume-task'
 import type {
   AgentProvider,
@@ -1216,7 +1217,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         if (questions) {
           const requestId = toolCallIdFromItem(it) ?? it.id
           const running = statusFromString(it.status) === 'running'
-          const errored = statusFromString(it.status) === 'error'
+          const cancelled = it.status === 'canceled'
+          const errored = !cancelled && statusFromString(it.status) === 'error'
           const turnId = deriveTurnId(it)
           // Orphan in_progress rows keyed by tool_call_id must not reopen the dock
           // after the real item_* twin already completed (legacy + metadata-less).
@@ -1225,11 +1227,24 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             (completedUserInputKeys.has(requestId) ||
               completedUserInputKeys.has(it.id) ||
               (!it.id.startsWith('item_') && !!turnId && completedUserInputTurns.has(turnId)))
-          const status = errored
-            ? 'error'
-            : running && !ghostPending
-              ? 'pending'
-              : 'submitted'
+          // A still-running row whose turn already ended can never be answered
+          // (orphans leaked by tool-less prompts); show it expired, not pending.
+          const turnRecord = turnId ? turnsById.get(turnId) : undefined
+          const turnActive = turnRecord
+            ? ['queued', 'in_progress', 'started'].includes(
+                String(turnRecord.status ?? '').toLowerCase()
+              )
+            : true
+          const expired = running && !ghostPending && !turnActive
+          const status = cancelled
+            ? 'cancelled'
+            : errored
+              ? 'error'
+              : expired
+                ? 'cancelled'
+                : running && !ghostPending
+                  ? 'pending'
+                  : 'submitted'
           blocks.push({
             kind: 'user_input',
             id: it.id,
@@ -1238,7 +1253,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             questions,
             status,
             answers: readUserInputAnswersFromItem(it),
-            ...(status === 'error' ? { errorMessage: it.detail ?? it.summary } : {})
+            ...(status === 'error' ? { errorMessage: it.detail ?? it.summary } : {}),
+            ...(expired ? { errorMessage: i18n.t('common:userInputExpired') } : {})
           })
         } else {
           blocks.push(toolBlockFromItem(it))
@@ -1934,17 +1950,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 }
                 if (it && TOOL_ITEM_KINDS.has(it.kind)) {
                   if (it.kind === 'tool_call' && looksLikeUserInputToolItem(it)) {
+                    const cancelled = it.status === 'canceled'
+                    const failed =
+                      !cancelled &&
+                      (ev === 'item.failed' || statusFromString(it.status) === 'error')
                     sink.onUserInputStatus({
                       itemId: it.id,
-                      status:
-                        ev === 'item.failed' || statusFromString(it.status) === 'error'
-                          ? 'error'
-                          : 'submitted',
+                      status: cancelled ? 'cancelled' : failed ? 'error' : 'submitted',
                       answers: readUserInputAnswersFromItem(it),
-                      errorMessage:
-                        ev === 'item.failed' || statusFromString(it.status) === 'error'
-                          ? it.detail ?? it.summary
-                          : undefined
+                      errorMessage: failed ? it.detail ?? it.summary : undefined
                     })
                     return
                   }

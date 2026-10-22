@@ -85,6 +85,37 @@ it('restores an uncertain elevation from the server pending list', async () => {
   expect(useChatStore.getState().blocks[0]).toMatchObject({ status: 'pending', submissionFailed: false })
 })
 
+it('reconciles a failed user input once the server no longer waits on it', async () => {
+  const answers = [{ id: 'q', label: 'Yes', value: 'Yes' }]
+  useChatStore.setState({ blocks: [
+    { kind: 'user_input', id: 'answered', requestId: 'req-a', questions: [], status: 'error', submissionFailed: true, errorMessage: 'user input request not found', answers },
+    { kind: 'user_input', id: 'dismissed', requestId: 'req-b', questions: [], status: 'error', submissionFailed: true, errorMessage: 'timeout' }
+  ] })
+  await useChatStore.getState().refreshPendingUserInputs()
+  const [answered, cancelled] = useChatStore.getState().blocks
+  expect(answered).toMatchObject({ status: 'submitted', submissionFailed: false, answers })
+  expect(cancelled).toMatchObject({ status: 'cancelled', submissionFailed: false })
+})
+
+it('keeps a failed user input docked while the server still waits on it', async () => {
+  useChatStore.setState({ blocks: [
+    { kind: 'user_input', id: 'prompt', requestId: 'req', questions: [], status: 'error', submissionFailed: true, errorMessage: 'timeout' }
+  ] })
+  provider.fetchPendingUserInputs.mockResolvedValue([{ requestId: 'req', questions: [] }])
+  await useChatStore.getState().refreshPendingUserInputs()
+  expect(useChatStore.getState().blocks[0]).toMatchObject({ status: 'pending', submissionFailed: false })
+})
+
+it('dismisses a submission-failed decision card out of the dock', () => {
+  useChatStore.setState({ blocks: [
+    { kind: 'approval', id: 'gate', approvalId: 'req', summary: '', status: 'error', submissionFailed: true, errorMessage: 'timeout' }
+  ] })
+  useChatStore.getState().dismissDecisionError('gate')
+  expect(useChatStore.getState().blocks[0]).toMatchObject({ status: 'error', submissionFailed: false })
+  useChatStore.getState().dismissDecisionError('gate')
+  expect(useChatStore.getState().blocks).toHaveLength(1)
+})
+
 it('submits an authorization even when a legacy tool row has the same id', async () => {
   const id = 'cua-permission-example'
   useChatStore.setState({ blocks: [

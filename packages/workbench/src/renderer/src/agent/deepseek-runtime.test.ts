@@ -177,6 +177,65 @@ describe('thread timing hydration', () => {
   })
 })
 
+describe('user_input hydration', () => {
+  const questionsDetail = JSON.stringify({
+    questions: [
+      {
+        header: '电脑控制授权',
+        id: 'cua_permission',
+        question: 'Allow Computer Use to use "Google Chrome"?',
+        options: [{ label: 'Allow', description: '' }]
+      }
+    ]
+  })
+
+  function stubDetail(turnStatus: string, itemStatus: string) {
+    const runtimeRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      body: JSON.stringify({
+        thread: { status: 'completed' },
+        latest_seq: 3,
+        turns: [{ id: 'turn_1', status: turnStatus }],
+        items: [
+          {
+            id: 'cua-permission-abc',
+            turn_id: 'turn_1',
+            kind: 'tool_call',
+            status: itemStatus,
+            summary: 'request_user_input',
+            detail: questionsDetail,
+            metadata: { tool_call_id: 'cua-permission-abc' },
+            started_at: '2026-10-22T08:26:45.000Z'
+          }
+        ]
+      })
+    })
+    Object.defineProperty(window, 'dsGui', { configurable: true, value: { runtimeRequest } })
+    return new DeepseekRuntimeProvider().getThreadDetail('thread_1')
+  }
+
+  it('expires an in-progress orphan whose turn already ended', async () => {
+    const detail = await stubDetail('completed', 'in_progress')
+    expect(detail.blocks[0]).toMatchObject({
+      kind: 'user_input',
+      status: 'cancelled',
+      requestId: 'cua-permission-abc',
+      errorMessage: 'This request expired because its turn ended.'
+    })
+  })
+
+  it('keeps an in-progress row pending while its turn is live', async () => {
+    const detail = await stubDetail('in_progress', 'in_progress')
+    expect(detail.blocks[0]).toMatchObject({ kind: 'user_input', status: 'pending' })
+  })
+
+  it('renders a runtime-cancelled row as cancelled, not an error', async () => {
+    const detail = await stubDetail('completed', 'canceled')
+    expect(detail.blocks[0]).toMatchObject({ kind: 'user_input', status: 'cancelled' })
+    expect(detail.blocks[0]).not.toHaveProperty('errorMessage')
+  })
+})
+
 describe('rewind result compatibility', () => {
   it('reads the additive rewind_result while preserving the old thread envelope', async () => {
     const runtimeRequest = vi.fn().mockResolvedValue({
