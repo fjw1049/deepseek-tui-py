@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.config.providers import max_output_tokens_for_model
 from deepseek_tui.engine.context import (
@@ -659,16 +661,18 @@ class TurnLoop:
             except Exception as e:
                 err_msg = str(e)
                 state.stream_retry_attempts += 1
+                retryable = _is_retryable_error(e)
 
                 if _should_transparently_retry(
-                    any_content_received, state.stream_retry_attempts, cancel_event.is_set()
+                    any_content_received, state.stream_retry_attempts, cancel_event.is_set(),
+                    retryable=retryable,
                 ):
                     logger.info(
                         "Stream error, transparent retry %d/%d: %s",
                         state.stream_retry_attempts, MAX_STREAM_RETRIES, err_msg,
                     )
                     continue
-                elif state.stream_retry_attempts < MAX_STREAM_RETRIES:
+                elif retryable and state.stream_retry_attempts < MAX_STREAM_RETRIES:
                     await emit(
                         ErrorEvent(message="Stream interrupted, retrying...", retryable=True)
                     )
@@ -695,6 +699,14 @@ class TurnLoop:
             outcome=TurnOutcomeStatus.SUCCESS,
             truncated=truncated,
         )
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """A client error (4xx except timeout and rate limit) fails the same way on every retry."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status in (408, 429) or status >= 500
+    return True
 
 
 def _should_transparently_retry(

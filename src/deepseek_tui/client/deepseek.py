@@ -230,6 +230,11 @@ class DeepSeekClient(LLMClient):
                                 " — API key invalid or unauthorized; run"
                                 " `deepseek-tui auth set` or check config.toml"
                             )
+                        elif status == 402:
+                            message += (
+                                " — account balance or quota is exhausted; top up the"
+                                " provider account or switch provider"
+                            )
                         raise httpx.HTTPStatusError(
                             message,
                             request=response.request,
