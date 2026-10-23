@@ -1,8 +1,9 @@
 """Notice when a UI surface stops returning anything new.
 
-Compare consecutive observations, not all states visited in a task. Repeated output
-is only a warning: it cannot prove that an action failed or that another observation
-would be unsafe. Existing execution budgets bound loops without blocking recovery.
+Compare consecutive observations, not all states visited in a task. A few repeats are
+only a warning: they cannot prove that an action failed. A long run of results with
+nothing changed at all pauses that surface until a person acts, so a dead loop ends in
+a handoff or an honest report instead of spending the whole round budget on screenshots.
 
 Screenshots are compared as grayscale thumbnails by their most-changed 8x8 block.
 Measured on real desktop captures: re-encodes of one unchanged screen 0-1, a focus ring
@@ -30,8 +31,9 @@ logger = logging.getLogger(__name__)
 THUMB_WIDTH = 512
 BLOCK = 8
 SAME_BLOCK_DIFF = 2
-# Three repeats trigger advice only; the execution budget remains the hard limit.
+# Three repeats trigger advice; a longer run of fully unchanged results pauses the surface.
 REMIND_STREAK = 3
+STALL_STREAK = 8
 
 _UNCHANGED = (
     "\n\n<system-reminder>\n"
@@ -49,6 +51,21 @@ _STUCK = (
     "(2) request_user_input for the step that needs the person; "
     "(3) stop and report the blocker and what remains.\n"
     "</system-reminder>"
+)
+
+_PAUSED = (
+    "\n\n<system-reminder>\n"
+    "The last {streak} observations on this interface were unchanged. Further calls on it "
+    "are paused until the person acts: hand them the step (request_user_input when "
+    "available), or stop and report the blocker and what remains (finish_task "
+    "partial/blocked when available).\n"
+    "</system-reminder>"
+)
+
+_BLOCKED = (
+    "Not executed: the last {streak} observations on this interface were unchanged. "
+    "Hand the step to the person (request_user_input when available), or stop and report "
+    "the blocker and what remains (finish_task partial/blocked when available)."
 )
 
 _Thumb = Image.Image  # grayscale, THUMB_WIDTH wide: captures of one window at two scales match
@@ -112,6 +129,10 @@ class UiProgress:
         self._last.clear()
         self._streak.clear()
 
+    def blocked_content(self, tool_name: str) -> str | None:
+        streak = self._streak.get(_surface_key(tool_name), 0)
+        return _BLOCKED.format(streak=streak) if streak >= STALL_STREAK else None
+
     def record_result(self, tool_name: str, result: ToolResult) -> str:
         return self.record(tool_name, observation_of(result))
 
@@ -134,6 +155,8 @@ class UiProgress:
             return ""
         streak = self._streak[key] = self._streak.get(key, 0) + 1
         logger.info("ui_observation_unchanged tool=%s kind=%s streak=%d", tool_name, kind, streak)
+        if streak >= STALL_STREAK:
+            return _PAUSED.format(streak=streak)
         if streak >= REMIND_STREAK:
             return _STUCK.format(streak=streak)
         return _UNCHANGED

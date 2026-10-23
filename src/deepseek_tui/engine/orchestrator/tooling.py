@@ -787,6 +787,9 @@ class ToolExecutionMixin:
             if is_task_call(tool_name, tool_call.arguments) and "finish_task" in delivery.catalog:
                 delivery.active = True
                 delivery.focused = delivery.focused or is_focus_call(tool_name, tool_call.arguments)
+        if is_task_call(tool_name, tool_call.arguments) and (
+                blocked := self._ui_progress.blocked_content(tool_name)):
+            raise ToolError(blocked)
 
         hook_ctx = self._lifecycle_hook_context(
             tool_name=tool_name,

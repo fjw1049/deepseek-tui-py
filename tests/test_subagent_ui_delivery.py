@@ -33,25 +33,26 @@ def desktop(monkeypatch, tmp_path):
     return tool
 
 
-async def test_child_requires_delivery_and_warns_without_blocking_recovery(tmp_path, desktop):
+async def test_child_requires_delivery_and_pauses_a_dead_loop(tmp_path, desktop):
     clients = []
     scripts = [call("cua_js", f"look{i}", code=f"observe {i}") for i in range(10)]
     scripts += [
         REPORT,  # Summary alone cannot bypass the UI contract.
         call("finish_task", "invalid", status="completed", answer="Done.", evidence=[], remaining=[]),
         call("finish_task", "finished", status="completed", answer="Window observed.",
-             evidence=["tool:look9"], remaining=[]),
+             evidence=["tool:look8"], remaining=[]),
         REPORT,
     ]
     snap = await _run(scripts, tmp_path, clients)
     assert snap.status.kind == SubAgentStatusKind.COMPLETED
-    assert desktop.calls == 10
+    assert desktop.calls == 9  # the first capture, then STALL_STREAK repeats; look9 is refused
     contents = [str(getattr(b, "content", "")) for r in clients[0].requests
                 for m in r.messages for b in m.content]
     assert any("may indicate stalled progress" in text for text in contents)
+    assert any("Not executed: the last 8 observations" in text for text in contents)
     assert any("Completed requires evidence" in text for text in contents)
     assert '"status": "completed"' in snap.result
-    assert "tool:look9" in snap.result
+    assert "tool:look8" in snap.result
     assert clients[0].calls == len(scripts)
 
 

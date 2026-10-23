@@ -268,6 +268,10 @@ async def _execute_subagent_tool(
         if path_approved and path_prompt is not None
         else context
     )
+    progress = context.metadata.get("ui_progress")
+    if progress is not None and is_task_call(tool_name, tool_input) and (
+            blocked := progress.blocked_content(tool_name)):
+        return f"Error: {blocked}"
     if tool_name in {"cua_js", "cua_js_reset"}:
         context.metadata["cua_call_id"] = tool_call_id
     delivery = context.metadata.get("task_delivery")

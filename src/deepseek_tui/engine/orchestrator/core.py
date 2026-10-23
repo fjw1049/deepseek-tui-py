@@ -3273,6 +3273,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     continue
                 delivery.stop_reminded = delivery.finalization_attempted = False
                 delivery.draft_answer = ""
+                self._ui_progress.reset()  # the person may have changed what the screen shows
                 # Honor @plugin: mount/unmount in steers (same as primary send).
                 pre_mount_steer = steer_text
                 steer_text = await self._apply_plugin_mount(steer_text)

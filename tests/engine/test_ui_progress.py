@@ -12,6 +12,7 @@ from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.ui_progress import (
     REMIND_STREAK,
+    STALL_STREAK,
     UiProgress,
     observation_of,
 )
@@ -108,6 +109,27 @@ def test_new_screenshot_clears_the_streak():
     assert "Do not act" not in progress.record("cua_js", shot(screen(text="sent")))
 
 
+def test_long_unchanged_run_pauses_only_that_surface_until_reset():
+    progress = UiProgress()
+    progress.record("cua_js", shot(screen()))
+    for _ in range(STALL_STREAK - 1):
+        progress.record("cua_js", shot(screen()))
+        assert progress.blocked_content("cua_js") is None
+    assert "paused until the person acts" in progress.record("cua_js", shot(screen()))
+    assert "Not executed" in progress.blocked_content("cua_js")
+    assert "Not executed" in progress.blocked_content("cua_js_reset")  # same connection
+    assert progress.blocked_content("browser_use") is None  # another surface
+    progress.reset()
+    assert progress.blocked_content("cua_js") is None
+
+
+def test_changing_text_never_pauses():
+    progress = UiProgress()
+    for i in range(STALL_STREAK * 2):
+        progress.record("cua_js", shot(screen(), text=f"Completed item {i}"))
+    assert progress.blocked_content("cua_js") is None
+
+
 def test_browser_receipts_do_not_hide_an_unchanged_page():
     def page(action_id):
         browser = {"receipt": {"action_id": action_id},
@@ -145,7 +167,7 @@ class RepeatingScreen(ToolSpec):
         return ToolResult(True, "1 image(s) attached.", images=[screen(quality=60 + self.calls)])
 
 
-async def test_engine_warns_about_repetition_without_blocking_recovery(tmp_path):
+async def test_engine_warns_then_pauses_a_dead_loop_until_the_next_turn(tmp_path):
     attempts = 10
     client = ScriptedClient([
         *(ToolCall(id=f"c{i}", name="cua_js", arguments={"code": f"click {i}"})
@@ -170,7 +192,9 @@ async def test_engine_warns_about_repetition_without_blocking_recovery(tmp_path)
                     for b in m.content if b.type == "tool_result"}
         assert "nothing new" in contents["c1"]
         assert "Do not act" in contents[f"c{REMIND_STREAK}"]
-        assert tool.calls == attempts
+        assert "paused until the person acts" in contents[f"c{STALL_STREAK}"]
+        assert tool.calls == STALL_STREAK + 1  # the first capture, then the repeats
+        assert "Not executed" in contents[f"c{STALL_STREAK + 1}"]
         assert result.task_outcome["status"] == "blocked"
         # The next turn starts with a clean history: the same screen is new again.
         client.replies = iter([
@@ -181,6 +205,6 @@ async def test_engine_warns_about_repetition_without_blocking_recovery(tmp_path)
             }),
         ])
         await engine._run_conversation([Message.user("Look again")], "test", "sys", None)
-        assert tool.calls == attempts + 1
+        assert tool.calls == STALL_STREAK + 2
     finally:
         await engine.shutdown_session()
