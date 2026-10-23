@@ -14,8 +14,9 @@ Use only capabilities exposed by the current tools. Use the current chat's
 shared browser rather than launching a separate browser through shell commands.
 The user-visible Browser panel and browser_use operate the same chat-scoped
 session. The panel opens on the first live browser tool call in a turn; respect
-users who collapse it. The development preview uses a separate Electron webview;
-opening its URL in automation does not transfer its login or drafts. Identify the
+users who collapse it. In native mode, development previews and automation use the same Workbench
+webviews, including existing drafts. Native chats share saved website data; chats
+with website data retention disabled use a separate temporary browser. Identify the
 automation target from `status` and `tabs`. The user's regular Chrome, native
 desktop apps, and other file viewers are separate surfaces.
 

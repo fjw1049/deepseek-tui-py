@@ -1283,7 +1283,7 @@ class ToolExecutionMixin:
         if kind == "action" and input_data.get("surface") == "desktop":
             return await self._await_desktop_action(tool_call_id, input_data)
         # Never hold the desktop while waiting on a person.
-        await self._release_cua()
+        await self._release_cua(reset=True)
         if kind == "action":
             if (self.mode or "agent") != "agent":
                 raise ToolError("Manual browser action is unavailable outside agent mode")
@@ -1329,6 +1329,10 @@ class ToolExecutionMixin:
             )
         import json as _json
 
+        from deepseek_tui.cua.tools import HANDOFF_NOTICE
+
+        if getattr(self, "_cua_session", None):
+            response = {**response, "instructions": HANDOFF_NOTICE}
         return ToolResult(content=_json.dumps(response, ensure_ascii=False), success=True)
 
     async def _await_desktop_action(
@@ -1381,22 +1385,21 @@ class ToolExecutionMixin:
         cancel_wait = asyncio.create_task(
             self.handle.cancel_event.wait(), name="user-input-cancel-wait"
         )
+        response = None
         try:
             done, _ = await asyncio.wait({future, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
             if future not in done:
-                future.cancel()
-                await self.handle.emit(
-                    UserInputResolvedEvent(tool_call_id=tool_call_id, response=None)
-                )
                 return None
             response = future.result()
+            return response
+        finally:
+            if not future.done():
+                future.cancel()
+            cancel_wait.cancel()
+            self.handle.pending_user_inputs.pop(tool_call_id, None)
             await self.handle.emit(
                 UserInputResolvedEvent(tool_call_id=tool_call_id, response=response)
             )
-            return response
-        finally:
-            cancel_wait.cancel()
-            self.handle.pending_user_inputs.pop(tool_call_id, None)
 
     async def _handle_enter_plan_mode(self, tool_call_id: str) -> ToolResult:
         mode = (self.mode or "agent").strip() or "agent"

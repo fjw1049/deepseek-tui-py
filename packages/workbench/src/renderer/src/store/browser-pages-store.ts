@@ -11,7 +11,7 @@ export type PageTab = {
   error: string | null
 }
 export type PageRect = { top: number; left: number; width: number; height: number }
-export type PageSession = { tabs: PageTab[]; activeTabId: string; retained?: boolean }
+export type PageSession = { tabs: PageTab[]; activeTabId: string; retained?: boolean; inputBlocked?: boolean }
 
 export type PageWebview = HTMLElement & {
   canGoBack(): boolean
@@ -75,7 +75,7 @@ function setSession(browserId: string, session: PageSession): void {
 function prune(): void {
   const { sessions, display } = useBrowserPagesStore.getState()
   const idle = Object.keys(sessions)
-    .filter(id => !sessions[id]?.retained && id !== display?.browserId && Date.now() - (lastUsed.get(id) ?? 0) >= RECENT_USE_MS)
+    .filter(id => sessions[id]?.tabs.every(tab => tab.url === BLANK_PAGE && !tab.title && !tab.loading) && !sessions[id]?.retained && id !== display?.browserId && Date.now() - (lastUsed.get(id) ?? 0) >= RECENT_USE_MS)
     .sort((a, b) => (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0))
   const excess = Object.keys(sessions).length - MAX_BROWSER_SESSIONS
   if (excess <= 0) return
@@ -84,6 +84,12 @@ function prune(): void {
   useBrowserPagesStore.setState(state => ({
     sessions: Object.fromEntries(Object.entries(state.sessions).filter(([id]) => !closing.has(id)))
   }))
+}
+
+/** Also protects separate popup windows managed by the main process. */
+export function setBrowserInputBlocked(browserId: string, inputBlocked: boolean): void {
+  const session = useBrowserPagesStore.getState().sessions[browserId]
+  if (session && session.inputBlocked !== inputBlocked) setSession(browserId, { ...session, inputBlocked })
 }
 
 /** A live runtime or recorder connection owns the page even when no panel shows it. */

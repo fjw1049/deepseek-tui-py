@@ -1,4 +1,10 @@
 {
+  "browserStaleFrame": "连接已中断，当前显示最后保存的画面",
+  "browserArtifacts": "最近保存的文件",
+  "browserArtifactSaved": "已保存：{{name}}",
+  "browserAgentTarget": "Agent 正在操作：{{name}}",
+  "browserDownloadCanceled": "下载已取消",
+
   "turnActivityWaiting": "等待响应",
   "turnActivitySubagent": "等待子代理完成",
   "turnActivityThinking": "思考中",
@@ -28,7 +34,7 @@
   "browserFillFocused": "填写网页中已选中的输入框",
   "browserPrivateInput": "输入或粘贴内容（隐藏显示）",
   "browserAgentWorkspace": "Agent 浏览器",
-  "browserAgentSubtitle": "当前对话的独立浏览器，与普通预览分开",
+  "browserAgentSubtitle": "当前对话的浏览器，原生页面与预览共享",
   "browserUserControl": "人工操作",
   "browserControlMinimize": "最小化",
   "browserControlRestore": "显示浏览器状态",
@@ -2433,7 +2439,7 @@
   "computerUseUnsupported": "当前系统暂不支持",
   "computerUseMissing": "需要完成组件安装",
   "computerUseDisabled": "已停用",
-  "computerUseReady": "已就绪，使用时会请求必要授权",
+  "computerUseReady": "组件已安装并启用，模型兼容性与访问权限将在使用时检查",
   "computerUseInstallHint": "此版本尚不提供自动安装，需要先安装 LCU 桌面控制组件。",
   "computerUseApplying": "设置已生效。",
   "computerUseError": "未能确认设置生效，请刷新状态后重试。",

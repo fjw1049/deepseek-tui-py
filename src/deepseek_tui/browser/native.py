@@ -89,6 +89,8 @@ class NativeBrowserEvents:
             self.chooser["snapshot"] = snapshot
 
         def download_started(params):
+            if params["guid"] in self.downloads:
+                return
             if len(self.downloads) >= 40:
                 expired = next(
                     (k for k, d in self.downloads.items() if d["state"] != "inProgress"), None
@@ -153,6 +155,12 @@ class NativeBrowserEvents:
         }.items():
             client.on(event, callback)
         self.clients.add(client)
+        if self.run.native and not isinstance(client, FrameContext):
+            result = await client.send("Workbench.getDownloads")
+            for item in result.get("downloads", []):
+                download_started(item["begin"])
+                if item.get("progress"):
+                    download_progress(item["progress"])
 
     def pending_requests(self, client, since):
         """Page requests started after ``since`` (loop time) that have not finished."""

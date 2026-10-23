@@ -43,6 +43,30 @@ def _calls(tmp_path):
     return [entry for entry in map(json.loads, lines) if "args" in entry]
 
 
+@pytest.mark.asyncio
+async def test_shared_runtime_does_not_replace_another_engines_cua(installation, tmp_path):
+    from types import SimpleNamespace
+    from deepseek_tui.tools.registry import ToolRegistry
+
+    shared = ToolRegistry()
+    runtime = SimpleNamespace(registry=shared)
+    first = _engine(tmp_path, installation, vision=VISION)
+    second = _engine(tmp_path, installation, vision=VISION)
+    for engine in (first, second):
+        engine.tool_runtime = runtime
+        engine.tool_registry = shared
+    try:
+        await first._prepare_cua()
+        first_tool = first.tool_registry.get("cua_js")
+        await second._prepare_cua()
+        assert first.tool_registry.get("cua_js") is first_tool
+        assert second.tool_registry.get("cua_js").session is second._cua_session
+        assert not shared.contains("cua_js")
+    finally:
+        await first._close_cua()
+        await second._close_cua()
+
+
 @pytest.fixture
 def native():
     return {
@@ -863,8 +887,9 @@ def test_cua_images_preserve_wire_bytes_and_coordinate_dimensions(tmp_path, monk
     assert image.width == 2600
 
 
+@pytest.mark.parametrize("size", [(1400, 1000), (3840, 2160)])
 def test_oversized_cua_screenshot_fits_provider_limit_at_the_same_pixel_size(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, size
 ):
     import base64
     import io
@@ -876,13 +901,13 @@ def test_oversized_cua_screenshot_fits_provider_limit_at_the_same_pixel_size(
 
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path))
     buffer = io.BytesIO()
-    Image.frombytes("RGB", (1400, 1000), os.urandom(1400 * 1000 * 3)).save(buffer, "PNG")
+    Image.frombytes("RGB", size, os.urandom(size[0] * size[1] * 3)).save(buffer, "PNG")
     assert len(buffer.getvalue()) > CUA_RAW_IMAGE_BYTES
     image = import_image(buffer.getvalue()).model_copy(update={"source": {"kind": "cua"}})
     wire = base64.b64decode(image_data_url(image, max_side=100).split(",", 1)[1])
     assert len(wire) <= CUA_RAW_IMAGE_BYTES
     with Image.open(io.BytesIO(wire)) as encoded:
-        assert encoded.size == (1400, 1000)
+        assert encoded.size == size
 
 
 def test_mcp_execute_can_be_imported_first():
@@ -1110,3 +1135,74 @@ async def test_large_runtime_text_blocks_are_remembered(session, tmp_path):
         assert session.large_texts == [GUIDE]
     finally:
         await session.close()
+
+
+@pytest.mark.parametrize("failure", ["crash", "error"])
+async def test_uncertain_cua_requires_new_evidence_even_after_reset(session, tmp_path, failure):
+    from deepseek_tui.tools.task_delivery import FinishTaskTool, TaskDelivery
+
+    await session.connect()
+    delivery = TaskDelivery(active=True, evidence={"tool:before"})
+    context = ToolContext(tmp_path, metadata={
+        "cua_turn_id": "t", "cua_call_id": "failed", "task_delivery": delivery,
+    })
+    tool = CuaTool(session, session.descriptors[0])
+    args = dict(status="completed", answer="Saved", evidence=["tool:before"], remaining=[])
+    try:
+        try:
+            result = await tool.execute({"code": failure}, context)
+            assert not result.success
+        except ToolError:
+            assert failure == "crash"
+        with pytest.raises(ToolError, match="CUA.*verif"):
+            await FinishTaskTool().execute(args, context)
+        session.reset_reason = ""
+        reset = CuaTool(session, session.descriptors[1])
+        reset_result = await reset.execute({}, context)
+        assert reset_result.metadata.get("task_evidence") is False
+        with pytest.raises(ToolError, match="CUA.*verif"):
+            await FinishTaskTool().execute(args, context)
+        delivery.evidence.add("tool:verified-file")
+        result = await FinishTaskTool().execute(
+            {**args, "evidence": ["tool:verified-file"]}, context
+        )
+        assert result.success
+    finally:
+        await session.close()
+
+
+async def test_runtime_cancel_closes_permission_event(installation, tmp_path):
+    from deepseek_tui.engine.events import UserInputRequiredEvent, UserInputResolvedEvent
+
+    engine = _engine(tmp_path, installation)
+    events = []
+    async def emit(event):
+        events.append(event)
+    engine.handle.emit = emit
+    task = asyncio.create_task(engine._await_user_input_raw(
+        "permission", [], purpose="cua_permission"
+    ))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert [type(event) for event in events] == [UserInputRequiredEvent, UserInputResolvedEvent]
+    assert events[-1].response is None
+    assert not engine.handle.pending_user_inputs
+
+
+async def test_information_handoff_drops_repl_and_tells_model(installation, tmp_path):
+    from unittest.mock import AsyncMock
+
+    engine = _engine(tmp_path, installation)
+    session = SimpleNamespace(end_turn=AsyncMock(), close=AsyncMock(), reset_reason="old")
+    engine._cua_session = session
+    task = asyncio.create_task(engine._await_user_input("ask", {
+        "questions": [{"id": "next", "header": "Next", "question": "Which document?"}],
+    }))
+    await asyncio.sleep(0)
+    engine.handle.pending_user_inputs["ask"].set_result({"answers": []})
+    result = await task
+    session.close.assert_awaited_once()
+    assert "CUA session reset" in result.content
+    assert session.reset_reason == ""

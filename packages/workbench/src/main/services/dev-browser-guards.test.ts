@@ -100,16 +100,15 @@ describe('dev browser guards', () => {
     expect(subframe.preventDefault).not.toHaveBeenCalled()
   })
 
-  it('denies native popups and handles failed guest navigation', async () => {
+  it('opens safe child windows without navigating the draft page', () => {
     const contents = createContents()
-    const open = contents.setWindowOpenHandler.mock.calls[0]![0] as (
-      details: { url: string }
-    ) => { action: string }
-    contents.loadURL.mockRejectedValueOnce(new Error('load failed'))
-    expect(open({ url: 'https://example.com/' })).toEqual({ action: 'deny' })
-    await Promise.resolve()
-    expect(mocks.logWarn).toHaveBeenCalledOnce()
+    const open = contents.setWindowOpenHandler.mock.calls[0]![0]
+    for (const url of ['https://example.com/', 'about:blank']) {
+      expect(open({ url })).toMatchObject({ action: 'allow', overrideBrowserWindowOptions: {
+        webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false }
+      } })
+    }
     expect(open({ url: 'javascript:123' })).toEqual({ action: 'deny' })
-    expect(contents.loadURL).toHaveBeenCalledOnce()
+    expect(contents.loadURL).not.toHaveBeenCalled()
   })
 })

@@ -149,6 +149,8 @@ async def cookie_sync_sites(request: Request, thread_id: str, profile: str) -> d
 async def cookie_sync(request: Request, thread_id: str, body: CookieSyncBody) -> dict[str, Any]:
     browser = service(request, thread_id)
     try:
+        if not browser.preferences(thread_id)["persistent"]:
+            raise ValueError("Cookie sync is unavailable in a temporary browser session")
         if body.action == "clear":
             await browser.clear_cookies()
         elif body.action in {"skip", "disable"}:

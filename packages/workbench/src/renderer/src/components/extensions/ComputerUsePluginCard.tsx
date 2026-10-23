@@ -46,7 +46,13 @@ function ApprovedApps(): React.JSX.Element {
     setPending(bundleId)
     setError(false)
     try { setApps(await cuaAppsRequest('/v1/cua/apps/revoke', { app: bundleId })) }
-    catch { setError(true) }
+    catch {
+      try {
+        const actual = await cuaAppsRequest('/v1/cua/apps')
+        setApps(actual)
+        setError(actual.some(app => app.bundleId === bundleId))
+      } catch { setError(true) }
+    }
     finally { setPending(null) }
   }
   return <section className="mt-5">
@@ -109,7 +115,9 @@ export function ComputerUsePluginCard(): React.JSX.Element {
     : !status.installed ? 'computerUseMissing' : !status.enabled ? 'computerUseDisabled' : 'computerUseReady'
   return <>
     <PluginListItem pluginId="computer-use" title={t('computerUseTitle')}
-      summary={t('computerUseSummary')} onOpen={() => setOpen(true)} busy={busy || !status || !status.supported || !status.installed}
+      summary={t('computerUseSummary')} onOpen={() => setOpen(true)} busy={busy || !status}
+      useDisabled={!status?.supported || !status?.installed}
+      removeDisabled={!status?.enabled && (!status?.supported || !status?.installed)}
       onUse={() => { void (async () => {
         if (!status?.enabled && !await toggle()) { setOpen(true); return }
         await usePluginNow('computer-use')
@@ -127,7 +135,7 @@ export function ComputerUsePluginCard(): React.JSX.Element {
     <div className="mt-6 flex items-center justify-between border-t border-ds-border pt-4">
       <span className="text-xs text-ds-muted">{t('computerUseBuiltin')}</span>
     </div>
-    {error ? <button type="button" disabled={busy} onClick={() => void refresh()} className="mt-3 text-sm text-ds-muted disabled:opacity-40">{t('computerUseRefresh')}</button> : null}
+    <button type="button" disabled={busy} onClick={() => void refresh()} className="mt-3 text-sm text-ds-muted disabled:opacity-40">{t('computerUseRefresh')}</button>
     </PluginDialog>, document.body) : null}
   </>
 }

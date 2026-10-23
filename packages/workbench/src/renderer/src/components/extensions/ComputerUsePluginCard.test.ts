@@ -27,15 +27,13 @@ it.each([false, true])('reports component availability and saves opt-out: instal
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
     const disable = [...host.querySelectorAll('button')].find(b => b.textContent === 'computerUseDisable')!
-    expect(disable.disabled).toBe(!installed)
+    expect(disable.disabled).toBe(false)
     await act(async () => disable.click())
-    if (installed) {
+    {
       expect(setSettings).toHaveBeenCalledWith({ cuaEnabled: false })
       await act(async () => host.querySelector('button')!.click())
       expect(document.body.textContent).toContain('computerUseApplying')
       await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
-    } else {
-      expect(setSettings).not.toHaveBeenCalled()
     }
     expect(host.textContent).toContain('computerUseTitle')
   } finally { await act(async () => root.unmount()) }
@@ -91,5 +89,43 @@ it('lists always-allowed apps and revokes only the chosen identity', async () =>
     expect(runtimeRequest).toHaveBeenCalledWith('/v1/cua/apps/revoke', 'POST', JSON.stringify({ app: 'com.apple.Notes' }))
     expect(document.body.textContent).toContain('computerUseApprovedAppsEmpty')
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+  } finally { await act(async () => root.unmount()) }
+})
+
+it('can refresh a missing component after installation', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  let installed = false
+  Object.assign(window, { dsGui: { runtimeRequest: vi.fn(async () => ({
+    ok: true, body: JSON.stringify({ supported: true, installed, enabled: true })
+  })) } })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(ComputerUsePluginCard)))
+    await act(async () => host.querySelector('button')!.click())
+    expect(document.body.textContent).toContain('computerUseMissing')
+    installed = true
+    await act(async () => [...document.body.querySelectorAll('button')].find(b => b.textContent === 'computerUseRefresh')!.click())
+    expect(document.body.textContent).toContain('computerUseReady')
+  } finally { await act(async () => root.unmount()) }
+})
+
+it('reconciles permissions when the revoke response is lost', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  let revoked = false
+  Object.assign(window, { dsGui: { platform: 'darwin', runtimeRequest: vi.fn(async (path: string) => {
+    if (path.endsWith('/revoke')) { revoked = true; throw new Error('connection lost') }
+    return { ok: true, body: JSON.stringify(path.endsWith('/status')
+      ? { supported: true, installed: true, enabled: true }
+      : { apps: revoked ? [] : [{ name: 'Notes', bundleId: 'com.apple.Notes' }] }) }
+  }) } })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(ComputerUsePluginCard)))
+    await act(async () => host.querySelector('button')!.click())
+    await act(async () => [...document.body.querySelectorAll('button')].find(b => b.textContent === 'computerUseRevoke')!.click())
+    expect(document.body.textContent).toContain('computerUseApprovedAppsEmpty')
+    expect(document.body.textContent).not.toContain('computerUseAppsError')
   } finally { await act(async () => root.unmount()) }
 })

@@ -198,7 +198,7 @@ export function BrowserPageLayer(): ReactElement {
     if (!bridge) return
     for (const [browserId, session] of Object.entries(sessions)) {
       const tabs: BrowserBridgeTab[] = session.tabs.filter(tab => contents[tab.id]).map(tab => ({
-        tabId: tab.id, webContentsId: contents[tab.id]!, active: tab.id === session.activeTabId,
+        tabId: tab.id, webContentsId: contents[tab.id]!, inputBlocked: session.inputBlocked ?? true, active: tab.id === session.activeTabId,
         visible: display?.browserId === browserId && tab.id === session.activeTabId
       }))
       const key = JSON.stringify(tabs)
@@ -225,7 +225,7 @@ export function BrowserPageLayer(): ReactElement {
       const shown = display?.browserId === browserId && tab.id === session.activeTabId
       const style: CSSProperties = shown ? { ...display!.rect }
         : { top: 0, right: 0, width: parkedSize.current.width, height: parkedSize.current.height }
-      return <div key={tab.id} className={`ds-browser-page${shown ? ' is-shown' : ''}`} style={style}>
+      return <div key={tab.id} className={`ds-browser-page${shown ? ' is-shown' : ''}`} style={style} inert={!shown || !!session.inputBlocked}>
         <Page browserId={browserId} tab={tab} shown={shown} onReady={onReady} />
       </div>
     }))}

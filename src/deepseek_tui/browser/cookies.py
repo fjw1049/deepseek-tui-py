@@ -353,12 +353,11 @@ class CookieStore:
             removed = []
 
             def merge(data):
-                # Deselected sites lose what Chrome brought. Selected sites follow Chrome,
-                # including sign-outs, unless the read found nothing at all, which is
-                # more likely a failed read than signing out everywhere.
-                managed = set(data.get("chrome_sites", [])) - selected
-                if cookies:
-                    managed |= selected
+                # A successful empty read means sign-out; failed reads returned above.
+                managed = set(data.get("chrome_sites", [])) | selected
+                if result.get("skipped"):
+                    # Partial decryption cannot prove missing cookies were removed.
+                    managed -= selected
                 for key, cookie in list(data["cookies"].items()):
                     if site_of(cookie["domain"]) in managed:
                         del data["cookies"][key]

@@ -1,0 +1,14 @@
+{
+  "real_tool_catalog": [
+    "js",
+    "js_reset"
+  ],
+  "real_permission_cancel_resolved": true,
+  "process_and_lock_released": true,
+  "reconnect_catalog": [
+    "js",
+    "js_reset"
+  ],
+  "real_information_handoff_closed_connection": true,
+  "handoff_returns_valid_json_and_reset_notice": true
+}

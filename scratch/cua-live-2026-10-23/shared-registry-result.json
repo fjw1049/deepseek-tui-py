@@ -1,0 +1,6 @@
+{
+  "real_lcu": true,
+  "first_session_survives_second_engine_preparation": true,
+  "shared_registry_unmodified": true,
+  "leases_released": true
+}

@@ -19,6 +19,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+from contextlib import AsyncExitStack, asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -349,6 +350,8 @@ class BrowserService:
         self.cookies = CookieStore(self.profile_root)
         self.installer = BrowserInstaller()
         self.runs: dict[str, BrowserRun] = {}
+        self._cookie_change_lock = asyncio.Lock()
+        self._cookies_changing = False
         self.workbench: dict[str, Any] | None = None  # Workbench's CDP bridge, when it runs
         from deepseek_tui.browser.suggestions import SkillSuggestions
 
@@ -427,43 +430,72 @@ class BrowserService:
         except Exception:
             self.cookies.save_error = True
 
+    @asynccontextmanager
+    async def _changing_cookies(self, thread_id: str | None = None):
+        async with self._cookie_change_lock:
+            self._cookies_changing = True
+            affected = [run for run in self.runs.values()
+                        if run.native or run.thread_id == thread_id
+                        or (run.session is None and self.preferences(run.thread_id)["persistent"])]
+            try:
+                async with AsyncExitStack() as locks:
+                    for run in affected:
+                        events = run.native_events.state() if run.native_events else {}
+                        if (events.get("dialog") or events.get("file_chooser")
+                                or run.lock.locked() or run.transferring or run.unresolved
+                                or run.pending_action or run.pending_input
+                                or run.demo_status == "running"
+                                or (run.owner == "agent" and run.agent_task)):
+                            raise ValueError(
+                                "Pause affected browser sessions and resolve pending actions "
+                                "before changing cookies")
+                        await locks.enter_async_context(run.lock)
+                    try:
+                        yield
+                    finally:
+                        # Even a partially applied import changes the account context.
+                        for run in affected:
+                            run.generation += 1
+                            run.latest_observation = None
+                            run.scene = None
+                            run.handoff_baseline = None
+            finally:
+                self._cookies_changing = False
+
     async def sync_cookies(
         self, thread_id: str, sites: list[str] | None = None,
     ) -> dict[str, Any]:
+        if not self.preferences(thread_id)["persistent"]:
+            raise ValueError("Cookie sync is unavailable in a temporary browser session")
         run = self.runs.get(thread_id)
-        if not run or not run.session:
-            await self.cookies.sync(sites=sites)
-            return self.cookies.state()
-        async with run.lock:
-            if run.owner != "user" or run.transferring or run.unresolved:
-                raise ValueError("Take control and resolve pending actions before syncing cookies")
-            await self.cookies.sync(run, sites)
-            run.generation += 1
-            run.latest_observation = None
-            run.scene = None
+        if run and run.session and run.owner != "user":
+            raise ValueError("Take control and resolve pending actions before syncing cookies")
+        async with self._changing_cookies(thread_id):
+            await self.cookies.sync(run if run and run.session else None, sites)
         return self.cookies.state()
 
     async def clear_cookies(self) -> None:
         # Workbench tabs clear in place; a private browser holds its cookies until closed.
         if any(not run.native for run in self.runs.values()):
             raise ValueError("Close all app browser sessions before clearing saved cookies")
-        roots = [self.profile_root / "profiles", *self.artifact_root.glob("*/profile")]
-        for root in roots:
-            for database in root.rglob("Cookies"):
-                for suffix in ("", "-wal", "-shm", "-journal"):
-                    path = database.with_name(database.name + suffix)
-                    if path.is_file() or path.is_symlink():
-                        path.unlink()
-        await self.cookies.clear()
-        if self.workbench:
-            from deepseek_tui.browser.workbench import control
+        async with self._changing_cookies():
+            roots = [self.profile_root / "profiles", *self.artifact_root.glob("*/profile")]
+            for root in roots:
+                for database in root.rglob("Cookies"):
+                    for suffix in ("", "-wal", "-shm", "-journal"):
+                        path = database.with_name(database.name + suffix)
+                        if path.is_file() or path.is_symlink():
+                            path.unlink()
+            await self.cookies.clear()
+            if self.workbench:
+                from deepseek_tui.browser.workbench import control
 
-            keep_cdp_local()
-            try:
-                await control(self.workbench, "Workbench.clearCookies", {})
-            except Exception as exc:  # noqa: BLE001 - reported to the user who asked to clear
-                raise ValueError(
-                    "Saved cookies were cleared, but Workbench's browser was not") from exc
+                keep_cdp_local()
+                try:
+                    await control(self.workbench, "Workbench.clearCookies", {})
+                except Exception as exc:  # noqa: BLE001 - reported to the user who asked to clear
+                    raise ValueError(
+                        "Saved cookies were cleared, but Workbench's browser was not") from exc
 
     async def ensure(self, thread_id: str, *, native_only: bool = False) -> BrowserRun:
         existing = self.runs.get(thread_id)
@@ -492,7 +524,10 @@ class BrowserService:
             if run.owner == "stopped":
                 raise ValueError("Browser session has stopped")
             if run.session is None:
-                if self.workbench and await self._attach_workbench(run):
+                if self._cookies_changing:
+                    raise ValueError("Browser login data is changing; retry after it finishes")
+                if (self.preferences(thread_id)["persistent"] and self.workbench
+                        and await self._attach_workbench(run)):
                     return run
                 if native_only:
                     shutil.rmtree(run.directory, ignore_errors=True)
@@ -615,7 +650,7 @@ class BrowserService:
     async def attach_native(self, thread_id: str) -> None:
         run = self.runs.get(thread_id)
         if run is None:
-            await self.ensure(thread_id, native_only=True)
+            await self.ensure(thread_id, native_only=self.preferences(thread_id)["persistent"])
             await self.control(thread_id, "user")
         elif run.native and run.session:
             async with run.lock:
@@ -659,6 +694,7 @@ class BrowserService:
                 "error": None,
                 "capabilities": browser_capabilities(video_ready=bool(shutil.which("ffmpeg"))),
                 **saved,
+                "persistent": self.preferences(thread_id)["persistent"],
                 "unresolved": list(saved.get("unresolved", {}).values()),
                 "cookie_sync": self.cookies.state(),
                 "skill_suggestion": self.suggestions.pending.get(thread_id),
@@ -673,13 +709,14 @@ class BrowserService:
             )
             is not None,
             "healthy": run.healthy,
+            "persistent": self.preferences(thread_id)["persistent"],
             "surface": "native" if run.native else "headless",
             "url": run.url,
             "video_recording": run.video is not None,
             "video_error": run.video_error,
             "owner": run.owner,
             "generation": run.generation,
-            "transferring": run.transferring,
+            "transferring": run.transferring or self._cookies_changing,
             "assistance": run.assistance,
             "viewport": {"width": run.width, "height": run.height},
             "tabs": run.tabs,
@@ -919,9 +956,16 @@ class BrowserService:
                             frame_status = "ready"
                 except Exception as exc:
                     run.view_mark = None
-                    if type(exc).__name__ == "CDPSessionError" or isinstance(exc, ConnectionError):
-                        run.healthy = False
                     run.latest_observation = None
+                    # Scene retries can hide a dead transport behind a document-change error.
+                    try:
+                        await asyncio.wait_for(run.session._internal.client.send(
+                            "Runtime.evaluate", {"expression": "1", "returnByValue": True}), timeout=2)
+                    except Exception:
+                        run.healthy = False
+                        run.error = "Browser disconnected; recover the session before acting"
+                        run.view_sequence += 1
+                        return {**self.state(thread_id), "image": None}
                     raise RuntimeError(
                         "Browser view unavailable; inspect status/recover: "
                         + (str(exc) or type(exc).__name__)
@@ -1485,7 +1529,11 @@ class BrowserService:
                 from deepseek_tui.browser.native import NativeBrowserEvents
 
                 run.native_events = NativeBrowserEvents(run, self)
-            if run.native_events:
+            # Tab lifecycle uses Workbench's control socket even after a popup closes.
+            detached_tab_action = run.native and not getattr(run.session, "connected", True) and action.action in {
+                "tabs", "switch_tab", "new_tab", "close_tab", "downloads",
+            }
+            if run.native_events and not detached_tab_action:
                 await run.native_events.install(run.session._internal.client)
                 # A page showing a native dialog cannot lay out until it is answered.
                 if run.native and not run.native_events.dialog:
@@ -1970,6 +2018,7 @@ class BrowserService:
             and run.native
         ):
             await self._sync_viewport(run)  # A Workbench tab keeps the panel's size.
+            run.healthy = True
         elif (
             a.action in {"new_tab", "switch_tab", "close_tab"}
             and result is not None

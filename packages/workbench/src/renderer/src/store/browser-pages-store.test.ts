@@ -4,7 +4,7 @@ import { MAX_BROWSER_SESSIONS, retainBrowserSession, openPageTab, closePageTab, 
 beforeEach(() => { vi.useFakeTimers(); useBrowserPagesStore.setState({ sessions: {}, display: null }) })
 afterEach(() => { vi.useRealTimers() })
 
-it('closes the least recently used browsers beyond the limit, never the one on screen', () => {
+it('only prunes unused blank browsers, preserving pages with user content', () => {
   ensureBrowserSession('shown')
   setPageDisplay({ browserId: 'shown', rect: { top: 0, left: 0, width: 10, height: 10 } })
   for (let index = 0; index < MAX_BROWSER_SESSIONS; index += 1) {
@@ -19,7 +19,8 @@ it('closes the least recently used browsers beyond the limit, never the one on s
   const kept = Object.keys(useBrowserPagesStore.getState().sessions)
   expect(kept).toHaveLength(MAX_BROWSER_SESSIONS)
   expect(kept).toContain('shown')
-  expect(kept).not.toContain('thread-0')
+  expect(kept).toContain('thread-0')
+  expect(kept).not.toContain('thread-1')
 })
 
 it('keeps a browser used in the last ten minutes, which an agent may still be driving', () => {

@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import { createServer, type IncomingMessage, type Server } from 'http'
 import { isAbsolute, join } from 'path'
 import type { Duplex } from 'stream'
-import { session, webContents, type DownloadItem, type WebContents } from 'electron'
+import { session, webContents, type DownloadItem, type BrowserWindow, type WebContents } from 'electron'
 import { WebSocketServer, type RawData, type WebSocket } from 'ws'
 import { DEV_BROWSER_PARTITION, type BrowserBridgeCommand, type BrowserBridgeReply, type BrowserBridgeTab } from '../../shared/browser-bridge'
 import { logWarn } from '../logger'
@@ -15,7 +15,7 @@ type Deps = {
 }
 
 type Message = { id: number; method: string; params?: Record<string, unknown> }
-type Tab = BrowserBridgeTab & { browserId: string }
+type Tab = BrowserBridgeTab & { browserId: string; popup?: BrowserWindow; openerId?: string }
 type FrameInfo = { parentId?: string; frameIds: string[] }
 
 const REQUEST_TIMEOUT_MS = 15_000
@@ -50,6 +50,8 @@ export function createBrowserBridge(deps: Deps) {
   let waiters: Array<() => void> = []
   /** Download folders the runtime chose for the tabs it drives; other tabs keep the app's. */
   const downloadDirs = new Map<number, string>()
+  const downloads = new Map<string, { browserId: string; begin: Record<string, unknown>; progress?: Record<string, unknown> }>()
+  const watched = new Set<number>()
   let server: Server | null = null
   let port = 0
 
@@ -64,10 +66,13 @@ export function createBrowserBridge(deps: Deps) {
     const guest = webContents.fromId(tab.webContentsId)
     return guest && !guest.isDestroyed() ? guest : null
   }
-  const listTabs = (browserId: string) => tabsOf(browserId).flatMap(tab => {
-    const guest = guestOf(tab)
-    return guest ? [{ tab_id: tab.tabId, url: guest.getURL(), title: guest.getTitle(), active: tab.active }] : []
-  })
+  const listTabs = (browserId: string) => {
+    const focusedPopup = tabsOf(browserId).find(tab => tab.popup && tab.active)
+    return tabsOf(browserId).flatMap(tab => {
+      const guest = guestOf(tab)
+      return guest ? [{ tab_id: tab.tabId, url: guest.getURL(), title: guest.getTitle(), active: focusedPopup ? tab === focusedPopup : tab.active, popup: !!tab.popup }] : []
+    })
+  }
 
   function isTabGuest(id: number): boolean {
     const guest = webContents.fromId(id)
@@ -85,24 +90,64 @@ export function createBrowserBridge(deps: Deps) {
     })
   }
 
-  function sendToTab(webContentsId: number, method: string, params: Record<string, unknown>): void {
-    const tab = [...tabs.values()].find(item => item.webContentsId === webContentsId)
-    for (const socket of (tab && sockets.get(tab.tabId)) || []) {
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ method, params }))
+  function sendToBrowser(browserId: string, method: string, params: Record<string, unknown>): void {
+    for (const [socket, owner] of connections) {
+      if (owner === browserId && socket.readyState === socket.OPEN) socket.send(JSON.stringify({ method, params }))
     }
   }
 
-  /** Per-tab Browser.setDownloadBehavior: CDP's own would redirect every Workbench tab. */
+  /** Download state belongs to the browser, not its currently connected tab. */
   function onDownload(_event: unknown, item: DownloadItem, source: WebContents): void {
     const directory = downloadDirs.get(source.id)
-    if (!directory) return
+    const tab = [...tabs.values()].find(item => item.webContentsId === source.id)
+    if (!directory || !tab) return
     const guid = randomUUID()
     item.setSavePath(join(directory, guid))
-    sendToTab(source.id, 'Browser.downloadWillBegin', { guid, url: item.getURL(), suggestedFilename: item.getFilename(), frameId: '' })
-    const progress = (state: string): void => sendToTab(source.id, 'Browser.downloadProgress',
-      { guid, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() })
+    const record: { browserId: string; begin: Record<string, unknown>; progress?: Record<string, unknown> } = {
+      browserId: tab.browserId, begin: { guid, url: item.getURL(), suggestedFilename: item.getFilename(), frameId: '' }
+    }
+    for (const [key, value] of downloads) {
+      if (downloads.size < 200) break
+      if (value.progress && value.progress.state !== 'inProgress') downloads.delete(key)
+    }
+    downloads.set(guid, record)
+    sendToBrowser(tab.browserId, 'Browser.downloadWillBegin', record.begin)
+    const progress = (state: string): void => {
+      record.progress = { guid, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() }
+      sendToBrowser(tab.browserId, 'Browser.downloadProgress', record.progress)
+    }
     item.on('updated', () => progress('inProgress'))
     item.once('done', (_done, state) => progress(state === 'completed' ? 'completed' : 'canceled'))
+  }
+
+  function watchTab(tab: Tab): void {
+    const guest = guestOf(tab)
+    if (!guest || watched.has(guest.id)) return
+    watched.add(guest.id)
+    guest.on('did-create-window', child => {
+      const parent = tabs.get(tab.tabId)
+      if (!parent) { child.destroy(); return }
+      const popup: Tab = { browserId: parent.browserId, tabId: randomUUID(), webContentsId: child.webContents.id,
+        active: false, visible: true, popup: child, openerId: parent.tabId, inputBlocked: parent.inputBlocked }
+      tabs.set(popup.tabId, popup)
+      child.on('focus', () => {
+        for (const tab of tabsOf(parent.browserId)) if (tab.popup) tab.active = tab === popup
+      })
+      child.on('blur', () => { popup.active = false })
+      child.setIgnoreMouseEvents(!!popup.inputBlocked)
+      child.setFocusable(!popup.inputBlocked)
+      if (popup.inputBlocked) child.blur()
+      watchTab(popup)
+      notify()
+    })
+    guest.once('destroyed', () => {
+      watched.delete(guest.id)
+      downloadDirs.delete(guest.id)
+      tabs.delete(tab.tabId)
+      closeSockets(tab.tabId)
+      for (const child of tabsOf(tab.browserId)) if (child.openerId === tab.tabId) child.popup?.destroy()
+      notify()
+    })
   }
 
   function closeSockets(tabId: string): void {
@@ -115,6 +160,7 @@ export function createBrowserBridge(deps: Deps) {
       if (typeof id !== 'string' || tabs.get(id)?.browserId !== browserId) throw new Error('Tab does not belong to this browser')
       return id
     }
+    if (method === 'Workbench.getDownloads') return { downloads: [...downloads.values()].filter(item => item.browserId === browserId).map(({ begin, progress }) => ({ begin, progress })) }
     if (method === 'Workbench.listTabs') return { tabs: listTabs(browserId) }
     if (method === 'Workbench.createTab') {
       const url = typeof params.url === 'string' ? params.url : 'about:blank'
@@ -127,6 +173,12 @@ export function createBrowserBridge(deps: Deps) {
     }
     if (method === 'Workbench.activateTab' || method === 'Workbench.closeTab') {
       const tabId = owned(params.tabId)
+      const popup = tabs.get(tabId)?.popup
+      if (popup) {
+        if (method === 'Workbench.closeTab') popup.destroy()
+        else { popup.show(); if (!tabs.get(tabId)?.inputBlocked) popup.focus() }
+        return {}
+      }
       const reply = await request({ kind: method === 'Workbench.activateTab' ? 'activate' : 'close', browserId, tabId })
       if (!reply.ok) throw new Error(reply.error ?? 'Workbench could not change the tab')
       if (method === 'Workbench.closeTab') await waitFor(() => !tabs.has(tabId), 'close the tab')
@@ -395,7 +447,7 @@ export function createBrowserBridge(deps: Deps) {
     setTabs(browserId: string, next: BrowserBridgeTab[]): void {
       const accepted = next.filter(tab => isTabGuest(tab.webContentsId))
       for (const tab of tabsOf(browserId)) {
-        if (!accepted.some(item => item.tabId === tab.tabId && item.webContentsId === tab.webContentsId)) {
+        if (!tab.popup && !accepted.some(item => item.tabId === tab.tabId && item.webContentsId === tab.webContentsId)) {
           tabs.delete(tab.tabId)
           closeSockets(tab.tabId)
         }
@@ -403,11 +455,16 @@ export function createBrowserBridge(deps: Deps) {
       for (const tab of accepted) {
         const known = tabs.get(tab.tabId)
         if (known && known.browserId !== browserId) continue
-        if (!known) webContents.fromId(tab.webContentsId)?.once('destroyed', () => {
-          downloadDirs.delete(tab.webContentsId)
-          if (tabs.get(tab.tabId)?.webContentsId === tab.webContentsId) { tabs.delete(tab.tabId); closeSockets(tab.tabId); notify() }
-        })
-        tabs.set(tab.tabId, { ...tab, browserId })
+        const entry = { ...tab, browserId }
+        tabs.set(tab.tabId, entry)
+        watchTab(entry)
+      }
+      const blocked = accepted.some(tab => tab.inputBlocked)
+      for (const tab of tabsOf(browserId)) if (tab.popup) {
+        tab.inputBlocked = blocked
+        tab.popup.setIgnoreMouseEvents(blocked)
+        tab.popup.setFocusable(!blocked)
+        if (blocked) tab.popup.blur()
       }
       notify()
     },

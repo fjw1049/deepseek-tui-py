@@ -84,7 +84,7 @@ def store(tmp_path, monkeypatch):
     return result
 
 
-async def test_consent_required_and_empty_source_does_not_erase(store, tmp_path):
+async def test_consent_required_and_successful_empty_source_removes_login(store, tmp_path):
     run, jar = run_at(tmp_path)
     await store.restore(run)
     await store.sync(run)
@@ -94,7 +94,7 @@ async def test_consent_required_and_empty_source_does_not_erase(store, tmp_path)
     assert len(jar) == 1
     store.read_source.return_value = {"cookies": [], "skipped": 0}
     await store.sync(run)
-    assert len(jar) == 1 and store.state()["status"] == "empty"
+    assert not jar and store.state()["status"] == "empty"
     assert "PRIVATE_COOKIE_SENTINEL" not in json.dumps(store.state())
     assert b"PRIVATE_COOKIE_SENTINEL" not in (store.root / "cookies.enc").read_bytes()
 
@@ -498,3 +498,59 @@ def test_saved_cookie_notice_state(tmp_path):
     store._write({"cookies": {"login": cookie()}, "sites": []})
     assert store.has_saved_cookies()
     assert "PRIVATE_COOKIE_SENTINEL" not in str(store.state())
+
+
+async def test_native_cookie_sync_blocks_other_agent_and_invalidates_all_runs(
+    tmp_path, monkeypatch
+):
+    service = BrowserService(tmp_path / "artifacts")
+    monkeypatch.setattr("deepseek_tui.browser.cookies.profiles", lambda: [{"id": "Default"}])
+    service.cookies.configure("enabled", "Default")
+    service.cookies.read_source = AsyncMock(
+        return_value={"cookies": [cookie_params(cookie("new"))], "skipped": 0}
+    )
+    one, jar = run_at(tmp_path, "one")
+    two, _ = run_at(tmp_path, "two")
+    one.native = two.native = True
+    one.owner, two.owner = "user", "agent"
+    two.agent_task = True
+    two.session = one.session
+    two.latest_observation = {"observation_id": "old-account"}
+    service.runs.update(one=one, two=two)
+    with pytest.raises(ValueError, match="browser sessions"):
+        await service.sync_cookies("one", ["example.test"])
+    service.cookies.read_source.assert_not_called()
+    two.agent_task = False
+    await service.sync_cookies("one", ["example.test"])
+    assert jar[cookie_key(cookie())]["value"] == "new"
+    assert one.generation == two.generation == 1
+    assert two.latest_observation is None
+
+
+async def test_clear_cookies_rejects_pending_native_action(tmp_path):
+    service = BrowserService(tmp_path / "artifacts")
+    run, _ = run_at(tmp_path)
+    run.native = True
+    run.unresolved = {"submit": {}}
+    service.runs["one"] = run
+    with pytest.raises(ValueError, match="browser sessions"):
+        await service.clear_cookies()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"error": "permission"},
+        {"error": "unavailable"},
+        {"cookies": [], "skipped": 1},
+    ],
+)
+async def test_failed_or_partial_empty_cookie_read_preserves_existing_login(
+    store, tmp_path, source
+):
+    run, jar = run_at(tmp_path)
+    store.configure("enabled", "Default")
+    await store.sync(run, ["example.test"])
+    store.read_source.return_value = source
+    await store.sync(run)
+    assert jar[cookie_key(cookie())]["value"] == "PRIVATE_COOKIE_SENTINEL"

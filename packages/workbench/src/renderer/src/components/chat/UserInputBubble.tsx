@@ -135,6 +135,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
   const total = block.questions.length
   const clampedStep = Math.min(step, Math.max(0, total - 1))
   const question = block.questions[clampedStep]
+  const isPermission = question?.id === 'cua_permission'
   const isLast = clampedStep >= total - 1
 
   const clearAutoAdvance = (): void => {
@@ -228,7 +229,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate font-semibold tracking-[-0.02em] text-ds-ink">
+            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words font-semibold tracking-[-0.02em] text-ds-ink">
               {question?.question || t('userInputTitle')}
             </span>
             {total > 1 ? (
@@ -296,7 +297,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
                     </button>
                   )
                 })}
-                {question.options.length > 0 ? <button
+                {!isPermission && question.options.length > 0 ? <button
                   type="button"
                   disabled={submitting}
                   onClick={() =>
@@ -328,7 +329,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
                     </span>
                   </span>
                 </button> : null}
-                {otherSelected ? (
+                {!isPermission && otherSelected ? (
                   <input
                     value={answer?.value ?? ''}
                     disabled={submitting}

@@ -75,6 +75,34 @@ async def read(service):
     return (await service.action("t", BrowserAction(action="observe", level="full")))["observation"]
 
 
+async def test_private_session_isolated_with_workbench_available(chrome, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    service, normal = chrome
+    url = normal.url
+    await evaluate(
+        normal.session._internal.client,
+        "document.cookie='normal_login=yes'; localStorage.setItem('normal', 'yes'); true",
+    )
+    service.configure("private", False)
+    service.workbench = {"port": 1, "token": "unused"}
+    attach = AsyncMock(side_effect=AssertionError("Private session attached shared browser"))
+    monkeypatch.setattr(service, "_attach_workbench", attach)
+    for _ in range(2):
+        result = await service.action("private", BrowserAction(action="open", url=url))
+        assert result["success"]
+        run = service.runs["private"]
+        assert not run.native and run.cookie_baseline is None
+        client = run.session._internal.client
+        assert await evaluate(client, "document.cookie === '' && localStorage.length === 0")
+        await evaluate(
+            client,
+            "document.cookie='private_login=yes'; localStorage.setItem('private', 'yes'); true",
+        )
+        await service.close("private")
+    attach.assert_not_awaited()
+
+
 def ref(observation, name):
     return next(e["ref"] for e in observation["elements"] if e["name"] == name)
 
@@ -764,9 +792,11 @@ async def test_observation_reports_page_and_panel_scroll_sizes(chrome):
     assert first["total_scroll_containers"] == 2  # overflow:hidden does not scroll
     panel, small = first["scroll_containers"]  # largest first
     assert panel["name"] == "Messages" and small["viewport"]["scroll_height"] == 500
+    # Classic scrollbars occupy space inside the bounding box; overlay ones do not.
+    client_width = await evaluate(client, "document.querySelector('#list').clientWidth")
     assert panel["ref"] == "c0" and panel["viewport"] == {
-        "width": panel["box"]["width"], "height": 300, "scroll_x": 0, "scroll_y": 0,
-        "scroll_width": panel["box"]["width"], "scroll_height": 2000,
+        "width": client_width, "height": 300, "scroll_x": 0, "scroll_y": 0,
+        "scroll_width": client_width, "scroll_height": 2000,
     }
 
     clicked = await act(service, first, "click", ref=panel["ref"])

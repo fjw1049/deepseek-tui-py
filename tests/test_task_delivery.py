@@ -139,7 +139,7 @@ async def test_information_wait_needs_no_browser(context):
         assert (await asyncio.wait_for(task, 1)).success
         assert not engine.handle.pending_user_inputs
         # The desktop is never held while a person is being asked.
-        engine._release_cua.assert_awaited_once_with()
+        engine._release_cua.assert_awaited_once_with(reset=True)
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -153,3 +153,21 @@ async def test_closed_session_does_not_erase_unknown_mutation(context):
         await FinishTaskTool().execute(dict(
             status="completed", answer="Submitted", evidence=["tool:read"], remaining=[]
         ), context)
+
+
+@pytest.mark.parametrize("pending", ["dialog", "file_chooser", "pending_action", "pending_input"])
+async def test_pending_browser_interaction_prevents_completion(context, pending):
+    browser = context.metadata["browser_service"]
+    browser.state = lambda _: (
+        {pending: {"id": "pending"}} if pending in {"dialog", "file_chooser"} else {}
+    )
+    if pending.startswith("pending_"):
+        setattr(browser.runs["t"], pending, object())
+    args = dict(status="completed", answer="Submitted", evidence=["tool:read"], remaining=[])
+    with pytest.raises(ToolError, match="pending browser"):
+        await FinishTaskTool().execute(args, context)
+    assert (
+        await FinishTaskTool().execute(
+            {**args, "status": "blocked", "remaining": ["Handle pending interaction"]}, context
+        )
+    ).success

@@ -5,7 +5,7 @@ import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
 import { buildPreviewPickerCleanupScript, buildPreviewPickerInjectScript, extractWebviewConsoleMessage, parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
 import { localizeDevBrowserScreenshotError } from '../lib/dev-browser-screenshot-errors'
-import { BLANK_PAGE, activatePageTab, closePageTab, ensureBrowserSession, navigatePageTab, openPageTab, pageWebview, setPageDisplay, updatePageTab, useBrowserPagesStore } from '../store/browser-pages-store'
+import { BLANK_PAGE, activatePageTab, closePageTab, ensureBrowserSession, navigatePageTab, openPageTab, pageWebview, setPageDisplay, updatePageTab, useBrowserPagesStore, setBrowserInputBlocked } from '../store/browser-pages-store'
 import { isHtmlPreviewPath } from '@shared/html-preview'
 import { BrowserCookieSync, type CookieSyncState } from './BrowserCookieSync'
 import { BrowserViewport } from './BrowserViewport'
@@ -17,15 +17,16 @@ import { respondToAssistance } from './BrowserAssistance'
 import type { Assistance } from './BrowserAssistanceCard'
 
 type BrowserState = {
+  persistent?: boolean
   cookie_sync?: CookieSyncState
   assistance?: Assistance | null
   active: boolean; url?: string; generation?: number; transferring?: boolean
   task_paused?: boolean; task_running?: boolean; task_pausing?: boolean
   viewport?: { width: number; height: number }
-  tabs?: { tab_id: string; title: string; url: string; active: boolean }[]
+  tabs?: { tab_id: string; title: string; url: string; active: boolean; popup?: boolean }[]
   image?: string | null; video_recording?: boolean; video_error?: string | null
   owner: 'agent' | 'user' | 'stopped'; recording: boolean
-  activity?: string; workflow_recording?: boolean
+  activity?: string; demo_status?: string; healthy?: boolean; workflow_recording?: boolean
   workflow_tabs?: string[]
   /** Demonstration tabs the recorder could not attach to, with the reason. */
   workflow_tab_errors?: Record<string, string>
@@ -46,7 +47,7 @@ type BrowserState = {
 }
 
 type ActionReceipt = { action?: string; target_url?: string; action_id: string; execution: string; effect?: string; reconciliation?: unknown }
-type ActionResult = { success?: boolean; content?: unknown; receipt?: ActionReceipt; dialog?: BrowserState['dialog'] }
+type ActionResult = { success?: boolean; content?: unknown; receipt?: ActionReceipt; dialog?: BrowserState['dialog']; artifact?: BrowserState['artifacts'][number] | null }
 export class BrowserRequestError extends Error {
   constructor(message: string, readonly result?: ActionResult) { super(message) }
 }
@@ -92,15 +93,18 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const [dialogAnswer, setDialogAnswer] = useState('')
   const { t } = useTranslation('common')
   const [state, setState] = useState<BrowserState | null>(null)
+  const [polled, setPolled] = useState(false)
   useEffect(() => { setDialogAnswer('') }, [state?.dialog?.id])
-  // Workbench tabs are the browser; a private browser only appears when the runtime
-  // had to work without them, and is then shown as a live remote view.
-  const remote = !!state?.active && state.surface !== 'native'
+  // Temporary sessions use the isolated runtime browser, never shared Workbench tabs.
+  const remote = state?.persistent === false || state?.surface === 'headless' || !!state?.unresolved?.length || (!!state?.active && state.surface !== 'native')
   const viewSuffix = remote ? '/view' : ''
   const session = useBrowserPagesStore(store => store.sessions[threadId])
   // Shown browsers always have a page; hidden ones may have been closed to save memory.
   const hasSession = !!session
-  useEffect(() => { if (visible && !hasSession) ensureBrowserSession(threadId) }, [threadId, visible, hasSession])
+  const nativeAllowed = !!state && state.persistent !== false && state.surface !== 'headless'
+  useEffect(() => {
+    if (visible && nativeAllowed && !hasSession) ensureBrowserSession(threadId)
+  }, [threadId, visible, hasSession, nativeAllowed])
   const activeTab = session?.tabs.find(tab => tab.id === session.activeTabId)
   const [image, setImage] = useState<string | null>(null)
   const [frameFresh, setFrameFresh] = useState(false)
@@ -134,7 +138,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const menuButton = useRef<HTMLButtonElement>(null)
   const [fresh, setFresh] = useState(false)
   // Previews wait for the first answer, which tells whether the page is local or remote.
-  const [polled, setPolled] = useState(false)
   useLightDismiss({ open: more, refs: [menuRoot], onDismiss: () => setMore(false) })
   useEffect(() => { if (!visible) { setMore(false); setControlOpen(false); setCookieSettings(false); setFresh(false); setFrameFresh(false) } }, [visible])
   useEffect(() => {
@@ -163,14 +166,16 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   useEffect(() => { setInspect(false) }, [visible, inspectedPage, state?.generation, state?.owner])
   useEffect(() => { if (externalError) { setError(externalError); onExternalErrorConsumed?.() } }, [externalError, onExternalErrorConsumed])
   const userControls = visible && fresh && state?.owner === 'user' && !state.transferring && !pending
-  const canNavigate = visible && fresh && !pending && !state?.transferring && (!state?.active || userControls)
+  const canNavigate = visible && fresh && !state?.unresolved?.length && !pending && !state?.transferring && (!state?.active || userControls)
   // The user browses Workbench tabs directly unless the agent is working in them.
-  const agentWorking = !!state?.active && state.owner === 'agent' && !!state.task_running
+  const agentWorking = !!state?.active && state.owner === 'agent' && (!!state.task_running || state.demo_status === 'running')
   const capturePending = !remote && !!state?.workflow_recording && !(state.workflow_tabs ?? []).includes(activeTab?.id ?? '')
   const captureError = capturePending ? state?.workflow_tab_errors?.[activeTab?.id ?? ''] : undefined
-  // Input is held only while a demonstration starts or stops: anything typed then is unrecorded.
-  const inputHeld = demoChanging || capturePending || agentWorking || !!state?.transferring
-  const canBrowse = visible && !inputHeld
+  // Recording transitions, automation and uncertain results must also block native input.
+  const inputHeld = demoChanging || capturePending || agentWorking || !!state?.transferring || !!state?.unresolved?.length || (lastReceipt?.execution === 'unknown' && !lastReceipt.reconciliation)
+  const blockNativeInput = !state || !!inputHeld
+  useEffect(() => { setBrowserInputBlocked(threadId, blockNativeInput) }, [threadId, blockNativeInput, hasSession])
+  const canBrowse = visible && !!state && !inputHeld
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const pageUrl = remote ? state?.url : activeTab?.url
   useEffect(() => { if (pageUrl) setUrl(pageUrl === BLANK_PAGE ? '' : pageUrl) }, [pageUrl])
@@ -188,7 +193,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     setFrameFresh(previous => !next.transferring && !!next.active && (
       !!next.image || (previous && sameGeneration && sameScene && next.frame_status === 'busy')
     ))
-    setState(next); if (next.image) setImage(next.image); else if (!next.active) setImage(null)
+    setState(next); if (next.image) setImage(next.image)
   }, [])
   useEffect(() => {
     if (!visible) return
@@ -218,6 +223,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       } : body
       const result = await browserRequest<ActionResult>(threadId, suffix, payload)
       if (!alive.current) return false
+      if (result.artifact) setNotice(t('browserArtifactSaved', { name: result.artifact.label || result.artifact.id }))
       if (result.receipt) setLastReceipt(result.receipt)
       if (result.dialog) setState(previous => previous ? { ...previous, dialog: result.dialog } : previous)
       if (result.success === false) setError(typeof result.content === 'string' ? result.content : JSON.stringify(result.content))
@@ -263,7 +269,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     const release = (): void => { if (useBrowserPagesStore.getState().display?.browserId === threadId) setPageDisplay(null) }
     const area = pageArea.current
     const layer = document.querySelector<HTMLElement>('.ds-browser-page-layer')
-    if (!visible || remote || !area || !layer) { release(); return }
+    if (!visible || !nativeAllowed || remote || !area || !layer) { release(); return }
     let frame = 0
     let until = 0
     const measure = (): void => {
@@ -286,7 +292,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       observer?.disconnect(); window.removeEventListener('resize', follow)
       document.removeEventListener('transitionend', follow, true); cancelAnimationFrame(frame); release()
     }
-  }, [visible, remote, threadId])
+  }, [visible, nativeAllowed, remote, threadId])
   useEffect(() => {
     if (inputHeld) try { pageWebview(activeTab?.id)?.blur() } catch { /* not attached yet */ }
   }, [inputHeld, activeTab?.id])
@@ -452,10 +458,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const unresolvedReceipt = state?.unresolved?.[0] || (lastReceipt?.execution === 'unknown' && !lastReceipt.reconciliation ? lastReceipt : null)
   const reviewActionLabel = ({ click: 'browserClick', fill: 'browserFill', open: 'browserOpen', reload: 'browserReload' } as Record<string, string>)[unresolvedReceipt?.action ?? '']
   const requiresReview = !!(unresolvedReceipt || state?.dialog || state?.file_chooser)
-  const hasConnectionProblem = !!(error || connectionError || state?.error)
-  const needsAttention = !!(unresolvedReceipt || state?.dialog || state?.file_chooser || waitingPreview || error || connectionError || state?.error)
+  const hasConnectionProblem = state?.healthy === false || !!(error || connectionError || state?.error)
+  const needsAttention = !!(unresolvedReceipt || state?.dialog || state?.file_chooser || waitingPreview || error || connectionError || state?.error || state?.healthy === false)
   const needsHelp = state?.assistance?.status === 'pending'
-  const controlTone = needsHelp || needsAttention ? 'attention' : state?.owner === 'user' ? 'human' : state?.active && state.task_running ? 'agent' : 'idle'
+  const controlTone = needsHelp || needsAttention ? 'attention' : state?.owner === 'user' ? 'human' : agentWorking ? 'agent' : 'idle'
   // Agent activity and anything waiting on the user always bring the status back.
   const controlForced = controlTone === 'agent' || controlTone === 'attention'
   useEffect(() => { if (controlForced) setControlMinimized(false) }, [controlForced])
@@ -485,22 +491,25 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     : controlTarget === 'stopped' ? 'browserWorking' : state?.task_pausing ? 'browserTaskPausing'
     : state?.transferring || capturePending ? 'browserWorking' : requiresReview || needsHelp ? 'browserWaitingForYou' : hasConnectionProblem ? 'browserConnectionProblem' : !state?.active ? 'browserIdle'
     : state.owner === 'user' ? state.task_paused ? 'browserTaskPaused' : 'browserUserControl' : state.task_paused ? 'browserControlPaused'
-    : state.task_running === false ? 'browserAgentReady' : 'browserAgentControl'
+    : !agentWorking && state.task_running === false ? 'browserAgentReady' : 'browserAgentControl'
   const controlHint = controlBusy ? 'browserControlSwitchHint' : unresolvedReceipt ? 'browserReviewHint' : requiresReview ? 'browserResponseHint' : hasConnectionProblem ? 'browserReconnectHint' : needsHelp ? 'browserControlHelpHint'
     : state?.owner === 'user' ? state.task_running || state.task_paused ? 'browserControlHumanHint' : 'browserControlHumanIdleHint'
-    : state?.active && state.task_running ? 'browserAgentHint' : 'browserControlReadyHint'
+    : agentWorking ? 'browserAgentHint' : 'browserControlReadyHint'
   const tabViews = remote
     ? (state?.tabs ?? []).map(tab => ({ id: tab.tab_id, title: tab.title, url: tab.url, active: tab.active }))
-    : (session?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, active: tab.id === session?.activeTabId }))
+    : [...(session?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, active: tab.id === session?.activeTabId })),
+      ...(state?.tabs ?? []).filter(tab => tab.popup).map(tab => ({ id: tab.tab_id, title: tab.title, url: tab.url, active: false }))]
+  const agentTab = agentWorking ? state?.tabs?.find(tab => tab.active) : undefined
+  const isPopup = (id: string): boolean => !!state?.tabs?.some(tab => tab.tab_id === id && tab.popup)
   const soleBlank = !remote && tabViews.length === 1 && tabViews[0]!.url === BLANK_PAGE
-  const tabsEnabled = remote ? canNavigate : visible
+  const tabsEnabled = remote ? canNavigate : visible && !!state && !state.unresolved?.length
   const addressEnabled = remote ? canNavigate : canBrowse
   const loading = remote ? !!state?.loading : !!activeTab?.loading
   const canStop = loading && (remote ? visible && fresh && state?.owner === 'user' && !state.transferring : canBrowse)
   const pageOpen = !!activeTab && activeTab.url !== BLANK_PAGE
   return <div className={`ds-shared-browser${remote ? '' : ' is-native'}${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
-    {visible ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
-      agentBusy={!!state?.active && state.owner !== 'user' && !!state.task_running}
+    {visible && state && state.persistent !== false ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
+      agentBusy={agentWorking}
       blank={!remote && !inputHeld && !pageOpen} updateRequest={cookieUpdate}
       manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? menuButton.current?.getBoundingClientRect() ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
     <div className="ds-dev-browser__chrome ds-browser-chrome">
@@ -509,11 +518,11 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
           {(tabViews.length ? tabViews : [{ id: '', title: t('browserNewTab'), url: '', active: true }]).map(tab =>
             <div className={`ds-dev-browser__tab${tab.active ? ' ds-dev-browser__tab--active' : ''}`} key={tab.id || 'placeholder'}>
               <button className="ds-dev-browser__tab-main" aria-pressed={tab.active} disabled={!tabsEnabled} title={tab.title || tab.url}
-                onClick={() => { if (!tab.id) return; if (remote) action({ action: 'switch_tab', tab_id: tab.id }); else activatePageTab(threadId, tab.id) }}>
-                <Globe2 className="ds-dev-browser__tab-icon" /><span className="ds-dev-browser__tab-label">{!tab.url || tab.url === BLANK_PAGE ? t('browserNewTab') : tab.title || tab.url}</span>
+                onClick={() => { if (!tab.id) return; if (remote || isPopup(tab.id)) action({ action: 'switch_tab', tab_id: tab.id }); else activatePageTab(threadId, tab.id) }}>
+                {agentTab?.tab_id === tab.id ? <LoaderCircle className="ds-browser-control-spinner" size={12} aria-label={t('browserAgentControl')} /> : <Globe2 className="ds-dev-browser__tab-icon" />}<span className="ds-dev-browser__tab-label">{!tab.url || tab.url === BLANK_PAGE ? t('browserNewTab') : tab.title || tab.url}</span>
               </button>
               {tab.id && !soleBlank ? <button className={`ds-dev-browser__tab-close${tab.active ? ' is-visible' : ''}`} aria-label={`${t('browserCloseTab')} ${tab.title}`} title={t('browserCloseTab')} disabled={remote ? !canNavigate : !canBrowse}
-                onClick={() => { if (remote) action({ action: 'close_tab', tab_id: tab.id }); else closePageTab(threadId, tab.id) }}><X size={11} /></button> : null}
+                onClick={() => { if (remote || isPopup(tab.id)) action({ action: 'close_tab', tab_id: tab.id }); else closePageTab(threadId, tab.id) }}><X size={11} /></button> : null}
             </div>)}
         </div>
         <button className="ds-dev-browser__icon-btn" aria-label={t('browserNewTab')} title={t('browserNewTab')} disabled={remote ? !canNavigate : !canBrowse}
@@ -549,8 +558,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
                 items[next]?.focus()
               } else if (e.key === 'Tab') setMore(false)
             }}>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" aria-haspopup="dialog" onClick={event => { setCookieAnchor(menuButton.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()); setCookieSettings(true) }}><Globe2 size={15} />{t('browserCookieManage')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setCookieUpdate(count => count + 1)}><RotateCw size={15} />{t('browserCookieUpdate')}</button>
+            {state && state.persistent !== false ? <>
+              <button type="button" role="menuitem" className="ds-dock-menu-item" aria-haspopup="dialog" onClick={event => { setCookieAnchor(menuButton.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()); setCookieSettings(true) }}><Globe2 size={15} />{t('browserCookieManage')}</button>
+              <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setCookieUpdate(count => count + 1)}><RotateCw size={15} />{t('browserCookieUpdate')}</button>
+            </> : null}
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
@@ -571,6 +582,14 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       </form>
       {detectedUrls.length ? <div className="ds-dev-browser__chips">{detectedUrls.map(target => <button key={target} className="ds-dev-browser__chip" disabled={pending || !fresh} title={target} onClick={() => void openPreview(target)}>{formatDevPreviewUrlLabel(target)}</button>)}</div> : null}
     </div>
+    {agentTab ? <div className="ds-browser-notice" role="status"><span>{t('browserAgentTarget', { name: agentTab.title || agentTab.url })}</span></div> : null}
+    {state?.artifacts?.length ? <details className="ds-browser-notice"><summary>{t('browserArtifacts')}</summary>
+      {state.artifacts.slice(-8).reverse().map(item => <button key={item.id} title={item.path} onClick={() => {
+        void window.dsGui.showItemInFolder(item.path).catch(e => setError(String(e)))
+      }}>{item.label || item.id}</button>)}
+    </details> : null}
+    {remote && image && (!fresh || !state?.active || state?.healthy === false) ? <div className="ds-browser-notice" role="status">{t('browserStaleFrame')}</div> : null}
+    {state?.video_error ? <div className="ds-browser-notice" role="alert">{state.video_error}</div> : null}
     <div className="ds-browser-content" ref={pageArea}>
     {inspect || notice ? <div className="ds-browser-feedback" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
     {!inspect && !notice && !remote && activeTab && activeTab.error !== null ? <div className="ds-browser-feedback" role="status"><span>{activeTab.error || t('browserLoadFailed')}</span></div> : null}
@@ -667,11 +686,12 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       <button disabled={pending || state.owner !== 'user'} onClick={() => void action({ action: 'upload', chooser_id: state.file_chooser?.id, files: [] })}>{t('browserDialogDismiss')}</button>
     </div> : null}
     {state?.downloads?.length ? <div className="ds-browser-notice">{state.downloads.map(item =>
-      <span key={item.id}>{item.filename} · {item.state === 'completed' ? t('browserDownloadReady') : t('browserDownloadPending')}
+      <span key={item.id}>{item.filename} · {item.state === 'completed' ? t('browserDownloadReady') : item.state === 'canceled' ? t('browserDownloadCanceled') : t('browserDownloadPending')}
         {item.state === 'completed' && item.path ? <button onClick={() => void window.dsGui.showItemInFolder(item.path!)}>{t('browserDownloadReady')}</button> : null}
       </span>)}</div> : null}
-    {hasConnectionProblem && !requiresReview ? <div className="ds-browser-notice">
+    {hasConnectionProblem && (!requiresReview || state?.healthy === false) ? <div className="ds-browser-notice">
       <button disabled={pending || controlBusy} onClick={() => void refreshBrowser()}>{t('browserRefreshView')}</button>
+      {state?.healthy === false ? <button disabled={pending || controlBusy} onClick={() => void perform('/recover', {})}>{t('browserRecover')}</button> : null}
       <details><summary>{t('browserTechnicalDetails')}</summary><pre>{error || connectionError || state?.error}</pre></details>
     </div> : null}
       </div> : null}

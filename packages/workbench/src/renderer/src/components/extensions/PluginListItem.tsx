@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { PluginIcon } from './PluginIcon'
 
-export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemove, removeLabel, busy = false }: {
+export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemove, removeLabel, busy = false, useDisabled = false, removeDisabled = false }: {
   pluginId: string
   title: string
   summary: string
@@ -13,6 +13,8 @@ export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemo
   onRemove?: () => void
   removeLabel?: string
   busy?: boolean
+  useDisabled?: boolean
+  removeDisabled?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -45,10 +47,10 @@ export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemo
           const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
           buttons[next]?.focus()
         }}>
-        <button role="menuitem" type="button" disabled={busy} onClick={() => { setOpen(false); onUse() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ds-ink hover:bg-ds-hover disabled:opacity-40"><MessageCircle className="size-4" />{t('pluginUseNow')}</button>
+        <button role="menuitem" type="button" disabled={busy || useDisabled} onClick={() => { setOpen(false); onUse() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ds-ink hover:bg-ds-hover disabled:opacity-40"><MessageCircle className="size-4" />{t('pluginUseNow')}</button>
         {onRemove ? <>
           <div role="separator" className="my-1 border-t border-ds-border" />
-          <button role="menuitem" type="button" disabled={busy} onClick={() => { close(); onRemove() }} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-ds-hover disabled:opacity-40 ${desktop ? 'text-ds-ink' : 'text-ds-danger'}`}><ActionIcon className="size-4" />{removeLabel ?? t('pluginUninstall')}</button>
+          <button role="menuitem" type="button" disabled={busy || removeDisabled} onClick={() => { close(); onRemove() }} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-ds-hover disabled:opacity-40 ${desktop ? 'text-ds-ink' : 'text-ds-danger'}`}><ActionIcon className="size-4" />{removeLabel ?? t('pluginUninstall')}</button>
         </> : null}
       </div> : null}
     </div>

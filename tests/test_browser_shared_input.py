@@ -422,3 +422,22 @@ async def test_unresolved_result_allows_scroll_but_blocks_click_and_typing(share
         with pytest.raises(ValueError, match='outcome is unknown'):
             await browser.input('one', body)
     assert 'pending' in run.unresolved
+
+
+@pytest.mark.parametrize("disconnected", [True, False])
+async def test_view_probes_transport_after_scene_failure(shared, monkeypatch, disconnected):
+    browser, run, client = shared
+    monkeypatch.setattr(browser, "_stream", AsyncMock())
+    monkeypatch.setattr(browser, "_scene", AsyncMock(side_effect=ValueError("Document changed")))
+    if disconnected:
+        client.send.side_effect = RuntimeError("Connection closed")
+        view = await browser.view("one")
+        assert not view["active"] and not view["healthy"]
+        assert view["image"] is None and "recover" in view["error"]
+        assert run.view_sequence == 1
+    else:
+        with pytest.raises(RuntimeError, match="Browser view unavailable"):
+            await browser.view("one")
+        assert run.healthy
+    client.send.assert_awaited_once_with(
+        "Runtime.evaluate", {"expression": "1", "returnByValue": True})

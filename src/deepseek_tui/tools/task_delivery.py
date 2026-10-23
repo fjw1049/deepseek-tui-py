@@ -32,6 +32,8 @@ class TaskDelivery:
     focused: bool = False
     extra_tools: set[str] = field(default_factory=set)
     evidence: set[str] = field(default_factory=set)
+    # Evidence predating an uncertain desktop action cannot verify its outcome.
+    cua_failed_evidence: set[str] | None = None
     outcome: dict[str, Any] | None = None
     stop_reminded: bool = False
     finalization_attempted: bool = False
@@ -208,8 +210,20 @@ class FinishTaskTool(ToolSpec):
                 "The user controls the browser; report partial/blocked or request control first"
             )
         if status == "completed":
+            if (browser_state.get("dialog") or browser_state.get("file_chooser")
+                    or (run and (getattr(run, "pending_action", None)
+                                 or getattr(run, "pending_input", None)))):
+                raise ToolError(
+                    "Resolve the pending browser interaction before claiming completion")
             if not evidence or remaining:
                 raise ToolError("Completed requires evidence and no remaining work")
+            if (state.cua_failed_evidence is not None
+                    and not (set(evidence) - state.cua_failed_evidence)):
+                raise ToolError(
+                    "CUA outcome needs verification after the failed call. Observe or check "
+                    "the actual result, cite fresh evidence, or report partial/blocked. "
+                    "Resetting the connection does not verify the outcome."
+                )
             if unresolved:
                 raise ToolError(
                     "Unresolved browser operations prevent claiming completion; "

@@ -595,3 +595,20 @@ async def test_native_recorder_only_reports_tabs_opened_during_the_recording(
     finally:
         await recorder.close()
         await browser.close_all()
+
+
+async def test_agent_can_list_and_switch_after_controlled_popup_closes(browser, bridge):
+    run = await browser.ensure("thr_one")
+    await browser.action("thr_one", BrowserAction(action="new_tab"))
+    closed = run.session.tab_id
+    await run.session._internal.client.close()
+    bridge.tabs.pop(closed)
+    bridge.active = "tab-a"
+    run.healthy = False
+    tabs = await browser.action("thr_one", BrowserAction(action="tabs"))
+    assert tabs["success"] and [t["tab_id"] for t in tabs["tabs"]] == ["tab-a"]
+    switched = await browser.action("thr_one", BrowserAction(action="switch_tab", tab_id="tab-a"))
+    assert switched["success"]
+    assert run.session.connected and run.session.tab_id == "tab-a" and run.healthy
+    assert not run.unresolved
+    await browser.close("thr_one")

@@ -843,3 +843,70 @@ it('explains why a demonstration tab cannot be recorded', async () => {
     expect(h.container.querySelector('.ds-browser-shield')).toBeTruthy()
   } finally { await h.close(); vi.useRealTimers() }
 })
+
+it('never creates shared tabs or offers cookie import for a temporary session', async () => {
+  const h = mount({ persistent: false, active: true, surface: 'headless', owner: 'user',
+    generation: 2, tabs: [], log: [], artifacts: [], image: 'data:image/jpeg;base64,AA==' })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'private' })))
+    expect(useBrowserPagesStore.getState().sessions.private).toBeUndefined()
+    expect(h.container.querySelector('.ds-shared-browser')?.classList.contains('is-native')).toBe(false)
+    await act(async () => h.container.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
+    expect(h.container.textContent).not.toContain('browserCookieManage')
+    expect(h.container.textContent).not.toContain('browserCookieUpdate')
+  } finally { await h.close() }
+})
+
+it('waits for preferences before creating a shared browser', async () => {
+  const h = mount()
+  h.request.mockImplementation(() => new Promise(() => {}))
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'pending' })))
+    expect(useBrowserPagesStore.getState().sessions.pending).toBeUndefined()
+  } finally { await h.close() }
+})
+
+it('holds native input during standalone replay', async () => {
+  const h = mount({ active: true, surface: 'native', owner: 'agent', task_running: false, demo_status: 'running', generation: 2, log: [], artifacts: [] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('.ds-browser-shield')).not.toBeNull()
+    expect(h.container.querySelector('.ds-browser-status')!.classList.contains('is-agent')).toBe(true)
+    expect(h.container.querySelector('.ds-browser-status-trigger')!.textContent).toContain('browserAgentControl')
+    expect(h.container.querySelector<HTMLInputElement>('[aria-label="browserAddressPlaceholder"]')!.disabled).toBe(true)
+    expect(useBrowserPagesStore.getState().sessions.one!.inputBlocked).toBe(true)
+  } finally { await h.close() }
+})
+
+it('uses a readonly viewport instead of direct native input for unknown submissions', async () => {
+  const h = mount({ active: true, surface: 'native', owner: 'user', generation: 2, image: 'data:image/jpeg;base64,AA==', log: [], artifacts: [], unresolved: [{ action_id: 'submit', execution: 'unknown' }] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('.ds-shared-browser')!.classList.contains('is-native')).toBe(false)
+    expect(h.container.querySelector<HTMLInputElement>('[aria-label="browserAddressPlaceholder"]')!.disabled).toBe(true)
+    expect(useBrowserPagesStore.getState().sessions.one!.inputBlocked).toBe(true)
+  } finally { await h.close() }
+})
+
+it('keeps a failed headless browser and offers explicit recovery', async () => {
+  const h = mount({ active: false, surface: 'headless', healthy: false, owner: 'user', generation: 2, log: [], artifacts: [] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('.ds-shared-browser')!.classList.contains('is-native')).toBe(false)
+    expect(useBrowserPagesStore.getState().sessions.one).toBeUndefined()
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
+    await h.click('browserRecover')
+    expect(h.request.mock.calls.some(([path]) => path.endsWith('/recover'))).toBe(true)
+  } finally { await h.close() }
+})
+
+it('exposes saved artifacts in the file manager', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [{ id: 'proof.jpg', label: 'Proof', path: '/tmp/proof.jpg' }] })
+  const show = vi.fn(async () => {})
+  window.dsGui.showItemInFolder = show
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await h.click('Proof')
+    expect(show).toHaveBeenCalledWith('/tmp/proof.jpg')
+  } finally { await h.close() }
+})

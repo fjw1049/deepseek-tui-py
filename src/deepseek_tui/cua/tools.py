@@ -154,6 +154,20 @@ class CuaTool(ToolSpec):
         return False
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+        delivery = context.metadata.get("task_delivery")
+        try:
+            result = await self._execute(input_data, context)
+        except BaseException:
+            if delivery is not None:
+                delivery.cua_failed_evidence = set(delivery.evidence)
+            raise
+        if not result.success and delivery is not None:
+            delivery.cua_failed_evidence = set(delivery.evidence)
+        if self.descriptor["name"] == "js_reset":
+            result = replace(result, metadata={**result.metadata, "task_evidence": False})
+        return result
+
+    async def _execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         from deepseek_tui.mcp.execute import mcp_response_to_tool_result
 
         turn = context.metadata.get("cua_turn_id") or current_turn()

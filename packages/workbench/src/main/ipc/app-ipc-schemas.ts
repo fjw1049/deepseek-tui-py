@@ -319,7 +319,8 @@ export const browserBridgeTabsPayloadSchema = z
             tabId: z.string().min(1).max(100),
             webContentsId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
             active: z.boolean(),
-            visible: z.boolean()
+            visible: z.boolean(),
+            inputBlocked: z.boolean().optional()
           })
           .strict()
       )

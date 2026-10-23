@@ -1,0 +1,11 @@
+{
+  "thread_id": "thr_a015051e",
+  "turn_id": "turn_d59f622f",
+  "turn_status": "completed",
+  "outcome": "completed",
+  "file_bytes": 78,
+  "sha256": "42f23b05e2e37609e621fcaacfae3bf1b68c04cef65c98d8386eb679cf600c7c",
+  "real_user_permission_submission": true,
+  "real_user_desktop_handoff_submission": true,
+  "verification_note": "Manual UI clicks by user; native automation on Electron remained unreliable."
+}

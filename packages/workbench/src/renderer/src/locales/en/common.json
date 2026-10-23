@@ -1,4 +1,10 @@
 {
+  "browserStaleFrame": "Connection interrupted. Showing the last saved frame.",
+  "browserArtifacts": "Recent saved files",
+  "browserArtifactSaved": "Saved: {{name}}",
+  "browserAgentTarget": "Agent is working on: {{name}}",
+  "browserDownloadCanceled": "Download canceled",
+
   "turnActivityWaiting": "Waiting for model response",
   "turnActivitySubagent": "Waiting for sub-agents to finish",
   "turnActivityThinking": "Thinking",
@@ -28,7 +34,7 @@
   "browserFillFocused": "Fill selected webpage field",
   "browserPrivateInput": "Type or paste text (hidden)",
   "browserAgentWorkspace": "Agent browser",
-  "browserAgentSubtitle": "This chat’s isolated browser, separate from normal preview",
+  "browserAgentSubtitle": "This conversation’s browser; native pages share the preview session",
   "browserUserControl": "Human control",
   "browserControlMinimize": "Minimize",
   "browserControlRestore": "Show browser status",

@@ -1,0 +1,123 @@
+{
+  "thread_id": "thr_1043fc3a",
+  "event": {
+    "seq": 508606,
+    "timestamp": "2026-10-23T10:38:36.529829+00:00",
+    "thread_id": "thr_1043fc3a",
+    "turn_id": "turn_9d5b00ef",
+    "item_id": null,
+    "event": "turn.completed",
+    "payload": {
+      "turn": {
+        "schema_version": 2,
+        "id": "turn_9d5b00ef",
+        "thread_id": "thr_1043fc3a",
+        "status": "completed",
+        "input_summary": "仅回复“并行对话正常”，不要调用工具。",
+        "created_at": "2026-10-23T10:38:33.637187Z",
+        "started_at": "2026-10-23T10:38:33.637187Z",
+        "ended_at": "2026-10-23T10:38:36.519075Z",
+        "duration_ms": 2881,
+        "end_to_end_ms": 2881,
+        "usage": {
+          "input_tokens": 31387,
+          "output_tokens": 31,
+          "total_tokens": 31418,
+          "cache_hit_tokens": 30720,
+          "cache_miss_tokens": 0,
+          "turns": 1,
+          "token_economy_savings_tokens": 0,
+          "models": {
+            "qwen-3-8-max": {
+              "input_tokens": 31387,
+              "output_tokens": 31,
+              "cache_hit_tokens": 30720,
+              "cache_miss_tokens": 0,
+              "cost_usd": 0.0,
+              "cost_cny": 0.0
+            }
+          },
+          "sources": {
+            "agent_round": 1
+          },
+          "cache_hit_rate": 1.0
+        },
+        "task_outcome": null,
+        "error": null,
+        "item_ids": [
+          "item_61ecaa8f",
+          "item_9c1dd21e",
+          "item_cf3a8daf"
+        ],
+        "import_generation": null,
+        "steer_count": 0,
+        "diff_snapshot": {
+          "turn_id": "turn_9d5b00ef",
+          "files": [],
+          "totals": {
+            "files": 0,
+            "additions": 0,
+            "deletions": 0
+          },
+          "revision": 1,
+          "merged_unified_diff": "",
+          "complete": true
+        }
+      },
+      "latency_trace": {
+        "turn_id": "turn_9d5b00ef",
+        "mode": "agent",
+        "ui_submit_at_ms": null,
+        "main_runtime_request_start_ms": null,
+        "runtime_turn_created_ms": 1792751913624,
+        "engine_load_start_ms": 1792751913402,
+        "engine_load_end_ms": 1792751913624,
+        "engine_load_cache_hit": false,
+        "tool_catalog_start_ms": 1792751913868,
+        "tool_catalog_end_ms": 1792751913871,
+        "tool_catalog_build_ms": 3,
+        "catalog_refresh_count": 0,
+        "catalog_refresh_total_ms": 0,
+        "tools_count": 36,
+        "active_tools_count": 34,
+        "llm_payload_bytes": null,
+        "llm_request_start_ms": 1792751913915,
+        "llm_first_sse_chunk_ms": 1792751915872,
+        "runtime_first_delta_emitted_ms": 1792751916000,
+        "turn_completed_ms": 1792751916519,
+        "first_response_timeout_s": 120.0,
+        "timeout_reason": null,
+        "delta_events_emitted": 8,
+        "approval_wait_total_ms": 0,
+        "approval_wait_count": 0,
+        "rounds": [
+          {
+            "round_idx": 0,
+            "started_at_ms": 1792751913878,
+            "llm_request_start_ms": 1792751913915,
+            "llm_first_sse_chunk_ms": 1792751915872,
+            "llm_stream_end_ms": 1792751916507,
+            "llm_ttfb_ms": 1957,
+            "llm_stream_ms": 2592,
+            "tool_calls": 0,
+            "tool_exec_ms": null
+          }
+        ],
+        "extra": {},
+        "segments_ms": {
+          "ui_to_main_ms": null,
+          "main_to_runtime_ms": null,
+          "engine_load_ms": 222,
+          "first_tool_catalog_ms": 3,
+          "catalog_refresh_ms": null,
+          "llm_ttfb_ms": 1957,
+          "llm_to_first_delta_ms": 128,
+          "approval_wait_ms": null,
+          "tool_exec_ms": null,
+          "agent_loop_ms": 2895,
+          "end_to_end_ms": null
+        }
+      }
+    }
+  }
+}

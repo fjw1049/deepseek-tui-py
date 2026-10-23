@@ -1,0 +1,6 @@
+{
+  "first_call_after_bridge_death_refused": true,
+  "new_runtime_segment_on_reconnect": true,
+  "old_javascript_binding_discarded": true,
+  "idle_pause_releases_process_and_lock": true
+}

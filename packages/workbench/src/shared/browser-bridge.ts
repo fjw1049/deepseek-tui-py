@@ -2,7 +2,7 @@
 export const DEV_BROWSER_PARTITION = 'persist:deepseek-dev-browser'
 
 /** A Workbench browser tab the runtime may drive through the loopback CDP bridge. */
-export type BrowserBridgeTab = { tabId: string; webContentsId: number; active: boolean; visible: boolean }
+export type BrowserBridgeTab = { tabId: string; webContentsId: number; active: boolean; visible: boolean; inputBlocked?: boolean }
 
 /** Tab changes the runtime asks the Workbench browser to make. */
 export type BrowserBridgeCommand =

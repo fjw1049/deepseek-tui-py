@@ -885,7 +885,7 @@ async def test_view_reports_main_frame_loading(tmp_path):
             handlers[event] = callback
 
     client = Client()
-    run = SimpleNamespace(thread_id="one", generation=0, session=SimpleNamespace(
+    run = SimpleNamespace(thread_id="one", native=False, generation=0, session=SimpleNamespace(
         _internal=SimpleNamespace(client=client)))
     native = NativeBrowserEvents(run, BrowserService(tmp_path))
     await native.install(client)
@@ -895,3 +895,68 @@ async def test_view_reports_main_frame_loading(tmp_path):
     assert native.state()["loading"] is True
     handlers["Page.frameStoppedLoading"]({"frameId": "main"})
     assert native.state()["loading"] is False
+
+
+async def test_temporary_session_never_attaches_shared_workbench(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserService
+
+    browser = BrowserService(tmp_path)
+    browser.configure("private", False)
+    browser.workbench = {"port": 1, "token": "unused"}
+    attach = AsyncMock(return_value=True)
+    monkeypatch.setattr(browser, "_attach_workbench", attach)
+    with pytest.raises(ValueError, match="Workbench browser is unavailable"):
+        await browser.ensure("private", native_only=True)
+    attach.assert_not_awaited()
+    assert browser.state("private")["persistent"] is False
+    with pytest.raises(ValueError, match="temporary"):
+        await browser.sync_cookies("private")
+
+
+async def test_native_download_reconciles_after_tab_connection_changes(tmp_path):
+    from deepseek_tui.browser.native import NativeBrowserEvents
+    from deepseek_tui.browser.service import BrowserRun
+
+    service = BrowserService(tmp_path)
+    run = BrowserRun("one", tmp_path / "one", native=True)
+    directory = tmp_path / "one" / "downloads"
+    directory.mkdir(parents=True)
+    saved = directory / "download-id"
+    saved.write_bytes(b"complete")
+
+    class Client:
+        def __init__(self):
+            self.handlers = {}
+
+        async def send(self, method, params=None):
+            if method == "Workbench.getDownloads":
+                return {
+                    "downloads": [
+                        {
+                            "begin": {"guid": "download-id", "suggestedFilename": "invoice.pdf"},
+                            "progress": {
+                                "guid": "download-id",
+                                "state": "completed",
+                                "receivedBytes": 8,
+                            },
+                        }
+                    ]
+                }
+            return {"frameTree": {"frame": {"id": "main", "loaderId": "doc"}}}
+
+        def on(self, event, callback):
+            self.handlers[event] = callback
+
+    client = Client()
+    run.session = SimpleNamespace(_internal=SimpleNamespace(client=client))
+    service.runs["one"] = run
+    native = NativeBrowserEvents(run, service)
+    await native.install(client)
+    assert native.state()["downloads"][0]["path"] == str(saved)
+    # Repeated start events from another attached tab must not erase completion.
+    client.handlers["Browser.downloadWillBegin"](
+        {"guid": "download-id", "suggestedFilename": "invoice.pdf"}
+    )
+    assert native.state()["downloads"][0]["state"] == "completed"

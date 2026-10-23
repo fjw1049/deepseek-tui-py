@@ -62,7 +62,7 @@ async function harness() {
     await vi.waitFor(() => expect(messages.some(m => m.id === id)).toBe(true))
     return messages.find(m => m.id === id)
   }
-  return { debug, commands, messages, socket, send }
+  return { debug, commands, messages, socket, send, bridge, guest, token }
 }
 
 it('checks nested commands and still supports legitimate child and grandchild sessions', async () => {
@@ -113,4 +113,40 @@ it('retains a connected browser until its last page connection closes', async ()
   expect(h.commands[0]).toEqual({ kind: 'retain', browserId: 'one', retained: true })
   h.socket.close()
   expect(h.commands.at(-1)).toEqual({ kind: 'retain', browserId: 'one', retained: false })
+})
+
+it('keeps completed downloads available after the source connection closes', async () => {
+  const h = await harness()
+  await h.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: '/tmp/audit-downloads' })
+  const item = Object.assign(new EventEmitter(), { setSavePath: vi.fn(), getURL: () => 'https://example.test/file', getFilename: () => 'invoice.pdf', getReceivedBytes: () => 12, getTotalBytes: () => 12 })
+  mocks.partition.emit('will-download', {}, item, h.guest)
+  h.socket.close()
+  item.emit('done', {}, 'completed')
+  const messages: any[] = []
+  const socket = Object.assign(new EventEmitter(), { readyState: 1, OPEN: 1, send: (value: string) => messages.push(JSON.parse(value)), close: () => socket.emit('close') })
+  mocks.server.emit('upgrade', { url: `/tab/tab?token=${h.token}`, headers: {} }, socket, Buffer.alloc(0))
+  try {
+    socket.emit('message', JSON.stringify({ id: 1, method: 'Workbench.getDownloads' }))
+    await vi.waitFor(() => expect(messages.find(m => m.id === 1)?.result.downloads).toHaveLength(1))
+    expect(messages.find(m => m.id === 1).result.downloads[0]).toMatchObject({ begin: { suggestedFilename: 'invoice.pdf' }, progress: { state: 'completed', receivedBytes: 12 } })
+  } finally { socket.emit('close') }
+})
+
+it('registers child windows with the parent browser and keeps ownership across renderer updates', async () => {
+  const h = await harness()
+  const childGuest = Object.assign(new EventEmitter(), { id: 3, isDestroyed: () => false, getURL: () => 'https://example.test/login', getTitle: () => 'Login' })
+  mocks.guests.set(3, childGuest)
+  const child = Object.assign(new EventEmitter(), { webContents: childGuest, setIgnoreMouseEvents: vi.fn(), setFocusable: vi.fn(), blur: vi.fn(), show: vi.fn(), focus: vi.fn(), destroy: vi.fn(() => childGuest.emit('destroyed')) })
+  h.guest.emit('did-create-window', child)
+  try {
+    const result = await h.send('Workbench.listTabs')
+    const popup = result.result.tabs.find((tab: any) => tab.popup)
+    expect(popup).toMatchObject({ title: 'Login', url: 'https://example.test/login' })
+    h.bridge.setTabs('one', [{ tabId: 'tab', webContentsId: 2, active: true, visible: true, inputBlocked: true }])
+    expect(child.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true)
+    expect(child.setFocusable).toHaveBeenLastCalledWith(false)
+    expect((await h.send('Workbench.listTabs')).result.tabs).toHaveLength(2)
+    await h.send('Workbench.closeTab', { tabId: popup.tab_id })
+    expect(child.destroy).toHaveBeenCalledOnce()
+  } finally { h.socket.close() }
 })

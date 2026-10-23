@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  browserBridgeTabsPayloadSchema,
   isSafeOpenExternalUrl,
   runtimeRequestPayloadSchema,
   shellOpenExternalUrlSchema,
@@ -35,4 +36,12 @@ describe('app-ipc-schemas', () => {
       })
     ).toThrow()
   })
+})
+
+
+it('accepts the renderer input lock while rejecting invalid bridge tab fields', () => {
+  const tab = { tabId: 'tab', webContentsId: 4, active: true, visible: true, inputBlocked: true }
+  expect(browserBridgeTabsPayloadSchema.parse({ browserId: 'chat', tabs: [tab] }).tabs[0]).toEqual(tab)
+  expect(() => browserBridgeTabsPayloadSchema.parse({ browserId: 'chat', tabs: [{ ...tab, inputBlocked: 'yes' }] })).toThrow()
+  expect(() => browserBridgeTabsPayloadSchema.parse({ browserId: 'chat', tabs: [{ ...tab, unexpected: true }] })).toThrow()
 })

@@ -1,7 +1,6 @@
 import { app, session } from 'electron'
 import { isBrowsableUrl } from '../../shared/dev-preview-url'
 import { DEV_BROWSER_PARTITION } from '../../shared/browser-bridge'
-import { logWarn } from '../logger'
 
 export function installDevPreviewWebviewGuards(): void {
   // This partition is separate from the shell's microphone-enabled session.
@@ -14,6 +13,7 @@ export function installDevPreviewWebviewGuards(): void {
     callback(permission === 'fullscreen' || permission === 'clipboard-sanitized-write')
   })
 
+  const popupContents = new Set<number>()
   app.on('web-contents-created', (_, contents) => {
     contents.on('will-attach-webview', (event, webPreferences, params) => {
       // Blank tabs are where agent-opened pages start.
@@ -35,24 +35,33 @@ export function installDevPreviewWebviewGuards(): void {
       webPreferences.allowRunningInsecureContent = false
     })
 
+    const isBrowser = (): boolean => contents.getType() === 'webview' || popupContents.has(contents.id)
+    contents.on('did-create-window', child => {
+      if (!isBrowser()) return
+      const id = child.webContents.id
+      popupContents.add(id)
+      child.webContents.once('destroyed', () => popupContents.delete(id))
+    })
     contents.on('will-navigate', (event, url) => {
-      if (contents.getType() === 'webview' && !isBrowsableUrl(url)) event.preventDefault()
+      if (isBrowser() && !isBrowsableUrl(url)) event.preventDefault()
     })
     contents.on('will-redirect', (event, url, _isInPlace, isMainFrame) => {
-      if (contents.getType() === 'webview' && isMainFrame && !isBrowsableUrl(url)) {
+      if (isBrowser() && isMainFrame && !isBrowsableUrl(url)) {
         event.preventDefault()
       }
     })
 
     contents.setWindowOpenHandler(({ url }) => {
-      if (contents.getType() !== 'webview') return { action: 'allow' }
-      // Keep target=_blank in the existing guest so its history stays usable.
-      if (isBrowsableUrl(url)) {
-        void contents.loadURL(url).catch((error: unknown) => {
-          logWarn('dev-browser-navigation', 'Popup navigation failed', String(error))
-        })
-      }
-      return { action: 'deny' }
+      if (!isBrowser()) return { action: 'allow' }
+      if (url !== 'about:blank' && !isBrowsableUrl(url)) return { action: 'deny' }
+      // A real child preserves opener/postMessage without replacing the draft page.
+      return { action: 'allow', overrideBrowserWindowOptions: {
+        autoHideMenuBar: true,
+        webPreferences: { partition: DEV_BROWSER_PARTITION, nodeIntegration: false,
+          nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false,
+          contextIsolation: true, sandbox: true, webSecurity: true, webviewTag: false,
+          allowRunningInsecureContent: false, preload: undefined }
+      } }
     })
   })
 }

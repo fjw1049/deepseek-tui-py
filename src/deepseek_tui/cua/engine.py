@@ -17,6 +17,16 @@ class CuaEngineMixin:
         config = getattr(getattr(self, "_app_config", None), "cua", None)
         if not config or not config.enabled or self.mode == "plan":
             return
+        runtime = getattr(self, "tool_runtime", None)
+        if runtime is not None and self.tool_registry is runtime.registry:
+            from deepseek_tui.tools.registry import ToolRegistry
+
+            # CUA tools carry session state; never register them into a shared runtime.
+            registry = ToolRegistry(self.tool_context)
+            registry.register_all(
+                [tool for tool in self.tool_registry.all() if tool.name() not in CUA_TOOLS]
+            )
+            self.tool_registry = registry
         from deepseek_tui.cua.readiness import vision_error
 
         error = vision_error(

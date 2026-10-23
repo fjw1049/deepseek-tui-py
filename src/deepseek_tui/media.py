@@ -160,6 +160,19 @@ def _encode_image_data_url(block: ImageBlock, *, max_side: int = 2048) -> str:
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=88)
         mime = "image/jpeg"
+    if (block.source or {}).get("kind") == "cua" and buffer.tell() > CUA_RAW_IMAGE_BYTES:
+        image = image.convert("RGB")
+        for quality in (75, 60, 45, 30):
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=quality)
+            mime = "image/jpeg"
+            if buffer.tell() <= CUA_RAW_IMAGE_BYTES:
+                break
+        else:
+            raise ValueError(
+                "CUA screenshot exceeds the image limit at its original pixel size. "
+                "Request a smaller observation; do not replay the preceding action."
+            )
     return f"data:{mime};base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
 
 

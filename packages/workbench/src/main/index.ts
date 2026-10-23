@@ -885,10 +885,10 @@ async function runtimeRequest(
     }
     const method = init.method ?? 'GET'
     const pathOnly = pathNorm.split('?')[0] ?? pathNorm
-    // Bulk archive purge / data maintenance can touch hundreds of threads.
+    // Maintenance and native permission prompts can take several minutes.
     const longPost =
       method === 'POST' &&
-      (pathOnly === '/v1/threads/purge-archived' || pathOnly.startsWith('/v1/data/') ||
+      (pathOnly === '/v1/cua/apps/revoke' || pathOnly === '/v1/threads/purge-archived' || pathOnly.startsWith('/v1/data/') ||
         pathOnly.startsWith('/v1/sharing/') || pathOnly.startsWith('/v1/external-sessions/'))
     const res = await fetch(url, {
       method,
