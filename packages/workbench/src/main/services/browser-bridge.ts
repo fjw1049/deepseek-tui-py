@@ -143,6 +143,8 @@ export function createBrowserBridge(deps: Deps) {
     guest.once('destroyed', () => {
       watched.delete(guest.id)
       downloadDirs.delete(guest.id)
+      // A recreated webview may already own this tab id; leave its entry and sockets alone.
+      if (tabs.get(tab.tabId)?.webContentsId !== guest.id) return
       tabs.delete(tab.tabId)
       closeSockets(tab.tabId)
       for (const child of tabsOf(tab.browserId)) if (child.openerId === tab.tabId) child.popup?.destroy()

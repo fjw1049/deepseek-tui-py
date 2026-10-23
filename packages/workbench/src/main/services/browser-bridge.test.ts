@@ -132,6 +132,28 @@ it('keeps completed downloads available after the source connection closes', asy
   } finally { socket.emit('close') }
 })
 
+it('keeps a tab whose webview was recreated when the old guest is destroyed late', async () => {
+  const h = await harness()
+  const replacement = Object.assign(new EventEmitter(), { debugger: h.debug, id: 4, isDestroyed: () => false, getType: () => 'webview',
+    hostWebContents: { id: 1 }, session: mocks.partition, getURL: () => 'http://example.test/new', getTitle: () => 'New' })
+  mocks.guests.set(4, replacement)
+  h.bridge.setTabs('one', [{ tabId: 'tab', webContentsId: 4, active: true, visible: true }])
+  mocks.guests.delete(2)
+  h.guest.emit('destroyed')
+  const messages: any[] = []
+  const socket = Object.assign(new EventEmitter(), { readyState: 1, OPEN: 1, destroy: vi.fn(),
+    send: (value: string) => messages.push(JSON.parse(value)), close: () => socket.emit('close') })
+  mocks.server.emit('upgrade', { url: `/tab/tab?token=${h.token}`, headers: {} }, socket, Buffer.alloc(0))
+  try {
+    socket.emit('message', JSON.stringify({ id: 1, method: 'Workbench.listTabs' }))
+    await vi.waitFor(() => expect(messages.find(m => m.id === 1)).toBeDefined())
+    expect(socket.destroy).not.toHaveBeenCalled()
+    expect(messages.find(m => m.id === 1).result.tabs).toEqual([
+      expect.objectContaining({ tab_id: 'tab', url: 'http://example.test/new' })
+    ])
+  } finally { socket.emit('close') }
+})
+
 it('registers child windows with the parent browser and keeps ownership across renderer updates', async () => {
   const h = await harness()
   const childGuest = Object.assign(new EventEmitter(), { id: 3, isDestroyed: () => false, getURL: () => 'https://example.test/login', getTitle: () => 'Login' })
