@@ -102,7 +102,12 @@ async def test_fetch_direct_resource_stays_direct(mock_api):
     (['anysearch', 'deepseek'], True, ['anysearch', 'deepseek']),
     (['deepseek', 'anysearch'], False, ['deepseek']),
     (['tavily', 'deepseek'], False, ['deepseek']),
-    ([], False, ['direct']),
+    (['DeepSeek', 'deepseek'], True, ['deepseek']),
+    # Search settings never take away AnySearch extraction.
+    (['tavily'], False, ['anysearch']),
+    ([], False, ['anysearch']),
+    ([], True, ['anysearch', 'direct']),
+    (None, False, ['anysearch']),
 ])
 async def test_fetch_follows_enabled_order(monkeypatch, providers, empty_anysearch, expected):
     called = []

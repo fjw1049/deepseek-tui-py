@@ -77,7 +77,13 @@ class FetchUrlTool(ToolSpec):
         deepseek_api_key: str | None = None, providers: list[str] | None = None,
     ) -> None:
         self._deepseek_api_key = (deepseek_api_key or os.environ.get("DEEPSEEK_API_KEY", "")).strip()
-        self._providers = ["anysearch"] if providers is None else providers
+        # Search order picks the extractor; AnySearch stays the fallback whatever search uses.
+        self._providers = [
+            name for name in _normalize_web_search_providers(providers) or []
+            if name in {"anysearch", "deepseek"}
+        ]
+        if "anysearch" not in self._providers:
+            self._providers.append("anysearch")
         self._anysearch_api_key = (
             anysearch_api_key or _ANYSEARCH_API_KEY or ""
         ).strip()
@@ -156,8 +162,6 @@ class FetchUrlTool(ToolSpec):
                     backend = "direct"
                 else:
                     for provider in self._providers:
-                        if provider not in {"anysearch", "deepseek"}:
-                            continue
                         try:
                             if provider == "deepseek":
                                 data = await _deepseek_request(
