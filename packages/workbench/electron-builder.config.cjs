@@ -70,6 +70,8 @@ module.exports = {
   appId: 'com.xingyuzhong.deepseekgui',
   protocols: [{ name: 'Dayu shared conversation', schemes: ['deepseek-gui'] }],
   productName: 'Dayu',
+  // Keep the legacy binary name so existing shortcuts, pins and installs keep working.
+  executableName: 'DeepSeek GUI',
   // node-pty runs spawn-helper; binaries must live outside asar to be executable.
   asar: true,
   asarUnpack: ['**/node_modules/node-pty/**/*'],

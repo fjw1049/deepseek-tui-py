@@ -1,4 +1,7 @@
-import { Menu, app, type MenuItemConstructorOptions } from 'electron'
+import { Menu, type MenuItemConstructorOptions } from 'electron'
+
+/** Name users see; packaged builds keep the legacy app.name for their keychain entry. */
+export const APP_DISPLAY_NAME = 'Dayu'
 
 /**
  * Install a minimal app menu that frees ⌘Q for the in-app approval-policy
@@ -15,17 +18,17 @@ export function installAppMenu(): void {
   const template: MenuItemConstructorOptions[] = isMac
     ? [
         {
-          label: app.name,
+          label: APP_DISPLAY_NAME,
           submenu: [
-            { role: 'about' },
+            { role: 'about', label: `About ${APP_DISPLAY_NAME}` },
             { type: 'separator' },
             { role: 'services' },
             { type: 'separator' },
-            { role: 'hide' },
+            { role: 'hide', label: `Hide ${APP_DISPLAY_NAME}` },
             { role: 'hideOthers' },
             { role: 'unhide' },
             { type: 'separator' },
-            quitItem
+            { ...quitItem, label: `Quit ${APP_DISPLAY_NAME}` }
           ]
         },
         {
