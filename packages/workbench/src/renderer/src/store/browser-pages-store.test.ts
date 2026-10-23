@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { MAX_BROWSER_SESSIONS, retainBrowserSession, openPageTab, closePageTab, navigatePageTab, ensureBrowserSession, setPageDisplay, updatePageTab, useBrowserPagesStore } from './browser-pages-store'
+import { BLANK_PAGE, MAX_BROWSER_SESSIONS, retainBrowserSession, openPageTab, closePageTab, navigatePageTab, ensureBrowserSession, setPageDisplay, updatePageTab, useBrowserPagesStore } from './browser-pages-store'
 
 beforeEach(() => { vi.useFakeTimers(); useBrowserPagesStore.setState({ sessions: {}, display: null }) })
 afterEach(() => { vi.useRealTimers() })
 
-it('only prunes unused blank browsers, preserving pages with user content', () => {
+it('prunes unused blank browsers before ones showing pages', () => {
   ensureBrowserSession('shown')
   setPageDisplay({ browserId: 'shown', rect: { top: 0, left: 0, width: 10, height: 10 } })
   for (let index = 0; index < MAX_BROWSER_SESSIONS; index += 1) {
@@ -21,6 +21,24 @@ it('only prunes unused blank browsers, preserving pages with user content', () =
   expect(kept).toContain('shown')
   expect(kept).toContain('thread-0')
   expect(kept).not.toContain('thread-1')
+})
+
+it('caps browsers with pages too and reopens their URLs when the conversation returns', () => {
+  for (let index = 0; index < MAX_BROWSER_SESSIONS; index += 1) {
+    openPageTab(`thread-${index}`, `https://example.test/${index}`)
+    vi.advanceTimersByTime(60_000)
+  }
+  const old = useBrowserPagesStore.getState().sessions['thread-0']!
+  updatePageTab('thread-0', old.activeTabId, { title: 'Draft' })
+  vi.advanceTimersByTime(10 * 60_000)
+  openPageTab('newest', 'https://example.test/new')
+  const { sessions } = useBrowserPagesStore.getState()
+  expect(Object.keys(sessions)).toHaveLength(MAX_BROWSER_SESSIONS)
+  expect(sessions['thread-0']).toBeUndefined()
+  const reopened = ensureBrowserSession('thread-0')
+  expect(reopened.tabs.map(tab => tab.url)).toEqual([BLANK_PAGE, 'https://example.test/0'])
+  expect(reopened.tabs.find(tab => tab.id === reopened.activeTabId)).toMatchObject({ url: 'https://example.test/0', title: 'Draft', loading: true })
+  expect(reopened.tabs.every(tab => !old.tabs.some(previous => previous.id === tab.id))).toBe(true)
 })
 
 it('keeps a browser used in the last ten minutes, which an agent may still be driving', () => {

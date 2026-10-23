@@ -45,6 +45,9 @@ const lastUsed = new Map<string, number>()
 /** Opening, switching or showing a browser is use; page events inside it are not. */
 const touch = (browserId: string): void => { lastUsed.set(browserId, Date.now()) }
 
+/** Pages of reclaimed browsers, reopened by URL when their conversation shows the browser again. */
+const dormant = new Map<string, { tabs: PageTab[]; activeIndex: number }>()
+
 const webviews = new Map<string, PageWebview>()
 /** Tabs whose page finished attaching; only those accept loadURL. */
 const readyTabs = new Set<string>()
@@ -71,16 +74,29 @@ function setSession(browserId: string, session: PageSession): void {
   useBrowserPagesStore.setState(state => ({ sessions: { ...state.sessions, [browserId]: session } }))
 }
 
-/** Close the least recently used browsers beyond the limit, never the one on screen. */
+const isBlank = (session: PageSession): boolean =>
+  session.tabs.every(tab => tab.url === BLANK_PAGE && !tab.title && !tab.loading)
+
+/**
+ * Close browsers beyond the limit, never the one on screen: blank ones first, then the
+ * least recently used. A closed browser's URLs reopen later; unsaved page state does not.
+ */
 function prune(): void {
   const { sessions, display } = useBrowserPagesStore.getState()
   const idle = Object.keys(sessions)
-    .filter(id => sessions[id]?.tabs.every(tab => tab.url === BLANK_PAGE && !tab.title && !tab.loading) && !sessions[id]?.retained && id !== display?.browserId && Date.now() - (lastUsed.get(id) ?? 0) >= RECENT_USE_MS)
-    .sort((a, b) => (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0))
+    .filter(id => !sessions[id]?.retained && id !== display?.browserId && Date.now() - (lastUsed.get(id) ?? 0) >= RECENT_USE_MS)
+    .sort((a, b) => Number(isBlank(sessions[b]!)) - Number(isBlank(sessions[a]!)) ||
+      (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0))
   const excess = Object.keys(sessions).length - MAX_BROWSER_SESSIONS
   if (excess <= 0) return
   const closing = new Set(idle.slice(0, excess))
-  closing.forEach(id => lastUsed.delete(id))
+  for (const id of closing) {
+    lastUsed.delete(id)
+    const session = sessions[id]!
+    if (!isBlank(session)) {
+      dormant.set(id, { tabs: session.tabs, activeIndex: session.tabs.findIndex(tab => tab.id === session.activeTabId) })
+    }
+  }
   useBrowserPagesStore.setState(state => ({
     sessions: Object.fromEntries(Object.entries(state.sessions).filter(([id]) => !closing.has(id)))
   }))
@@ -105,8 +121,11 @@ export function ensureBrowserSession(browserId: string): PageSession {
   const existing = useBrowserPagesStore.getState().sessions[browserId]
   touch(browserId)
   if (existing) return existing
-  const tab = createPageTab(BLANK_PAGE, null)
-  const session = { tabs: [tab], activeTabId: tab.id }
+  const saved = dormant.get(browserId)
+  dormant.delete(browserId)
+  const tabs = saved ? saved.tabs.map(tab => ({ ...createPageTab(tab.url, tab.filePath), title: tab.title }))
+    : [createPageTab(BLANK_PAGE, null)]
+  const session = { tabs, activeTabId: tabs[Math.max(0, saved?.activeIndex ?? 0)]!.id }
   setSession(browserId, session)
   prune()
   return session
