@@ -15,7 +15,7 @@ import {
 import { APP_DISPLAY_NAME, installAppMenu } from './app-menu'
 import { createWindowMaterialApplier, parseWindowMaterial, type WindowMaterialAddon } from './window-material'
 import { parseSharedConversationLink } from '../shared/share-link'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -78,16 +78,10 @@ import { shutdownWorkspacePreviewServers } from './services/workspace-preview-se
 import { resolveWorkbenchLogsDir } from '../shared/workbench-home'
 import { migrateLegacyDirContents } from './migrate-legacy-dir'
 
-// Keep Chromium sessions and legacy settings when the displayed product name changes.
-if (app.isPackaged) {
-  // The internal name keys the OS keychain entry that encrypts cookies and safeStorage
-  // secrets; renaming it would make them undecryptable. Users see APP_DISPLAY_NAME.
-  app.setName('DeepSeek GUI')
-  const userDataPath = join(app.getPath('appData'), 'DeepSeek GUI')
-  mkdirSync(userDataPath, { recursive: true })
-  app.setPath('userData', userDataPath)
-  app.setAboutPanelOptions({ applicationName: APP_DISPLAY_NAME })
-}
+// app.name stays package.json's "name" (deepseek-workbench), as in every earlier build: it
+// keys userData and the keychain entry that encrypts cookies and safeStorage secrets, so
+// the Dayu rename must not change it. Users see APP_DISPLAY_NAME instead.
+app.setAboutPanelOptions({ applicationName: APP_DISPLAY_NAME })
 
 const mainDir = import.meta.dirname
 const applyWindowMaterial = createWindowMaterialApplier(() => {

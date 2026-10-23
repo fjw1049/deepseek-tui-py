@@ -1,6 +1,6 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron'
 
-/** Name users see; packaged builds keep the legacy app.name for their keychain entry. */
+/** Name users see; app.name stays package.json's name, which keys userData and the keychain. */
 export const APP_DISPLAY_NAME = 'Dayu'
 
 /**
