@@ -1277,7 +1277,15 @@ async def run_subagent_loop(
 
     agent.steps_taken = steps
     if delivery.active and delivery.outcome is None:
-        raise RuntimeError("UI task ended without a validated finish_task outcome; work remains unverified")
+        if not agent.max_steps_reached:
+            raise RuntimeError("UI task ended without a validated finish_task outcome; work remains unverified")
+        # The budget ran out mid-task: hand over what was written, labelled unverified.
+        delivery.outcome = {
+            "status": "partial",
+            "answer": "Step budget exhausted before finish_task; the report below is unverified.",
+            "evidence": [],
+            "remaining": ["Verify the UI outcome; the sub-agent stopped at its step budget"],
+        }
     if delivery.outcome is not None:
         final_text = "UI task outcome: " + json.dumps(delivery.outcome, ensure_ascii=False) + "\n\n" + final_text
     if use_structured_output and not structured_received:

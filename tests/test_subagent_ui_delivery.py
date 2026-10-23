@@ -55,11 +55,14 @@ async def test_child_requires_delivery_and_warns_without_blocking_recovery(tmp_p
     assert clients[0].calls == len(scripts)
 
 
-async def test_child_cannot_finish_without_ui_delivery_at_budget(tmp_path, monkeypatch, desktop):
+async def test_child_out_of_budget_delivers_unverified_partial(tmp_path, monkeypatch, desktop):
     monkeypatch.setattr("deepseek_tui.tools.subagent.loop.DEFAULT_MAX_STEPS", 3)
     snap = await _run([call("cua_js", "look", code="observe"), REPORT], tmp_path, [])
-    assert snap.status.kind == SubAgentStatusKind.FAILED
-    assert "without a validated finish_task" in snap.status.message
+    assert snap.status.kind == SubAgentStatusKind.COMPLETED
+    assert snap.max_steps_reached
+    assert snap.task_outcome["status"] == "partial"
+    assert snap.task_outcome["evidence"] == []
+    assert "Checked 1 desktop window." in snap.result  # what the child wrote still reaches the parent
 
 
 async def test_child_reports_remaining_work_from_partial_delivery(tmp_path, desktop):
