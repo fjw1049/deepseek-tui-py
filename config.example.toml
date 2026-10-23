@@ -18,7 +18,8 @@ allow_shell = true
 # mcp_config_path = "~/.deepseek/mcp.json"
 
 # Web search providers (Workbench Settings → Search), tried in order (fallback).
-# web_search_providers = ["anysearch", "tavily"]  # first wins; next only if prior fails / empty
+# deepseek_tools_api_key = ""  # or DEEPSEEK_API_KEY; shared by Search and Fetch
+# web_search_providers = ["anysearch", "tavily", "deepseek"]  # first wins; next only if prior fails / empty
 # anysearch_api_key = ""   # or ANYSEARCH_API_KEY (optional for AnySearch)
 # tavily_api_key = ""      # or TAVILY_API_KEY (required when tavily is enabled)
 

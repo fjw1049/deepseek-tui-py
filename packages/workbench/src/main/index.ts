@@ -1027,6 +1027,7 @@ app.whenReady().then(async () => {
       const migratedWebSearch = mergeWebSearchSettings(gui, {
         providers: {
           anysearch: { apiKey: anyKey },
+          deepseek: { apiKey: gui.providers.deepseek.apiKey.trim() || file.providers.deepseek.apiKey },
           tavily: {
             apiKey: tavKey,
             ...(enableTavilyFromKey ? { enabled: true } : {})

@@ -324,7 +324,7 @@ export type MemorySettingsPatchV1 = Partial<Omit<MemorySettingsV1, 'smart'>> & {
 }
 
 /** Built-in web_search backends (Workbench Settings → Search). */
-export const WEB_SEARCH_PROVIDER_IDS = ['anysearch', 'tavily'] as const
+export const WEB_SEARCH_PROVIDER_IDS = ['anysearch', 'tavily', 'deepseek'] as const
 export type WebSearchProviderId = (typeof WEB_SEARCH_PROVIDER_IDS)[number]
 
 export type WebSearchProviderConfigV1 = {
@@ -370,14 +370,15 @@ export function defaultWebSearchSettings(): WebSearchSettingsV1 {
     order: [...WEB_SEARCH_PROVIDER_IDS],
     providers: {
       anysearch: { enabled: true, apiKey: '' },
-      tavily: { enabled: false, apiKey: '' }
+      tavily: { enabled: false, apiKey: '' },
+      deepseek: { enabled: false, apiKey: '' }
     }
   }
 }
 
 export function normalizeWebSearchSettings(
   raw: unknown,
-  legacy?: { anysearchApiKey?: string; tavilyApiKey?: string; providers?: string[] | null }
+  legacy?: { anysearchApiKey?: string; tavilyApiKey?: string; deepseekApiKey?: string; providers?: string[] | null }
 ): WebSearchSettingsV1 {
   const defaults = defaultWebSearchSettings()
   const source =
@@ -388,6 +389,11 @@ export function normalizeWebSearchSettings(
   const next: WebSearchSettingsV1 = {
     order: normalizeWebSearchOrder(source?.order ?? defaults.order),
     providers: {
+      deepseek: {
+        enabled: providersRaw?.deepseek?.enabled ?? false,
+        apiKey: typeof providersRaw?.deepseek?.apiKey === 'string'
+          ? providersRaw.deepseek.apiKey.trim() : (legacy?.deepseekApiKey ?? '').trim()
+      },
       anysearch: {
         enabled: providersRaw?.anysearch?.enabled ?? defaults.providers.anysearch.enabled,
         apiKey:
@@ -444,6 +450,10 @@ export function mergeWebSearchSettings(
   return normalizeWebSearchSettings({
     order: patch.order ?? base.order,
     providers: {
+      deepseek: {
+        enabled: providersPatch?.deepseek?.enabled ?? base.providers.deepseek.enabled,
+        apiKey: providersPatch?.deepseek?.apiKey ?? base.providers.deepseek.apiKey
+      },
       anysearch: {
         enabled: providersPatch?.anysearch?.enabled ?? base.providers.anysearch.enabled,
         apiKey: providersPatch?.anysearch?.apiKey ?? base.providers.anysearch.apiKey

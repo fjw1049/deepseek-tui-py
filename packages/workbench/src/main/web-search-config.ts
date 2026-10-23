@@ -27,15 +27,17 @@ export function parseWebSearchFromConfigToml(content: string): {
 } {
   const anysearchApiKey = readTomlTopLevelString(content, 'anysearch_api_key') ?? ''
   const tavilyApiKey = readTomlTopLevelString(content, 'tavily_api_key') ?? ''
+  const deepseekApiKey = readTomlTopLevelString(content, 'deepseek_tools_api_key') ?? ''
   const providers = readTomlTopLevelStringArray(content, 'web_search_providers')
   const settings = normalizeWebSearchSettings(undefined, {
     anysearchApiKey,
     tavilyApiKey,
+    deepseekApiKey,
     providers
   })
   return {
     settings,
-    hasAnyKey: Boolean(anysearchApiKey || tavilyApiKey || providers)
+    hasAnyKey: Boolean(anysearchApiKey || tavilyApiKey || deepseekApiKey || providers)
   }
 }
 
@@ -52,6 +54,7 @@ async function writeConfigAt(path: string, settings: WebSearchSettingsV1): Promi
   const next = upsertTomlTopLevel(content, {
     anysearch_api_key: settings.providers.anysearch.apiKey.trim(),
     tavily_api_key: settings.providers.tavily.apiKey.trim(),
+    deepseek_tools_api_key: settings.providers.deepseek.apiKey.trim(),
     web_search_providers: enabled
   })
   await writeFile(path, next, 'utf8')

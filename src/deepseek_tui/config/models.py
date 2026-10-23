@@ -343,6 +343,7 @@ class Config(BaseModel):
     allow_shell: bool = True
     tavily_api_key: str | None = None
     anysearch_api_key: str | None = None
+    deepseek_tools_api_key: str | None = None
     # Ordered web_search backends (e.g. ["anysearch", "tavily"]).
     # Tried in order: first success with results wins; failures fall through.
     # ``None`` keeps legacy order: AnySearch first, then Tavily when keyed.

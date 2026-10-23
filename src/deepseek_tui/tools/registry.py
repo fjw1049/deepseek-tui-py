@@ -752,9 +752,13 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
                 tavily_api_key=cfg.tavily_api_key,
                 anysearch_api_key=cfg.anysearch_api_key,
                 providers=cfg.web_search_providers,
+                deepseek_api_key=cfg.deepseek_tools_api_key,
             )
         )
-        registry.register(FetchUrlTool(anysearch_api_key=cfg.anysearch_api_key))
+        registry.register(FetchUrlTool(
+            anysearch_api_key=cfg.anysearch_api_key,
+            deepseek_api_key=cfg.deepseek_tools_api_key, providers=cfg.web_search_providers,
+        ))
 
     if cfg.allow_shell and cfg.features.shell_tool and mode != "plan":
         registry.register(ExecShellTool())

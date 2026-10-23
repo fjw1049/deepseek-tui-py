@@ -1,4 +1,6 @@
 {
+  "webSearchProviderDeepseek": "DeepSeek",
+
   "externalApp": "External application",
   "externalAppDesc": "Applies when opening from the sidebar preview or double-clicking a file link in chat.",
   "title": "Settings",
@@ -126,7 +128,7 @@
   "llmAuxiliaryVision": "Vision",
   "llmSectionSpeech": "Speech assistant model",
   "sectionWebSearch": "Web search",
-  "webSearchSectionDesc": "Drag cards to set priority. Tried in list order: if the first fails or returns nothing, fall back to the next enabled provider.",
+  "webSearchSectionDesc": "Drag to reorder. Enabled services are tried in order.",
   "webSearchProviderAnysearch": "AnySearch",
   "webSearchProviderTavily": "Tavily",
   "webSearchProviderAnysearchHint": "General web search; API key is optional.",

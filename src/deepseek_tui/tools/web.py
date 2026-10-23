@@ -72,7 +72,12 @@ class _SearchHit:
 
 
 class FetchUrlTool(ToolSpec):
-    def __init__(self, *, anysearch_api_key: str | None = None) -> None:
+    def __init__(
+        self, *, anysearch_api_key: str | None = None,
+        deepseek_api_key: str | None = None, providers: list[str] | None = None,
+    ) -> None:
+        self._deepseek_api_key = (deepseek_api_key or os.environ.get("DEEPSEEK_API_KEY", "")).strip()
+        self._providers = ["anysearch"] if providers is None else providers
         self._anysearch_api_key = (
             anysearch_api_key or _ANYSEARCH_API_KEY or ""
         ).strip()
@@ -84,7 +89,7 @@ class FetchUrlTool(ToolSpec):
         return (
             "Fetch a URL and return readable content. Prefer this over "
             "hand-rolling curl/wget in exec_shell for any HTTP(S) read. "
-            "Uses AnySearch extract for general pages (clean Markdown, low "
+            "Uses the configured extraction provider for general pages (clean Markdown, low "
             "noise); raw HTTP for direct files (raw GitHub, .md/.txt). "
             "For a raw GitHub file that times out, retry via "
             "https://cdn.jsdelivr.net/gh/<owner>/<repo>@<branch>/<path>. "
@@ -150,16 +155,29 @@ class FetchUrlTool(ToolSpec):
                     content = response.text
                     backend = "direct"
                 else:
-                    try:
-                        content = await _anysearch_extract(
-                            client,
-                            url=url,
-                            api_key=self._anysearch_api_key or None,
-                            context=context,
-                        )
-                        backend = "anysearch_extract"
-                    except ToolError as exc:
-                        extract_error = str(exc)
+                    for provider in self._providers:
+                        if provider not in {"anysearch", "deepseek"}:
+                            continue
+                        try:
+                            if provider == "deepseek":
+                                data = await _deepseek_request(
+                                    client, "fetch", {"url": url}, self._deepseek_api_key, context
+                                )
+                                fetched = data.get("content", "")
+                                if not isinstance(fetched, str):
+                                    raise ToolError("DeepSeek Fetch returned invalid content")
+                                content = fetched
+                                backend = "deepseek"
+                            else:
+                                content = await _anysearch_extract(
+                                    client, url=url, api_key=self._anysearch_api_key or None,
+                                    context=context,
+                                )
+                                backend = "anysearch_extract"
+                            if content.strip():
+                                break
+                        except ToolError as exc:
+                            extract_error = str(exc)
 
                     if not content.strip():
                         _check_network_policy(url, "fetch_url", context)
@@ -223,7 +241,7 @@ class FetchUrlTool(ToolSpec):
         )
 
 
-_KNOWN_WEB_SEARCH_PROVIDERS = frozenset({"anysearch", "tavily"})
+_KNOWN_WEB_SEARCH_PROVIDERS = frozenset({"anysearch", "tavily", "deepseek"})
 
 
 def _looks_like_search_key_failure(detail: str) -> bool:
@@ -253,6 +271,7 @@ class WebSearchTool(ToolSpec):
         tavily_api_key: str | None = None,
         anysearch_api_key: str | None = None,
         api_key: str | None = None,
+        deepseek_api_key: str | None = None,
         providers: list[str] | None = None,
     ) -> None:
         # ``api_key`` kept for backward compatibility (maps to Tavily).
@@ -260,6 +279,7 @@ class WebSearchTool(ToolSpec):
         self._anysearch_api_key = (
             anysearch_api_key or _ANYSEARCH_API_KEY or ""
         ).strip()
+        self._deepseek_api_key = (deepseek_api_key or os.environ.get("DEEPSEEK_API_KEY", "")).strip()
         self._providers = _normalize_web_search_providers(providers)
 
     def name(self) -> str:
@@ -274,7 +294,7 @@ class WebSearchTool(ToolSpec):
                 "of asking the user for an AnySearch/Tavily key."
             )
         label = " → ".join(
-            "AnySearch" if name == "anysearch" else "Tavily" for name in active
+            {"anysearch": "AnySearch", "tavily": "Tavily", "deepseek": "DeepSeek"}[name] for name in active
         )
         return (
             f"Search the web via {label} (priority fallback), "
@@ -354,6 +374,29 @@ class WebSearchTool(ToolSpec):
                             api_key=self._anysearch_api_key or None,
                         )
                         candidate = list(outcome)
+                        candidate_answer = ""
+                    elif name == "deepseek":
+                        if len(query) > 128:
+                            raise ToolError("DeepSeek search query must be at most 128 characters")
+                        data = await _deepseek_request(
+                            client, "search",
+                            {"query": query, "count": min(max_results, 50), "need_content": False},
+                            self._deepseek_api_key, context,
+                        )
+                        results = data.get("results")
+                        if not isinstance(results, list) or any(
+                            not isinstance(item, dict) for item in results
+                        ):
+                            raise ToolError("DeepSeek Search returned invalid results")
+                        candidate = [
+                            _SearchHit(
+                                title=str(item.get("title") or ""),
+                                url=str(item.get("url") or ""),
+                                snippet=str(item.get("summary") or item.get("snippet") or ""),
+                                source="deepseek",
+                            )
+                            for item in results[:max_results]
+                        ]
                         candidate_answer = ""
                     elif name == "tavily":
                         if not self._tavily_api_key:
@@ -480,6 +523,29 @@ async def _search_anysearch(
             )
         )
     return hits
+
+
+async def _deepseek_request(
+    client: httpx.AsyncClient, operation: str, payload: dict[str, object],
+    api_key: str, context: ToolContext,
+) -> dict[str, object]:
+    if not api_key:
+        raise ToolError("DeepSeek API key is missing")
+    endpoint = f"https://api.deepseek.com/v1/tools/{operation}"
+    _check_network_policy(endpoint, "web_search" if operation == "search" else "fetch_url", context)
+    try:
+        response = await _post_bounded(
+            client, endpoint, json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        )
+        if not response.is_success:
+            raise ToolError(f"DeepSeek {operation} API returned HTTP {response.status_code}")
+        data = response.json()
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        raise ToolError(f"DeepSeek {operation} request failed") from exc
+    if not isinstance(data, dict):
+        raise ToolError("DeepSeek returned invalid JSON object")
+    return data
 
 
 async def _search_tavily(

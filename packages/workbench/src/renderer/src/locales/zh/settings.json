@@ -1,4 +1,6 @@
 {
+  "webSearchProviderDeepseek": "DeepSeek",
+
   "externalApp": "外部打开应用",
   "externalAppDesc": "侧边栏预览中点击「用所选应用打开」，以及聊天里双击文件链接时生效。",
   "title": "设置",
@@ -126,7 +128,7 @@
   "llmAuxiliaryVision": "视觉",
   "llmSectionSpeech": "语音辅助模型",
   "sectionWebSearch": "网络搜索",
-  "webSearchSectionDesc": "拖动卡片调整优先级。按列表顺序尝试：第一个失败或无结果时，自动回退到下一个已启用的源。",
+  "webSearchSectionDesc": "拖动调整顺序，按顺序尝试已启用的服务。",
   "webSearchProviderAnysearch": "AnySearch",
   "webSearchProviderTavily": "Tavily",
   "webSearchProviderAnysearchHint": "通用网页搜索；API Key 可选。",

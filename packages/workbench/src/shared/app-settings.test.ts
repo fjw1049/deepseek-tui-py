@@ -304,7 +304,7 @@ describe('normalizeWebSearchSettings', () => {
         tavily: { enabled: true, apiKey: 'tv' }
       }
     })
-    expect(merged.order).toEqual(['tavily', 'anysearch'])
+    expect(merged.order).toEqual(['tavily', 'anysearch', 'deepseek'])
   })
 })
 

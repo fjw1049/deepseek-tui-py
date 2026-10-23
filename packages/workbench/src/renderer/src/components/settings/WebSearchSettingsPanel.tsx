@@ -32,12 +32,8 @@ type Props = {
 
 const NAME_KEY: Record<WebSearchProviderId, string> = {
   anysearch: 'webSearchProviderAnysearch',
+  deepseek: 'webSearchProviderDeepseek',
   tavily: 'webSearchProviderTavily'
-}
-
-const HINT_KEY: Record<WebSearchProviderId, string> = {
-  anysearch: 'webSearchProviderAnysearchHint',
-  tavily: 'webSearchProviderTavilyHint'
 }
 
 export function WebSearchSettingsPanel({ form, onUpdate }: Props): ReactElement {
@@ -49,6 +45,7 @@ export function WebSearchSettingsPanel({ form, onUpdate }: Props): ReactElement 
   )
   const [showKey, setShowKey] = useState<Record<WebSearchProviderId, boolean>>({
     anysearch: false,
+    deepseek: false,
     tavily: false
   })
 
@@ -64,8 +61,10 @@ export function WebSearchSettingsPanel({ form, onUpdate }: Props): ReactElement 
     if (normalized.join('\0') === order.join('\0')) return
     // Persist the full webSearch object so partial merges cannot drop order.
     const next: WebSearchSettingsV1 = {
+      ...webSearch,
       order: normalized,
       providers: {
+        deepseek: { ...webSearch.providers.deepseek },
         anysearch: { ...webSearch.providers.anysearch },
         tavily: { ...webSearch.providers.tavily }
       }
@@ -79,8 +78,10 @@ export function WebSearchSettingsPanel({ form, onUpdate }: Props): ReactElement 
   ): void => {
     onUpdate({
       webSearch: {
+        ...webSearch,
         order,
         providers: {
+          deepseek: { ...webSearch.providers.deepseek },
           anysearch: { ...webSearch.providers.anysearch },
           tavily: { ...webSearch.providers.tavily },
           [id]: { ...webSearch.providers[id], ...patch }
@@ -188,13 +189,7 @@ function SortableProviderCard({
                 {index + 1}
               </span>
               <span>{t(NAME_KEY[id])}</span>
-              {index === 0 ? (
-                <span className="text-[11px] font-medium text-accent">
-                  {t('webSearchPriorityPrimary')}
-                </span>
-              ) : null}
             </div>
-            <p className="mt-1 max-w-2xl text-[13px] leading-6 text-ds-muted">{t(HINT_KEY[id])}</p>
           </div>
         </div>
         <Toggle checked={enabled} onChange={onEnabledChange} />
@@ -204,7 +199,7 @@ function SortableProviderCard({
           type={showKey ? 'text' : 'password'}
           className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 pr-10 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
           value={apiKey}
-          placeholder={keyRequired ? 'tvly-…' : t('webSearchOptionalKeyPlaceholder')}
+          placeholder={id === 'deepseek' ? 'sk-…' : keyRequired ? 'tvly-…' : t('webSearchOptionalKeyPlaceholder')}
           onChange={(e) => onApiKeyChange(e.target.value)}
         />
         <button
@@ -220,9 +215,6 @@ function SortableProviderCard({
           )}
         </button>
       </div>
-      <p className="pl-8 text-[12px] leading-5 text-ds-muted">
-        {keyRequired ? t('webSearchTavilyKeyHint') : t('webSearchAnysearchKeyHint')}
-      </p>
     </div>
   )
 }
