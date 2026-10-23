@@ -10,7 +10,7 @@ from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.surfaces import focus_tools, task_tools
+from deepseek_tui.surfaces import is_focus_call, is_task_call
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolResult, ToolSpec
 from deepseek_tui.tools.task_delivery import TaskDelivery
 from tests.engine.test_browser_primary_loop import ScriptedClient
@@ -111,9 +111,14 @@ async def test_without_finish_task_in_catalog_the_turn_ends_normally(tmp_path):
 
 
 def test_surface_registry_decides_task_and_focus():
-    assert {"browser_use", "cua_js", "cua_js_reset"} <= task_tools()
-    assert "browser_skill" not in task_tools()  # authoring a skill operates no interface
-    assert focus_tools() == {"browser_use"}
+    assert all(is_task_call(name) for name in ("browser_use", "cua_js", "cua_js_reset"))
+    for action in ("run_site", "capture_start", "capture_stop"):
+        assert is_task_call("browser_skill", {"action": action})
+        assert is_focus_call("browser_skill", {"action": action})
+    for action in ("read_site", "save", "add_site", "read_demonstration"):
+        assert not is_task_call("browser_skill", {"action": action})
+    assert is_focus_call("browser_use")
+    assert not is_focus_call("cua_js")
 
 
 @pytest.mark.parametrize("focused,allowed", [(False, True), (True, False)])
@@ -151,5 +156,41 @@ async def test_reconnect_guide_reaches_the_model_once(tmp_path):
         assert guide not in results["again"]
         assert "tool call first above" in results["again"]
         assert "Window: Notes 2" in results["again"]
+    finally:
+        await engine.shutdown_session()
+
+
+@pytest.mark.parametrize("verified", [True, False])
+async def test_site_replay_requires_delivery_and_verified_evidence(tmp_path, monkeypatch, verified):
+    from deepseek_tui.tools.browser_skill import BrowserSkillTool
+
+    async def replay(*args):
+        return {"verified": verified, "stopped_at": None if verified else {"reason": "needs_user"}}
+
+    monkeypatch.setattr("deepseek_tui.tools.browser_skill._run_site", replay)
+    replies = [
+        ToolCall(id="replay", name="browser_skill", arguments={"action": "run_site"}),
+        ToolCall(id="done", name="finish_task", arguments={
+            "status": "completed", "answer": "Verified.", "evidence": ["tool:replay"],
+            "remaining": [],
+        }),
+    ]
+    if not verified:
+        replies.append(ToolCall(id="blocked", name="finish_task", arguments={
+            "status": "blocked", "answer": "User input needed.", "evidence": [],
+            "remaining": ["Enter the secret"],
+        }))
+    engine, client = await desktop_engine(tmp_path, replies)
+    engine.tool_registry.register(BrowserSkillTool())
+    engine.tool_context.metadata.update(browser_service=object(), runtime_thread_id="t")
+    try:
+        result = await engine._run_conversation([Message.user("Run the recorded task")], "test", "sys", None)
+        assert "finish_task" in names(client.requests[1])
+        assert result.task_outcome["status"] == ("completed" if verified else "blocked")
+        if not verified:
+            results = {b.tool_use_id: b for m in client.requests[-1].messages
+                       for b in m.content if b.type == "tool_result"}
+            assert results["done"].is_error
+            assert "Unknown evidence" in results["done"].content
     finally:
         await engine.shutdown_session()

@@ -11,7 +11,6 @@ from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.ui_progress import (
-    BLOCK_STREAK,
     REMIND_STREAK,
     UiProgress,
     observation_of,
@@ -72,24 +71,32 @@ def test_a_drawn_pointer_counts_as_change():
     assert progress.record("cua_js", shot(screen(cursor=(800, 500)))) == ""
 
 
-def test_window_unchanged_across_other_text_reaches_the_stuck_reminder():
-    # The loop that motivated this: the window stays the same while menus are read.
+def test_new_accessibility_text_clears_stale_screenshot_streak():
     progress = UiProgress()
-    progress.record("cua_js", shot(screen()))
-    notes = []
-    for i in range(REMIND_STREAK):
-        assert progress.record("cua_js", tree(f"menu {i}")) == ""  # new text, not a loop
-        notes.append(progress.record("cua_js", shot(screen(), text=f"menu {i} open")))
-    assert "nothing new" in notes[0] and "Do not act" not in notes[0]
-    assert f"last {REMIND_STREAK} screenshots" in notes[-1]
-    assert "request_user_input" in notes[-1]
+    capture = screen()
+    for i in range(12):
+        assert progress.record("cua_js", shot(capture, text=f"Completed item {i}")) == ""
 
 
-def test_repeated_text_only_results_count_separately():
+def test_alternating_windows_are_progress():
+    progress = UiProgress()
+    captures = [screen(text="Source"), screen(text="Destination")]
+    for i in range(12):
+        assert progress.record("cua_js", shot(captures[i % 2])) == ""
+
+
+def test_new_screenshots_clear_repeated_action_receipts():
+    progress = UiProgress()
+    for i in range(12):
+        assert "Do not act" not in progress.record("cua_js", tree("Clicked"))
+        assert progress.record("cua_js", shot(screen(text=f"Item {i}"))) == ""
+
+
+def test_repeated_text_only_results_warn():
     progress = UiProgress()
     progress.record("cua_js", tree("Window: Notes"))
     notes = [progress.record("cua_js", tree("Window: Notes")) for _ in range(REMIND_STREAK)]
-    assert f"last {REMIND_STREAK} text-only results" in notes[-1]
+    assert f"last {REMIND_STREAK} observations" in notes[-1]
 
 
 def test_new_screenshot_clears_the_streak():
@@ -99,20 +106,6 @@ def test_new_screenshot_clears_the_streak():
         progress.record("cua_js", shot(screen()))
     assert progress.record("cua_js", shot(screen(text="sent"))) == ""
     assert "Do not act" not in progress.record("cua_js", shot(screen(text="sent")))
-
-
-def test_block_after_the_limit_until_a_person_acts():
-    progress = UiProgress()
-    progress.record("cua_js", shot(screen()))
-    for _ in range(BLOCK_STREAK - 1):
-        progress.record("cua_js", shot(screen()))
-        assert progress.blocked_content("cua_js") is None
-    progress.record("cua_js", shot(screen()))
-    assert "Not executed" in progress.blocked_content("cua_js")
-    assert "Not executed" in progress.blocked_content("cua_js_reset")  # same connection
-    assert progress.blocked_content("browser_use") is None  # another surface
-    progress.reset()
-    assert progress.blocked_content("cua_js") is None
 
 
 def test_browser_receipts_do_not_hide_an_unchanged_page():
@@ -152,8 +145,8 @@ class RepeatingScreen(ToolSpec):
         return ToolResult(True, "1 image(s) attached.", images=[screen(quality=60 + self.calls)])
 
 
-async def test_engine_appends_notes_and_stops_executing_a_dead_loop(tmp_path):
-    attempts = BLOCK_STREAK + 2
+async def test_engine_warns_about_repetition_without_blocking_recovery(tmp_path):
+    attempts = 10
     client = ScriptedClient([
         *(ToolCall(id=f"c{i}", name="cua_js", arguments={"code": f"click {i}"})
           for i in range(attempts)),
@@ -177,8 +170,7 @@ async def test_engine_appends_notes_and_stops_executing_a_dead_loop(tmp_path):
                     for b in m.content if b.type == "tool_result"}
         assert "nothing new" in contents["c1"]
         assert "Do not act" in contents[f"c{REMIND_STREAK}"]
-        assert tool.calls == BLOCK_STREAK + 1  # the first capture, then the repeats
-        assert "Not executed" in contents[f"c{BLOCK_STREAK + 1}"]
+        assert tool.calls == attempts
         assert result.task_outcome["status"] == "blocked"
         # The next turn starts with a clean history: the same screen is new again.
         client.replies = iter([
@@ -189,6 +181,6 @@ async def test_engine_appends_notes_and_stops_executing_a_dead_loop(tmp_path):
             }),
         ])
         await engine._run_conversation([Message.user("Look again")], "test", "sys", None)
-        assert tool.calls == BLOCK_STREAK + 2
+        assert tool.calls == attempts + 1
     finally:
         await engine.shutdown_session()

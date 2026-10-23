@@ -1,10 +1,8 @@
 """Notice when a UI surface stops returning anything new.
 
-Same-args dedup (``tool_dedup``) cannot see a UI loop: every call's code differs while
-the screen does not. Loops also rarely repeat back to back; they cycle (screenshot,
-accessibility tree, an opened menu, the same screenshot again). So an observation counts
-as new only if it matches none seen on that surface since the last reset, and a run of
-results that are not new is the signal.
+Compare consecutive observations, not all states visited in a task. Repeated output
+is only a warning: it cannot prove that an action failed or that another observation
+would be unsafe. Existing execution budgets bound loops without blocking recovery.
 
 Screenshots are compared as grayscale thumbnails by their most-changed 8x8 block.
 Measured on real desktop captures: re-encodes of one unchanged screen 0-1, a focus ring
@@ -32,37 +30,26 @@ logger = logging.getLogger(__name__)
 THUMB_WIDTH = 512
 BLOCK = 8
 SAME_BLOCK_DIFF = 2
+# Three repeats trigger advice only; the execution budget remains the hard limit.
 REMIND_STREAK = 3
-BLOCK_STREAK = 8
-MAX_HISTORY = 32
-
-_KINDS = {
-    "screenshot": "screenshots all matched earlier captures",
-    "text": "text-only results all repeated earlier ones",
-}
 
 _UNCHANGED = (
     "\n\n<system-reminder>\n"
-    "This observation matches one this interface already returned in this task: it shows "
+    "This observation matches the previous one of this kind: it shows "
     "nothing new.\n"
     "</system-reminder>"
 )
 
 _STUCK = (
     "\n\n<system-reminder>\n"
-    "The last {streak} {kind} on this interface: the recent actions produced nothing "
-    "new. Do not act on what you cannot see. Choose one and state it before acting: "
+    "The last {streak} observations repeated earlier content on this interface. "
+    "This may indicate stalled progress, but does not prove an action failed. "
+    "Do not act on what you cannot see. Choose one and state it before acting: "
     "(1) a way to observe or reach the target you have not tried yet; "
     "(2) request_user_input for the step that needs the person; "
     "(3) stop and report the blocker and what remains.\n"
     "</system-reminder>"
 )
-
-_BLOCKED = (
-    "Not executed: the last {streak} {kind} on this interface. "
-    "Ask the user with request_user_input, or stop and report the blocker and what remains."
-)
-
 
 _Thumb = Image.Image  # grayscale, THUMB_WIDTH wide: captures of one window at two scales match
 
@@ -79,26 +66,6 @@ def _similar(a: _Thumb, b: _Thumb) -> bool:
     diff = ImageChops.difference(a, b)
     blocks = diff.resize((max(1, diff.width // BLOCK), max(1, diff.height // BLOCK)), Image.BOX)
     return blocks.getextrema()[1] <= SAME_BLOCK_DIFF
-
-
-@dataclass
-class _Seen:
-    texts: set[str] = field(default_factory=set)
-    images: list[_Thumb] = field(default_factory=list)
-
-    def is_new(self, observation: _Observation) -> bool:
-        """Record this observation; False when it shows nothing not seen before."""
-        new_text = observation.text not in self.texts
-        self.texts.add(observation.text)
-        if not observation.images:
-            return new_text
-        new_image = False
-        for image in observation.images:
-            if not any(_similar(image, earlier) for earlier in self.images):
-                new_image = True
-                self.images.append(image)
-                del self.images[:-MAX_HISTORY]
-        return new_image
 
 
 def _thumbnail(asset_id: str) -> _Thumb:
@@ -137,37 +104,36 @@ def _surface_key(tool_name: str) -> frozenset[str]:
 
 @dataclass
 class UiProgress:
-    _seen: dict[frozenset[str], _Seen] = field(default_factory=dict)
-    # Per surface and kind ("screenshot" or "text"): consecutive results showing nothing new.
-    _streak: dict[tuple[frozenset[str], str], int] = field(default_factory=dict)
+    # Keep only the previous observation per kind, so normal A/B navigation is progress.
+    _last: dict[tuple[frozenset[str], str], _Observation] = field(default_factory=dict)
+    _streak: dict[frozenset[str], int] = field(default_factory=dict)
 
     def reset(self) -> None:
-        self._seen.clear()
+        self._last.clear()
         self._streak.clear()
 
-    def blocked_content(self, tool_name: str) -> str | None:
-        key = _surface_key(tool_name)
-        for kind in _KINDS:
-            streak = self._streak.get((key, kind), 0)
-            if streak >= BLOCK_STREAK:
-                return _BLOCKED.format(streak=streak, kind=_KINDS[kind])
-        return None
+    def record_result(self, tool_name: str, result: ToolResult) -> str:
+        return self.record(tool_name, observation_of(result))
 
     def record(self, tool_name: str, observation: _Observation | None) -> str:
-        """Remember this observation; return the note to append to its tool result."""
         if observation is None:
             return ""
         key = _surface_key(tool_name)
-        # With screenshots, only they decide: a window whose pixels never change has not
-        # responded, even while the text beside them differs (another menu's tree, an
-        # error). Text-only results keep their own count, so reading menus neither hides
-        # nor clears an unresponsive window.
         kind = "screenshot" if observation.images else "text"
-        if self._seen.setdefault(key, _Seen()).is_new(observation):
-            self._streak[(key, kind)] = 0
+        previous = self._last.get((key, kind))
+        self._last[(key, kind)] = observation
+        unchanged = (
+            previous is not None
+            and previous.text == observation.text
+            and len(previous.images) == len(observation.images)
+            and all(_similar(a, b) for a, b in zip(previous.images, observation.images))
+        )
+        if not unchanged:
+            # Progress in either channel clears the surface's warning streak.
+            self._streak[key] = 0
             return ""
-        streak = self._streak[(key, kind)] = self._streak.get((key, kind), 0) + 1
-        logger.info("ui_observation_not_new tool=%s kind=%s streak=%d", tool_name, kind, streak)
+        streak = self._streak[key] = self._streak.get(key, 0) + 1
+        logger.info("ui_observation_unchanged tool=%s kind=%s streak=%d", tool_name, kind, streak)
         if streak >= REMIND_STREAK:
-            return _STUCK.format(streak=streak, kind=_KINDS[kind])
+            return _STUCK.format(streak=streak)
         return _UNCHANGED

@@ -85,6 +85,8 @@ def summarize_subagent_result(snap: SubAgentResult) -> str:
         return "Cancelled"
     if snap.status.kind is SubAgentStatusKind.INTERRUPTED:
         return f"Interrupted: {snap.status.message or 'unknown'}"
+    if snap.task_outcome is not None and snap.task_outcome.get("status") != "completed":
+        return f"UI task {snap.task_outcome['status']}: {snap.task_outcome['answer']}"[:240]
     body = (snap.result or "").strip()
     if not body:
         return f"Completed ({snap.agent_type.value})"
@@ -125,6 +127,8 @@ def subagent_done_sentinel(snap: SubAgentResult) -> str:
         }
         # Only present when it happened: a parent that has never seen the key
         # cannot misread its absence, and the common case stays unchanged.
+        if snap.task_outcome is not None:
+            body["task_outcome"] = snap.task_outcome
         if snap.max_steps_reached:
             body["max_steps_reached"] = True
         payload = json.dumps(body, ensure_ascii=False)
@@ -195,3 +199,4 @@ class AgentRunOutput:
     text: str
     structured: Any = None
     structured_received: bool = False
+    task_outcome: dict[str, Any] | None = None

@@ -22,7 +22,7 @@ from deepseek_tui.engine.dispatch import (
     should_parallelize_tool_batch,
 )
 from deepseek_tui.engine.tool_dedup import ToolCallDeduplicator
-from deepseek_tui.engine.ui_progress import UiProgress, observation_of
+from deepseek_tui.engine.ui_progress import UiProgress
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
@@ -53,7 +53,7 @@ from deepseek_tui.tools.plan_mode import (
 )
 from deepseek_tui.protocol.messages import Message, ToolUseBlock
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.surfaces import focus_tools, task_tools
+from deepseek_tui.surfaces import is_focus_call, is_task_call
 from deepseek_tui.tools.approval import (
     ApprovalCacheStatus,
     ApprovalDecision,
@@ -433,9 +433,10 @@ class ToolExecutionMixin:
         from deepseek_tui.tools.registry import ToolCapability
 
         delivery = self.tool_context.metadata.get("task_delivery")
-        if delivery and delivery.active and result.success and tool_call.name not in {
+        if (delivery and delivery.active and result.success
+                and result.metadata.get("task_evidence", True) and tool_call.name not in {
             "finish_task", "request_task_tools", "request_user_input", "checklist",
-        }:
+        }):
             if tool_call.name != "browser_use" or tool_call.arguments.get("action") != "request_assistance":
                 evidence_ref = "tool:" + tool_call.id
                 delivery.evidence.add(evidence_ref)
@@ -534,9 +535,10 @@ class ToolExecutionMixin:
             self.tool_context.metadata.setdefault("image_assets", {})[image.asset_id] = (
                 image.model_dump()
             )
-        if tool_call.name in task_tools():
-            observation = await asyncio.to_thread(observation_of, result)
-            output_for_context += self._ui_progress.record(tool_call.name, observation)
+        if is_task_call(tool_call.name, tool_call.arguments):
+            output_for_context += await asyncio.to_thread(
+                self._ui_progress.record_result, tool_call.name, result
+            )
         elif tool_call.name == REQUEST_USER_INPUT_NAME and result.success:
             self._ui_progress.reset()  # the person may have changed what the screen shows
         output_for_context = self._tool_dedup.decorate_execute_content(decision, output_for_context)
@@ -782,11 +784,9 @@ class ToolExecutionMixin:
                 raise ToolError("Tool is outside this task's browser phase; "
                                 "request_task_tools with the task dependency first")
             # Without finish_task in this catalog the turn could never be delivered.
-            if tool_name in task_tools() and "finish_task" in delivery.catalog:
+            if is_task_call(tool_name, tool_call.arguments) and "finish_task" in delivery.catalog:
                 delivery.active = True
-                delivery.focused = delivery.focused or tool_name in focus_tools()
-        if tool_name in task_tools() and (blocked := self._ui_progress.blocked_content(tool_name)):
-            raise ToolError(blocked)
+                delivery.focused = delivery.focused or is_focus_call(tool_name, tool_call.arguments)
 
         hook_ctx = self._lifecycle_hook_context(
             tool_name=tool_name,

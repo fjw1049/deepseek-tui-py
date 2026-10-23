@@ -36,6 +36,7 @@ def agent_record(agent: SubAgent) -> dict[str, Any]:
         "result": agent.result,
         "structured_result": agent.structured_result,
         "structured_received": agent.structured_received,
+        "task_outcome": agent.task_outcome,
         "steps_taken": agent.steps_taken,
         "max_steps_reached": agent.max_steps_reached,
         "started_at_ms": agent.started_at_ms,
@@ -90,6 +91,7 @@ def restore_agent(raw: dict[str, Any], workspace: Path, default_model: str) -> S
         agent.status = SubAgentStatus.interrupted(SUBAGENT_RESTART_REASON)
     agent.result = raw.get("result")
     agent.structured_result = raw.get("structured_result")
+    agent.task_outcome = raw.get("task_outcome")
     agent.structured_received = bool(
         raw.get("structured_received", agent.structured_result is not None)
     )

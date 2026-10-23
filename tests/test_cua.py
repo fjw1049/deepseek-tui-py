@@ -1007,7 +1007,12 @@ async def test_auto_allow_skips_the_card_even_unattended(installation, native, t
             "action": "accept", "content": {}, "_meta": {"persist": "session"}
         }
         assert not engine.handle.pending_user_inputs
-        assert "unattended" not in engine._cua_prompt()
+        assert "unattended" in engine._cua_prompt()
+        assert "browser-site grants" in engine._cua_prompt()
+        assert "stop and report" in engine._cua_prompt()
+        origin = {**native, "_meta": {"origin": "https://example.com",
+                                      "tool_name": "access_browser_origin"}}
+        assert await engine._cua_session.on_approval(origin) == {"action": "cancel"}
     finally:
         await engine._close_cua()
 

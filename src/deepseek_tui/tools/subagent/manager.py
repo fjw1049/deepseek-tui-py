@@ -354,6 +354,7 @@ class SubAgentManager:
         agent.result = None
         agent.structured_result = None
         agent.structured_received = False
+        agent.task_outcome = None
         agent.max_steps_reached = False
         agent.ended_at_ms = None
         agent.cancel_token = asyncio.Event()
@@ -551,6 +552,7 @@ class SubAgentManager:
                 if isinstance(result, AgentRunOutput):
                     agent.result = result.text
                     agent.structured_result = result.structured
+                    agent.task_outcome = result.task_outcome
                     agent.structured_received = result.structured_received or result.structured is not None
                 else:
                     agent.result = str(result) if result is not None else None

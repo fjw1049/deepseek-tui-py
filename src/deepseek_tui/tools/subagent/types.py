@@ -469,6 +469,7 @@ class SubAgentResult:
     max_steps_reached: bool = False
     background: bool = False
     structured_received: bool = False
+    task_outcome: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

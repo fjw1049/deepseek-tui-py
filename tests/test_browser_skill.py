@@ -224,6 +224,7 @@ async def test_tool_runs_a_saved_site_example_with_approval(service, tmp_path, m
                                  "inputs": {"loginid": "alice"}}, context)
     assert result.success and ran == ["step_001", "step_002"]
     assert json.loads(result.content)["stopped_at"]["reason"] == "needs_user"
+    assert result.metadata["task_evidence"] is False
 
 
 def _second_site(service, host):

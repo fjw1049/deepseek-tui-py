@@ -13,7 +13,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const PRODUCT_NAME = 'DeepSeek GUI'
+const PRODUCT_NAME = 'Dayu'
 const DEFAULT_RELEASE_PREFIX = 'deepseek-gui'
 const DEFAULT_RELEASE_CHANNEL = 'frontier'
 const PLATFORMS = ['mac', 'win', 'linux']
@@ -24,15 +24,15 @@ const ROOT = resolve(SCRIPT_DIR, '..')
 const PLATFORM_SPECS = {
   mac: {
     updateFile: 'latest-mac.yml',
-    assetPattern: /^DeepSeek-GUI-.+-mac-(arm64|x64)\.(dmg|zip)(\.blockmap)?$/
+    assetPattern: /^Dayu-.+-mac-(arm64|x64)\.(dmg|zip)(\.blockmap)?$/
   },
   win: {
     updateFile: 'latest.yml',
-    assetPattern: /^DeepSeek-GUI-.+-win-x64\.exe(\.blockmap)?$/
+    assetPattern: /^Dayu-.+-win-x64\.exe(\.blockmap)?$/
   },
   linux: {
     updateFile: 'latest-linux.yml',
-    assetPattern: /^DeepSeek-GUI-.+-linux-x86_64\.AppImage(\.blockmap)?$/
+    assetPattern: /^Dayu-.+-linux-x86_64\.AppImage(\.blockmap)?$/
   }
 }
 

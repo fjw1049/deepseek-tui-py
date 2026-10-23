@@ -88,14 +88,18 @@ class CuaEngineMixin:
         if session is None or self.mode == "plan":
             return ""
         config = getattr(getattr(self, "_app_config", None), "cua", None)
-        unattended = (
-            "\n\nThis run is unattended: app access requests are declined automatically, so "
-            "computer use works only with apps the user already always-allows. When a step "
-            "needs a person, stop and report exactly what remains."
-            if self.tool_context.metadata.get("unattended")
-            and not (config and config.auto_allow_apps)
-            else ""
-        )
+        unattended = ""
+        if self.tool_context.metadata.get("unattended"):
+            access = (
+                "Native-app access is automatically allowed, but new browser-site grants "
+                "are declined automatically. "
+                if config and config.auto_allow_apps else
+                "New app and browser-site access requests are declined automatically. "
+            )
+            unattended = (
+                "\n\nThis run is unattended: " + access
+                + "When a step needs a person, stop and report exactly what remains."
+            )
         # Host guidance lives in prompts/computer_use.md (with the routing section);
         # only the runtime's own instructions and live run state are appended here.
         return "\n\n" + session.instructions + unattended

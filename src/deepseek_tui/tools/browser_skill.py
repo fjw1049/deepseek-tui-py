@@ -152,7 +152,12 @@ class BrowserSkillTool(ToolSpec):
                     )
                 else:
                     return ToolResult(False, "Unknown browser_skill action")
-            return ToolResult(True, json.dumps(result, ensure_ascii=False))
+            # A successful replay invocation can still stop before the requested outcome.
+            evidence = action != "run_site" or (
+                not result.get("stopped_at") and result.get("verified") is True
+            )
+            return ToolResult(True, json.dumps(result, ensure_ascii=False),
+                              metadata={"task_evidence": evidence})
         except (ValueError, OSError, ImportError) as exc:
             return ToolResult(False, str(exc) or type(exc).__name__)
 

@@ -15,7 +15,7 @@ import {
 import { installAppMenu } from './app-menu'
 import { createWindowMaterialApplier, parseWindowMaterial, type WindowMaterialAddon } from './window-material'
 import { parseSharedConversationLink } from '../shared/share-link'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -77,6 +77,13 @@ import { registerAppIpcHandlers } from './ipc/register-app-ipc-handlers'
 import { shutdownWorkspacePreviewServers } from './services/workspace-preview-server'
 import { resolveWorkbenchLogsDir } from '../shared/workbench-home'
 import { migrateLegacyDirContents } from './migrate-legacy-dir'
+
+// Keep Chromium sessions and legacy settings when the displayed product name changes.
+if (app.isPackaged) {
+  const userDataPath = join(app.getPath('appData'), 'DeepSeek GUI')
+  mkdirSync(userDataPath, { recursive: true })
+  app.setPath('userData', userDataPath)
+}
 
 const mainDir = import.meta.dirname
 const applyWindowMaterial = createWindowMaterialApplier(() => {

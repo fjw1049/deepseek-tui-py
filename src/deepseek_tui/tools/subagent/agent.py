@@ -80,6 +80,7 @@ class SubAgent:
         self.result: str | None = None
         self.structured_result: Any | None = None
         self.structured_received = False
+        self.task_outcome: dict[str, Any] | None = None
         self.output_schema = output_schema
         self.steps_taken: int = 0
         self.max_steps_reached: bool = False
@@ -118,4 +119,5 @@ class SubAgent:
             max_steps_reached=self.max_steps_reached,
             background=self.background,
             structured_received=self.structured_received,
+            task_outcome=self.task_outcome,
         )

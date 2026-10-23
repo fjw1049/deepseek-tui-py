@@ -100,6 +100,7 @@ def _result_to_json(result: SubAgentResult) -> dict[str, Any]:
         "max_steps_reached": result.max_steps_reached,
         "structured": result.structured,
         "structured_received": result.structured_received,
+        "task_outcome": result.task_outcome,
         "background": result.background,
     }
 

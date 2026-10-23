@@ -68,8 +68,8 @@ if (releaseAppVersion && !/^\d+\.\d+\.\d+$/.test(releaseAppVersion)) {
 
 module.exports = {
   appId: 'com.xingyuzhong.deepseekgui',
-  protocols: [{ name: 'DeepSeek shared conversation', schemes: ['deepseek-gui'] }],
-  productName: 'DeepSeek GUI',
+  protocols: [{ name: 'Dayu shared conversation', schemes: ['deepseek-gui'] }],
+  productName: 'Dayu',
   // node-pty runs spawn-helper; binaries must live outside asar to be executable.
   asar: true,
   asarUnpack: ['**/node_modules/node-pty/**/*'],
@@ -78,7 +78,7 @@ module.exports = {
     output: process.env.DEEPSEEK_GUI_DIST_DIR || 'dist'
   },
   files: ['out/**/*', '!out/native/**/*', 'package.json'],
-  artifactName: `DeepSeek-GUI-${artifactVersion}-\${os}-\${arch}.\${ext}`,
+  artifactName: `Dayu-${artifactVersion}-\${os}-\${arch}.\${ext}`,
   publish: [
     {
       provider: 'generic',
@@ -100,7 +100,7 @@ module.exports = {
     // Voice input needs microphone access; macOS requires a usage description.
     extendInfo: {
       NSMicrophoneUsageDescription:
-        'DeepSeek GUI uses the microphone for voice-to-text input in the composer.'
+        'Dayu uses the microphone for voice-to-text input in the composer.'
     },
     icon: './src/asset/img/deepseek.png',
     // arm64 (Apple Silicon) + x64 (Intel). On M 系列 Mac 本地打包会各出一组 dmg/zip。
@@ -125,8 +125,8 @@ module.exports = {
     // 明确创建快捷方式；always 在覆盖安装时也会重建（即使用户曾删掉桌面图标）
     createDesktopShortcut: 'always',
     createStartMenuShortcut: true,
-    shortcutName: 'DeepSeek GUI',
-    uninstallDisplayName: 'DeepSeek GUI',
+    shortcutName: 'Dayu',
+    uninstallDisplayName: 'Dayu',
     deleteAppDataOnUninstall: false
   },
   linux: {

@@ -93,7 +93,7 @@ copy_mac_arch_artifacts() {
   local files=()
 
   shopt -s nullglob
-  files=("${output_dir}"/DeepSeek-GUI-*-mac-"${arch}".*)
+  files=("${output_dir}"/Dayu-*-mac-"${arch}".*)
   shopt -u nullglob
 
   [[ ${#files[@]} -gt 0 ]] || die "No macOS ${arch} artifacts found in ${output_dir}"
@@ -219,11 +219,11 @@ collect() {
 }
 
 # artifactName: ${productName}-${version}-mac-${arch}.dmg|zip
-collect "macOS arm64 dmg" "dist/DeepSeek-GUI-*-mac-arm64.dmg"
-collect "macOS x64 dmg" "dist/DeepSeek-GUI-*-mac-x64.dmg"
-collect "macOS arm64 zip" "dist/DeepSeek-GUI-*-mac-arm64.zip"
-collect "macOS x64 zip" "dist/DeepSeek-GUI-*-mac-x64.zip"
-collect "macOS blockmap" "dist/DeepSeek-GUI-*-mac-*.zip.blockmap"
+collect "macOS arm64 dmg" "dist/Dayu-*-mac-arm64.dmg"
+collect "macOS x64 dmg" "dist/Dayu-*-mac-x64.dmg"
+collect "macOS arm64 zip" "dist/Dayu-*-mac-arm64.zip"
+collect "macOS x64 zip" "dist/Dayu-*-mac-x64.zip"
+collect "macOS blockmap" "dist/Dayu-*-mac-*.zip.blockmap"
 
 upload_github_assets() {
   local tag="$1"
@@ -279,7 +279,7 @@ This is an unsigned build. macOS Gatekeeper will block first launch.
 Run this after downloading:
 
 ```sh
-xattr -cr "DeepSeek GUI.app"
+xattr -cr "Dayu.app"
 # or
 npm run mac:unquarantine
 ```

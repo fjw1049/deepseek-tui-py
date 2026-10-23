@@ -21,6 +21,9 @@ from deepseek_tui.tools.subagent.types import (
     build_subagent_system_prompt,
 )
 from deepseek_tui.utils import summarize_text
+from deepseek_tui.engine.ui_progress import UiProgress
+from deepseek_tui.surfaces import is_task_call, surface_tools
+from deepseek_tui.tools.task_delivery import FinishTaskTool, TaskDelivery
 
 if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
@@ -267,6 +270,11 @@ async def _execute_subagent_tool(
     )
     if tool_name in {"cua_js", "cua_js_reset"}:
         context.metadata["cua_call_id"] = tool_call_id
+    delivery = context.metadata.get("task_delivery")
+    if delivery is not None and is_task_call(tool_name, tool_input):
+        delivery.active = True
+    if delivery is not None and tool_name != "finish_task":
+        delivery.outcome = None  # Any further execution needs a fresh delivery.
     try:
         session = context.metadata.get("cua_session")
         handed_off = tool_name == "agent" and session is not None and await session.handoff()
@@ -278,6 +286,7 @@ async def _execute_subagent_tool(
 
             result = replace(result, content=result.content + "\n\n" + HANDOFF_NOTICE)
             session.reset_reason = ""
+            context.metadata["ui_progress"].reset()
         if hook_executor:
             from dataclasses import replace
 
@@ -290,6 +299,22 @@ async def _execute_subagent_tool(
                 feedback.append(post.reason)
             if feedback:
                 result = replace(result, content=result.content + "\n[hook feedback]\n" + "\n".join(feedback))
+        from dataclasses import replace
+
+        progress = context.metadata.get("ui_progress")
+        if progress is not None and tool_name == "request_user_input" and result.success:
+            progress.reset()
+        note = await asyncio.to_thread(progress.record_result, tool_name, result) if (
+            progress is not None and is_task_call(tool_name, tool_input)
+        ) else ""
+        if delivery is not None and delivery.active and result.success and tool_name not in {
+            "finish_task", "request_user_input", "checklist",
+        } and result.metadata.get("task_evidence", True):
+            evidence_ref = "tool:" + tool_call_id
+            delivery.evidence.add(evidence_ref)
+            result = replace(result, content=result.content + "\nEvidence reference: " + evidence_ref,
+                             metadata={**result.metadata, "evidence_ref": evidence_ref})
+        result = replace(result, content=result.content + note)
         context.metadata.setdefault("tool_result_metadata", {})[tool_call_id] = result.metadata
         context.metadata.setdefault("tool_result_content", {})[tool_call_id] = result.content
         if result.images:
@@ -578,6 +603,9 @@ async def run_subagent_loop(
         sandbox_mode=getattr(runtime.config, "sandbox_mode", None),
         approval_policy=approval_policy if isinstance(approval_policy, str) else None,
     )
+    delivery = TaskDelivery()
+    context.metadata["task_delivery"] = delivery
+    context.metadata["ui_progress"] = UiProgress()
     registry.set_context(context)
     api_tools = registry.to_api_tools()
 
@@ -595,6 +623,10 @@ async def run_subagent_loop(
     )
     if resuming and existing is not None:
         messages.extend(dicts_to_messages(existing.messages))
+        delivery.active = any(
+            is_task_call(getattr(block, "name", ""), getattr(block, "input", None))
+            for message in messages for block in message.content
+        )
         force_summary = False  # A new attempt may use tools again.
         steps = max(0, int(existing.steps_taken))
     else:
@@ -716,6 +748,13 @@ async def run_subagent_loop(
         DEFAULT_MAX_STEPS remains the hard upper bound.
         """
         nonlocal stop_hook_active
+        if delivery.active and delivery.outcome is None:
+            messages.append(reminders.reminder_message(
+                reminders.SUBAGENT_OUTPUT_NUDGE,
+                "UI work requires finish_task before the final report. Call it alone with "
+                "status, answer, evidence and remaining; use partial/blocked for unfinished work.",
+            ))
+            return False
         executor = getattr(runtime, "hook_executor", None)
         if executor is None or not executor.has_hooks_for_event("subagent_stop"):
             return True
@@ -823,6 +862,17 @@ async def run_subagent_loop(
             )
         elif context.metadata.get("cua_error"):
             system_prompt += "\n\nComputer use unavailable: " + context.metadata["cua_error"]
+        if delivery.active or surface_tools().intersection(
+            (t.get("function") or t)["name"] for t in api_tools
+        ):
+            registry.register(FinishTaskTool())
+            api_tools = registry.to_api_tools()
+            system_prompt += (
+                "\nAfter UI work, submit finish_task alone before your final SUMMARY or "
+                "structured_output. This validates the UI outcome; then deliver your usual "
+                "report. Use partial/blocked and list remaining work if unfinished."
+            )
+        delivery.catalog = {(t.get("function") or t)["name"] for t in api_tools}
         pause_generation_seen = 0
         while steps - attempt_start_steps < DEFAULT_MAX_STEPS:
             pause = getattr(runtime.manager, "parent_pause", None)
@@ -835,6 +885,8 @@ async def run_subagent_loop(
                         "continuing the original assignment; old pending actions are invalid.",
                     ))
                     pause_generation_seen = pause.generation
+                    context.metadata["ui_progress"].reset()
+                    delivery.outcome = None
             pause_generation = pause.generation if pause is not None else None
             if _subagent_cancelled(cancel, agent):
                 _save_cancel_checkpoint()
@@ -849,6 +901,8 @@ async def run_subagent_loop(
                     break
                 text = (text or "").strip()
                 if text:
+                    delivery.outcome = None
+                    context.metadata["ui_progress"].reset()
                     history.user(text)
                     from deepseek_tui.engine.turn import prepare_turn_for_model
 
@@ -873,12 +927,16 @@ async def run_subagent_loop(
             steps += 1
             agent.steps_taken = steps
 
-            round_tools = api_tools
+            round_tools = delivery.tools(api_tools)
             if force_summary:
                 round_tools = [
                     tool for tool in api_tools
                     if (tool.get("function") or tool).get("name") == STRUCTURED_OUTPUT_TOOL_NAME
                 ] if use_structured_output else []
+            if delivery.active and delivery.outcome is None and force_summary:
+                round_tools = [
+                    t for t in api_tools if (t.get("function") or t)["name"] == "finish_task"
+                ]
             request = MessageRequest(
                 model=effective_model,
                 messages=messages,
@@ -1098,7 +1156,14 @@ async def run_subagent_loop(
                             input_summary=input_preview,
                         )
                     )
-                if tc.name == STRUCTURED_OUTPUT_TOOL_NAME:
+                if tc.name == "finish_task" and len(result.tool_calls) != 1:
+                    output = "Error: Call finish_task alone."
+                    ok = False
+                elif (tc.name == STRUCTURED_OUTPUT_TOOL_NAME
+                      and delivery.active and delivery.outcome is None):
+                    output = "Error: Submit finish_task before structured_output for UI work."
+                    ok = False
+                elif tc.name == STRUCTURED_OUTPUT_TOOL_NAME:
                     tool_result = await registry.execute(tc.name, tc.arguments, context)
                     output = (
                         tool_result.content
@@ -1211,6 +1276,10 @@ async def run_subagent_loop(
 
 
     agent.steps_taken = steps
+    if delivery.active and delivery.outcome is None:
+        raise RuntimeError("UI task ended without a validated finish_task outcome; work remains unverified")
+    if delivery.outcome is not None:
+        final_text = "UI task outcome: " + json.dumps(delivery.outcome, ensure_ascii=False) + "\n\n" + final_text
     if use_structured_output and not structured_received:
         raise RuntimeError("sub-agent did not return structured_output")
     if not final_text and last_thinking:
@@ -1219,4 +1288,5 @@ async def run_subagent_loop(
     # Report shape is not a reason to wipe memory — Kimi leaves context
     # memory in place after distillSummary. close() is the only wipe.
     _save_complete_checkpoint("round")
-    return AgentRunOutput(text=final_text, structured=structured_value, structured_received=structured_received)
+    return AgentRunOutput(text=final_text, structured=structured_value,
+                          structured_received=structured_received, task_outcome=delivery.outcome)
