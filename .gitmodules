@@ -1,0 +1,3 @@
+[submodule "scratch/harness2"]
+	path = scratch/harness2
+	url = https://github.com/google-research/harness2
