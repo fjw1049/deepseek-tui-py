@@ -12,7 +12,6 @@ import type { Notice, NoticeTone } from '../extensions/marketplace-shared'
 import {
   Bot,
   CheckCircle2,
-  ChevronRight,
   Clock3,
   FileDiff,
   Flag,
@@ -25,7 +24,6 @@ import {
   Plus,
   Plug,
   Puzzle,
-  Search,
   Send,
   Settings2,
   Shrink,
@@ -66,6 +64,7 @@ import {
   type ComposerActionCommandId
 } from '../../lib/composer-slash-commands'
 import { ContextUsageMeter } from './ContextUsageMeter'
+import { ComposerPlusMenu, type ComposerPlusGroup } from './ComposerPlusMenu'
 import { ComposerCommandPanel } from './ComposerCommandPanel'
 import { ComposerVoiceBar, type ComposerVoicePhase } from './ComposerVoiceBar'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
@@ -85,9 +84,7 @@ import {
 import {
   buildComposerConnectorRows,
   composerConnectorDotClass,
-  composerConnectorDotTone,
   diskServersFromMcpConfig,
-  filterComposerConnectorRows,
   isComposerConnectorSelectable,
   mediaConnectorTitle,
   parseMcpRuntimeServers,
@@ -323,9 +320,7 @@ export function FloatingComposer({
   const shellRef = useRef<HTMLDivElement | null>(null)
   const footerRef = useRef<HTMLDivElement | null>(null)
   const plusMenuRef = useRef<HTMLDivElement | null>(null)
-  const skillSearchRef = useRef<HTMLInputElement | null>(null)
-  const connectorSearchRef = useRef<HTMLInputElement | null>(null)
-  const pluginSearchRef = useRef<HTMLInputElement | null>(null)
+  const plusPanelRef = useRef<HTMLDivElement | null>(null)
   const [footerWidth, setFooterWidth] = useState<number | null>(null)
   const composingRef = useRef(false)
   const lastSendClickAtRef = useRef(0)
@@ -341,19 +336,15 @@ export function FloatingComposer({
   const [asrConfigured, setAsrConfigured] = useState(false)
   const [focused, setFocused] = useState(false)
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
-  // Which second-level panel the `+` menu is currently revealing on hover.
-  const [plusSubmenu, setPlusSubmenu] = useState<'mode' | 'skills' | 'connectors' | 'plugins' | null>(null)
   const [composerSkills, setComposerSkills] = useState<Array<{ name: string; description?: string }>>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
   const [skillsLoaded, setSkillsLoaded] = useState(false)
-  const [skillQuery, setSkillQuery] = useState('')
   // MCP connectors mirror skills: listed from the runtime (so we know live
   // connection state), picked as an inline chip, and prepended as a leading
   // `@name` token on send. ``connected`` drives the green/red status dot.
   const [composerConnectors, setComposerConnectors] = useState<ComposerConnectorRow[]>([])
   const [connectorsLoading, setConnectorsLoading] = useState(false)
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
-  const [connectorQuery, setConnectorQuery] = useState('')
   const [attachNotice, setAttachNotice] = useState<Notice | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => sessionKey ? paneAttachments.get(sessionKey) ?? [] : [])
   const attachmentSessionRef = useRef(sessionKey)
@@ -409,44 +400,6 @@ export function FloatingComposer({
   >([])
   const [pluginsLoading, setPluginsLoading] = useState(false)
   const [pluginsLoaded, setPluginsLoaded] = useState(false)
-  const [pluginQuery, setPluginQuery] = useState('')
-  const filteredSkills = useMemo(() => {
-    const q = skillQuery.trim().toLowerCase()
-    if (!q) return composerSkills
-    return composerSkills.filter(
-      (skill) =>
-        skill.name.toLowerCase().includes(q) ||
-        (skill.description ?? '').toLowerCase().includes(q)
-    )
-  }, [composerSkills, skillQuery])
-  const filteredConnectors = useMemo(
-    () => filterComposerConnectorRows(composerConnectors, connectorQuery),
-    [composerConnectors, connectorQuery]
-  )
-  const filteredPlugins = useMemo(() => {
-    const q = pluginQuery.trim().toLowerCase()
-    if (!q) return composerPlugins
-    return composerPlugins.filter((plugin) => {
-      const title = displayPluginName(plugin.name).toLowerCase()
-      return (
-        plugin.name.toLowerCase().includes(q) ||
-        (plugin.name === 'computer-use' && 'cua'.includes(q)) ||
-        title.includes(q) ||
-        (plugin.description ?? '').toLowerCase().includes(q)
-      )
-    })
-  }, [composerPlugins, displayPluginName, pluginQuery])
-  const plusListCount =
-    plusSubmenu === 'skills'
-      ? filteredSkills.length
-      : plusSubmenu === 'connectors'
-        ? filteredConnectors.length
-        : plusSubmenu === 'plugins'
-          ? filteredPlugins.length
-          : 0
-  const plusListOpen =
-    plusSubmenu === 'skills' || plusSubmenu === 'connectors' || plusSubmenu === 'plugins'
-  const plusNav = useComboboxNav(plusListCount, plusListOpen)
   const [activeCommand, setActiveCommand] = useState<{
     id: ComposerActionCommandId
     args: string
@@ -798,7 +751,7 @@ export function FloatingComposer({
   useLightDismiss({
     open: plusMenuOpen,
     onDismiss: () => setPlusMenuOpen(false),
-    refs: [plusMenuRef]
+    refs: [plusMenuRef, plusPanelRef]
   })
 
   useEffect(() => {
@@ -841,30 +794,6 @@ export function FloatingComposer({
       setComposerPlugins([])
     }
   }, [runtimeReady])
-
-  // Collapse the hovered submenu (and clear the skill filter) whenever the
-  // `+` menu closes, so it reopens on the first-level list next time.
-  useEffect(() => {
-    if (!plusMenuOpen) {
-      setPlusSubmenu(null)
-      setSkillQuery('')
-      setConnectorQuery('')
-      setPluginQuery('')
-    }
-  }, [plusMenuOpen])
-
-  useEffect(() => {
-    if (plusSubmenu === 'skills') skillSearchRef.current?.focus()
-    else if (plusSubmenu === 'connectors') connectorSearchRef.current?.focus()
-    else if (plusSubmenu === 'plugins') pluginSearchRef.current?.focus()
-  }, [plusSubmenu])
-
-  useEffect(() => {
-    if (!plusListOpen) return
-    plusMenuRef.current
-      ?.querySelector('[data-plus-highlight="true"]')
-      ?.scrollIntoView({ block: 'nearest' })
-  }, [plusListOpen, plusNav.highlighted])
 
   useEffect(() => {
     if (!footerPlan.showPlus && plusMenuOpen) {
@@ -1004,11 +933,11 @@ export function FloatingComposer({
   )
 
   useEffect(() => {
-    if (plusSubmenu !== 'connectors') return
+    if (!plusMenuOpen) return
     const pending = composerConnectors.some((connector) => connector.status === 'connecting')
     if (!pending) return
     return pollWhileVisible(() => loadComposerConnectors({ force: true }), 1500)
-  }, [plusSubmenu, composerConnectors, loadComposerConnectors])
+  }, [plusMenuOpen, composerConnectors, loadComposerConnectors])
 
   useEffect(() => {
     if (!focusConnector || !connectorsLoaded) return
@@ -1540,6 +1469,61 @@ export function FloatingComposer({
     })
   }
 
+  const plusGroups: ComposerPlusGroup[] = [
+    {
+      id: 'actions', label: t('composerPlusActions'), items: [
+        { id: 'files', label: t('composerPlusAddFile'), icon: <Paperclip className="h-[18px] w-[18px]" />, onSelect: () => { void pickAttachments(); focusComposer() } }
+      ]
+    },
+    {
+      id: 'modes', label: t('composerPlusMode'), items: ([
+          { id: 'goal', label: t('composerModeGoalFull'), description: t('composerModeHintGoal'), icon: Flag },
+          { id: 'plan', label: t('composerModePlanFull'), description: t('composerModeHintPlan'), icon: ListTodo },
+          { id: 'ask', label: t('composerModeAskFull'), description: t('composerModeHintAsk'), icon: MessageCircleQuestion }
+        ] as const).map(({ icon: Icon, ...item }) => ({
+          ...item, icon: <Icon className="h-[18px] w-[18px]" />, selected: mode === item.id,
+          onSelect: () => { clearAttachNotice(); setMode(mode === item.id ? 'agent' : item.id); focusComposer() }
+        }))
+    },
+    {
+      id: 'plugins', label: t('plugins'), loading: pluginsLoading,
+      empty: t(runtimeReady ? 'composerPluginsEmpty' : 'composerPluginsNeedRuntime'),
+      items: composerPlugins.map(plugin => {
+        const visual = pluginVisual(plugin.name)
+        const Icon = visual.icon
+        return {
+          id: `plugin-${plugin.name}`, label: displayPluginName(plugin.name), description: plugin.description,
+          keywords: `${plugin.name} ${plugin.name === 'computer-use' ? 'cua' : ''}`,
+          icon: <Icon className="h-[18px] w-[18px]" />,
+          selected: (focusPlugin ?? activePlugin?.name)?.toLowerCase() === plugin.name.toLowerCase(),
+          onSelect: () => handlePickPlugin(plugin.name)
+        }
+      })
+    },
+    {
+      id: 'skills', label: t('composerPlusSkills'), loading: skillsLoading,
+      empty: t(runtimeReady ? 'composerSkillsEmpty' : 'composerSkillsNeedRuntime'),
+      items: composerSkills.map(skill => ({
+        id: `skill-${skill.name}`, label: skill.name, description: skill.description,
+        icon: <Sparkles className="h-[18px] w-[18px]" />, selected: focusSkill === skill.name,
+        onSelect: () => handlePickSkill(skill.name)
+      }))
+    },
+    {
+      id: 'connectors', label: t('composerPlusConnectors'), loading: connectorsLoading,
+      empty: t(runtimeReady ? 'composerConnectorsEmpty' : 'composerConnectorsNeedRuntime'),
+      items: composerConnectors.map(connector => ({
+        id: `connector-${connector.id}`, label: connector.title, keywords: connector.id,
+        description: connector.status === 'connecting' ? t('composerConnectorConnectingHint')
+          : connector.status === 'failed' || connector.status === 'disabled'
+            ? t('composerConnectorFailedHint', { error: connector.error ? `：${connector.error}` : '' })
+            : connector.summary || connector.id,
+        icon: <Plug className="h-[18px] w-[18px]" />, disabled: !isComposerConnectorSelectable(connector),
+        selected: focusConnector === connector.id, onSelect: () => handlePickConnector(connector.id)
+      }))
+    }
+  ]
+
   return (
     <div
       className={`pointer-events-auto w-full ${
@@ -1649,6 +1633,14 @@ export function FloatingComposer({
       })()}
 
       <div className="relative">
+        {plusMenuOpen && (
+          <div ref={plusPanelRef}>
+            <ComposerPlusMenu groups={plusGroups} onClose={() => {
+              setPlusMenuOpen(false)
+              plusMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+            }} />
+          </div>
+        )}
         {activeCommand ? (
           <ComposerCommandPanel
             command={activeCommand.id}
@@ -2019,6 +2011,11 @@ export function FloatingComposer({
                 onClick={() => {
                   setActiveCommand(null)
                   clearAttachNotice()
+                  if (!plusMenuOpen) {
+                    loadComposerSkills()
+                    loadComposerConnectors({ force: true })
+                    loadComposerPlugins()
+                  }
                   setPlusMenuOpen((open) => !open)
                 }}
                 className={`ds-no-drag inline-flex items-center justify-center rounded-full text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -2029,488 +2026,7 @@ export function FloatingComposer({
               >
                 <Plus className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2} />
               </button>
-              {plusMenuOpen ? (
-                <div className="absolute bottom-full left-0 z-40 mb-2">
-                  {/*
-                    Chat: flyout opens to the right (left-full).
-                    IDE compactChrome: stack above + left-align — the rail sits on
-                    the window's right edge, so a right flyout is clipped.
-                  */}
-                  <div className="ds-glass ds-morph-pop min-w-[220px] overflow-hidden rounded-2xl p-1.5">
-                    {/* Add files: no submenu, runs immediately. */}
-                    <button
-                      type="button"
-                      disabled={!canCompose}
-                      onMouseEnter={() => setPlusSubmenu(null)}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => void pickAttachments()}
-                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
-                    >
-                      <Paperclip className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                      <span className="flex-1">{t('composerPlusAddFile')}</span>
-                    </button>
-                    <div className="my-1 border-t border-ds-border-muted" />
-                    {/* Mode + Skills: hover previews the submenu, click locks it
-                        open so the pointer can travel to the panel and interact
-                        with its controls without the panel collapsing. */}
-                    <button
-                      type="button"
-                      onMouseEnter={() => setPlusSubmenu('mode')}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => setPlusSubmenu('mode')}
-                      className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
-                        plusSubmenu === 'mode'
-                          ? 'bg-ds-hover text-ds-ink'
-                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                      }`}
-                    >
-                      <Wand2 className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                      <span className="flex-1">{t('composerPlusMode')}</span>
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    </button>
-                    <button
-                      type="button"
-                      onMouseEnter={() => {
-                        setPlusSubmenu('skills')
-                        loadComposerSkills()
-                      }}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setPlusSubmenu('skills')
-                        loadComposerSkills()
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
-                        plusSubmenu === 'skills'
-                          ? 'bg-ds-hover text-ds-ink'
-                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                      }`}
-                    >
-                      <Sparkles className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                      <span className="flex-1">{t('composerPlusSkills')}</span>
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    </button>
-                    <button
-                      type="button"
-                      onMouseEnter={() => {
-                        setPlusSubmenu('connectors')
-                        loadComposerConnectors({ force: true })
-                      }}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setPlusSubmenu('connectors')
-                        loadComposerConnectors({ force: true })
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
-                        plusSubmenu === 'connectors'
-                          ? 'bg-ds-hover text-ds-ink'
-                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                      }`}
-                    >
-                      <Plug className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                      <span className="flex-1">{t('composerPlusConnectors')}</span>
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    </button>
-                    <button
-                      type="button"
-                      onMouseEnter={() => {
-                        setPlusSubmenu('plugins')
-                        loadComposerPlugins()
-                      }}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setPlusSubmenu('plugins')
-                        loadComposerPlugins()
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition ${
-                        plusSubmenu === 'plugins'
-                          ? 'bg-ds-hover text-ds-ink'
-                          : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                      }`}
-                    >
-                      <Puzzle className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                      <span className="flex-1">{t('composerPlusPlugins')}</span>
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    </button>
-                  </div>
 
-                  {plusSubmenu === 'mode' ? (
-                    <div
-                      className={
-                        compactChrome
-                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 w-max max-w-[min(300px,calc(100vw-2rem))] overflow-hidden rounded-2xl p-2'
-                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 w-max overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
-                      }
-                    >
-                      {/* Lock panel width to Plan hint so toggling Ask doesn't resize. */}
-                      <p
-                        aria-hidden
-                        className="h-0 overflow-hidden px-1.5 text-[12px] leading-5 whitespace-nowrap"
-                      >
-                        {t('composerModeHintGoal')}
-                      </p>
-                      <p className="px-1.5 pb-1.5 pt-0.5 text-[12px] leading-5 text-ds-faint">
-                        {mode === 'plan'
-                          ? t('composerModeHintPlan')
-                          : mode === 'ask'
-                            ? t('composerModeHintAsk')
-                            : mode === 'goal'
-                              ? t('composerModeHintGoal')
-                            : t('composerModeHintDefault')}
-                      </p>
-                      <div className="border-t border-ds-border-muted pt-1">
-                        {(
-                          [
-                            { id: 'plan' as const, label: t('composerModePlanFull') },
-                            { id: 'ask' as const, label: t('composerModeAskFull') },
-                            { id: 'goal' as const, label: t('composerModeGoalFull') }
-                          ] as const
-                        ).map((item) => {
-                          const on = mode === item.id
-                          return (
-                            <button
-                              key={item.id}
-                              type="button"
-                              role="switch"
-                              aria-checked={on}
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() => {
-                                clearAttachNotice()
-                                setMode(on ? 'agent' : item.id)
-                                focusComposer()
-                              }}
-                              className="flex w-full items-center justify-between gap-2.5 rounded-xl px-1.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-hover"
-                            >
-                              <span className="whitespace-nowrap">{item.label}</span>
-                              <span
-                                className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition ${
-                                  on ? 'bg-accent' : 'bg-ds-border'
-                                }`}
-                              >
-                                <span
-                                  className={`absolute h-3 w-3 rounded-full bg-white shadow-sm transition ${
-                                    on ? 'left-[14px]' : 'left-0.5'
-                                  }`}
-                                />
-                              </span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {plusSubmenu === 'skills' ? (
-                    <div
-                      className={
-                        compactChrome
-                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 flex max-h-[min(360px,46vh)] w-[min(300px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl p-2'
-                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
-                      }
-                    >
-                      <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
-                        <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                        <input
-                          ref={skillSearchRef}
-                          type="text"
-                          role="combobox"
-                          aria-expanded
-                          aria-autocomplete="list"
-                          value={skillQuery}
-                          onChange={(event) => setSkillQuery(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              event.preventDefault()
-                              setPlusMenuOpen(false)
-                              return
-                            }
-                            plusNav.onKeyDown(event, (index) => {
-                              const skill = filteredSkills[index]
-                              if (!skill) return
-                              handlePickSkill(skill.name)
-                              setPlusMenuOpen(false)
-                            })
-                          }}
-                          placeholder={t('composerSkillSearchPlaceholder')}
-                          className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
-                        />
-                      </div>
-                      <div className="ds-scroll-surface min-h-0 flex-1 space-y-1 overflow-y-auto">
-                        {skillsLoading ? (
-                          <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          </div>
-                        ) : !runtimeReady ? (
-                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                            {t('composerSkillsNeedRuntime')}
-                          </div>
-                        ) : filteredSkills.length === 0 ? (
-                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                            {t('composerSkillsEmpty')}
-                          </div>
-                        ) : (
-                          filteredSkills.map((skill, index) => (
-                              <button
-                                key={skill.name}
-                                type="button"
-                                data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
-                                onMouseDown={(event) => event.preventDefault()}
-                                onMouseEnter={() => plusNav.setHighlighted(index)}
-                                onClick={() => {
-                                  handlePickSkill(skill.name)
-                                  setPlusMenuOpen(false)
-                                }}
-                                className={`block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover ${
-                                  index === plusNav.highlighted ? 'ds-combobox-row--highlight' : ''
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
-                                  <Package className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                                  <span className="truncate">{skill.name}</span>
-                                </div>
-                                {skill.description ? (
-                                  <div className="mt-0.5 line-clamp-2 pl-6 text-[11px] leading-4 text-ds-faint">
-                                    {skill.description}
-                                  </div>
-                                ) : null}
-                              </button>
-                            ))
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {plusSubmenu === 'connectors' ? (
-                    <div
-                      className={
-                        compactChrome
-                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 flex max-h-[min(360px,46vh)] w-[min(300px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl p-2'
-                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
-                      }
-                    >
-                      <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
-                        <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                        <input
-                          ref={connectorSearchRef}
-                          type="text"
-                          role="combobox"
-                          aria-expanded
-                          aria-autocomplete="list"
-                          value={connectorQuery}
-                          onChange={(event) => setConnectorQuery(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              event.preventDefault()
-                              setPlusMenuOpen(false)
-                              return
-                            }
-                            plusNav.onKeyDown(event, (index) => {
-                              const connector = filteredConnectors[index]
-                              if (!connector || !isComposerConnectorSelectable(connector)) return
-                              handlePickConnector(connector.id)
-                              setPlusMenuOpen(false)
-                            })
-                          }}
-                          placeholder={t('composerConnectorSearchPlaceholder')}
-                          className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
-                        />
-                      </div>
-                      <div className="ds-scroll-surface min-h-0 flex-1 space-y-1 overflow-y-auto">
-                        {connectorsLoading ? (
-                          <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          </div>
-                        ) : filteredConnectors.length === 0 ? (
-                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                            {!runtimeReady
-                              ? t('composerConnectorsNeedRuntime')
-                              : t('composerConnectorsEmpty')}
-                          </div>
-                        ) : (
-                          filteredConnectors.map((connector, index) => {
-                              const selectable = isComposerConnectorSelectable(connector)
-                              const tone = composerConnectorDotTone(connector)
-                              const connecting = connector.status === 'connecting'
-                              const failed =
-                                connector.status === 'failed' || connector.status === 'disabled'
-                              const errorSuffix = connector.error ? `：${connector.error}` : ''
-                              const statusHint = connecting
-                                ? t('composerConnectorConnectingHint')
-                                : failed
-                                  ? t('composerConnectorFailedHint', { error: errorSuffix })
-                                  : connector.summary || connector.id
-                              return (
-                              <button
-                                key={connector.id}
-                                type="button"
-                                disabled={!selectable}
-                                data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
-                                title={
-                                  connecting
-                                    ? t('composerConnectorConnectingPickHint')
-                                    : failed
-                                      ? t('composerConnectorFailed', {
-                                          name: connector.title,
-                                          error: errorSuffix
-                                        })
-                                      : undefined
-                                }
-                                onMouseDown={(event) => event.preventDefault()}
-                                onMouseEnter={() => plusNav.setHighlighted(index)}
-                                onClick={() => {
-                                  if (!selectable) return
-                                  handlePickConnector(connector.id)
-                                  setPlusMenuOpen(false)
-                                }}
-                                className={`block w-full rounded-xl px-2.5 py-2 text-left transition ${
-                                  selectable
-                                    ? index === plusNav.highlighted
-                                      ? 'ds-combobox-row--highlight'
-                                      : 'hover:bg-ds-hover'
-                                    : connecting
-                                      ? 'cursor-wait opacity-70'
-                                      : 'cursor-not-allowed opacity-40'
-                                }`}
-                              >
-                                <div className="flex items-start gap-2 text-[13px] font-medium text-ds-ink">
-                                  <span
-                                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${composerConnectorDotClass(tone)}`}
-                                    aria-hidden
-                                  />
-                                  <Plug className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.8} />
-                                  <span className="min-w-0 flex-1 truncate">{connector.title}</span>
-                                  <span className="mt-0.5 shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
-                                    {connector.section === 'default'
-                                      ? t('connectorTabDefault')
-                                      : t('connectorTabActivated')}
-                                  </span>
-                                </div>
-                                <div
-                                  className={`mt-0.5 line-clamp-2 pl-[26px] text-[11px] leading-4 ${
-                                    failed
-                                      ? 'text-red-500/80'
-                                      : connecting
-                                        ? 'text-amber-600 dark:text-amber-400'
-                                        : 'text-ds-faint'
-                                  }`}
-                                >
-                                  {statusHint}
-                                </div>
-                              </button>
-                              )
-                            })
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {plusSubmenu === 'plugins' ? (
-                    <div
-                      className={
-                        compactChrome
-                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 flex max-h-[min(360px,46vh)] w-[min(300px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl p-2'
-                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
-                      }
-                    >
-                      <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
-                        <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                        <input
-                          ref={pluginSearchRef}
-                          type="text"
-                          role="combobox"
-                          aria-expanded
-                          aria-autocomplete="list"
-                          value={pluginQuery}
-                          onChange={(event) => setPluginQuery(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              event.preventDefault()
-                              setPlusMenuOpen(false)
-                              return
-                            }
-                            plusNav.onKeyDown(event, (index) => {
-                              const plugin = filteredPlugins[index]
-                              if (!plugin) return
-                              handlePickPlugin(plugin.name)
-                              setPlusMenuOpen(false)
-                            })
-                          }}
-                          placeholder={t('composerPluginSearchPlaceholder')}
-                          className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
-                        />
-                      </div>
-                      <div className="ds-scroll-surface min-h-0 flex-1 space-y-1 overflow-y-auto">
-                        {pluginsLoading ? (
-                          <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          </div>
-                        ) : !runtimeReady ? (
-                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                            {t('composerPluginsNeedRuntime')}
-                          </div>
-                        ) : filteredPlugins.length === 0 ? (
-                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                            {t('composerPluginsEmpty')}
-                          </div>
-                        ) : (
-                          filteredPlugins.map((plugin, index) => {
-                              const alreadyMounted =
-                                activePlugin?.name.toLowerCase() === plugin.name.toLowerCase()
-                              const visual = pluginVisual(plugin.name)
-                              const Icon = visual.icon
-                              const title = displayPluginName(plugin.name)
-                              return (
-                                <button
-                                  key={plugin.name}
-                                  type="button"
-                                  data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
-                                  onMouseDown={(event) => event.preventDefault()}
-                                  onMouseEnter={() => plusNav.setHighlighted(index)}
-                                  onClick={() => {
-                                    handlePickPlugin(plugin.name)
-                                    setPlusMenuOpen(false)
-                                  }}
-                                  className={`block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover ${
-                                    index === plusNav.highlighted ? 'ds-combobox-row--highlight' : ''
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
-                                    <span
-                                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${visual.tile}`}
-                                    >
-                                      <Icon className="h-3.5 w-3.5" strokeWidth={1.9} />
-                                    </span>
-                                    <span className="min-w-0 flex-1 truncate">
-                                      <span className="block truncate">{title}</span>
-                                      {title.toLowerCase() !== plugin.name.toLowerCase() ? (
-                                        <span className="block truncate font-mono text-[10px] font-normal text-ds-faint">
-                                          {plugin.name}
-                                        </span>
-                                      ) : null}
-                                    </span>
-                                    {alreadyMounted ? (
-                                      <span className="ml-auto shrink-0 rounded-full bg-[rgba(168,85,247,0.16)] px-1.5 py-0.5 text-[10px] font-semibold text-[#a855f7]">
-                                        {t('composerPluginActive')}
-                                      </span>
-                                    ) : (
-                                      <span className="ml-auto shrink-0 text-[10px] font-medium text-ds-faint">
-                                        {t('composerPluginEnterAction')}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {plugin.description ? (
-                                    <div className="mt-0.5 line-clamp-2 pl-8 text-[11px] leading-4 text-ds-faint">
-                                      {plugin.description}
-                                    </div>
-                                  ) : null}
-                                </button>
-                              )
-                            })
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
             ) : null}
 
@@ -2523,7 +2039,6 @@ export function FloatingComposer({
                   onOpenChange={(nextOpen) => {
                     if (nextOpen) {
                       setPlusMenuOpen(false)
-                      setPlusSubmenu(null)
                     }
                   }}
                 />

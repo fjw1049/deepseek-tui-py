@@ -1,0 +1,47 @@
+.ds-composer-plus-menu[role='dialog'] {
+  --plus-label: #262626;
+  --plus-heading: #737373;
+  --plus-description: #858585;
+  --plus-highlight: #f5f5f5;
+  background: #fff;
+}
+
+[data-theme='dark'] .ds-composer-plus-menu[role='dialog'] {
+  --plus-label: #ededed;
+  --plus-heading: #ababab;
+  --plus-description: #969696;
+  --plus-highlight: #292929;
+  background: #1c1c1c;
+}
+
+.ds-composer-plus-menu .ds-composer-plus-menu__row {
+  color: var(--plus-label);
+}
+
+.ds-composer-plus-menu .ds-composer-plus-menu__row[aria-selected='true'],
+.ds-composer-plus-menu .ds-composer-plus-menu__row:not([aria-disabled='true']):hover {
+  background: var(--plus-highlight);
+}
+
+.ds-composer-plus-menu .ds-composer-plus-menu__label {
+  color: var(--plus-label);
+}
+
+.ds-composer-plus-menu .ds-composer-plus-menu__description {
+  color: var(--plus-description);
+}
+
+/* The list highlight indicates keyboard focus while the search keeps typing focus. */
+.ds-composer-plus-menu .ds-composer-plus-menu__search:focus,
+.ds-composer-plus-menu .ds-composer-plus-menu__search:focus-visible {
+  outline: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.ds-composer-plus-menu .ds-composer-plus-menu__heading {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--plus-heading);
+}

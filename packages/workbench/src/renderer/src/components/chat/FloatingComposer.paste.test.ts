@@ -122,18 +122,17 @@ it.each([
   const onSend = vi.fn().mockResolvedValue(true)
   await act(async () => root.render(createElement(FloatingComposer, { ...props, hasActiveThread: false, input: 'Open Notes', onSend })))
   await act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.t('composerPlusMenu')}"]`)!.click())
-  await act(async () => Array.from(host.querySelectorAll('button')).find(button => button.textContent === i18n.t('composerPlusPlugins'))!.click())
-  expect(host.textContent).toContain('data-analysis')
-  expect(host.textContent).not.toContain('disabled-plugin')
+  expect(host.querySelector('[id$="plugin-data-analysis"]')).not.toBeNull()
+  expect(host.querySelector('[id$="plugin-disabled-plugin"]')).toBeNull()
   if (visible) {
-    const search = host.querySelector<HTMLInputElement>(`input[placeholder="${i18n.t('composerPluginSearchPlaceholder')}"]`)!
+    const search = host.querySelector<HTMLInputElement>(`input[placeholder="${i18n.t('composerPlusSearch')}"]`)!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'CUA')
       search.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    expect(host.textContent).not.toContain('data-analysis')
+    expect(host.querySelector('[id$="plugin-data-analysis"]')).toBeNull()
   }
-  const cua = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('computer-use'))
+  const cua = Array.from(host.querySelectorAll('button')).find(button => button.id.endsWith('plugin-computer-use'))
   expect(Boolean(cua)).toBe(visible)
   if (cua) {
     await act(async () => cua.click())
