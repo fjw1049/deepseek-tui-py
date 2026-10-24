@@ -240,3 +240,13 @@ it('disables every tool while the page cannot be annotated', async () => {
   for (const label of ['annotationPick', 'annotationPen', 'annotationRect', 'annotationText']) expect(button(label)?.disabled, label).toBe(true)
   expect(button('annotationHide')?.disabled).toBe(false)
 })
+
+it('keeps the captured page URL when the same tab navigates before adding', async () => {
+  const h = mount({ pageUrl: 'https://example.test/a' })
+  await h.render()
+  await freeze()
+  h.props.pageUrl = 'https://example.test/b'
+  await h.render()
+  await click('annotationAdd')
+  expect(h.props.onAdd).toHaveBeenCalledWith(expect.any(File), false, 'https://example.test/a')
+})

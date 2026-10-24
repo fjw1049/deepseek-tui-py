@@ -637,9 +637,9 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     {state?.video_error ? <div className="ds-browser-notice" role="alert">{state.video_error}</div> : null}
     <div className={`ds-browser-content${annotationBarVisible || statusBarOnly ? ' has-annotation-bar' : ''}`} ref={pageArea}>
     {annotationBarVisible && onAttachImage ? <BrowserAnnotation key={`${inspectedPage}:${state?.generation}:${state?.owner}`} ref={annotation}
-      disabled={!annotationReady} pickEnabled={canInspect} picking={inspect} onPickingChange={setInspect} capture={captureForAnnotation}
-      onAdd={async (file, annotated) => {
-        const attached = await onAttachImage(file, path => annotationContextNote(path, annotated, pageUrl))
+      disabled={!annotationReady} pickEnabled={canInspect} picking={inspect} onPickingChange={setInspect} capture={captureForAnnotation} pageUrl={pageUrl}
+      onAdd={async (file, annotated, capturedPageUrl) => {
+        const attached = await onAttachImage(file, path => annotationContextNote(path, annotated, capturedPageUrl))
         if (attached) setNotice(t('annotationAdded'))
         return attached
       }}

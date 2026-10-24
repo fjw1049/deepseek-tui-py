@@ -1,4 +1,4 @@
-import { PREVIEW_PICK_ANCESTRY_MAX, type PreviewElementPick } from './preview-element-picker'
+import { sanitizePickPayload, type PreviewElementPick } from './preview-element-picker'
 
 /** Stable marker so timeline/title parsers can strip the wire envelope. */
 export const PREVIEW_PICK_WIRE_MARKER = '[ds-preview-pick]'
@@ -121,29 +121,14 @@ export type ParsedPreviewPickWire = {
   chipLabels: string[]
 }
 
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : []
-}
-
 function parsePickObject(data: Record<string, unknown>): PreviewElementPick | null {
   const filePath = typeof data.filePath === 'string' ? data.filePath.trim() : ''
   const pageUrl = typeof data.pageUrl === 'string' ? data.pageUrl.trim() : ''
   const selector = typeof data.selector === 'string' ? data.selector.trim() : ''
   const tagName = typeof data.tagName === 'string' ? data.tagName.trim() : ''
   if ((!filePath && !pageUrl) || (!selector && !tagName)) return null
-  return {
-    filePath,
-    ...(pageUrl ? { pageUrl } : {}),
-    selector: selector || tagName,
-    tagName: tagName || 'div',
-    ...(typeof data.id === 'string' && data.id.trim() ? { id: data.id.trim() } : {}),
-    classes: asStringArray(data.classes).slice(0, 8),
-    textPreview: typeof data.textPreview === 'string' ? data.textPreview : '',
-    htmlSnippet: typeof data.htmlSnippet === 'string' ? data.htmlSnippet : '',
-    ancestry: asStringArray(data.ancestry).slice(0, PREVIEW_PICK_ANCESTRY_MAX)
-  }
+  const payload = sanitizePickPayload({ ...data, selector: selector || tagName, tagName: tagName || 'div' })
+  return payload ? { ...payload, filePath, ...(pageUrl ? { pageUrl } : {}) } : null
 }
 
 /**

@@ -72,8 +72,13 @@ class WindowStream {
       }
       return
     }
-    if (this.sourceId === sourceId || this.dead.has(sourceId)) return
+    if (this.sourceId === sourceId) return
     this.stopCapture()
+    this.report({ hasFrame: false })
+    if (this.dead.has(sourceId)) {
+      this.report({ status: 'failed' })
+      return
+    }
     const token = this.captureToken
     this.sourceId = sourceId
     this.appId = appId
@@ -211,9 +216,11 @@ export function useCuaWindowStream(input: {
   const active = enabled && pageVisible && appId !== null && window.dsGui.platform === 'darwin'
   useEffect(() => {
     if (!active || !appId) {
-      // Stopping keeps hasFrame: the held frame stays on the canvas instead of an older still.
       controller.current?.stop()
-      setState((previous) => (previous.status === 'idle' ? previous : { ...previous, status: 'idle' }))
+      // A browser target yields the canvas to its own screenshot. Ending or hiding
+      // the same app keeps the last live frame instead of replacing it with an older still.
+      setState((previous) => appId === null ? IDLE
+        : previous.status === 'idle' ? previous : { ...previous, status: 'idle' })
       return
     }
     void controller.current?.target(appId)

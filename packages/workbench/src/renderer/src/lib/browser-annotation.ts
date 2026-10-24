@@ -3,6 +3,8 @@
  * then composited at the screenshot's native resolution for the chat.
  */
 
+import { formatComposerPathMention } from './composer-insert'
+
 export type AnnotationShape = 'rect' | 'ellipse' | 'arrow'
 export type AnnotationTool = 'pen' | 'text' | AnnotationShape
 
@@ -168,15 +170,32 @@ export async function compositeAnnotation(backdrop: string, marks: readonly Anno
 
 export const ANNOTATION_CONTEXT_OPEN = '<browser-annotation-context>'
 export const ANNOTATION_CONTEXT_CLOSE = '</browser-annotation-context>'
+/** Follows the file path in every note; restoreAnnotationContext reads the path back by it. */
+const ANNOTATION_CONTEXT_SUBJECT = ' is a screenshot of the browser pane'
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Tells the model what the attached image is; stripped from titles and the timeline. */
 export function annotationContextNote(fileName: string, annotated: boolean, pageUrl?: string): string {
   const what = annotated ? "with the user's annotations drawn on top" : 'as the user currently sees it, with no annotations'
   const page = pageUrl ? ` of ${pageUrl}` : ''
-  return `${ANNOTATION_CONTEXT_OPEN}${fileName} is a screenshot of the browser pane${page}, ${what}. Use the browser tools to inspect or interact with the live page.${ANNOTATION_CONTEXT_CLOSE}`
+  return `${ANNOTATION_CONTEXT_OPEN}${fileName}${ANNOTATION_CONTEXT_SUBJECT}${page}, ${what}. Use the browser tools to inspect or interact with the live page.${ANNOTATION_CONTEXT_CLOSE}`
 }
 
 export function stripAnnotationContext(text: string): string {
   const pattern = new RegExp(`\\s*${ANNOTATION_CONTEXT_OPEN}[\\s\\S]*?${ANNOTATION_CONTEXT_CLOSE.replace('/', '\\/')}`, 'g')
   return text.replace(pattern, '')
+}
+
+/** Restore hidden screenshot notes only for attachments retained in an edited message. */
+export function restoreAnnotationContext(original: string, edited: string): string {
+  const pattern = new RegExp(`${escapeRegExp(ANNOTATION_CONTEXT_OPEN)}([\\s\\S]*?)${escapeRegExp(ANNOTATION_CONTEXT_CLOSE)}`, 'g')
+  const notes = [...original.matchAll(pattern)]
+    .filter((match) => {
+      const pathEnd = match[1].indexOf(ANNOTATION_CONTEXT_SUBJECT)
+      if (pathEnd <= 0) return false
+      const mention = formatComposerPathMention(match[1].slice(0, pathEnd))
+      return new RegExp(`(?:^|\\s)${escapeRegExp(mention)}(?=\\s|$)`).test(edited)
+    })
+    .map(match => match[0])
+  return [edited, ...notes].join('\n')
 }

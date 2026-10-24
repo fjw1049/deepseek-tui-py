@@ -10,7 +10,7 @@ import { AnnotationToolbar } from './AnnotationToolbar'
 
 type Size = { width: number; height: number }
 type TextDraft = { id: number; x: number; y: number; value: string; size: number; color: string }
-type Backdrop = { url: string; natural: Size | null }
+type Backdrop = { url: string; natural: Size | null; pageUrl?: string }
 
 export type BrowserAnnotationHandle = {
   /** The header's select-element button: same as the bar's cursor, including the discard check. */
@@ -33,7 +33,7 @@ function layoutZoom(element: HTMLElement): number {
  * to the element picker; any drawing tool freezes a screenshot and draws over it until the marks
  * are added to the chat. Picking is owned by the pane, which runs the picker.
  */
-export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingChange, capture, onAdd, onHide, onError, status, tools, closable, ref }: {
+export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingChange, capture, onAdd, onHide, onError, status, tools, closable, pageUrl, ref }: {
   disabled: boolean
   pickEnabled: boolean
   picking: boolean
@@ -41,7 +41,9 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
   /** Resolves to an image data URL of the page as shown; rejects with a user-facing message. */
   capture: () => Promise<string>
   /** Resolves false when the image was not attached; the sketch then stays open. */
-  onAdd: (file: File, annotated: boolean) => Promise<boolean>
+  onAdd: (file: File, annotated: boolean, pageUrl?: string) => Promise<boolean>
+  /** Source URL frozen with the screenshot, even if the live tab later navigates. */
+  pageUrl?: string
   /** Hides the resting bar. */
   onHide: () => void
   onError: (message: string) => void
@@ -120,13 +122,13 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
   const startCapture = useCallback((): void => {
     const run = ++captureRun.current
     capture().then(url => {
-      if (run === captureRun.current) setBackdrop({ url, natural: null })
+      if (run === captureRun.current) setBackdrop({ url, natural: null, pageUrl })
     }, (error: unknown) => {
       if (run !== captureRun.current) return
       onError(error instanceof Error && error.message ? error.message : t('annotationCaptureFailed'))
       setTool(null)
     })
-  }, [capture, onError, t])
+  }, [capture, onError, t, pageUrl])
   // The first drawing tool freezes the page; switching tools keeps the same screenshot.
   useEffect(() => { if (sketching && !backdrop) startCapture() }, [sketching, backdrop === null]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -221,7 +223,7 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
     try {
       const blob = await compositeAnnotation(backdrop.url, marks, base.current)
       const annotated = marks.length > 0
-      const attached = await onAdd(new File([blob], annotated ? 'browser-annotation.png' : 'browser-screenshot.png', { type: 'image/png' }), annotated)
+      const attached = await onAdd(new File([blob], annotated ? 'browser-annotation.png' : 'browser-screenshot.png', { type: 'image/png' }), annotated, backdrop.pageUrl)
       if (attached && alive.current) leaveSketch()
     } catch (error) {
       if (alive.current) onError(error instanceof Error ? error.message : String(error))
@@ -245,7 +247,7 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
           onLoad={(e) => {
             const { naturalWidth, naturalHeight } = e.currentTarget
             const loaded = backdrop.url
-            setBackdrop(current => current?.url === loaded ? { url: loaded, natural: { width: naturalWidth, height: naturalHeight } } : current)
+            setBackdrop(current => current?.url === loaded ? { ...current, natural: { width: naturalWidth, height: naturalHeight } } : current)
           }} />
         <canvas ref={canvas} className={`ds-annotation__canvas is-${tool}`} role="img" aria-label={t('annotationCanvas')}
           onPointerDown={onPointerDown} onMouseDown={(e) => { if (tool === 'text') e.preventDefault() }}

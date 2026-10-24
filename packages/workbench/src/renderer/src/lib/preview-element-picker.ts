@@ -85,7 +85,7 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-function sanitizePickPayload(raw: PreviewElementPickPayload): PreviewElementPickPayload | null {
+export function sanitizePickPayload(raw: Record<string, unknown>): PreviewElementPickPayload | null {
   const selector = asString(raw.selector).trim()
   const tagName = asString(raw.tagName).trim().toLowerCase()
   if (!selector || !tagName) return null

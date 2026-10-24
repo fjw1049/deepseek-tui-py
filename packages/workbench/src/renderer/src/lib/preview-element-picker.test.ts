@@ -347,3 +347,15 @@ describe('preview pick composer helpers', () => {
     expect(parsed?.picks).toHaveLength(1)
   })
 })
+
+it('preserves enriched element context through edit and resend', () => {
+  const pick: PreviewElementPick = {
+    filePath: '', pageUrl: 'https://example.test', selector: '#buy', tagName: 'button',
+    classes: [], textPreview: 'Buy', htmlSnippet: '<button id="buy">Buy</button>', ancestry: ['body', 'button#buy'],
+    attributes: { 'aria-label': 'Buy now' }, styles: { color: 'red' },
+    rect: { x: 12, y: 20, width: 80, height: 30 }, siblingHtml: '<!-- SELECTED --><button id="buy" />'
+  }
+  const parsed = parsePreviewPickWireMessage(formatPreviewPickWireMessage(pick, 'Change color'))!
+  expect(parsed.picks).toEqual([pick])
+  expect(parsePreviewPickWireMessage(formatPreviewPickWireMessage(parsed.picks, 'Make blue'))?.picks).toEqual([pick])
+})

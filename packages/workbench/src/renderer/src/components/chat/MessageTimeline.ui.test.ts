@@ -293,3 +293,25 @@ it('keeps current activity outside folded history and clears it when the turn en
   await render()
   expect(container.querySelector('[data-turn-activity]')).toBeNull()
 })
+
+it.each([true, false])('retains annotation context on resend only with its attachment (%s)', async (keepImage) => {
+  const path = '.deepseek-paste/capture.png'
+  const note = `<browser-annotation-context>${path} is a screenshot of the browser pane of https://example.test/a, with the user's annotations drawn on top. Use the browser tools to inspect or interact with the live page.</browser-annotation-context>`
+  const blocks: ChatBlock[] = [{ kind: 'user', id: 'annotation-message', text: `@${path}\nExplain the arrow\n${note}` }]
+  const resend = vi.fn(async () => true)
+  act(() => useChatStore.setState({ busy: false, blocks, workspaceRoot: '', activeThreadId: 'annotations', rewindAndResend: resend }))
+  await act(async () => root.render(createElement(MessageTimeline, {
+    blocks, liveReasoning: '', live: '', activeThreadId: 'annotations', runtimeConnection: 'ready',
+    onRetryConnection: () => {}, onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+  })))
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-rewind-trigger')!.click())
+  const input = container.querySelector('textarea')!
+  expect(input.value).not.toContain('browser-annotation-context')
+  const draft = keepImage ? `@${path}\nExplain the red arrow` : 'Explain without the screenshot'
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, draft)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })))
+  expect(resend).toHaveBeenCalledWith('annotation-message', keepImage ? `${draft}\n${note}` : draft, expect.any(Object))
+})

@@ -108,7 +108,7 @@ import {
   formatPreviewPickWireMessage,
   parsePreviewPickWireMessage
 } from '../../lib/preview-pick-message'
-import { stripAnnotationContext } from '../../lib/browser-annotation'
+import { restoreAnnotationContext, stripAnnotationContext } from '../../lib/browser-annotation'
 import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
 import {
@@ -2315,7 +2315,7 @@ function UserMessageBubble({
     setConfirm(null)
     setSubmitting(true)
     try {
-      const succeeded = await rewindAndResend(block.id, wireText, {
+      const succeeded = await rewindAndResend(block.id, restoreAnnotationContext(block.text, wireText), {
         restoreFiles: restoreFiles && canRestoreFiles,
         forceConflicts: restoreFiles && canRestoreFiles && force,
         retryDraft: trimmed

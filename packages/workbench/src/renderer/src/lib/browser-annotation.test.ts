@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   EMPTY_ANNOTATION_HISTORY, annotationContextNote, arrowGeometry, commitMark, compositeScale, drawMark, fitContain,
-  isMeaningfulMark, redoMark, stripAnnotationContext, undoMark,
+  isMeaningfulMark, redoMark, restoreAnnotationContext, stripAnnotationContext, undoMark,
   type AnnotationContext, type AnnotationMark, type ShapeMark
 } from './browser-annotation'
 
@@ -92,4 +92,14 @@ describe('context note', () => {
     expect(note).toContain("user's annotations")
     expect(stripAnnotationContext(`圈出来的这条是什么？\n\n${note}`)).toBe('圈出来的这条是什么？')
   })
+})
+
+it('restores only retained screenshot notes, including quoted paths and inline mentions', () => {
+  const a = annotationContextNote('shots/first [1].png', true, 'https://example.test/a')
+  const b = annotationContextNote('shots/second.png', false, 'https://example.test/b')
+  const original = `@"shots/first [1].png"\n@shots/second.png\nCompare\n${a}\n${b}`
+  const edited = 'Explain @"shots/first [1].png" please'
+  expect(restoreAnnotationContext(original, edited)).toBe(`${edited}\n${a}`)
+  expect(restoreAnnotationContext(original, '@shots/second.png.bak')).toBe('@shots/second.png.bak')
+  expect(restoreAnnotationContext(original, 'No screenshots')).toBe('No screenshots')
 })
