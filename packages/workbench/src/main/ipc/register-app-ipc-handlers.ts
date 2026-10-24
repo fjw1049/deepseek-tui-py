@@ -32,6 +32,7 @@ import {
   browserBridgeReplyPayloadSchema,
   browserBridgeTabsPayloadSchema,
   defaultPathSchema,
+  devBrowserPickerPayloadSchema,
   devBrowserScreenshotPayloadSchema,
   gitBranchPayloadSchema,
   gitBranchesPayloadSchema,
@@ -77,7 +78,8 @@ import {
   workspaceRootSchema
 } from './app-ipc-schemas'
 import { getWorkspacePreviewUrl } from '../services/workspace-preview-server'
-import { copyDevBrowserScreenshotToClipboard } from '../services/dev-browser-screenshot'
+import { captureDevBrowserScreenshotDataUrl } from '../services/dev-browser-screenshot'
+import { runDevBrowserPicker } from '../services/dev-browser-picker'
 import type { JsonSettingsStore } from '../settings-store'
 import { getRuntimeBaseUrl } from '../settings-store'
 import {
@@ -1509,13 +1511,17 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const { requestId, ...reply } = parseIpcPayload('browser-bridge:reply', browserBridgeReplyPayloadSchema, payload)
     getBrowserBridge()?.reply(requestId, reply)
   })
-  ipcMain.handle('dev-browser:copy-screenshot', async (event, payload: unknown) => {
+  ipcMain.handle('dev-browser:picker', async (event, payload: unknown) => {
+    const request = parseIpcPayload('dev-browser:picker', devBrowserPickerPayloadSchema, payload)
+    return runDevBrowserPicker(getMainWindow(), request.webContentsId, request.action, event.sender.id)
+  })
+  ipcMain.handle('dev-browser:capture-screenshot', async (event, payload: unknown) => {
     const request = parseIpcPayload(
-      'dev-browser:copy-screenshot',
+      'dev-browser:capture-screenshot',
       devBrowserScreenshotPayloadSchema,
       payload
     )
-    return copyDevBrowserScreenshotToClipboard(
+    return captureDevBrowserScreenshotDataUrl(
       getMainWindow(),
       request.webContentsId,
       event.sender.id

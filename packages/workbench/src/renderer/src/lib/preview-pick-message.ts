@@ -1,4 +1,4 @@
-import type { PreviewElementPick } from './preview-element-picker'
+import { PREVIEW_PICK_ANCESTRY_MAX, type PreviewElementPick } from './preview-element-picker'
 
 /** Stable marker so timeline/title parsers can strip the wire envelope. */
 export const PREVIEW_PICK_WIRE_MARKER = '[ds-preview-pick]'
@@ -11,6 +11,8 @@ const EMPTY_REQUEST_FALLBACK = '(未填写具体要求，请根据选中模块�
 const WIRE_INTRO =
   '请修改以下预览选中模块（先用 htmlSnippet 在文件里做唯一匹配；匹配不到再用 selector；不要整页重写）。'
 const LEGACY_WIRE_INTRO_PREFIX = '请修改预览中选中的模块'
+const PAGE_WIRE_INTRO =
+  '以下是用户在浏览器中选中的元素。带 filePath 的来自工作区 HTML 预览：先用 htmlSnippet 在文件里做唯一匹配，匹配不到再用 selector，不要整页重写；带 pageUrl 的是网页上的元素，用来确定用户指的是哪里。'
 
 export type UpsertPreviewPickResult =
   | { kind: 'added'; picks: PreviewElementPick[] }
@@ -21,7 +23,7 @@ function pickKey(pick: PreviewElementPick): string {
   // Include htmlSnippet: class-less static elements collapse to identical
   // truncated tag/nth-of-type selectors, so selector alone would toggle off an
   // unrelated earlier pick. outerHTML disambiguates distinct nodes.
-  return `${pick.filePath}\0${pick.selector}\0${pick.htmlSnippet}`
+  return `${pick.filePath || pick.pageUrl}\0${pick.selector}\0${pick.htmlSnippet}`
 }
 
 /**
@@ -49,22 +51,34 @@ export function upsertPreviewPick(
 
 /** Short chip label shown in the composer / timeline (not the full context). */
 export function formatPreviewPickChipLabel(pick: PreviewElementPick): string {
-  const file = pick.filePath.split(/[\\/]/).filter(Boolean).at(-1) || pick.filePath || 'html'
+  const file = pick.filePath
+    ? pick.filePath.split(/[\\/]/).filter(Boolean).at(-1) || pick.filePath
+    : pageLabel(pick.pageUrl) || 'html'
   const target = (pick.selector || pick.tagName || 'element').trim()
   const label = `${file} · ${target}`
   return label.length > 42 ? `${label.slice(0, 41)}…` : label
 }
 
+function pageLabel(pageUrl: string | undefined): string {
+  if (!pageUrl) return ''
+  try { return new URL(pageUrl).host || pageUrl } catch { return pageUrl }
+}
+
 function pickToJsonObject(pick: PreviewElementPick): Record<string, unknown> {
   return {
-    filePath: pick.filePath,
+    ...(pick.filePath ? { filePath: pick.filePath } : {}),
+    ...(pick.pageUrl ? { pageUrl: pick.pageUrl } : {}),
     selector: pick.selector,
     tagName: pick.tagName,
     ...(pick.id ? { id: pick.id } : {}),
     classes: pick.classes,
     textPreview: pick.textPreview,
     htmlSnippet: pick.htmlSnippet,
-    ancestry: pick.ancestry
+    ancestry: pick.ancestry,
+    ...(pick.attributes ? { attributes: pick.attributes } : {}),
+    ...(pick.styles ? { styles: pick.styles } : {}),
+    ...(pick.rect ? { rect: pick.rect } : {}),
+    ...(pick.siblingHtml ? { siblingHtml: pick.siblingHtml } : {})
   }
 }
 
@@ -90,7 +104,7 @@ export function formatPreviewPickWireMessage(
   const request = userRequest.trim()
   return [
     PREVIEW_PICK_WIRE_MARKER,
-    WIRE_INTRO,
+    list.every((pick) => pick.filePath) ? WIRE_INTRO : PAGE_WIRE_INTRO,
     '```json',
     formatPreviewPicksJson(list),
     '```',
@@ -115,18 +129,20 @@ function asStringArray(value: unknown): string[] {
 
 function parsePickObject(data: Record<string, unknown>): PreviewElementPick | null {
   const filePath = typeof data.filePath === 'string' ? data.filePath.trim() : ''
+  const pageUrl = typeof data.pageUrl === 'string' ? data.pageUrl.trim() : ''
   const selector = typeof data.selector === 'string' ? data.selector.trim() : ''
   const tagName = typeof data.tagName === 'string' ? data.tagName.trim() : ''
-  if (!filePath || (!selector && !tagName)) return null
+  if ((!filePath && !pageUrl) || (!selector && !tagName)) return null
   return {
     filePath,
+    ...(pageUrl ? { pageUrl } : {}),
     selector: selector || tagName,
     tagName: tagName || 'div',
     ...(typeof data.id === 'string' && data.id.trim() ? { id: data.id.trim() } : {}),
     classes: asStringArray(data.classes).slice(0, 8),
     textPreview: typeof data.textPreview === 'string' ? data.textPreview : '',
     htmlSnippet: typeof data.htmlSnippet === 'string' ? data.htmlSnippet : '',
-    ancestry: asStringArray(data.ancestry).slice(0, 3)
+    ancestry: asStringArray(data.ancestry).slice(0, PREVIEW_PICK_ANCESTRY_MAX)
   }
 }
 
@@ -139,7 +155,7 @@ export function parsePreviewPickWireMessage(text: string): ParsedPreviewPickWire
   if (!trimmed.includes('```json') || !trimmed.includes(USER_REQUEST_MARKER)) return null
   const hasMarker = trimmed.startsWith(PREVIEW_PICK_WIRE_MARKER)
   const hasIntro =
-    trimmed.includes(WIRE_INTRO) || trimmed.includes(LEGACY_WIRE_INTRO_PREFIX)
+    trimmed.includes(WIRE_INTRO) || trimmed.includes(PAGE_WIRE_INTRO) || trimmed.includes(LEGACY_WIRE_INTRO_PREFIX)
   if (!hasMarker && !hasIntro) return null
 
   const jsonMatch = /```json\s*\n([\s\S]*?)\n```/.exec(trimmed)

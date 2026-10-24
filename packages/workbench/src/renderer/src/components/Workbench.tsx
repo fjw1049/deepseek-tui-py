@@ -110,6 +110,7 @@ import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { OperationContextDock } from './chat/OperationContextDock'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
+import type { IncomingComposerImage } from './chat/FloatingComposer'
 import { SimpleEmptyPrompt } from './chat/SimpleEmptyPrompt'
 import { getEmptyHomeLayout, subscribeAppearance } from '../lib/apply-appearance'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
@@ -503,6 +504,9 @@ export function Workbench(): ReactElement {
   const [browsePreviewUrl, setBrowsePreviewUrl] = useState<string | null>(null)
   const [composerFocusRequestId, setComposerFocusRequestId] = useState(0)
   const [pendingPreviewPicks, setPendingPreviewPicks] = useState<PreviewElementPick[]>([])
+  const [incomingComposerImage, setIncomingComposerImage] = useState<IncomingComposerImage | null>(null)
+  const incomingComposerImageSeq = useRef(0)
+  const pendingComposerImageSettle = useRef<((attached: boolean) => void) | null>(null)
   const [previewPickNotice, setPreviewPickNotice] = useState<Notice | null>(null)
   const [previewPickNoticeNonce, setPreviewPickNoticeNonce] = useState(0)
   const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null)
@@ -1527,6 +1531,19 @@ export function Workbench(): ReactElement {
     [t]
   )
 
+  const attachBrowserImage = useCallback((file: File, contextNote: (path: string) => string): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
+      // An image the composer never picked up is superseded by this one.
+      pendingComposerImageSettle.current?.(false)
+      pendingComposerImageSettle.current = resolve
+      setIncomingComposerImage({ id: ++incomingComposerImageSeq.current, file, contextNote, settle: resolve })
+    }), [])
+
+  const consumeIncomingComposerImage = useCallback((id: number): void => {
+    pendingComposerImageSettle.current = null
+    setIncomingComposerImage((current) => (current?.id === id ? null : current))
+  }, [])
+
   const removePendingPreviewPick = useCallback((index: number): void => {
     setPendingPreviewPicks((current) => current.filter((_, i) => i !== index))
   }, [])
@@ -2123,6 +2140,7 @@ export function Workbench(): ReactElement {
             onPreferredUrlConsumed={clearWorkspacePreviewUrl}
             onPreviewErrorConsumed={clearHtmlPreviewError}
             onPreviewPick={handlePreviewPick}
+            onAttachImage={attachBrowserImage}
             onDemonstrationSaved={(message) => { void sendMessage(message, mode) }}
             onTabChange={(tab) => {
               if (tab === 'changes' && rightSidebarTab !== 'changes') {
@@ -2195,6 +2213,8 @@ export function Workbench(): ReactElement {
           previewPicks={pendingPreviewPicks}
           onRemovePreviewPick={removePendingPreviewPick}
           onClearPreviewPicks={clearPendingPreviewPicks}
+          incomingImage={incomingComposerImage}
+          onIncomingImageConsumed={consumeIncomingComposerImage}
           flashNotice={previewPickNotice}
           flashNoticeNonce={previewPickNoticeNonce}
         />,

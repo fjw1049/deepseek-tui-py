@@ -233,8 +233,10 @@ const api = {
       return () => { ipcRenderer.removeListener('browser-bridge:command', handler) }
     }
   },
-  copyDevBrowserScreenshotToClipboard: (webContentsId) =>
-    ipcRenderer.invoke('dev-browser:copy-screenshot', { webContentsId })
+  captureDevBrowserScreenshot: (webContentsId) =>
+    ipcRenderer.invoke('dev-browser:capture-screenshot', { webContentsId }),
+  runDevBrowserPicker: (webContentsId, action) =>
+    ipcRenderer.invoke('dev-browser:picker', { webContentsId, action })
 } satisfies DsGuiApi
 
 contextBridge.exposeInMainWorld('dsGui', api)

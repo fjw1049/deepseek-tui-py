@@ -121,6 +121,15 @@ type ComposerAttachment = {
   path: string
   name: string
   size: number
+  /** Hidden context for the model (e.g. what a browser screenshot shows), sent after the request. */
+  contextNote?: string
+}
+
+/** An image handed over from another surface (the browser pane), attached like a paste. */
+export type IncomingComposerImage = {
+  id: number; file: File; contextNote?: (path: string) => string
+  /** Told whether the image ended up attached, so the sender can keep its work when it did not. */
+  settle?: (attached: boolean) => void
 }
 
 type FileBadge = { label: string; className: string }
@@ -221,6 +230,8 @@ type Props = {
   previewPicks?: PreviewElementPick[]
   onRemovePreviewPick?: (index: number) => void
   onClearPreviewPicks?: () => void
+  incomingImage?: IncomingComposerImage | null
+  onIncomingImageConsumed?: (id: number) => void
 }
 
 type SlashCommandId = ComposerMode | ComposerActionCommandId | 'goal'
@@ -246,7 +257,8 @@ function getSlashQuery(input: string): string | null {
 
 function buildOutboundMessage(attachments: ComposerAttachment[], input: string): string {
   const mentionLines = attachments.map((item) => formatComposerPathMention(item.path))
-  return [...mentionLines, input.trim()].filter(Boolean).join('\n')
+  const notes = attachments.flatMap((item) => item.contextNote ? [item.contextNote] : [])
+  return [...mentionLines, input.trim(), ...notes].filter(Boolean).join('\n')
 }
 
 export function FloatingComposer({
@@ -281,7 +293,9 @@ export function FloatingComposer({
   focusRequestId = 0,
   previewPicks = [],
   onRemovePreviewPick,
-  onClearPreviewPicks
+  onClearPreviewPicks,
+  incomingImage = null,
+  onIncomingImageConsumed
 }: Props): ReactElement {
   const paneFocused = useChatPaneFocused()
   const chatStore = useChatStoreApi()
@@ -1259,8 +1273,9 @@ export function FloatingComposer({
     setInput(`${current.slice(0, start)}${text}${current.slice(end)}`)
   }
 
-  const attachImageFiles = async (files: File[]): Promise<void> => {
-    if (!canCompose || !effectiveWorkspaceRoot || !files.length) return
+  /** Resolves true only when every file was attached. */
+  const attachImageFiles = async (files: File[], contextNote?: (path: string) => string): Promise<boolean> => {
+    if (!canCompose || !effectiveWorkspaceRoot || !files.length) return false
     const target = imageTargetRef.current
     setImageImports((count) => count + 1)
     try {
@@ -1273,22 +1288,38 @@ export function FloatingComposer({
           reader.onerror = () => reject(new Error(t('composerPasteFailed')))
           reader.readAsDataURL(file)
         })
-        if (target !== imageTargetRef.current) return
+        if (target !== imageTargetRef.current) return false
         const result = await window.dsGui.writePasteImageFile({ workspaceRoot: effectiveWorkspaceRoot, dataUrl })
         if (!result.ok) throw new Error(result.message)
-        if (target !== imageTargetRef.current) return
+        if (target !== imageTargetRef.current) return false
         setAttachments((previous) => [...previous, {
           id: `att-${result.relativePath}`, path: result.relativePath, name: file.name || result.name,
-          size: result.size
+          size: result.size, ...(contextNote ? { contextNote: contextNote(result.relativePath) } : {})
         }])
       }
       focusComposer()
+      return true
     } catch (error) {
       if (target === imageTargetRef.current) showAttachNotice(error instanceof Error ? error.message : t('composerPasteFailed'))
+      return false
     } finally {
       setImageImports((count) => count - 1)
     }
   }
+
+  const handledIncomingImage = useRef(0)
+  useEffect(() => {
+    if (!incomingImage || handledIncomingImage.current === incomingImage.id) return
+    handledIncomingImage.current = incomingImage.id
+    onIncomingImageConsumed?.(incomingImage.id)
+    if (!canCompose || !effectiveWorkspaceRoot) {
+      showAttachNotice(t('annotationNeedsWorkspace'))
+      incomingImage.settle?.(false)
+      return
+    }
+    void attachImageFiles([incomingImage.file], incomingImage.contextNote).then((attached) => incomingImage.settle?.(attached))
+  }, [incomingImage]) // eslint-disable-line react-hooks/exhaustive-deps
+
 
   const handleLargePaste = async (text: string): Promise<void> => {
     if (!effectiveWorkspaceRoot) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Window } from 'happy-dom'
 import {
   PREVIEW_PICK_CONSOLE_PREFIX,
@@ -82,14 +82,14 @@ describe('parsePreviewPickConsoleMessage', () => {
     expect(parsed?.type).toBe('pick')
     if (parsed?.type !== 'pick') return
     expect(parsed.payload.textPreview.length).toBe(200)
-    expect(parsed.payload.htmlSnippet.length).toBe(1200)
-    expect(parsed.payload.ancestry).toHaveLength(3)
+    expect(parsed.payload.htmlSnippet.length).toBe(2000)
+    expect(parsed.payload.ancestry).toHaveLength(4)
     expect(parsed.payload.classes[0]).toHaveLength(128)
     expect(parsed.payload.ancestry[0]).toHaveLength(500)
   })
 
   it('rejects oversized console messages before parsing JSON', () => {
-    expect(parsePreviewPickConsoleMessage(`${PREVIEW_PICK_CONSOLE_PREFIX}${'x'.repeat(20_000)}`)).toBeNull()
+    expect(parsePreviewPickConsoleMessage(`${PREVIEW_PICK_CONSOLE_PREFIX}${'x'.repeat(40_000)}`)).toBeNull()
   })
 })
 
@@ -121,6 +121,47 @@ describe('preview picker arm/disarm scripts', () => {
     const disposeIdx = cleanup.indexOf('__dsPreviewPick?.dispose')
     expect(armIdx).toBeGreaterThanOrEqual(0)
     expect(disposeIdx).toBeGreaterThan(armIdx)
+  })
+
+  it('reports attributes, box and siblings for the picked element', () => {
+    const guest = new Window()
+    guest.document.body.innerHTML = '<nav><a id="go" class="link primary main" href="/next" aria-label="Next page">Two</a><span class="sep"></span></nav>'
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      new Function('window', 'document', buildPreviewPickerInjectScript())(guest, guest.document)
+      guest.document.getElementById('go')!.dispatchEvent(new guest.MouseEvent('click', { bubbles: true }))
+      const parsed = parsePreviewPickConsoleMessage(String(warn.mock.calls.at(-1)?.[0]))
+      expect(parsed?.type).toBe('pick')
+      if (parsed?.type !== 'pick') return
+      expect(parsed.payload.attributes).toEqual({ 'aria-label': 'Next page', href: '/next' })
+      expect(parsed.payload.rect).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+      expect(parsed.payload.siblingHtml).toBe('<!-- SELECTED --><a id="go" class="link primary main" />\n<span class="sep" />')
+    } finally {
+      warn.mockRestore()
+      new Function('window', 'document', buildPreviewPickerCleanupScript())(guest, guest.document)
+    }
+  })
+
+  it('keeps presses from the page while armed so picking never selects text, and lets them through after', () => {
+    const guest = new Window()
+    guest.document.body.innerHTML = '<p id="t">Selectable</p>'
+    const target = guest.document.getElementById('t')!
+    const press = (): boolean => !target.dispatchEvent(new guest.MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
+    new Function('window', 'document', buildPreviewPickerInjectScript())(guest, guest.document)
+    expect(press()).toBe(true)
+    new Function('window', 'document', buildPreviewPickerCleanupScript())(guest, guest.document)
+    expect(press()).toBe(false)
+  })
+
+  it('drops malformed optional fields instead of the whole pick', () => {
+    const parsed = parsePreviewPickConsoleMessage(`${PREVIEW_PICK_CONSOLE_PREFIX}${JSON.stringify({
+      type: 'pick',
+      payload: { selector: 'p', tagName: 'p', classes: [], textPreview: '', htmlSnippet: '<p></p>', ancestry: [],
+        styles: { color: 'red', bad: 3 }, rect: { x: 1, y: 'no', width: 2, height: 3 }, attributes: [] }
+    })}`)
+    expect(parsed?.type === 'pick' && parsed.payload).toMatchObject({ styles: { color: 'red' } })
+    expect(parsed?.type === 'pick' && 'rect' in parsed.payload).toBe(false)
+    expect(parsed?.type === 'pick' && 'attributes' in parsed.payload).toBe(false)
   })
 
   it('inject gates click/move handlers on the arm flag', () => {
@@ -267,6 +308,27 @@ describe('preview pick composer helpers', () => {
     const request = '增加说明“用户要求：请先登录”，并调整样式'
     const parsed = parsePreviewPickWireMessage(formatPreviewPickWireMessage(samplePick, request))
     expect(parsed?.userRequest).toBe(request)
+  })
+
+  it('round-trips a web page pick with its URL and extra context', () => {
+    const pagePick: PreviewElementPick = {
+      ...samplePick, filePath: '', pageUrl: 'https://www.baidu.com/s?wd=1',
+      styles: { color: 'rgb(0, 0, 0)' }, rect: { x: 10, y: 20, width: 300, height: 36 },
+      attributes: { href: '/next' }, siblingHtml: '<!-- SELECTED --><h1 class="title" />'
+    }
+    const wire = formatPreviewPickWireMessage(pagePick, '这条新闻讲的是什么')
+    expect(wire).toContain('带 pageUrl 的是网页上的元素')
+    const raw = JSON.parse(/```json\s*\n([\s\S]*?)\n```/.exec(wire)?.[1] ?? 'null')
+    expect(raw[0]).not.toHaveProperty('filePath')
+    expect(raw[0]).toMatchObject({ pageUrl: 'https://www.baidu.com/s?wd=1', rect: { width: 300 }, attributes: { href: '/next' } })
+    const parsed = parsePreviewPickWireMessage(wire)
+    expect(parsed?.userRequest).toBe('这条新闻讲的是什么')
+    expect(parsed?.chipLabels).toEqual(['www.baidu.com · h1.title'])
+    expect(parsed?.picks[0]).toMatchObject({ filePath: '', pageUrl: 'https://www.baidu.com/s?wd=1' })
+  })
+
+  it('keeps the file intro when every pick comes from a workspace file', () => {
+    expect(formatPreviewPickWireMessage([samplePick, secondPick], 'x')).toContain('请修改以下预览选中模块')
   })
 
   it('parses the legacy unmarked single-object wire form', () => {

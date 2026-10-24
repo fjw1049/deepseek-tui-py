@@ -7,6 +7,7 @@
 import type { ChatBlock } from '../../agent/types'
 import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
 import { parsePreviewPickWireMessage } from '../../lib/preview-pick-message'
+import { stripAnnotationContext } from '../../lib/browser-annotation'
 
 /** One tick on the navigation trail — a single query the user sent. */
 export interface QueryTrailItem {
@@ -91,7 +92,8 @@ function normalizePreview(text: string): string {
   return head.length > MAX_PREVIEW_LENGTH ? collapsePreview(head) : collapsePreview(text)
 }
 
-export function queryDisplayText(text: string): string {
+export function queryDisplayText(rawText: string): string {
+  const text = stripAnnotationContext(rawText)
   const previewPick = parsePreviewPickWireMessage(text)
   const focus = previewPick ? null : parseUserFocusPrefix(text)
   const source = previewPick

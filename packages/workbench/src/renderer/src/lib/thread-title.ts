@@ -2,6 +2,7 @@ import type { NormalizedThread } from '../agent/types'
 import i18n from '../i18n'
 import { parseUserFocusPrefix } from './user-focus-prefix'
 import { parsePreviewPickWireMessage } from './preview-pick-message'
+import { stripAnnotationContext } from './browser-annotation'
 
 const LEGACY_PLACEHOLDER_TITLES = new Set(['New Thread', '新会话'])
 const MAX_THREAD_TITLE_LENGTH = 48
@@ -31,8 +32,9 @@ export function getDefaultThreadTitle(): string {
   return i18n.t('common:untitledThread')
 }
 
-export function deriveThreadTitleFromPrompt(prompt: string): string {
+export function deriveThreadTitleFromPrompt(rawPrompt: string): string {
   const fallback = getDefaultThreadTitle()
+  const prompt = stripAnnotationContext(rawPrompt)
   // Strip focus prefixes / preview-pick envelopes so the sidebar title
   // shows the user's actual question, not the raw wire command.
   const previewPick = parsePreviewPickWireMessage(prompt)

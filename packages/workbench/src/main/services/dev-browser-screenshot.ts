@@ -1,8 +1,4 @@
-import { clipboard, nativeImage, webContents, type BrowserWindow } from 'electron'
-
-export type DevBrowserScreenshotResult =
-  | { ok: true }
-  | { ok: false; message: string }
+import { nativeImage, webContents, type BrowserWindow } from 'electron'
 
 export function resolveDevBrowserGuestWebContents(
   mainWindow: BrowserWindow | null,
@@ -91,11 +87,11 @@ async function captureGuestImage(
   }
 }
 
-export async function copyDevBrowserScreenshotToClipboard(
+async function captureDevBrowserGuest(
   mainWindow: BrowserWindow | null,
   webContentsId: number,
   senderWebContentsId?: number
-): Promise<DevBrowserScreenshotResult> {
+): Promise<{ ok: true; image: Electron.NativeImage } | { ok: false; message: string }> {
   const resolved = resolveDevBrowserGuestWebContents(
     mainWindow,
     webContentsId,
@@ -120,8 +116,7 @@ export async function copyDevBrowserScreenshotToClipboard(
     if (image.isEmpty()) {
       return { ok: false, message: 'Screenshot is empty.' }
     }
-    clipboard.writeImage(image)
-    return { ok: true }
+    return { ok: true, image }
   } catch (error) {
     return {
       ok: false,
@@ -130,4 +125,17 @@ export async function copyDevBrowserScreenshotToClipboard(
   } finally {
     clearTimeout(timeout)
   }
+}
+
+/** Capture the guest as a PNG data URL at its sharpest available scale. */
+export async function captureDevBrowserScreenshotDataUrl(
+  mainWindow: BrowserWindow | null,
+  webContentsId: number,
+  senderWebContentsId?: number
+): Promise<{ ok: true; dataUrl: string } | { ok: false; message: string }> {
+  const captured = await captureDevBrowserGuest(mainWindow, webContentsId, senderWebContentsId)
+  if (!captured.ok) return captured
+  const scaleFactor = Math.max(1, ...captured.image.getScaleFactors())
+  const png = captured.image.toPNG({ scaleFactor })
+  return { ok: true, dataUrl: `data:image/png;base64,${png.toString('base64')}` }
 }

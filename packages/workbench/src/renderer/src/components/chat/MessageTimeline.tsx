@@ -108,6 +108,7 @@ import {
   formatPreviewPickWireMessage,
   parsePreviewPickWireMessage
 } from '../../lib/preview-pick-message'
+import { stripAnnotationContext } from '../../lib/browser-annotation'
 import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
 import {
@@ -2211,16 +2212,17 @@ function UserMessageBubble({
   const busy = useChatStore((s) => s.busy)
   const rewindAndResend = useChatStore((s) => s.rewindAndResend)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
-  const previewPick = useMemo(() => parsePreviewPickWireMessage(block.text), [block.text])
+  const userText = useMemo(() => stripAnnotationContext(block.text), [block.text])
+  const previewPick = useMemo(() => parsePreviewPickWireMessage(userText), [userText])
   const focus = useMemo(
-    () => (previewPick ? null : parseUserFocusPrefix(block.text)),
-    [block.text, previewPick]
+    () => (previewPick ? null : parseUserFocusPrefix(userText)),
+    [userText, previewPick]
   )
   const displayBody = previewPick
     ? previewPick.userRequest
     : focus
       ? focus.body
-      : block.text
+      : userText
   const previewChipLabels = previewPick?.chipLabels ?? []
   const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -2285,7 +2287,7 @@ function UserMessageBubble({
   const startEdit = (): void => {
     if (busy) return
     setDraft(
-      previewPick ? previewPick.userRequest : focus ? focus.body : block.text
+      previewPick ? previewPick.userRequest : focus ? focus.body : userText
     )
     setEditPicks(previewPick?.picks ?? [])
     setConfirm(null)
@@ -2294,7 +2296,7 @@ function UserMessageBubble({
 
   const cancelEdit = (): void => {
     setDraft(
-      previewPick ? previewPick.userRequest : focus ? focus.body : block.text
+      previewPick ? previewPick.userRequest : focus ? focus.body : userText
     )
     setEditPicks(previewPick?.picks ?? [])
     setConfirm(null)

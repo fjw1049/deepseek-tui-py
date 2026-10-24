@@ -337,6 +337,13 @@ export const browserBridgeReplyPayloadSchema = z
   })
   .strict()
 
+export const devBrowserPickerPayloadSchema = z
+  .object({
+    webContentsId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    action: z.enum(['arm', 'disarm'])
+  })
+  .strict()
+
 export const devBrowserScreenshotPayloadSchema = z
   .object({
     webContentsId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)

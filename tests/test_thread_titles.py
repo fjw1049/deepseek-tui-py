@@ -25,6 +25,15 @@ def test_derive_thread_title_matches_first_query_display_rules() -> None:
     assert should_derive_thread_title("手动标题", thread_id="thr_12345678") is False
 
 
+def test_derive_thread_title_ignores_browser_annotation_context() -> None:
+    note = (
+        "<browser-annotation-context>shot.png is a screenshot of the browser pane, "
+        "with the user's annotations drawn on top.</browser-annotation-context>"
+    )
+    assert derive_thread_title_from_query(f"圈出来的这条是什么？\n{note}") == "圈出来的这条是什么"
+    assert derive_thread_title_from_query(note) is None
+
+
 def test_first_query_title_stays_stable_when_later_queries_exist(tmp_path: Path) -> None:
     store = RuntimeThreadStore(tmp_path / "runtime")
     now = datetime.now(timezone.utc)

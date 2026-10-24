@@ -483,8 +483,13 @@ export type DsGuiApi = {
     reply: (requestId: string, reply: BrowserBridgeReply) => Promise<void>
     onCommand: (listener: (requestId: string, command: BrowserBridgeCommand) => void) => () => void
   }
-  /** Capture the dev-browser guest webview and copy it to the system clipboard. */
-  copyDevBrowserScreenshotToClipboard: (
+  /** Capture the dev-browser guest webview as a PNG data URL (for annotation). */
+  captureDevBrowserScreenshot: (
     webContentsId: number
+  ) => Promise<{ ok: true; dataUrl: string } | { ok: false; message?: string }>
+  /** Arm or disarm the element picker in a dev-browser guest, even while it is still loading. */
+  runDevBrowserPicker: (
+    webContentsId: number,
+    action: 'arm' | 'disarm'
   ) => Promise<{ ok: true } | { ok: false; message?: string }>
 }

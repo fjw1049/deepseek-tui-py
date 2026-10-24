@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { copyDevBrowserScreenshotToClipboard, resolveDevBrowserGuestWebContents } from './dev-browser-screenshot'
+import {
+  captureDevBrowserScreenshotDataUrl, resolveDevBrowserGuestWebContents
+} from './dev-browser-screenshot'
 
 const electronMock = vi.hoisted(() => ({
-  fromId: vi.fn(), writeImage: vi.fn(), createFromBuffer: vi.fn()
+  fromId: vi.fn(), createFromBuffer: vi.fn()
 }))
 vi.mock('electron', () => ({
   webContents: { fromId: electronMock.fromId },
-  clipboard: { writeImage: electronMock.writeImage },
   nativeImage: { createFromBuffer: electronMock.createFromBuffer }
 }))
 
@@ -58,15 +59,17 @@ describe('resolveDevBrowserGuestWebContents', () => {
     expect(resolveDevBrowserGuestWebContents(mainWindow, 42, 1).ok).toBe(false)
   })
 
-  it('clears the timeout after copying a screenshot', async () => {
+  it('clears the timeout after capturing a screenshot', async () => {
     vi.useFakeTimers()
-    electronMock.fromId.mockReturnValue(createGuest())
-    expect(await copyDevBrowserScreenshotToClipboard(mainWindow, 42, 1)).toEqual({ ok: true })
-    expect(electronMock.writeImage).toHaveBeenCalledOnce()
+    electronMock.fromId.mockReturnValue({
+      ...createGuest(),
+      capturePage: vi.fn(async () => ({ isEmpty: () => false, getScaleFactors: () => [1], toPNG: () => Buffer.from('png') }))
+    })
+    expect((await captureDevBrowserScreenshotDataUrl(mainWindow, 42, 1)).ok).toBe(true)
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('detaches its debugger on timeout and does not copy late results', async () => {
+  it('detaches its debugger on timeout', async () => {
     vi.useFakeTimers()
     let attached = false
     let finishCapture!: (value: { data: string }) => void
@@ -80,12 +83,32 @@ describe('resolveDevBrowserGuestWebContents', () => {
       ...createGuest(), debugger: debuggerSession,
       capturePage: vi.fn(async () => ({ isEmpty: () => true }))
     })
-    const pending = copyDevBrowserScreenshotToClipboard(mainWindow, 42, 1)
+    const pending = captureDevBrowserScreenshotDataUrl(mainWindow, 42, 1)
     await vi.advanceTimersByTimeAsync(12_000)
     expect(await pending).toEqual({ ok: false, message: 'Screenshot timed out.' })
     expect(debuggerSession.detach).toHaveBeenCalledOnce()
     finishCapture({ data: 'late' })
     await Promise.resolve()
-    expect(electronMock.writeImage).not.toHaveBeenCalled()
+  })
+})
+
+describe('captureDevBrowserScreenshotDataUrl', () => {
+  it('returns a PNG data URL at the sharpest captured scale', async () => {
+    const toPNG = vi.fn(() => Buffer.from('png'))
+    electronMock.fromId.mockReturnValue({
+      ...createGuest(),
+      capturePage: vi.fn(async () => ({ isEmpty: () => false, getScaleFactors: () => [1, 2], toPNG }))
+    })
+    expect(await captureDevBrowserScreenshotDataUrl(mainWindow, 42, 1)).toEqual({
+      ok: true, dataUrl: `data:image/png;base64,${Buffer.from('png').toString('base64')}`
+    })
+    expect(toPNG).toHaveBeenCalledWith({ scaleFactor: 2 })
+  })
+
+  it('refuses a guest owned by another window', async () => {
+    electronMock.fromId.mockReturnValue(createGuest())
+    expect(await captureDevBrowserScreenshotDataUrl(mainWindow, 42, 2)).toEqual({
+      ok: false, message: 'Screenshot request came from an unexpected window.'
+    })
   })
 })

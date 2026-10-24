@@ -28,10 +28,14 @@ def should_derive_thread_title(
     )
 
 
+# Hidden context the Workbench appends after browser screenshots; never title material.
+_ANNOTATION_CONTEXT = re.compile(r"\s*<browser-annotation-context>[\s\S]*?</browser-annotation-context>")
+
+
 def derive_thread_title_from_query(query: str) -> str | None:
     """Match the Workbench's short, stable first-query title closely."""
 
-    clean_query = query.strip()
+    clean_query = _ANNOTATION_CONTEXT.sub("", query).strip()
     if not clean_query:
         return None
 

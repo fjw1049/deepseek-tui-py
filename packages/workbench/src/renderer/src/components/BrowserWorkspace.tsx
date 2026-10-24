@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Hand, Play, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb, CircleStop } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, RotateCw, Globe2, Plus, X, MoreHorizontal, Hand, Play, Video, Film, Square, MousePointer2, Pencil, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, Lightbulb, CircleStop } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
-import { buildPreviewPickerCleanupScript, buildPreviewPickerInjectScript, extractWebviewConsoleMessage, parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
+import { extractWebviewConsoleMessage, parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
 import { localizeDevBrowserScreenshotError } from '../lib/dev-browser-screenshot-errors'
+import { annotationContextNote, readAnnotationBarShown, writeAnnotationBarShown } from '../lib/browser-annotation'
+import { BrowserAnnotation, type BrowserAnnotationHandle } from './browser-annotation/BrowserAnnotation'
 import { BLANK_PAGE, activatePageTab, closePageTab, ensureBrowserSession, navigatePageTab, openPageTab, pageWebview, setPageDisplay, updatePageTab, useBrowserPagesStore, setBrowserInputBlocked } from '../store/browser-pages-store'
 import { isHtmlPreviewPath } from '@shared/html-preview'
 import { BrowserCookieSync, type CookieSyncState } from './BrowserCookieSync'
@@ -69,25 +71,19 @@ export async function browserRequest<T>(threadId: string, suffix = '', body?: un
 /** The browser before a conversation exists; agents never act in it. */
 export const PREVIEW_BROWSER_ID = 'workbench-preview'
 
-/** A status capsule heading for its toolbar dock. */
-function DockIcon(): ReactElement {
-  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="1.5" y="9" width="8.5" height="5" rx="2.5" /><path d="M9 7 14 2M10.5 2H14v3.5" />
-  </svg>
-}
-
 type BrowserWorkspaceProps = {
   threadId: string | null; visible?: boolean; blocks?: ChatBlock[]
   preferredUrl?: string | null; preferredFilePath?: string | null; externalError?: string | null
   onPreferredUrlConsumed?: () => void; onExternalErrorConsumed?: () => void
   onPreviewPick?: (pick: PreviewElementPick) => void
+  onAttachImage?: (file: File, contextNote: (path: string) => string) => Promise<boolean>
   onOpenFileInEditor?: (path: string) => void
   onDemonstrationSaved?: (message: string) => void
 }
 
 /** One browser shared by the user and the agent: previews, browsing and automation. */
 export function BrowserWorkspace({ threadId: conversationId, visible = true, blocks = [], preferredUrl, preferredFilePath,
-  onPreferredUrlConsumed, externalError, onExternalErrorConsumed, onPreviewPick, onOpenFileInEditor,
+  onPreferredUrlConsumed, externalError, onExternalErrorConsumed, onPreviewPick, onAttachImage, onOpenFileInEditor,
   onDemonstrationSaved }: BrowserWorkspaceProps): ReactElement {
   const threadId = conversationId ?? PREVIEW_BROWSER_ID
   const [dialogAnswer, setDialogAnswer] = useState('')
@@ -117,16 +113,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const [more, setMore] = useState(false)
   const controlOptionsId = useId()
   const [controlOpen, setControlOpen] = useState(false)
-  const [controlMinimized, setControlMinimized] = useState(false)
-  const [controlLeaving, setControlLeaving] = useState(false)
-  const controlRestore = useRef<HTMLButtonElement>(null)
-  const controlDock = useRef<DOMRect | null>(null)
-  const controlFlight = useRef<Animation | null>(null)
-  const controlRoot = useRef<HTMLElement>(null)
+  const controlRoot = useRef<HTMLDivElement>(null)
   const controlButton = useRef<HTMLButtonElement>(null)
-  const [controlPosition, setControlPosition] = useState({ x: 0.5, y: 0 })
-  const controlDrag = useRef<{ id: number; x: number; y: number; left: number; top: number } | null>(null)
-  const suppressControlClick = useRef(false)
   useLightDismiss({ open: controlOpen, refs: [controlRoot], onDismiss: () => {
     if (controlRoot.current?.contains(document.activeElement)) controlButton.current?.focus()
     setControlOpen(false)
@@ -152,8 +140,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const [previewFiles, setPreviewFiles] = useState<Record<string, string>>({})
   const [waitingPreview, setWaitingPreview] = useState<{ url: string; filePath?: string | null } | null>(null)
   const [inspect, setInspect] = useState(false)
+  const [annotationBarShown, setAnnotationBarShownState] = useState(readAnnotationBarShown)
+  const annotation = useRef<BrowserAnnotationHandle>(null)
+  const setAnnotationBarShown = useCallback((shown: boolean): void => { writeAnnotationBarShown(shown); setAnnotationBarShownState(shown) }, [])
   const [notice, setNotice] = useState('')
-  const [copying, setCopying] = useState(false)
   useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(''), 4000)
@@ -161,7 +151,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   }, [notice])
   const detectedUrls = useMemo(() => extractDetectedDevPreviewUrls(blocks), [blocks])
   const filePath = remote ? (state?.url ? previewFiles[state.url.split('#')[0]] : undefined) : activeTab?.filePath ?? undefined
-  const canInspect = !!filePath && isHtmlPreviewPath(filePath) && !!onPreviewPick
   const inspectedPage = remote ? state?.url : activeTab?.id
   useEffect(() => { setInspect(false) }, [visible, inspectedPage, state?.generation, state?.owner])
   useEffect(() => { if (externalError) { setError(externalError); onExternalErrorConsumed?.() } }, [externalError, onExternalErrorConsumed])
@@ -178,6 +167,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const canBrowse = visible && !!state && !inputHeld
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const pageUrl = remote ? state?.url : activeTab?.url
+  // Workspace HTML previews pick against their source file; any other web page picks by URL.
+  const pickSource = useMemo(() => filePath && isHtmlPreviewPath(filePath) ? { filePath }
+    : pageUrl && /^(https?|file):/i.test(pageUrl) ? { filePath: '', pageUrl } : null, [filePath, pageUrl])
+  const canInspect = !!pickSource && !!onPreviewPick
   useEffect(() => { if (pageUrl) setUrl(pageUrl === BLANK_PAGE ? '' : pageUrl) }, [pageUrl])
   const displayedScene = useRef<string | undefined>(undefined)
   const apply = useCallback((next: BrowserState): void => {
@@ -299,14 +292,21 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   // Element picking on a native tab: the injected picker reports over console messages.
   useEffect(() => {
     const webview = remote ? null : pageWebview(activeTab?.id)
-    if (!inspect || !webview || !filePath) return
-    const run = (code: string): void => { try { void webview.executeJavaScript(code).catch(() => {}) } catch { /* not attached yet */ } }
-    const arm = (): void => run(buildPreviewPickerInjectScript())
+    if (!inspect || !webview || !pickSource) return
+    // The main process runs the picker in the main frame, so it arms while the page is still loading.
+    const run = (action: 'arm' | 'disarm'): void => {
+      try { void window.dsGui.runDevBrowserPicker(webview.getWebContentsId(), action).catch(() => {}) } catch { /* not attached yet */ }
+    }
+    const arm = (): void => run('arm')
     const onMessage = (event: Event): void => {
       const message = extractWebviewConsoleMessage(event)
       const parsed = message && message.includes(PREVIEW_PICK_CONSOLE_PREFIX) ? parsePreviewPickConsoleMessage(message) : null
       if (parsed?.type === 'cancel') setInspect(false)
-      else if (parsed?.type === 'pick') onPreviewPick?.({ ...parsed.payload, filePath })
+      else if (parsed?.type === 'pick') {
+        onPreviewPick?.({ ...parsed.payload, ...pickSource })
+        // With the annotation bar, a pick ends selection mode (the bar returns to rest).
+        if (onAttachImage) { setInspect(false); setNotice(t('browserPickAdded')) }
+      }
     }
     arm()
     webview.addEventListener('dom-ready', arm)
@@ -314,9 +314,9 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     return () => {
       webview.removeEventListener('dom-ready', arm)
       webview.removeEventListener('console-message', onMessage)
-      run(buildPreviewPickerCleanupScript())
+      run('disarm')
     }
-  }, [inspect, remote, activeTab?.id, filePath, onPreviewPick])
+  }, [inspect, remote, activeTab?.id, pickSource, onPreviewPick, onAttachImage, t])
   async function refreshBrowser(): Promise<void> {
     setPending(true); setFrameFresh(false)
     try {
@@ -415,29 +415,19 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       await window.dsGui.openExternal(result.url)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
   }
-  async function copyScreenshot(): Promise<void> {
-    if (!remote) {
-      if (copying) return
-      setCopying(true)
-      try {
-        const result = await window.dsGui.copyDevBrowserScreenshotToClipboard(pageWebview(activeTab?.id)!.getWebContentsId())
-        if (!result.ok) throw new Error(result.message)
-        setNotice(t('browserScreenshotCopied'))
-      } catch (e) { setError(localizeDevBrowserScreenshotError(e instanceof Error ? e.message : String(e), t)) }
-      finally { setCopying(false) }
-      return
-    }
-    try {
+  const captureForAnnotation = useCallback(async (): Promise<string> => {
+    if (remote) {
       const snapshot = await browserRequest<BrowserState>(threadId, '/view')
-      if (!snapshot.image) throw new Error(t('browserScreenshotFailed'))
-      const img = new Image(); img.src = snapshot.image; await img.decode()
-      const canvas = document.createElement('canvas'); canvas.width = img.naturalWidth; canvas.height = img.naturalHeight
-      canvas.getContext('2d')!.drawImage(img, 0, 0)
-      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error(t('browserScreenshotFailed'))), 'image/png'))
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-      setNotice(t('browserScreenshotCopied'))
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-  }
+      if (!snapshot.image) throw new Error(t('annotationCaptureFailed'))
+      return snapshot.image
+    }
+    const webview = pageWebview(activeTab?.id)
+    if (!webview) throw new Error(t('annotationCaptureFailed'))
+    const result = await window.dsGui.captureDevBrowserScreenshot(webview.getWebContentsId())
+    if (result.ok) return result.dataUrl
+    const message = localizeDevBrowserScreenshotError(result.message, t)
+    throw new Error(message === t('browserScreenshotFailed') ? t('annotationCaptureFailed') : message)
+  }, [remote, threadId, activeTab?.id, t])
   function navigate(): void {
     const value = url.trim()
     if (!value) { if (!remote && activeTab && activeTab.url !== BLANK_PAGE) loadInTab(activeTab.id, BLANK_PAGE); return }
@@ -462,31 +452,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const needsAttention = !!(unresolvedReceipt || state?.dialog || state?.file_chooser || waitingPreview || error || connectionError || state?.error || state?.healthy === false)
   const needsHelp = state?.assistance?.status === 'pending'
   const controlTone = needsHelp || needsAttention ? 'attention' : state?.owner === 'user' ? 'human' : agentWorking ? 'agent' : 'idle'
-  // Agent activity and anything waiting on the user always bring the status back.
-  const controlForced = controlTone === 'agent' || controlTone === 'attention'
-  useEffect(() => { if (controlForced) setControlMinimized(false) }, [controlForced])
-  const controlHidden = controlMinimized && !controlForced
-  const controlWasHidden = useRef(controlHidden)
-  // The status shrinks into its toolbar dock and grows back out of it.
-  useLayoutEffect(() => {
-    if (controlWasHidden.current === controlHidden) return
-    controlWasHidden.current = controlHidden
-    controlFlight.current?.cancel()
-    const panel = controlRoot.current
-    if (controlHidden) {
-      controlDock.current = controlRestore.current?.getBoundingClientRect() ?? null
-      if (panel?.contains(document.activeElement)) controlRestore.current?.focus()
-    } else setControlLeaving(false)
-    const dock = controlDock.current
-    if (!panel || !dock || typeof panel.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setControlLeaving(false); return }
-    const rect = panel.getBoundingClientRect()
-    const open = `translate(0px, 0px) ${panel.style.transform} scale(1)`
-    const docked = `translate(${dock.left + dock.width / 2 - rect.left - rect.width / 2}px, ${dock.top + dock.height / 2 - rect.top - rect.height / 2}px) ${panel.style.transform} scale(${Math.min(1, dock.width / rect.width)})`
-    const flight = panel.animate(controlHidden ? [{ transform: open, opacity: 1 }, { transform: docked, opacity: 0 }] : [{ transform: docked, opacity: 0 }, { transform: open, opacity: 1 }],
-      { duration: 260, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' })
-    controlFlight.current = flight
-    if (controlHidden) void flight.finished.then(() => setControlLeaving(false), () => {})
-  }, [controlHidden])
+  const showControlButton = !!state?.active && !(requiresReview && state.owner === 'user') && (!hasConnectionProblem || requiresReview)
+    && !(state.owner === 'user' && state.task_running === false && !state.assistance)
+  // Agent activity, a pending hand-over, or anything waiting on the user keeps the bar up even when its tools were hidden.
+  const controlForced = controlTone === 'agent' || controlTone === 'attention' || showControlButton
   const controlTitle = controlTarget === 'user' ? 'browserPausing' : controlTarget === 'agent' ? 'browserResuming'
     : controlTarget === 'stopped' ? 'browserWorking' : state?.task_pausing ? 'browserTaskPausing'
     : state?.transferring || capturePending ? 'browserWorking' : requiresReview || needsHelp ? 'browserWaitingForYou' : hasConnectionProblem ? 'browserConnectionProblem' : !state?.active ? 'browserIdle'
@@ -507,157 +476,45 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const loading = remote ? !!state?.loading : !!activeTab?.loading
   const canStop = loading && (remote ? visible && fresh && state?.owner === 'user' && !state.transferring : canBrowse)
   const pageOpen = !!activeTab && activeTab.url !== BLANK_PAGE
-  return <div className={`ds-shared-browser${remote ? '' : ' is-native'}${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
-    {visible && state && state.persistent !== false ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
-      agentBusy={agentWorking}
-      blank={!remote && !inputHeld && !pageOpen} updateRequest={cookieUpdate}
-      manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? menuButton.current?.getBoundingClientRect() ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
-    <div className="ds-dev-browser__chrome ds-browser-chrome">
-      <div className="ds-dev-browser__tabs">
-        <div className="ds-dev-browser__tab-scroll" aria-label={t('browserTabs')}>
-          {(tabViews.length ? tabViews : [{ id: '', title: t('browserNewTab'), url: '', active: true }]).map(tab =>
-            <div className={`ds-dev-browser__tab${tab.active ? ' ds-dev-browser__tab--active' : ''}`} key={tab.id || 'placeholder'}>
-              <button className="ds-dev-browser__tab-main" aria-pressed={tab.active} disabled={!tabsEnabled} title={tab.title || tab.url}
-                onClick={() => { if (!tab.id) return; if (remote || isPopup(tab.id)) action({ action: 'switch_tab', tab_id: tab.id }); else activatePageTab(threadId, tab.id) }}>
-                {agentTab?.tab_id === tab.id ? <LoaderCircle className="ds-browser-control-spinner" size={12} aria-label={t('browserAgentControl')} /> : <Globe2 className="ds-dev-browser__tab-icon" />}<span className="ds-dev-browser__tab-label">{!tab.url || tab.url === BLANK_PAGE ? t('browserNewTab') : tab.title || tab.url}</span>
-              </button>
-              {tab.id && !soleBlank ? <button className={`ds-dev-browser__tab-close${tab.active ? ' is-visible' : ''}`} aria-label={`${t('browserCloseTab')} ${tab.title}`} title={t('browserCloseTab')} disabled={remote ? !canNavigate : !canBrowse}
-                onClick={() => { if (remote || isPopup(tab.id)) action({ action: 'close_tab', tab_id: tab.id }); else closePageTab(threadId, tab.id) }}><X size={11} /></button> : null}
-            </div>)}
-        </div>
-        <button className="ds-dev-browser__icon-btn" aria-label={t('browserNewTab')} title={t('browserNewTab')} disabled={remote ? !canNavigate : !canBrowse}
-          onClick={() => { if (remote) action({ action: 'new_tab' }); else openPageTab(threadId, BLANK_PAGE) }}><Plus size={14} /></button>
-      </div>
-      <form className="ds-dev-browser__toolbar" onSubmit={(e) => { e.preventDefault(); navigate() }}>
-        <div className="ds-dev-browser__nav">
-          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserBack')} title={t('browserBack')} disabled={remote ? !userControls : !canBrowse || !nativeHistory('canGoBack')}
-            onClick={() => { if (remote) action({ action: 'back' }); else pageWebview(activeTab?.id)?.goBack() }}><ArrowLeft size={14} /></button>
-          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserForward')} title={t('browserForward')} disabled={remote ? !userControls : !canBrowse || !nativeHistory('canGoForward')}
-            onClick={() => { if (remote) action({ action: 'forward' }); else pageWebview(activeTab?.id)?.goForward() }}><ArrowRight size={14} /></button>
-          {canStop ?
-            <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserStop')} title={t('browserStop')} onClick={() => void stopLoading()}><CircleStop size={13} /></button> :
-            <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserReload')} title={t('browserReload')} disabled={remote ? !userControls : !canBrowse || !pageOpen}
-              onClick={() => { if (remote) action({ action: 'reload' }); else pageWebview(activeTab?.id)?.reloadIgnoringCache() }}>{loading ? <LoaderCircle className="ds-browser-control-spinner" size={13} /> : <RotateCw size={13} />}</button>}
-        </div>
-        <input className="ds-dev-browser__omnibox" aria-label={t('browserAddressPlaceholder')} placeholder={t('browserAddressPlaceholder')} value={url} disabled={!addressEnabled} onChange={(e) => setUrl(e.target.value)} />
-        <button className="ds-dev-browser__icon-btn" aria-label={t('browserOpen')} title={t('browserOpen')} disabled={!addressEnabled || !url.trim()}><ArrowRight size={13} /></button>
-        {canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={remote ? !userControls : !canBrowse} onClick={() => setInspect(!inspect)}><MousePointer2 size={15} /></button> : null}
-        {controlHidden ? <button ref={controlRestore} type="button" className={`ds-dev-browser__icon-btn ds-browser-status-restore is-${controlTone}`} aria-label={t('browserControlRestore')} title={t(controlTitle)} onClick={() => setControlMinimized(false)}>
-          <span className="ds-browser-status-mini" aria-hidden="true"><span className="ds-browser-status-dot" /><span className="ds-browser-status-mini-line" /></span></button> : null}
-        <div className="ds-browser-menu-anchor" ref={menuRoot}>
-          <button ref={menuButton} type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserMore')} title={t('browserMore')} aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(!more)}><MoreHorizontal size={16} /></button>
-          {more ? <div className="ds-dock-menu" role="menu" aria-label={t('browserMore')}
-            onClick={(e) => { if ((e.target as Element).closest('button')) setMore(false) }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setMore(false); menuButton.current?.focus() }
-              else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
-                e.preventDefault()
-                const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
-                const index = items.indexOf(document.activeElement as HTMLButtonElement)
-                const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
-                items[next]?.focus()
-              } else if (e.key === 'Tab') setMore(false)
-            }}>
-            {state && state.persistent !== false ? <>
-              <button type="button" role="menuitem" className="ds-dock-menu-item" aria-haspopup="dialog" onClick={event => { setCookieAnchor(menuButton.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()); setCookieSettings(true) }}><Globe2 size={15} />{t('browserCookieManage')}</button>
-              <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setCookieUpdate(count => count + 1)}><RotateCw size={15} />{t('browserCookieUpdate')}</button>
-            </> : null}
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
-            {conversationId ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void demonstrate()}><GraduationCap size={15} />{t(state?.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')}</button> : null}
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={pending} onClick={() => void suggestion(state?.skill_suggestions_enabled === false ? 'enable' : 'disable')}><Lightbulb size={15} />{t(state?.skill_suggestions_enabled === false ? 'browserSuggestOn' : 'browserSuggestOff')}</button>
-            <div className="ds-browser-menu-divider" role="separator" />
-            {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !userControls : !pageOpen} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !image : !pageOpen || copying} aria-busy={copying} onClick={() => void copyScreenshot()}><Copy size={15} />{t('browserCopyScreenshot')}</button>
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!pageUrl || !normalizeBrowseUrlInput(pageUrl)} onClick={() => { if (pageUrl) void window.dsGui.openExternal(pageUrl).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
-            {/* Workbench tabs stay open; ending only matters for a task or a private browser. */}
-            {remote || state?.task_running ? <>
-              <div className="ds-browser-menu-divider" role="separator" />
-              <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.active || pending} onClick={() => void control('stopped')}><Square size={15} />{t(state?.task_running ? 'browserEndTaskAndSession' : 'browserEndSession')}</button>
-            </> : null}
-          </div> : null}
-        </div>
-      </form>
-      {detectedUrls.length ? <div className="ds-dev-browser__chips">{detectedUrls.map(target => <button key={target} className="ds-dev-browser__chip" disabled={pending || !fresh} title={target} onClick={() => void openPreview(target)}>{formatDevPreviewUrlLabel(target)}</button>)}</div> : null}
-    </div>
-    {agentTab ? <div className="ds-browser-notice" role="status"><span>{t('browserAgentTarget', { name: agentTab.title || agentTab.url })}</span></div> : null}
-    {state?.artifacts?.length ? <details className="ds-browser-notice"><summary>{t('browserArtifacts')}</summary>
-      {state.artifacts.slice(-8).reverse().map(item => <button key={item.id} title={item.path} onClick={() => {
-        void window.dsGui.showItemInFolder(item.path).catch(e => setError(String(e)))
-      }}>{item.label || item.id}</button>)}
-    </details> : null}
-    {remote && image && (!fresh || !state?.active || state?.healthy === false) ? <div className="ds-browser-notice" role="status">{t('browserStaleFrame')}</div> : null}
-    {state?.video_error ? <div className="ds-browser-notice" role="alert">{state.video_error}</div> : null}
-    <div className="ds-browser-content" ref={pageArea}>
-    {inspect || notice ? <div className="ds-browser-feedback" role="status"><span>{inspect ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
-    {!inspect && !notice && !remote && activeTab && activeTab.error !== null ? <div className="ds-browser-feedback" role="status"><span>{activeTab.error || t('browserLoadFailed')}</span></div> : null}
-    {!inspect && !notice && captureError ? <div className="ds-browser-feedback" role="alert"><span>{t('browserDemoTabUnavailable', { error: captureError })}</span></div> : null}
-    {!inspect && !notice && state?.skill_suggestion ? <div className="ds-browser-feedback" role="status"><span>{t('browserSuggestSkill', { site: state.skill_suggestion.site, count: state.skill_suggestion.count })}</span>
-      <button disabled={pending} onClick={() => void suggestion('accept')}>{t('browserSuggestAccept')}</button>
-      <button disabled={pending} onClick={() => void suggestion('dismiss')}>{t('browserSuggestDismiss')}</button></div> : null}
-
-    {controlHidden && !controlLeaving ? null : <header ref={controlRoot} className={`ds-browser-status is-${controlTone}${controlHidden ? ' is-leaving' : ''}`} aria-hidden={controlHidden || undefined} style={{
-      left: `calc(${controlPosition.x * 100}% + ${8 - controlPosition.x * 16}px)`,
-      top: `calc(${controlPosition.y * 100}% + ${8 - controlPosition.y * 16}px)`,
-      transform: `translate(${-controlPosition.x * 100}%, ${-controlPosition.y * 100}%)`
-    }} aria-label={t('browserControlLabel')}
-      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setControlOpen(false) }}>
-      <div className="ds-browser-status-bar">
-      <button ref={controlButton} type="button" className="ds-browser-status-trigger" aria-expanded={controlOpen}
-        aria-controls={controlOptionsId}
-        onPointerDown={event => {
-          if (event.button !== 0 || !event.isPrimary) return
-          const rect = controlRoot.current!.getBoundingClientRect()
-          controlDrag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top }
-          suppressControlClick.current = false
-          event.currentTarget.setPointerCapture(event.pointerId)
-        }}
-        onPointerMove={event => {
-          const drag = controlDrag.current
-          if (!drag || drag.id !== event.pointerId) return
-          const dx = event.clientX - drag.x, dy = event.clientY - drag.y
-          if (!suppressControlClick.current && Math.hypot(dx, dy) < 5) return
-          suppressControlClick.current = true
-          const panel = controlRoot.current!
-          const bounds = panel.parentElement!.getBoundingClientRect()
-          const rect = panel.getBoundingClientRect()
-          setControlPosition({
-            x: Math.max(0, Math.min(1, (drag.left + dx - bounds.left - 8) / Math.max(1, bounds.width - rect.width - 16))),
-            y: Math.max(0, Math.min(1, (drag.top + dy - bounds.top - 8) / Math.max(1, bounds.height - rect.height - 16)))
-          })
-        }}
-        onPointerUp={event => {
-          if (controlDrag.current?.id !== event.pointerId) return
-          controlDrag.current = null
-          event.currentTarget.releasePointerCapture(event.pointerId)
-        }}
-        onPointerCancel={() => { controlDrag.current = null; suppressControlClick.current = true }}
-        onLostPointerCapture={() => { controlDrag.current = null }}
-        onClick={event => {
-          if (event.detail !== 0 && suppressControlClick.current) { suppressControlClick.current = false; return }
-          setControlOpen(!controlOpen)
-        }}>
-        <span className="ds-browser-status-copy" role="status" aria-live="polite" aria-atomic="true">
+  const annotationReady = remote ? !!userControls && !!image : canBrowse && pageOpen
+  const annotationSurface = !!onAttachImage && (remote ? !!image : pageOpen)
+  const annotationBarVisible = annotationSurface && (annotationBarShown || inspect || controlForced)
+  // Without a page to annotate, the bar still carries the status whenever it matters.
+  const statusBarOnly = !annotationBarVisible && controlForced
+  const pickHint = inspect && !annotationBarVisible
+  // The picker swallows page clicks, so it must not stay armed while the agent drives the page.
+  useEffect(() => { if (onAttachImage && !annotationReady) setInspect(false) }, [onAttachImage, annotationReady])
+  const controlDetails = !!(waitingPreview || (unresolvedReceipt && userControls) || (state?.dialog && userControls) || (state?.file_chooser && userControls)
+    || state?.downloads?.length || (hasConnectionProblem && (!requiresReview || state?.healthy === false)))
+  const videoUnavailable = state?.capabilities?.video?.ready === false
+  const statusCopy = <span className="ds-browser-status-copy" role="status" aria-live="polite" aria-atomic="true">
           <strong><span className="ds-browser-status-dot" aria-hidden="true" />{t(controlTitle)}{needsAttention && !requiresReview && !hasConnectionProblem ? <span className="ds-browser-attention">{t('browserNeedsAttention')}</span> : state?.downloads?.length ? <span className="ds-browser-attention">{t('browserDownloads')}</span> : null}</strong>
         </span>
-        <ChevronDown size={14} aria-hidden="true" className={controlOpen ? 'is-open' : ''} />
-      </button>
-      {controlForced ? null : <button type="button" className="ds-browser-status-minimize" aria-label={t('browserControlMinimize')} title={t('browserControlMinimize')}
-        onClick={() => { setControlOpen(false); setControlMinimized(true); setControlLeaving(true) }}><DockIcon /></button>}
-      </div>
-      {controlOpen ? <div id={controlOptionsId} className="ds-browser-control-details">
-        <p>{t(controlHint)}</p>
-        {state?.active && !(requiresReview && state.owner === 'user') && (!hasConnectionProblem || requiresReview)
-          && !(state.owner === 'user' && state.task_running === false && !state.assistance) ? <button type="button" className="ds-browser-control" disabled={!visible || !fresh || pending || controlBusy}
-          aria-busy={controlBusy} onClick={() => {
-            setControlOpen(false); controlButton.current?.focus()
-            void control(state.owner === 'user' ? 'agent' : 'user')
-          }}>
-          {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={14} /> : state.owner === 'user' ? <Play size={14} /> : <Hand size={14} />}
-          {t(controlBusy ? 'browserControlSwitching' : requiresReview && state.owner !== 'user' ? 'browserInspectAndHandle' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? 'browserReturnControl' : 'browserTakeControl')}
-        </button> : null}
+  // Recording sits after the annotation tools; like them it is greyed out while the agent has the page.
+  const recordingTools = state ? <>
+    {/* Disabled buttons get no hover, so the reason sits on a wrapper. */}
+    <span className="ds-annotation-toolbar__reason" title={videoUnavailable ? t('browserVideoUnavailable') : undefined}>
+      <button type="button" className={`ds-annotation-toolbar__btn${state.video_recording ? ' is-recording' : ''}`} aria-label={t(state.video_recording ? 'browserVideoStop' : 'browserVideoStart')}
+        title={videoUnavailable ? undefined : t(state.video_recording ? 'browserVideoStop' : 'browserVideoStart')} aria-pressed={!!state.video_recording}
+        disabled={!userControls || videoUnavailable} onClick={() => action({ action: state.video_recording ? 'video_stop' : 'video_start' })}><Video size={16} /></button>
+    </span>
+    <button type="button" className={`ds-annotation-toolbar__btn${state.recording ? ' is-recording' : ''}`} aria-label={t(state.recording ? 'browserFinishRecording' : 'browserRecordSteps')}
+      title={t(state.recording ? 'browserFinishRecording' : 'browserRecordSteps')} aria-pressed={!!state.recording}
+      disabled={!userControls} onClick={() => action({ action: state.recording ? 'record_stop' : 'record_start' })}><Film size={16} /></button>
+  </> : null
+  // The bar's leading status: who has the page, the hand-over button, and anything waiting on the user.
+  const controlStatus = <div ref={controlRoot} className={`ds-browser-status is-${controlTone}`} role="group" aria-label={t('browserControlLabel')}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setControlOpen(false) }}>
+    {controlDetails ? <button ref={controlButton} type="button" className="ds-browser-status-trigger" aria-expanded={controlOpen} aria-controls={controlOptionsId}
+      title={t(controlHint)} onClick={() => setControlOpen(!controlOpen)}>{statusCopy}<ChevronDown size={14} aria-hidden="true" className={controlOpen ? 'is-open' : ''} /></button>
+      : <span className="ds-browser-status-label" title={t(controlHint)}>{statusCopy}</span>}
+    {showControlButton && state ? <button type="button" className="ds-browser-control" disabled={!visible || !fresh || pending || controlBusy}
+      aria-busy={controlBusy} onClick={() => { setControlOpen(false); void control(state.owner === 'user' ? 'agent' : 'user') }}>
+      {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={14} /> : state.owner === 'user' ? <Play size={14} /> : <Hand size={14} />}
+      {t(controlBusy ? 'browserControlSwitching' : requiresReview && state.owner !== 'user' ? 'browserInspectAndHandle' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? 'browserReturnControl' : 'browserTakeControl')}
+    </button> : null}
+    {controlOpen && controlDetails ? <div id={controlOptionsId} className="ds-browser-control-details">
+      <p>{t(controlHint)}</p>
     {waitingPreview ? <div className="ds-browser-notice"><span>{t('browserPreviewWaiting')}</span><button disabled={!userControls} onClick={() => void openPreview(waitingPreview.url, waitingPreview.filePath)}>{t('browserOpen')}</button><button aria-label={t('browserDismissPreview')} onClick={() => setWaitingPreview(null)}><X size={13} /></button></div> : null}
     {unresolvedReceipt && userControls ?
       <div role="status" className="ds-browser-notice"><span>{t('browserOutcomeUnknown')}</span>
@@ -694,16 +551,116 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       {state?.healthy === false ? <button disabled={pending || controlBusy} onClick={() => void perform('/recover', {})}>{t('browserRecover')}</button> : null}
       <details><summary>{t('browserTechnicalDetails')}</summary><pre>{error || connectionError || state?.error}</pre></details>
     </div> : null}
-      </div> : null}
-    </header>}
+    </div> : null}
+  </div>
+  return <div className={`ds-shared-browser${remote ? '' : ' is-native'}${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
+    {visible && state && state.persistent !== false ? <BrowserCookieSync threadId={threadId} state={state?.cookie_sync} generation={state?.generation}
+      agentBusy={agentWorking}
+      blank={!remote && !inputHeld && !pageOpen} updateRequest={cookieUpdate}
+      manage={cookieSettings} anchor={cookieAnchor} onOpen={anchor => { setCookieAnchor(anchor ?? menuButton.current?.getBoundingClientRect() ?? null); setCookieSettings(true) }} onClose={() => { setCookieSettings(false); menuButton.current?.focus() }} /> : null}
+    <div className="ds-dev-browser__chrome ds-browser-chrome">
+      <div className="ds-dev-browser__tabs">
+        <div className="ds-dev-browser__tab-scroll" aria-label={t('browserTabs')}>
+          {(tabViews.length ? tabViews : [{ id: '', title: t('browserNewTab'), url: '', active: true }]).map(tab =>
+            <div className={`ds-dev-browser__tab${tab.active ? ' ds-dev-browser__tab--active' : ''}`} key={tab.id || 'placeholder'}>
+              <button className="ds-dev-browser__tab-main" aria-pressed={tab.active} disabled={!tabsEnabled} title={tab.title || tab.url}
+                onClick={() => { if (!tab.id) return; if (remote || isPopup(tab.id)) action({ action: 'switch_tab', tab_id: tab.id }); else activatePageTab(threadId, tab.id) }}>
+                {agentTab?.tab_id === tab.id ? <LoaderCircle className="ds-browser-control-spinner" size={12} aria-label={t('browserAgentControl')} /> : <Globe2 className="ds-dev-browser__tab-icon" />}<span className="ds-dev-browser__tab-label">{!tab.url || tab.url === BLANK_PAGE ? t('browserNewTab') : tab.title || tab.url}</span>
+              </button>
+              {tab.id && !soleBlank ? <button className={`ds-dev-browser__tab-close${tab.active ? ' is-visible' : ''}`} aria-label={`${t('browserCloseTab')} ${tab.title}`} title={t('browserCloseTab')} disabled={remote ? !canNavigate : !canBrowse}
+                onClick={() => { if (remote || isPopup(tab.id)) action({ action: 'close_tab', tab_id: tab.id }); else closePageTab(threadId, tab.id) }}><X size={11} /></button> : null}
+            </div>)}
+        </div>
+        <button className="ds-dev-browser__icon-btn" aria-label={t('browserNewTab')} title={t('browserNewTab')} disabled={remote ? !canNavigate : !canBrowse}
+          onClick={() => { if (remote) action({ action: 'new_tab' }); else openPageTab(threadId, BLANK_PAGE) }}><Plus size={14} /></button>
+      </div>
+      <form className="ds-dev-browser__toolbar" onSubmit={(e) => { e.preventDefault(); navigate() }}>
+        <div className="ds-dev-browser__nav">
+          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserBack')} title={t('browserBack')} disabled={remote ? !userControls : !canBrowse || !nativeHistory('canGoBack')}
+            onClick={() => { if (remote) action({ action: 'back' }); else pageWebview(activeTab?.id)?.goBack() }}><ArrowLeft size={14} /></button>
+          <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserForward')} title={t('browserForward')} disabled={remote ? !userControls : !canBrowse || !nativeHistory('canGoForward')}
+            onClick={() => { if (remote) action({ action: 'forward' }); else pageWebview(activeTab?.id)?.goForward() }}><ArrowRight size={14} /></button>
+          {canStop ?
+            <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserStop')} title={t('browserStop')} onClick={() => void stopLoading()}><CircleStop size={13} /></button> :
+            <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserReload')} title={t('browserReload')} disabled={remote ? !userControls : !canBrowse || !pageOpen}
+              onClick={() => { if (remote) action({ action: 'reload' }); else pageWebview(activeTab?.id)?.reloadIgnoringCache() }}>{loading ? <LoaderCircle className="ds-browser-control-spinner" size={13} /> : <RotateCw size={13} />}</button>}
+        </div>
+        <input className="ds-dev-browser__omnibox" aria-label={t('browserAddressPlaceholder')} placeholder={t('browserAddressPlaceholder')} value={url} disabled={!addressEnabled} onChange={(e) => setUrl(e.target.value)} />
+        <button className="ds-dev-browser__icon-btn" aria-label={t('browserOpen')} title={t('browserOpen')} disabled={!addressEnabled || !url.trim()}><ArrowRight size={13} /></button>
+        {onAttachImage ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t(inspect ? 'browserExitSelection' : 'browserAnnotate')} title={t(inspect ? 'browserExitSelection' : 'browserAnnotate')} aria-pressed={inspect} disabled={!inspect && (!annotationReady || !canInspect)}
+          onClick={() => { if (annotation.current) annotation.current.togglePick(); else { setAnnotationBarShown(true); setInspect(true) } }}><MousePointer2 size={15} /></button>
+          : canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={remote ? !userControls : !canBrowse} onClick={() => setInspect(!inspect)}><MousePointer2 size={15} /></button> : null}
+        <div className="ds-browser-menu-anchor" ref={menuRoot}>
+          <button ref={menuButton} type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserMore')} title={t('browserMore')} aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(!more)}><MoreHorizontal size={16} /></button>
+          {more ? <div className="ds-dock-menu" role="menu" aria-label={t('browserMore')}
+            onClick={(e) => { if ((e.target as Element).closest('button')) setMore(false) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setMore(false); menuButton.current?.focus() }
+              else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+                e.preventDefault()
+                const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
+                const index = items.indexOf(document.activeElement as HTMLButtonElement)
+                const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+                items[next]?.focus()
+              } else if (e.key === 'Tab') setMore(false)
+            }}>
+            {state && state.persistent !== false ? <>
+              <button type="button" role="menuitem" className="ds-dock-menu-item" aria-haspopup="dialog" onClick={event => { setCookieAnchor(menuButton.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()); setCookieSettings(true) }}><Globe2 size={15} />{t('browserCookieManage')}</button>
+              <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => setCookieUpdate(count => count + 1)}><RotateCw size={15} />{t('browserCookieUpdate')}</button>
+            </> : null}
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls || state?.capabilities?.video?.ready === false} title={state?.capabilities?.video?.ready === false ? t('browserVideoUnavailable') : undefined} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
+            {conversationId ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void demonstrate()}><GraduationCap size={15} />{t(state?.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')}</button> : null}
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={pending} onClick={() => void suggestion(state?.skill_suggestions_enabled === false ? 'enable' : 'disable')}><Lightbulb size={15} />{t(state?.skill_suggestions_enabled === false ? 'browserSuggestOn' : 'browserSuggestOff')}</button>
+            <div className="ds-browser-menu-divider" role="separator" />
+            {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !userControls : !pageOpen} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
+            {onAttachImage && !annotationBarShown ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!annotationSurface} onClick={() => setAnnotationBarShown(true)}><Pencil size={15} />{t('browserShowAnnotationTools')}</button> : null}
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!pageUrl || !normalizeBrowseUrlInput(pageUrl)} onClick={() => { if (pageUrl) void window.dsGui.openExternal(pageUrl).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
+            {/* Workbench tabs stay open; ending only matters for a task or a private browser. */}
+            {remote || state?.task_running ? <>
+              <div className="ds-browser-menu-divider" role="separator" />
+              <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.active || pending} onClick={() => void control('stopped')}><Square size={15} />{t(state?.task_running ? 'browserEndTaskAndSession' : 'browserEndSession')}</button>
+            </> : null}
+          </div> : null}
+        </div>
+      </form>
+      {detectedUrls.length ? <div className="ds-dev-browser__chips">{detectedUrls.map(target => <button key={target} className="ds-dev-browser__chip" disabled={pending || !fresh} title={target} onClick={() => void openPreview(target)}>{formatDevPreviewUrlLabel(target)}</button>)}</div> : null}
+    </div>
+    {agentTab ? <div className="ds-browser-notice" role="status"><span>{t('browserAgentTarget', { name: agentTab.title || agentTab.url })}</span></div> : null}
+    {state?.artifacts?.length ? <details className="ds-browser-notice"><summary>{t('browserArtifacts')}</summary>
+      {state.artifacts.slice(-8).reverse().map(item => <button key={item.id} title={item.path} onClick={() => {
+        void window.dsGui.showItemInFolder(item.path).catch(e => setError(String(e)))
+      }}>{item.label || item.id}</button>)}
+    </details> : null}
+    {remote && image && (!fresh || !state?.active || state?.healthy === false) ? <div className="ds-browser-notice" role="status">{t('browserStaleFrame')}</div> : null}
+    {state?.video_error ? <div className="ds-browser-notice" role="alert">{state.video_error}</div> : null}
+    <div className={`ds-browser-content${annotationBarVisible || statusBarOnly ? ' has-annotation-bar' : ''}`} ref={pageArea}>
+    {annotationBarVisible && onAttachImage ? <BrowserAnnotation key={`${inspectedPage}:${state?.generation}:${state?.owner}`} ref={annotation}
+      disabled={!annotationReady} pickEnabled={canInspect} picking={inspect} onPickingChange={setInspect} capture={captureForAnnotation}
+      onAdd={async (file, annotated) => {
+        const attached = await onAttachImage(file, path => annotationContextNote(path, annotated, pageUrl))
+        if (attached) setNotice(t('annotationAdded'))
+        return attached
+      }}
+      onHide={() => { setAnnotationBarShown(false); setInspect(false) }} onError={setError} status={controlStatus} tools={recordingTools} closable={!controlForced} /> : null}
+    {statusBarOnly ? <div className="ds-annotation"><div className="ds-annotation-toolbar" role="toolbar" aria-label={t('browserControlLabel')} data-state="rest">{controlStatus}{recordingTools ? <><span className="ds-annotation-toolbar__divider" aria-hidden="true" />{recordingTools}</> : null}</div></div> : null}
+    {pickHint || notice ? <div className="ds-browser-feedback" role="status"><span>{pickHint ? t('browserPickInstruction') : notice}</span><button aria-label={t('browserDismissPreview')} onClick={() => { setInspect(false); setNotice('') }}><X size={13} /></button></div> : null}
+    {!pickHint && !notice && !remote && activeTab && activeTab.error !== null ? <div className="ds-browser-feedback" role="status"><span>{activeTab.error || t('browserLoadFailed')}</span></div> : null}
+    {!pickHint && !notice && captureError ? <div className="ds-browser-feedback" role="alert"><span>{t('browserDemoTabUnavailable', { error: captureError })}</span></div> : null}
+    {!pickHint && !notice && state?.skill_suggestion ? <div className="ds-browser-feedback" role="status"><span>{t('browserSuggestSkill', { site: state.skill_suggestion.site, count: state.skill_suggestion.count })}</span>
+      <button disabled={pending} onClick={() => void suggestion('accept')}>{t('browserSuggestAccept')}</button>
+      <button disabled={pending} onClick={() => void suggestion('dismiss')}>{t('browserSuggestDismiss')}</button></div> : null}
+
       {remote && image ? <BrowserViewport image={image} enabled={!!userControls && frameFresh && !controlOpen && !more && !state.dialog} reviewOnly={!!unresolvedReceipt} resizeEnabled={!!userControls && frameFresh && !controlOpen && !more && !state.video_recording} generation={state.generation ?? 0}
         sceneId={state.scene?.scene_id} inspect={inspect && canInspect} onInspectCancel={() => setInspect(false)} width={state.viewport?.width ?? 1200} height={state.viewport?.height ?? 760} label={t('browserLiveView')}
         send={async (body) => {
           if (body.kind === 'pick') {
             const result = await browserRequest<{ pick?: unknown; url?: string }>(threadId, '/input', body)
             const parsed = parsePreviewPickConsoleMessage(PREVIEW_PICK_CONSOLE_PREFIX + JSON.stringify({ type: 'pick', payload: result.pick }))
-            if (alive.current && parsed?.type === 'pick' && filePath && result.url?.split('#')[0] === state.url?.split('#')[0]) {
-              onPreviewPick?.({ ...parsed.payload, filePath }); setNotice(t('browserPickAdded'))
+            if (alive.current && parsed?.type === 'pick' && pickSource && result.url?.split('#')[0] === state.url?.split('#')[0]) {
+              onPreviewPick?.({ ...parsed.payload, ...pickSource }); setNotice(t('browserPickAdded'))
+              if (onAttachImage) setInspect(false)
             }
             return {}
           }
