@@ -95,3 +95,56 @@ async def test_cua_permissions_name_entries_and_open_only_listed_ones(
         ['-R', '/Applications/ChatGPT.app'],
         ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'],
     ]
+
+
+@pytest.mark.asyncio
+async def test_cua_preview_frame_serves_only_the_items_own_screenshots(client, runtime_app):
+    import base64
+    import io
+
+    from PIL import Image
+
+    from deepseek_tui.media import import_image
+    from deepseek_tui.server.threads.models import (
+        TurnItemKind,
+        TurnItemLifecycleStatus,
+        TurnItemRecord,
+    )
+
+    def stored(size):
+        out = io.BytesIO()
+        Image.new("RGB", size, "white").save(out, "PNG")
+        return import_image(out.getvalue())
+
+    shot, other = stored((1920, 1200)), stored((40, 40))
+    image = shot.model_dump()
+    image["source"] = {"kind": "cua", "tool": "cua_js"}
+    item = TurnItemRecord(
+        id="item-cua", turn_id="turn-a", kind=TurnItemKind.TOOL_CALL,
+        status=TurnItemLifecycleStatus.COMPLETED, summary="cua_js",
+        metadata={"images": [image]},
+    )
+    runtime_app.state.thread_manager.store.save_item(item)
+
+    response = await client.get(f"/v1/cua/frames/item-cua/{shot.asset_id}")
+    assert response.status_code == 200
+    frame = response.json()
+    assert (frame["mime_type"], frame["width"], frame["height"]) == ("image/jpeg", 960, 600)
+    with Image.open(io.BytesIO(base64.b64decode(frame["data"]))) as decoded:
+        assert decoded.size == (960, 600)
+
+    assert (await client.get(f"/v1/cua/frames/item-cua/{other.asset_id}")).status_code == 404
+    assert (await client.get(f"/v1/cua/frames/missing/{shot.asset_id}")).status_code == 404
+    assert (await client.get("/v1/cua/frames/item-cua/..")).status_code in {400, 404}
+
+
+@pytest.mark.asyncio
+async def test_cua_preview_frame_requires_the_runtime_token(authed_runtime_app):
+    from httpx import ASGITransport, AsyncClient
+
+    app, token = authed_runtime_app
+    path = "/v1/cua/frames/item/" + "a" * 64
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get(path)).status_code == 401
+        authorized = await client.get(path, headers={"Authorization": f"Bearer {token}"})
+        assert authorized.status_code == 404

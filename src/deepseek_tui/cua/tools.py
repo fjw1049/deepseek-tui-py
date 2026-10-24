@@ -75,6 +75,25 @@ def desktop_action_result(question: dict[str, Any], response: dict[str, Any]) ->
     }
 
 
+def cua_surface(meta: Any) -> dict[str, str] | None:
+    """What this call last touched, from the runtime's own result metadata (UI only).
+
+    Native apps carry their bundle id; the live preview captures that app's window.
+    Browser calls carry no app: an agent tab need not be the window's visible tab, so
+    the preview shows the call's own screenshots instead of capturing the window.
+    """
+    surface = meta.get("codex/toolSurface") if isinstance(meta, dict) else None
+    if not isinstance(surface, dict):
+        return None
+    if surface.get("kind") == "computerUse":
+        app = surface.get("app")
+        app_id = app.get("appId") if isinstance(app, dict) else None
+        return {"kind": "app", "app_id": app_id} if isinstance(app_id, str) and app_id else None
+    if surface.get("kind") == "browserUse":
+        return {"kind": "browser"}
+    return None
+
+
 def collapse_repeated_texts(messages, new: int, texts: list[str]) -> None:
     """Shorten a large runtime text that the newest CUA results repeat from earlier context.
 
@@ -203,9 +222,10 @@ class CuaTool(ToolSpec):
             )
             for image in result.images
         ]
-        result = replace(
-            result, images=images, metadata={**result.metadata, "cua_runtime_content": True}
-        )
+        metadata = {**result.metadata, "cua_runtime_content": True}
+        if surface := cua_surface(payload.get("_meta")):
+            metadata["cua_surface"] = surface
+        result = replace(result, images=images, metadata=metadata)
         if not result.success and "is not a function" in result.content:
             # JavaScript's own TypeError: the model guessed an API.
             result = replace(result, content=result.content + (

@@ -824,6 +824,59 @@ async def cua_apps_revoke(request: Request) -> dict[str, Any]:
     return await cua_apps(request)
 
 
+_PREVIEW_FRAME_SIDE = 960
+_ASSET_ID = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _preview_frame(asset_id: str) -> dict[str, Any]:
+    import base64
+    import hashlib
+    import io
+
+    from PIL import Image
+
+    from deepseek_tui.config.paths import user_media_dir
+
+    data = (user_media_dir() / asset_id).read_bytes()
+    if hashlib.sha256(data).hexdigest() != asset_id:
+        raise ValueError("stored screenshot failed its integrity check")
+    with Image.open(io.BytesIO(data)) as image:
+        frame = image.convert("RGB")
+    frame.thumbnail((_PREVIEW_FRAME_SIDE, _PREVIEW_FRAME_SIDE))
+    out = io.BytesIO()
+    frame.save(out, "JPEG", quality=80)
+    return {
+        "mime_type": "image/jpeg",
+        "data": base64.b64encode(out.getvalue()).decode("ascii"),
+        "width": frame.width,
+        "height": frame.height,
+    }
+
+
+@router_mcp.get("/cua/frames/{item_id}/{asset_id}")
+async def cua_preview_frame(request: Request, item_id: str, asset_id: str) -> dict[str, Any]:
+    """A desktop screenshot recorded by one computer-use tool item, sized for the preview."""
+    if not _ASSET_ID.match(asset_id):
+        raise api_error(400, "Invalid screenshot id", error="cua_frame_invalid")
+    try:
+        item = await asyncio.to_thread(manager(request).store.load_item, item_id)
+    except (FileNotFoundError, ValueError) as exc:
+        raise api_error(404, "Unknown tool item", error="cua_frame_not_found") from exc
+    images = (item.metadata or {}).get("images") if isinstance(item.metadata, dict) else None
+    # Only screenshots this item recorded from computer use; never arbitrary stored media.
+    if not any(
+        isinstance(image, dict)
+        and image.get("asset_id") == asset_id
+        and (image.get("source") or {}).get("kind") == "cua"
+        for image in images or []
+    ):
+        raise api_error(404, "No such computer-use screenshot", error="cua_frame_not_found")
+    try:
+        return await asyncio.to_thread(_preview_frame, asset_id)
+    except (OSError, ValueError) as exc:
+        raise api_error(404, "Screenshot unavailable", error="cua_frame_unavailable") from exc
+
+
 _PRIVACY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
 _PRIVACY_PANES = {
     "accessibility": _PRIVACY_PANE + "Accessibility",

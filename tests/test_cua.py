@@ -1088,6 +1088,22 @@ async def test_missing_api_error_points_back_to_the_documentation(session, tmp_p
         await session.close()
 
 
+@pytest.mark.asyncio
+async def test_runtime_surface_names_the_touched_app_for_the_preview(session, tmp_path):
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        app = await tool.execute({"code": "surface:com.apple.TextEdit"}, context)
+        assert app.metadata["cua_surface"] == {"kind": "app", "app_id": "com.apple.TextEdit"}
+        browser = await tool.execute({"code": "surface:browser"}, context)
+        assert browser.metadata["cua_surface"] == {"kind": "browser"}
+        plain = await tool.execute({"code": "listApps"}, context)
+        assert "cua_surface" not in plain.metadata
+    finally:
+        await session.close()
+
+
 GUIDE = "## Computer Use\n" + "Use cua.getApp(id) and observe before acting.\n" * 200
 
 
@@ -1206,3 +1222,15 @@ async def test_information_handoff_drops_repl_and_tells_model(installation, tmp_
     session.close.assert_awaited_once()
     assert "CUA session reset" in result.content
     assert session.reset_reason == ""
+
+
+def test_subagent_cua_step_reports_its_app_to_the_parent_ui():
+    from deepseek_tui.server.threads.manager import _mailbox_message_payload
+    from deepseek_tui.tools.subagent.mailbox import MailboxMessage
+
+    surface = {"kind": "app", "app_id": "com.apple.Notes"}
+    payload = _mailbox_message_payload(MailboxMessage.tool_call_completed(
+        "child", "cua_js", 2, True, tool_call_id="call-9", cua_surface=surface))
+    assert payload["cua_surface"] == surface
+    plain = _mailbox_message_payload(MailboxMessage.tool_call_completed("child", "read_file", 3, True))
+    assert plain["cua_surface"] is None

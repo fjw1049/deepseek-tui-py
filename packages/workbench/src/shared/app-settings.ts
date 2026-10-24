@@ -491,6 +491,8 @@ export type AppSettingsV1 = {
   cuaEnabled?: boolean
   cuaChrome?: boolean
   cuaAutoAllowApps?: boolean
+  /** Show the window computer use operates beside the chat. GUI only; on unless false. */
+  cuaWindowPreview?: boolean
   /** Per-vendor API keys + models (built-in catalogue only). */
   llmProviders: Record<BuiltinLlmProviderId, LlmProviderConfigV1>
   customEndpoints: CustomEndpointV1[]
@@ -1463,6 +1465,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     cuaEnabled: typeof settings.cuaEnabled === 'boolean' ? settings.cuaEnabled : undefined,
     cuaChrome: typeof settings.cuaChrome === 'boolean' ? settings.cuaChrome : undefined,
     cuaAutoAllowApps: typeof settings.cuaAutoAllowApps === 'boolean' ? settings.cuaAutoAllowApps : undefined,
+    cuaWindowPreview: settings.cuaWindowPreview === false ? false : undefined,
     visionModel: typeof settings.visionModel === 'string' ? settings.visionModel.trim() : undefined,
     llmProviders: llm.llmProviders,
     network: normalizeNetworkSettings(settings.network),

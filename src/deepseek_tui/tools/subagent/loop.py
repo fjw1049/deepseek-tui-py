@@ -1202,6 +1202,8 @@ async def run_subagent_loop(
                             tool_call_id=tc.id,
                             input_summary=input_preview,
                             output_summary=_mailbox_output_summary(output),
+                            cua_surface=context.metadata.get("tool_result_metadata", {})
+                            .get(tc.id, {}).get("cua_surface"),
                         )
                     )
                 history.tool(

@@ -23,6 +23,12 @@ export function createCuaClient({ cwd, onElicitation }) {
           context.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
         });
       }
+      if (args.code?.startsWith('surface:')) {
+        const appId = args.code.slice(8);
+        const surface = appId === 'browser' ? { kind: 'browserUse', backend: 'chrome' }
+          : { kind: 'computerUse', app: { appId, kind: 'appId' } };
+        return { content: [{ type: 'text', text: 'touched' }], _meta: { 'codex/toolSurface': surface } };
+      }
       if (args.code === 'crash') process.exit(8);
       if (args.code?.startsWith('throw:')) return { content: [{ type: 'text', text: args.code.slice(6) }], isError: true };
       return { content: [{ type: 'text', text: args.code ?? 'reset' }], isError: args.code === 'error' };

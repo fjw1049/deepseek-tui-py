@@ -354,6 +354,8 @@ export type SubagentMailboxPayload = {
     output_summary?: string | null
     /** Spawn assignment preview for dock / list titles. */
     prompt?: string | null
+    /** App a computer-use step touched (`cua_js` completions only). */
+    cua_surface?: { kind: string; app_id?: string } | null
   }
 }
 

@@ -58,6 +58,7 @@ import { readWebSearchConfigFile, writeWebSearchConfigFile } from './web-search-
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
 import { installDevPreviewWebviewGuards } from './services/dev-browser-guards'
 import { createBrowserBridge, type BrowserBridge } from './services/browser-bridge'
+import { registerCuaWindowPreviewIpc } from './services/cua-window-preview'
 import { installMainWindowNavigationGuards } from './services/main-window-guards'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
@@ -1061,6 +1062,10 @@ app.whenReady().then(async () => {
     if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return false
     return applyWindowMaterial(mainWindow, input)
   })
+  registerCuaWindowPreviewIpc((event) =>
+    Boolean(mainWindow && !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame)
+  )
   const applySettingsPatch = async (partial: AppSettingsPatch): Promise<AppSettingsV1> => {
     const prev = await store.load()
     const next = normalizeAppSettings({

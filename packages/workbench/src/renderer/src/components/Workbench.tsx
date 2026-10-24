@@ -108,6 +108,7 @@ import { AppTerminalPanel } from './AppTerminalPanel'
 import { Sidebar } from './chat/Sidebar'
 import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { OperationContextDock } from './chat/OperationContextDock'
+import { CuaPreview, CuaPreviewRailSlot } from './cua-preview/CuaPreview'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
 import type { IncomingComposerImage } from './chat/FloatingComposer'
@@ -2071,6 +2072,7 @@ export function Workbench(): ReactElement {
                         previewEnabled={activeWorkspaceRoot.trim().length > 0}
                         onTogglePreview={togglePreviewPanel}
                       />
+                      <CuaPreviewRailSlot />
                     </div>
                   </aside>
                   ) : null}
@@ -2079,6 +2081,7 @@ export function Workbench(): ReactElement {
             </div>
             </div>
             </div>
+            <CuaPreview threadId={activeThreadId} />
             </ChatSplitDropZone>
             {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
               <div

@@ -655,6 +655,8 @@
   "cuaAutoAllowApps": "Automatically allow all apps (no per-app prompts)",
   "cuaAutoAllowAppsShort": "Auto-allow apps",
   "cuaAutoAllowAppsHint": "When on, apps a task needs are allowed without an approval card, so the model can operate any app, including mail, chat and password managers. Dayu and terminals are never controllable, and Chrome sites still ask. macOS Accessibility and Screen Recording permissions are still required.",
+  "cuaWindowPreview": "Show the window being operated",
+  "cuaWindowPreviewHint": "While computer use works in an app, show that app's window beside the chat. The live view on macOS needs Screen Recording for Dayu; turning this off applies from the next task.",
   "cuaInherited": "Config file: {{state}}",
   "cuaInheritedUnknown": "Config file (could not be read)",
   "cuaOn": "On",

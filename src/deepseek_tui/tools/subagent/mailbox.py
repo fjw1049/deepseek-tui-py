@@ -70,6 +70,8 @@ class MailboxMessage:
     output_summary: str | None = None
     # Spawn assignment preview for Workbench dock / list titles.
     prompt: str | None = None
+    # App a computer-use call touched, so the Workbench window preview can follow it.
+    cua_surface: dict[str, str] | None = None
 
     @staticmethod
     def started(
@@ -116,6 +118,7 @@ class MailboxMessage:
         tool_call_id: str | None = None,
         input_summary: str | None = None,
         output_summary: str | None = None,
+        cua_surface: dict[str, str] | None = None,
     ) -> MailboxMessage:
         return MailboxMessage(
             kind=MailboxMessageKind.TOOL_CALL_COMPLETED,
@@ -126,6 +129,7 @@ class MailboxMessage:
             ok=ok,
             input_summary=input_summary,
             output_summary=output_summary,
+            cua_surface=cua_surface,
         )
 
     @staticmethod

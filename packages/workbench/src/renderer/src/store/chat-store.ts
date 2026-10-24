@@ -1,5 +1,6 @@
 import { loadSettingsSnapshot } from '../lib/settings-snapshot'
 import { revealBrowserForTool } from '../lib/browser-activity'
+import { cuaEventFromMailbox, noteCuaCallFinished, noteCuaCallStarted, noteCuaTurnEnded } from './cua-preview-store'
 import { create, useStore, type StoreApi } from 'zustand'
 import { createContext, useContext } from 'react'
 import type {
@@ -849,6 +850,8 @@ function syncTurnCompletionPoll(
       return threadSnapshotLooksRunning(blocks, threadStatus)
     },
     onCompletedThreads: async (doneIds, state, setState, getState) => {
+      // Tasks that finished while another thread was in view end their previews too.
+      for (const id of doneIds) noteCuaTurnEnded(id)
       for (const id of doneIds) {
         const detail = await getProvider(state.providerId).getThreadDetail(id).catch(() => null)
         notifyTurnComplete(
@@ -1019,6 +1022,8 @@ function buildThreadEventSink(
       if (get().activeThreadId === threadId) {
         revealBrowserForTool(threadId, get().currentTurnId, ev.toolName, ev.status)
       }
+      noteCuaCallStarted(threadId, get().currentTurnId, ev)
+      noteCuaCallFinished(threadId, ev)
       emitPetEvent(threadId,
         ev.status === 'running'
           ? {
@@ -1389,6 +1394,11 @@ function buildThreadEventSink(
         composerMode: composerModeFromGoal(goal, s.composerMode)
       })),
     onSubagentMailbox: (ev: SubagentMailboxPayload) => {
+      const cuaStep = cuaEventFromMailbox(ev.message)
+      if (cuaStep) {
+        noteCuaCallStarted(threadId, get().currentTurnId, cuaStep)
+        noteCuaCallFinished(threadId, cuaStep)
+      }
       // Lifecycle lives in `kind`; `status` only carries progress narration.
       const mailboxKind = ev.message.kind
       if (mailboxKind === 'started') {
@@ -1563,6 +1573,7 @@ function buildThreadEventSink(
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
       emitPetEvent(threadId, { type: 'turn_complete' })
+      noteCuaTurnEnded(threadId)
       const completedState = get()
       const completedThreadId = payload?.threadId ?? completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId
@@ -4066,6 +4077,14 @@ if (options.appView) {
     } })
   }
 }
+// Every way a viewed turn stops (completion, Stop, recovery) clears its turn id;
+// Stop does so without a completion event, so the preview ends on this edge.
+const unsubscribeCuaPreview = store.subscribe((state, previous) => {
+  if (previous.currentTurnId && !state.currentTurnId && state.activeThreadId &&
+      state.activeThreadId === previous.activeThreadId) {
+    noteCuaTurnEnded(state.activeThreadId)
+  }
+})
 const unsubscribeQueue = store.subscribe((state, previous) => {
   if (state.activeThreadId !== previous.activeThreadId || state.busy || !state.queuedMessages.length) return
   if (!previous.blocks.some(hasPendingRuntimeWork) || state.blocks.some(hasPendingRuntimeWork)) return
@@ -4089,6 +4108,7 @@ return { store, clearSelection(workspaceRoot: string) {
 }, dispose() {
   disposed = true
   unsubscribeQueue()
+  unsubscribeCuaPreview()
   selectionVersion++
   pendingSelectionVersion = null
   sseAbort?.abort()

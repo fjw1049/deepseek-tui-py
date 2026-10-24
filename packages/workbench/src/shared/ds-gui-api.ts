@@ -285,6 +285,17 @@ export type SkillMarkdownResult =
 
 export type { UsageQueryResult, UsageRange } from './usage-ledger'
 
+/** The window a computer-use preview may capture for one app (macOS). */
+export type CuaPreviewWindowResult = {
+  status: 'ok' | 'permission' | 'no-window' | 'unsupported'
+  /** Capturer source id of exactly that window; only with status `ok`. */
+  sourceId?: string
+  windowId?: number
+  appName?: string
+  /** App icon as a data URL. */
+  icon?: string | null
+}
+
 export type DsGuiApi = {
   platform: string
   getSettings: () => Promise<AppSettingsV1>
@@ -294,6 +305,9 @@ export type DsGuiApi = {
   notifyAppearanceApplied: () => Promise<void>
   /** macOS only. false means custom blur fell back to the system material. */
   setWindowMaterial: (input: import('./appearance').WindowMaterial) => Promise<boolean>
+  /** Frontmost capturable window of the app computer use last touched (macOS). */
+  resolveCuaPreviewWindow: (bundleId: string) => Promise<CuaPreviewWindowResult>
+  openScreenCaptureSettings: () => Promise<void>
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
   transcribeAudio: (payload: {
     audio: ArrayBuffer

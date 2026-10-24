@@ -655,6 +655,8 @@
   "cuaAutoAllowApps": "自动允许控制所有应用（不再逐个询问）",
   "cuaAutoAllowAppsShort": "自动允许应用",
   "cuaAutoAllowAppsHint": "开启后，任务需要使用某个应用时直接放行，不弹授权卡片；模型可以操作邮件、聊天、密码管理器等任何应用。Dayu 和终端自身始终禁止控制，Chrome 站点授权仍单独询问。系统「隐私与安全性」中的辅助功能和屏幕录制权限仍需授予。",
+  "cuaWindowPreview": "显示操作窗口预览",
+  "cuaWindowPreviewHint": "电脑控制操作某个应用时，在对话旁显示该应用的窗口。macOS 实时画面需要为 Dayu 开启“屏幕录制”权限；关闭后从下一次任务起不再显示。",
   "cuaInherited": "跟随配置文件：{{state}}",
   "cuaInheritedUnknown": "跟随配置文件（读取失败）",
   "cuaOn": "开启",

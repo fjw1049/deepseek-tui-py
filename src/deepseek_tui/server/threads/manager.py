@@ -222,6 +222,7 @@ def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
         "input_summary": msg.input_summary,
         "output_summary": msg.output_summary,
         "prompt": msg.prompt,
+        "cua_surface": msg.cua_surface,
     }
 
 
@@ -6423,6 +6424,7 @@ class RuntimeThreadManager:
                             "path",
                             "occurrences",
                             "images",
+                            "cua_surface",
                             "agent_id",
                             "agent_type",
                             "nickname",

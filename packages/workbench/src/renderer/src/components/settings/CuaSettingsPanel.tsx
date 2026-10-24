@@ -118,6 +118,17 @@ export function CuaSettingsPanel({ form, onUpdate }: {
       </select>
     </label>
     <p className="ds-llm-card__meta">{t('cuaAutoAllowAppsHint')}</p>
+    <label className="ds-llm-card">
+      <span>{t('cuaWindowPreview')}</span>
+      <select aria-label={t('cuaWindowPreview')}
+        value={String(form.cuaWindowPreview !== false)}
+        disabled={enabled === false}
+        onChange={event => onUpdate({ cuaWindowPreview: event.target.value === 'true' })}>
+        <option value="true">{t('cuaOn')}</option>
+        <option value="false">{t('cuaOff')}</option>
+      </select>
+    </label>
+    <p className="ds-llm-card__meta">{t('cuaWindowPreviewHint')}</p>
     <p className="ds-llm-card__meta">{t('cuaVisionHint')}</p>
     {window.dsGui?.platform === 'darwin' && enabled !== false ? <SystemPermissions /> : null}
   </div>
