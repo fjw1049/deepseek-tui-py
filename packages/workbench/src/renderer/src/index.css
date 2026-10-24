@@ -12161,15 +12161,6 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   font-size: var(--ds-ide-font-code);
 }
 
-.ds-ide-chat-rail .ds-user-input-pending {
-  border-radius: 12px;
-  font-size: var(--ds-ide-font-base);
-}
-
-.ds-ide-chat-rail .ds-user-input-pending .text-\[12\.5px\] {
-  font-size: var(--ds-ide-font-base);
-}
-
 .ds-ide-chat-rail .ds-evolution-bubble,
 .ds-ide-chat-rail .ds-elevation-bubble {
   border-radius: 12px;

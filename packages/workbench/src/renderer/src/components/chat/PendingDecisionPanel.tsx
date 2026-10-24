@@ -39,17 +39,20 @@ export function PendingDecisionPanel({ blocks }: { blocks: ChatBlock[] }): React
   const context = (block: Decision): string => (block.kind === 'browser_assistance' ? block.request.reason : block.kind === 'user_input'
     ? block.questions[0]?.question ?? '' : block.kind === 'elevation' ? block.reason : block.summary).slice(0, 60)
 
+  const questionSelected = selected.kind === 'user_input' && selected.status === 'pending'
+  const singleQuestion = decisions.length === 1 && questionSelected
+
   return (
-    <section aria-label={t('feedbackPendingCount', { count: decisions.length })} className="ds-no-drag mb-2 min-w-0 rounded-xl border border-ds-border bg-ds-card">
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+    <section aria-label={t('feedbackPendingCount', { count: decisions.length })} className={`ds-no-drag mb-2 min-w-0 ${questionSelected ? '' : 'rounded-xl border border-ds-border bg-ds-card'}`}>
+      {!singleQuestion ? <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <button type="button" className="min-h-8 rounded text-left text-[13px] font-medium text-ds-ink" aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded(!expanded)}>
           {t('feedbackPendingCount', { count: decisions.length })} · {t(expanded ? 'feedbackCollapse' : 'feedbackExpand')}
         </button>
         {decisions.length > 1 ? <select aria-label={t('feedbackSelectPending')} value={selected.id} className="min-h-8 min-w-0 max-w-full flex-1 rounded-lg border border-ds-border bg-ds-card px-2 text-[12px] text-ds-ink" onChange={(event) => { setSelectedId(event.target.value); setExpanded(true) }}>
           {decisions.map((block, index) => <option key={block.id} value={block.id}>{index + 1}. {label(block)}{context(block) ? ` · ${context(block)}` : ''}</option>)}
         </select> : null}
-      </div>
-      <div id={panelId} hidden={!expanded} className="ds-scroll-surface max-h-[min(320px,40vh)] overflow-y-auto overscroll-contain px-2 pb-2">
+      </div> : null}
+      <div id={panelId} hidden={!singleQuestion && !expanded} className={`ds-scroll-surface overflow-y-auto overscroll-contain ${questionSelected ? 'ds-question-scroll max-h-[min(480px,50vh)]' : 'max-h-[min(320px,40vh)] px-2 pb-2'}`}>
         {/* Keep drafts mounted while switching between requests. */}
         {decisions.map((block) => <div key={block.id} hidden={selected.id !== block.id}>
           {block.kind === 'browser_assistance' ? <>

@@ -4,13 +4,13 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  CircleHelp,
   LoaderCircle,
   X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock, UserInputAnswer, UserInputQuestion } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
+import './user-input.css'
 
 const USER_INPUT_OTHER_LABEL = 'Other'
 const AUTO_ADVANCE_MS = 240
@@ -106,21 +106,6 @@ function ResolvedUserInputStatus({ block }: { block: UserInputBlock }): ReactEle
   )
 }
 
-function ProgressDots({ current, total }: { current: number; total: number }): ReactElement {
-  return (
-    <div className="flex items-center gap-1.5" aria-hidden>
-      {Array.from({ length: total }, (_, index) => (
-        <span
-          key={index}
-          className={`size-1.5 rounded-full bg-ds-ink transition ${
-            index === current ? 'scale-100 opacity-100' : index < current ? 'opacity-70' : 'opacity-30'
-          }`}
-        />
-      ))}
-    </div>
-  )
-}
-
 function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElement {
   const { t } = useTranslation('common')
   const resolveUserInput = useChatStore((s) => s.resolveUserInput)
@@ -130,6 +115,9 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
   const [step, setStep] = useState(0)
   const [localSubmitting, setSubmitting] = useState(false)
   const submitting = localSubmitting || Boolean(block.submitting)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const inFlight = useRef(false)
   const autoAdvanceTimer = useRef<number | undefined>(undefined)
 
   const total = block.questions.length
@@ -152,6 +140,8 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
 
   useEffect(() => {
     clearAutoAdvance()
+    setSubmitting(false)
+    inFlight.current = false
     setStep(0)
   }, [block.id])
 
@@ -163,6 +153,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
   }
 
   const goTo = (next: number): void => {
+    if (submitting) return
     clearAutoAdvance()
     setStep(next)
   }
@@ -173,6 +164,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
     value = label,
     autoAdvance = true
   ): void => {
+    if (submitting || inFlight.current) return
     setAnswers((prev) => ({
       ...prev,
       [q.id]: { id: q.id, label, value }
@@ -190,197 +182,131 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
   const canSubmit = block.questions.every(isAnswered)
 
   const submit = (): void => {
-    if (!canSubmit || submitting) return
+    if (!canSubmit || submitting || inFlight.current) return
+    inFlight.current = true
     clearAutoAdvance()
     setSubmitting(true)
     void resolveUserInput(block.id, {
       kind: 'submit',
       answers: block.questions.map((q) => answers[q.id]).filter(Boolean)
-    }).finally(() => setSubmitting(false))
+    }).finally(() => { inFlight.current = false; setSubmitting(false) })
   }
 
   const cancel = (): void => {
+    if (submitting || inFlight.current) return
     clearAutoAdvance()
-    void resolveUserInput(block.id, { kind: 'cancel' })
+    inFlight.current = true
+    setSubmitting(true)
+    void resolveUserInput(block.id, { kind: 'cancel' }).finally(() => {
+      inFlight.current = false
+      setSubmitting(false)
+    })
   }
 
   const answer = question ? answers[question.id] : undefined
   const otherSelected = answer?.label === USER_INPUT_OTHER_LABEL || question?.options.length === 0
   const currentAnswered = question ? isAnswered(question) : false
 
+  useEffect(() => {
+    // Only move focus when it already belongs to this question card.
+    if (!cardRef.current?.contains(document.activeElement)) return
+    if (otherSelected) inputRef.current?.focus()
+    else cardRef.current?.focus()
+  }, [clampedStep, otherSelected])
+
   return (
     <div
+      ref={cardRef}
       id={`block-${block.id}`}
       data-state={submitting ? 'submitting' : 'pending'}
       aria-busy={submitting}
-      className="ds-user-input-pending w-full overflow-hidden rounded-2xl border border-ds-border bg-ds-subtle p-4 text-[13px] leading-5 text-ds-ink"
+      role="group"
+      aria-labelledby={`question-${block.id}`}
+      tabIndex={0}
+      className="ds-user-input-pending"
+      onKeyDown={(event) => {
+        if (event.defaultPrevented || event.repeat || event.nativeEvent.isComposing ||
+          event.metaKey || event.ctrlKey || event.altKey || submitting || !question) return
+        if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return
+        const index = Number(event.key) - 1
+        if (/^[1-9]$/.test(event.key) && question.options[index]) {
+          event.preventDefault()
+          const option = question.options[index]
+          chooseOption(question, option.label, option.value || option.label)
+        }
+      }}
     >
-      <div className="flex items-start gap-2.5">
-        <span
-          aria-hidden
-          className="mt-0.5 grid size-5 shrink-0 place-items-center text-ds-muted"
-        >
-          {submitting ? (
-            <LoaderCircle className="size-4 animate-spin" strokeWidth={2} />
-          ) : (
-            <CircleHelp className="size-4" strokeWidth={2} />
-          )}
-        </span>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words font-semibold tracking-[-0.02em] text-ds-ink">
-              {question?.question || t('userInputTitle')}
+      <div className="ds-question-meta">
+        <span aria-live="polite">{t('userInputQuestionProgress', { current: total ? clampedStep + 1 : 0, total })}</span>
+        {block.taskId ? <span className="ds-question-source" title={t('userInputFromTask', { id: block.taskId })}>
+          {t('userInputFromTask', { id: block.taskId })}
+        </span> : null}
+      </div>
+      <h3 id={`question-${block.id}`} className="ds-question-title">
+        {question?.question || t('userInputTitle')}
+      </h3>
+      {question ? <div className="ds-question-options" role="group" aria-labelledby={`question-${block.id}`}>
+        {question.options.map((option, index) => {
+          const optionValue = option.value || option.label
+          const selected = answer?.label === option.label && answer.value === optionValue
+          return <button
+            key={option.label}
+            type="button"
+            disabled={submitting}
+            aria-pressed={selected}
+            aria-keyshortcuts={index < 9 ? String(index + 1) : undefined}
+            onClick={() => chooseOption(question, option.label, optionValue)}
+            className="ds-question-option"
+          >
+            <span className="ds-question-option-copy">
+              <span className="ds-question-option-label">{option.label}</span>{' '}
+              {option.description ? <span className="ds-question-option-description">{option.description}</span> : null}
             </span>
-            {total > 1 ? (
-              <span className="shrink-0 font-mono text-[11px] text-ds-faint">
-                {clampedStep + 1}/{total}
-              </span>
-            ) : (
-              <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                {t('userInputTitle')}
-              </span>
-            )}
-            {block.taskId ? (
-              <span className="max-w-[8rem] truncate font-mono text-[11px] text-ds-faint">
-                {t('userInputFromTask', { id: block.taskId })}
-              </span>
-            ) : null}
-            <button
-              type="button"
-              aria-label={t('userInputCancel')}
-              onClick={cancel}
-              className="grid size-5 shrink-0 place-items-center rounded-full text-ds-faint transition hover:text-ds-ink"
-            >
-              <X className="size-3.5" strokeWidth={2} />
-            </button>
-          </div>
-
-          {question ? (
-            <div className="mt-2">
-              {question.header ? (
-                <div className="text-[11px] font-medium text-ds-muted">{question.header}</div>
-              ) : null}
-              <div className="mt-1.5 grid gap-0.5">
-                {question.options.map((option) => {
-                  const optionValue = option.value || option.label
-                  const selected =
-                    answer?.label === option.label && answer.value === optionValue
-                  return (
-                    <button
-                      key={option.label}
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => chooseOption(question, option.label, optionValue)}
-                      className={`flex items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition disabled:opacity-50 ${
-                        selected ? 'bg-ds-card text-ds-ink' : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                      }`}
-                    >
-                      <span
-                        aria-hidden
-                        className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border-2 transition ${
-                          selected ? 'border-accent' : 'border-ds-border'
-                        }`}
-                      >
-                        {selected ? <span className="size-2 rounded-full bg-accent" /> : null}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[13px] font-medium text-ds-ink">
-                          {option.label}
-                        </span>
-                        {option.description ? (
-                          <span className="mt-0.5 block text-[11px] leading-[1.35] text-ds-faint">
-                            {option.description}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  )
-                })}
-                {!isPermission && question.options.length > 0 ? <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() =>
-                    chooseOption(
-                      question,
-                      USER_INPUT_OTHER_LABEL,
-                      answer?.label === USER_INPUT_OTHER_LABEL ? answer.value : '',
-                      false
-                    )
-                  }
-                  className={`flex items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition disabled:opacity-50 ${
-                    otherSelected ? 'bg-ds-card text-ds-ink' : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                  }`}
-                >
-                  <span
-                    aria-hidden
-                    className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border-2 transition ${
-                      otherSelected ? 'border-accent' : 'border-ds-border'
-                    }`}
-                  >
-                    {otherSelected ? <span className="size-2 rounded-full bg-accent" /> : null}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium text-ds-ink">
-                      {t('userInputOther')}
-                    </span>
-                    <span className="mt-0.5 block text-[11px] leading-[1.35] text-ds-faint">
-                      {t('userInputOtherDescription')}
-                    </span>
-                  </span>
-                </button> : null}
-                {!isPermission && otherSelected ? (
-                  <input
-                    value={answer?.value ?? ''}
-                    disabled={submitting}
-                    onChange={(e) =>
-                      chooseOption(question, USER_INPUT_OTHER_LABEL, e.target.value, false)
-                    }
-                    placeholder={t('userInputCustomPlaceholder')}
-                    className="mt-1 h-10 w-full rounded-xl border-0 bg-ds-card px-3 text-[13px] text-ds-ink outline-none ring-0 placeholder:text-ds-faint focus:bg-ds-card"
-                  />
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="mt-3 flex items-center gap-1.5">
-            <button
-              type="button"
-              aria-label={t('userInputBack')}
-              disabled={submitting || clampedStep === 0}
-              onClick={() => goTo(clampedStep - 1)}
-              className="grid size-8 place-items-center rounded-full text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:pointer-events-none disabled:opacity-30"
-            >
-              <ArrowLeft className="size-4" strokeWidth={2} />
-            </button>
-            {total > 1 ? <ProgressDots current={clampedStep} total={total} /> : null}
-            {isLast ? (
-              <button
-                type="button"
-                disabled={submitting || !canSubmit}
-                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-full bg-ds-ink px-3 text-[12px] font-medium text-ds-canvas transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
-                onClick={submit}
-              >
-                {submitting ? (
-                  <LoaderCircle className="size-3.5 animate-spin" strokeWidth={2} />
-                ) : (
-                  <Check className="size-3.5" strokeWidth={2} />
-                )}
-                {t('userInputSubmit')}
-              </button>
-            ) : (
-              <button
-                type="button"
-                aria-label={t('userInputNext')}
-                disabled={submitting || !question || !currentAnswered}
-                onClick={() => goTo(clampedStep + 1)}
-                className="ml-auto grid size-8 place-items-center rounded-full bg-ds-ink text-ds-canvas transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
-              >
-                <ArrowRight className="size-4" strokeWidth={2} />
-              </button>
-            )}
-          </div>
+            <span className="ds-question-key" aria-hidden>{selected ? <Check size={14} /> : index + 1}</span>
+          </button>
+        })}
+        {!isPermission && question.options.length > 0 ? <button
+          type="button"
+          disabled={submitting}
+          aria-pressed={otherSelected}
+          className="ds-question-option"
+          onClick={() => chooseOption(question, USER_INPUT_OTHER_LABEL,
+            answer?.label === USER_INPUT_OTHER_LABEL ? answer.value : '', false)}
+        >
+          <span className="ds-question-option-copy">
+            <span className="ds-question-option-label">{t('userInputOther')}</span>{' '}
+            <span className="ds-question-option-description">{t('userInputOtherDescription')}</span>
+          </span>
+          <span className="ds-question-key" aria-hidden>{otherSelected ? <Check size={14} /> : null}</span>
+        </button> : null}
+        {!isPermission && otherSelected ? <input
+          ref={inputRef}
+          value={answer?.value ?? ''}
+          disabled={submitting}
+          aria-label={question.question}
+          onChange={(event) => chooseOption(question, USER_INPUT_OTHER_LABEL, event.target.value, false)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.repeat) return
+            event.preventDefault()
+            if (isLast) submit()
+            else if (currentAnswered) goTo(clampedStep + 1)
+          }}
+          placeholder={t('userInputCustomPlaceholder')}
+          className="ds-question-input"
+        /> : null}
+      </div> : null}
+      <div className="ds-question-footer">
+        {clampedStep > 0 ? <button type="button" disabled={submitting} onClick={() => goTo(clampedStep - 1)}>
+          <ArrowLeft size={15} aria-hidden />{t('userInputBack')}
+        </button> : null}
+        <div className="ds-question-actions">
+          <button type="button" disabled={submitting} onClick={cancel}>{t('userInputCancel')}</button>
+          {isLast ? <button type="button" disabled={submitting || !canSubmit || !total} onClick={submit}>
+            {t('userInputSubmit')}
+            {submitting ? <LoaderCircle size={15} className="animate-spin" aria-hidden /> : <ArrowRight size={15} aria-hidden />}
+          </button> : <button type="button" disabled={submitting || !currentAnswered} onClick={() => goTo(clampedStep + 1)}>
+            {t('userInputNext')}<ArrowRight size={15} aria-hidden />
+          </button>}
         </div>
       </div>
     </div>

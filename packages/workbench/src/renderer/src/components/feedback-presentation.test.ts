@@ -124,3 +124,35 @@ it('uses neutral checking and a readable offline retry, then clears on recovery'
   await act(async () => root.render(createElement(ConnectionStatusBar)))
   expect(host.innerHTML).toBe('')
 })
+
+it('uses the same unpadded question shell for single and multiple pending requests', async () => {
+  for (const blocks of [pending.slice(0, 1), pending]) {
+    await act(async () => root.render(createElement(PendingDecisionPanel, { blocks })))
+    const section = host.querySelector('section')!
+    const scroll = host.querySelector('.ds-scroll-surface')!
+    expect(section.classList.contains('border')).toBe(false)
+    expect(scroll.classList.contains('px-2')).toBe(false)
+    expect(scroll.classList.contains('pb-2')).toBe(false)
+    expect(scroll.classList.contains('max-h-[min(480px,50vh)]')).toBe(true)
+    expect(host.querySelector('input')?.closest('[hidden]')).toBeNull()
+  }
+})
+
+it('restores the question shell after switching from another decision type', async () => {
+  await act(async () => root.render(createElement(PendingDecisionPanel, { blocks: pending })))
+  const select = host.querySelector('select')!
+  act(() => { select.value = 'command'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(host.querySelector('section')?.classList.contains('border')).toBe(true)
+  act(() => { select.value = 'question'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(host.querySelector('section')?.classList.contains('border')).toBe(false)
+  expect(host.querySelector('.ds-scroll-surface')?.classList.contains('px-2')).toBe(false)
+})
+
+it('reveals the last remaining question even if the multi-request panel was collapsed', async () => {
+  await act(async () => root.render(createElement(PendingDecisionPanel, { blocks: pending })))
+  act(() => host.querySelector<HTMLButtonElement>('[aria-expanded]')!.click())
+  expect(host.querySelector('input')?.closest('[hidden]')).not.toBeNull()
+  await act(async () => root.render(createElement(PendingDecisionPanel, { blocks: pending.slice(0, 1) })))
+  expect(host.querySelector('[aria-expanded]')).toBeNull()
+  expect(host.querySelector('input')?.closest('[hidden]')).toBeNull()
+})
