@@ -52,7 +52,7 @@ export function PendingDecisionPanel({ blocks }: { blocks: ChatBlock[] }): React
           {decisions.map((block, index) => <option key={block.id} value={block.id}>{index + 1}. {label(block)}{context(block) ? ` · ${context(block)}` : ''}</option>)}
         </select> : null}
       </div> : null}
-      <div id={panelId} hidden={!singleQuestion && !expanded} className={`ds-scroll-surface overflow-y-auto overscroll-contain ${questionSelected ? 'ds-question-scroll max-h-[min(480px,50vh)]' : 'max-h-[min(320px,40vh)] px-2 pb-2'}`}>
+      <div id={panelId} hidden={!singleQuestion && !expanded} className={`ds-scroll-surface overscroll-contain ${questionSelected ? '' : 'overflow-y-auto max-h-[min(320px,40vh)] px-2 pb-2'}`}>
         {/* Keep drafts mounted while switching between requests. */}
         {decisions.map((block) => <div key={block.id} hidden={selected.id !== block.id}>
           {block.kind === 'browser_assistance' ? <>

@@ -3,19 +3,22 @@
   --ds-question-hover: #f8f8f8;
   width: 100%;
   min-width: 0;
-  padding: 24px;
+  max-height: min(360px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 16px;
   border: 1px solid var(--ds-border);
   border-radius: 18px;
   background: var(--ds-question-background);
   color: var(--ds-text);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 20px;
 }
 [data-theme='dark'] .ds-user-input-pending {
   --ds-question-background: var(--ds-surface-card);
   --ds-question-hover: var(--ds-surface-hover);
 }
-.ds-question-scroll { scrollbar-gutter: stable; }
 .ds-question-meta {
   display: flex;
   flex-wrap: wrap;
@@ -25,23 +28,23 @@
 }
 .ds-question-source { min-width: 0; overflow-wrap: anywhere; }
 .ds-question-title {
-  margin: 10px 0 18px;
+  margin: 6px 0 8px;
   font-size: 16px;
   font-weight: 600;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.ds-question-options { display: grid; gap: 4px; }
+.ds-question-options { display: grid; gap: 2px; }
 .ds-question-option {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   width: calc(100% + 24px);
   margin-inline: -12px;
-  min-height: 44px;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 6px 12px;
   border-radius: 8px;
   text-align: left;
   transition: background-color 120ms ease;
@@ -55,7 +58,7 @@
   display: grid;
   place-items: center;
   flex: 0 0 24px;
-  height: 24px;
+  height: 20px;
   border-radius: 6px;
   color: var(--ds-text-muted);
   font-size: 12px;
@@ -77,14 +80,14 @@
 }
 .ds-question-input::placeholder { color: var(--ds-text-muted); }
 .ds-question-footer, .ds-question-actions { display: flex; align-items: center; gap: 12px; }
-.ds-question-footer { margin-top: 16px; flex-wrap: wrap; }
+.ds-question-footer { margin-top: 8px; flex-wrap: wrap; }
 .ds-question-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .ds-question-footer button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 36px;
+  min-height: 32px;
   padding: 4px 0;
   border-radius: 4px;
   color: var(--ds-text-muted);

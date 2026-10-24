@@ -133,7 +133,8 @@ it('uses the same unpadded question shell for single and multiple pending reques
     expect(section.classList.contains('border')).toBe(false)
     expect(scroll.classList.contains('px-2')).toBe(false)
     expect(scroll.classList.contains('pb-2')).toBe(false)
-    expect(scroll.classList.contains('max-h-[min(480px,50vh)]')).toBe(true)
+    expect(scroll.classList.contains('overflow-y-auto')).toBe(false)
+    expect(section.className).not.toContain('max-w-')
     expect(host.querySelector('input')?.closest('[hidden]')).toBeNull()
   }
 })
