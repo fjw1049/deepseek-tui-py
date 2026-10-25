@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { resolveTurnActivity } from './TurnActivity'
+import { resolveTurnActivity, resolveTurnActivityStep } from './TurnActivity'
 import type { ChatBlock } from '../../agent/types'
 
 it('uses event states for waiting, model, tools and human gates, never history text', () => {
@@ -29,4 +29,15 @@ it('shows the current subagent handoff without reusing an old wait status', () =
   expect(resolveTurnActivity({ ...base, active: false })).toBeNull()
   expect(resolveTurnActivity({ ...base, blocks: [waiting,
     { kind: 'system', id: 'resume', text: 'Resuming turn with 1 sub-agent completion(s)' }] })).toBe('Waiting')
+})
+
+it('names the running desktop step by the call\'s own title', () => {
+  const call = (status: 'running' | 'success', title: string, tool = 'cua_js'): ChatBlock => ({
+    kind: 'tool', id: 'cua', toolKind: 'tool_call', status, summary: tool,
+    meta: { tool_name: tool, tool_input: { code: 'await app.click(75)', title } }
+  })
+  expect(resolveTurnActivityStep([call('running', '进入电视剧频道')])).toBe('进入电视剧频道')
+  expect(resolveTurnActivityStep([call('success', '进入电视剧频道')])).toBeNull()
+  expect(resolveTurnActivityStep([call('running', '读取文件', 'read_file')])).toBeNull()
+  expect(resolveTurnActivityStep([call('running', '  ')])).toBeNull()
 })

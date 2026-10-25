@@ -1,5 +1,10 @@
 import { AutomationResultCard } from './AutomationResultCard'
-import { TurnActivity, resolveTurnActivity, type TurnActivityKind } from './TurnActivity'
+import {
+  TurnActivity,
+  resolveTurnActivity,
+  resolveTurnActivityStep,
+  type TurnActivityKind
+} from './TurnActivity'
 import { useBrowserAssistanceStore } from '../../store/browser-assistance-store'
 import { copyText } from '../../lib/copy-text'
 import { ConversationScope, useConversationScope } from './conversation-scope'
@@ -1274,7 +1279,8 @@ function MessageTurn({
           {/* Turns without an assistant answer still need to expose their
               completed write receipt. */}
           {!hasAssistantAnswer ? turnChangeSummary : null}
-          <TurnActivity activity={activity} />
+          <TurnActivity activity={activity}
+            step={activity === 'Desktop' ? resolveTurnActivityStep(turn.blocks) : null} />
 
         </>
       )}

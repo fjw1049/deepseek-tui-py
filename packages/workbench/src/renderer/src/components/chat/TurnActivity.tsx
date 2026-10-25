@@ -35,12 +35,27 @@ export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUse
   return running.length ? 'Tool' : 'Waiting'
 }
 
-export function TurnActivity({ activity }: { activity: TurnActivityKind | null }): React.ReactElement | null {
+/** The running desktop call's own step title, so a long task shows which step it is on. */
+export function resolveTurnActivityStep(blocks: ChatBlock[]): string | null {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i]
+    if (block.kind !== 'tool' || block.status !== 'running' || block.meta?.tool_name !== 'cua_js') continue
+    const input = block.meta.tool_input
+    const title = input && typeof input === 'object' ? (input as { title?: unknown }).title : undefined
+    return typeof title === 'string' && title.trim() ? title.trim() : null
+  }
+  return null
+}
+
+export function TurnActivity({ activity, step = null }: {
+  activity: TurnActivityKind | null
+  step?: string | null
+}): React.ReactElement | null {
   const { t } = useTranslation('common')
   if (!activity) return null
   return <div role="status" aria-live="polite" aria-atomic="true" data-turn-activity={activity}
     className="flex items-center gap-2 py-1 text-[13px] leading-5 text-ds-faint">
     {activity !== 'User' ? <SquareGrid className="shrink-0" /> : null}
-    <span>{t(`turnActivity${activity}`)}</span>
+    <span className="min-w-0 truncate">{t(`turnActivity${activity}`)}{step ? ` · ${step}` : ''}</span>
   </div>
 }
