@@ -1,3 +1,4 @@
+import { SettingsToggle as Toggle } from './settings/SettingsToggle'
 import { cacheSettingsSnapshot, getSettingsSnapshot, loadSettingsSnapshot } from '../lib/settings-snapshot'
 import { GlobalErrorNotice } from './GlobalFeedback'
 import { ConfirmDialog } from './workspace-editor/ConfirmDialog'
@@ -67,6 +68,7 @@ import { WebSearchSettingsPanel } from './settings/WebSearchSettingsPanel'
 import { SessionImportPanel } from './settings/SessionImportPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
 import { SharingSettingsPanel } from './settings/SharingSettingsPanel'
+import { CuaSettingsPanel } from './settings/CuaSettingsPanel'
 import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
@@ -614,7 +616,7 @@ export function SettingsView(): ReactElement {
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-ds-ink">
-                {category === 'import' ? t('sessionImport.title') : category === 'models'
+                {category === 'computer-control' ? t('cuaTitle') : category === 'import' ? t('sessionImport.title') : category === 'models'
                   ? t('models')
                   : category === 'search'
                     ? t('search')
@@ -629,7 +631,7 @@ export function SettingsView(): ReactElement {
                             : t('title')}
               </h1>
               <p className="mt-1 text-[14px] text-ds-muted">
-                {category === 'import' ? t('sessionImport.subtitle') : category === 'data'
+                {category === 'computer-control' ? t('cuaDescription') : category === 'import' ? t('sessionImport.subtitle') : category === 'data'
                   ? t('dataSubtitle')
                   : category === 'archive'
                     ? t('archiveSubtitle')
@@ -896,6 +898,10 @@ export function SettingsView(): ReactElement {
                 />
               </SettingsCard>
             </>
+          )}
+
+          {category === 'computer-control' && (
+            <CuaSettingsPanel form={form} onUpdate={(patch) => update(patch)} />
           )}
 
           {category === 'search' && (
@@ -1600,31 +1606,5 @@ function ShortcutKeycaps({
         </kbd>
       ))}
     </div>
-  )
-}
-
-function Toggle({
-  checked,
-  onChange
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-        checked ? 'bg-accent' : 'bg-ds-faint'
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
-          checked ? 'left-6' : 'left-0.5'
-        }`}
-      />
-    </button>
   )
 }

@@ -225,6 +225,7 @@ class CuaTool(ToolSpec):
         metadata = {**result.metadata, "cua_runtime_content": True}
         if surface := cua_surface(payload.get("_meta")):
             metadata["cua_surface"] = surface
+            self.session.last_surface = surface
         result = replace(result, images=images, metadata=metadata)
         if not result.success and "is not a function" in result.content:
             # JavaScript's own TypeError: the model guessed an API.

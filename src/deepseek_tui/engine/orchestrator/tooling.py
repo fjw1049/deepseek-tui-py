@@ -786,6 +786,8 @@ class ToolExecutionMixin:
             # Without finish_task in this catalog the turn could never be delivered.
             if is_task_call(tool_name, tool_call.arguments) and "finish_task" in delivery.catalog:
                 delivery.active = True
+                if tool_name in {"browser_use", "browser_skill"}:
+                    delivery.browser_used = True
                 delivery.focused = delivery.focused or is_focus_call(tool_name, tool_call.arguments)
         if is_task_call(tool_name, tool_call.arguments) and (
                 blocked := self._ui_progress.blocked_content(tool_name)):
@@ -1019,6 +1021,9 @@ class ToolExecutionMixin:
             fingerprint_arguments if fingerprint_arguments is not None else tool_call.arguments
         )
         if fp_name == "browser_use":
+            # Each upload sends local files away: never answered from, or saved to, the cache.
+            if isinstance(fp_args, dict) and fp_args.get("action") == "upload":
+                use_cache = False
             browser = self.tool_context.metadata.get("browser_service")
             thread_id = str(self.tool_context.metadata.get("runtime_thread_id", ""))
             task_id = self.tool_context.metadata.get("goal_turn_id") or self.tool_context.metadata.get("turn_latency_turn_id")
@@ -1083,6 +1088,14 @@ class ToolExecutionMixin:
             tool_description=approval_request.reason,
             working_directory=self.tool_context.working_directory,
         )
+        if fp_name == "browser_use" and browser is not None and hasattr(browser, "approval_preview"):
+            # A browser card names the site, action and element instead of raw arguments.
+            shown = browser.approval_preview(thread_id, tool_call.arguments if isinstance(
+                tool_call.arguments, dict) else {}, getattr(self, "reply_locale", "zh"))
+            approval_request.title = shown["title"]
+            approval_request.impacts = shown["impacts"]
+            approval_request.presentation_risk = shown["risk"]
+            approval_request.primary_preview = approval_request.input_summary = ""
         # Auto-approve short-circuits inside request_approval without ever
         # registering the id on the ApprovalBridge. Emitting
         # ApprovalRequiredEvent in that case races the instant decision:
@@ -1353,12 +1366,19 @@ class ToolExecutionMixin:
             raise ToolError("Desktop assistance is unavailable: computer use is not enabled here")
         if self.tool_context.metadata.get("unattended"):
             raise ToolError("Nobody is watching this run; report the step that needs the user")
-        # The user is about to change the screen: old bindings must not survive.
-        await self._release_cua(reset=True)
+        session = getattr(self, "_cua_session", None)
+        if session is None:
+            raise ToolError("Computer use is not ready for desktop assistance")
         question = desktop_action_question(reason.strip(), getattr(self, "reply_locale", "zh"))
-        response = await self._await_user_input_raw(
-            tool_call_id, [question], purpose="desktop_action"
-        )
+        await session.reserve_human(reason.strip(), tool_call_id)
+        try:
+            response = await self._await_user_input_raw(
+                tool_call_id, [question], purpose="desktop_action"
+            )
+        finally:
+            session.release_human()
+            # The returned handoff notice requires a fresh observation.
+            session.reset_reason = ""
         if response is None:
             return ToolResult(
                 content="Desktop assistance cancelled (turn cancelled)", success=False

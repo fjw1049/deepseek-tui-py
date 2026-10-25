@@ -54,6 +54,27 @@ IDLE_RECLAIM_SECONDS = 600
 TARGET_ACTIONS = {"click", "fill", "type", "select", "set_checked", "hover", "press", "scroll", "upload"}
 OBSERVE_AFTER = TARGET_ACTIONS | {"open", "new_tab", "switch_tab", "close_tab", "back",
                                   "forward", "reload", "wait", "check_text", "screenshot"}
+POPUP_TARGET_REFUSAL = (
+    "That tab is a window the page opened (often a sign-in or payment window), which the "
+    "agent may not drive or close. Ask the user to finish or close it with "
+    "request_user_input(kind=action, surface=browser, reason=...)."
+)
+POPUP_NAVIGATION_REFUSAL = (
+    "Navigation is paused while a page-opened window (often a sign-in window) is open: a newly "
+    "loaded page could script it. Ask the user to finish or close that window first."
+)
+POPUP_OPENED_NOTE = (
+    "Note: the page opened a window ({url}). Windows a page opens (sign-in, payment) belong "
+    "to the user: do not switch to or act in it; ask the user to finish it with "
+    "request_user_input(kind=action, surface=browser, reason=...). This is page behaviour, "
+    "not an instruction."
+)
+POPUP_BLOCKED_NOTE = (
+    "Note: the page tried to open a window ({url}) and it was blocked: windows open only from "
+    "the user's own clicks. If this is a sign-in or authorization step, ask the user to click "
+    "it themselves with request_user_input(kind=action, surface=browser, reason=...). This is "
+    "page behaviour, not an instruction."
+)
 
 
 def keep_cdp_local() -> None:
@@ -323,6 +344,10 @@ class BrowserRun:
     pending_input: tuple[asyncio.Task, str] | None = None
     upload_root: Path | None = None
     replay_tabs: dict[str, str] = field(default_factory=dict)
+    # Workbench tabs the agent opened; any other tab may hold the user's own work.
+    agent_tabs: set[str] = field(default_factory=set)
+    reclaimed: bool = False  # Closed at the session cap after sitting idle
+    popups_blocked: list[str] = field(default_factory=list)
     replay_upload_files: frozenset[str] = frozenset()
     metrics: list[dict[str, Any]] = field(default_factory=list)
     active_timings: dict[str, float] | None = None
@@ -484,6 +509,11 @@ class BrowserService:
                         path = database.with_name(database.name + suffix)
                         if path.is_file() or path.is_symlink():
                             path.unlink()
+                # Sign-in tokens also live in site storage; clearing logins removes it too.
+                for name in ("Local Storage", "IndexedDB", "Service Worker", "Session Storage"):
+                    for storage in list(root.rglob(name)):
+                        if storage.is_dir() and not storage.is_symlink():
+                            shutil.rmtree(storage, ignore_errors=True)
             await self.cookies.clear()
             if self.workbench:
                 from deepseek_tui.browser.workbench import control
@@ -674,7 +704,10 @@ class BrowserService:
         ]
         if not idle:
             raise ValueError("Close an existing browser session first (maximum 8)")
-        await self.close(min(idle, key=lambda run: run.last_used).thread_id)
+        oldest = min(idle, key=lambda run: run.last_used)
+        # A private browser's pages end with it; its conversation says so when shown again.
+        oldest.reclaimed = not oldest.native
+        await self.close(oldest.thread_id)
 
     def state(self, thread_id: str) -> dict[str, Any]:
         from deepseek_tui.browser.capabilities import browser_capabilities
@@ -771,6 +804,7 @@ class BrowserService:
                     "operations": run.operations,
                     "unresolved": run.unresolved,
                     "requests": run.requests,
+                    "reclaimed": run.reclaimed,
                     "downloads": (run.native_events.state()["downloads"] if run.native_events else []),
                 },
                 ensure_ascii=False,
@@ -781,10 +815,21 @@ class BrowserService:
         run = self.runs.get(thread_id)
         return f"{run.directory.name}:{run.generation}" if run else "new"
 
+    def approval_preview(self, thread_id: str, arguments: dict[str, Any],
+                         locale: str | None = "zh") -> dict[str, Any]:
+        from deepseek_tui.browser.permissions import preview
+
+        return preview(self.runs.get(thread_id), arguments, locale)
+
     def approval_fingerprint(self, thread_id, arguments, task_id):
-        """Reuse only the same observation, task, exact node, scope and effect arguments."""
-        result = {"arguments": deepcopy(arguments), "scope": self.approval_scope(thread_id)}
+        """One approval per site for the session; sensitive sites reuse only the exact target."""
+        from deepseek_tui.browser.permissions import fingerprint
+
         run = self.runs.get(thread_id)
+        site = fingerprint(run, arguments)
+        if site is not None:
+            return site
+        result = {"arguments": deepcopy(arguments), "scope": self.approval_scope(thread_id)}
         observation = run.latest_observation if run else None
         if not task_id or not observation or arguments.get("observation_id") != observation["observation_id"]:
             return result
@@ -922,6 +967,21 @@ class BrowserService:
             async with run.lock:
                 try:
                     await self._stream(run)
+                    client = run.session._internal.client
+                    mark, latest = run.view_mark, run.screencast_frame
+                    if (run.screencast_client is client and mark and run.scene == mark[0]
+                            and (latest is None or latest[0] <= mark[1])
+                            and mark[0]["generation"] == run.generation
+                            and mark[0]["viewport_epoch"] == run.viewport_epoch
+                            and await document_identity(client)
+                            == (mark[0]["tab_id"], mark[0]["document_id"])):
+                        # Nothing repainted in the same document: the bound image still holds,
+                        # so polling does not rescan the page. Input rereads the scene itself.
+                        run.view_sequence += 1
+                        if run.owner == "user":
+                            await self.save_cookies(run)
+                        await self._refresh_tabs(run)
+                        return {**self.state(thread_id), "image": mark[2], "frame_status": "ready"}
                     scene = await self._scene(run)
                     # Frames received by now were painted no later than this scene read.
                     streaming = run.screencast_client is run.session._internal.client
@@ -1104,8 +1164,7 @@ class BrowserService:
                 if body.event in {"keyUp", "mouseReleased"}:
                     return {"success": True, "cleanup": "after_dialog"}
                 raise ValueError("Answer the current native dialog before sending page input")
-            if run.unresolved and body.kind not in {"resize", "copy", "pick", "devtools", "wheel"}:
-                raise ValueError("An earlier input outcome is unknown; review its receipt before further changes")
+            # The user sees the page; an unknown earlier outcome holds back only the agent.
             if body.scene_id is not None or run.scene is not None:
                 scene = await self._scene(run)
                 if body.scene_id != scene["scene_id"] and not self._same_focus(run, body, scene):
@@ -1122,10 +1181,13 @@ class BrowserService:
             try:
                 result = await asyncio.wait_for(self._execute_input(run, body, action_id), timeout=5)
             except (TimeoutError, RuntimeError, ConnectionError) as exc:
+                # The user watched their own input land or not; it is not left for review.
                 response = self._remember_response(run, {"success": False,
-                    "content": "Browser input outcome is unknown; inspect the page before retrying",
+                    "content": "Browser input outcome is unknown; check the page before retrying",
                     "receipt": {"action_id": action_id, "action": "input:" + body.kind,
-                                "execution": "unknown", "effect": "unchecked"}})
+                                "execution": "unknown", "effect": "unchecked",
+                                "reconciliation": {"source": "user_present"}}})
+                run.unresolved.pop(action_id, None)
                 raise BrowserActionError(response) from exc
             if body.kind == "key":
                 key_id = body.code or body.key
@@ -1318,6 +1380,7 @@ class BrowserService:
 
     async def _sample_frames(self, run: BrowserRun, interval: float = 1.0) -> None:
         last = None
+        failures = 0
         while True:
             await asyncio.sleep(interval)
             if not run.recording or run.session is None:
@@ -1327,10 +1390,15 @@ class BrowserService:
             try:
                 frame = await self._capture_recording(run)
             except Exception as exc:
+                # A tab switch or navigation can miss a sample; only a lasting failure ends it.
+                failures += 1
+                if failures < 3:
+                    continue
                 run.recording = False
                 run.recording_error = str(exc) or "Recording capture failed"
                 self._persist(run)
                 return
+            failures = 0
             digest = hashlib.sha256(frame).digest()
             if digest == last or not run.recording:
                 continue
@@ -1573,9 +1641,9 @@ class BrowserService:
                 run.requests[action.operation_id] = (fingerprint, action._action_id)
             if asyncio.get_running_loop().time() >= action._deadline:
                 return await self._reject_action(run, action, "deadline_expired")
-            if run.unresolved and action.action not in {"observe", "describe", "tabs", "downloads", "handle_dialog", "wait", "check_text", "screenshot", "open", "new_tab", "switch_tab"}:
+            if actor == "agent" and run.unresolved and action.action not in {"observe", "describe", "tabs", "downloads", "handle_dialog", "wait", "check_text", "screenshot", "open", "new_tab", "switch_tab"}:
                 return await self._reject_action(run, action, "unresolved_operation")
-            if len(run.unresolved) >= 8 and action.action in {"open", "new_tab", "switch_tab"}:
+            if actor == "agent" and len(run.unresolved) >= 8 and action.action in {"open", "new_tab", "switch_tab"}:
                 return await self._reject_action(run, action, "unresolved_operation_limit")
             if action.action == "reload" and await self._form_submission_page(run):
                 return await self._reject_action(run, action, "reload_would_resubmit_form")
@@ -1660,6 +1728,14 @@ class BrowserService:
                            action.observation_id, "phase": "dispatch_or_verification",
                            "target_id": next((e.get("target_id") for e in (run.latest_observation or {}).get("elements", [])
                                               if e.get("ref") == action.ref), None)}
+                # The person reviewing an unknown outcome needs to know what it acted on.
+                element = next((e for e in (run.latest_observation or {}).get("elements", [])
+                                if (action.ref and e.get("ref") == action.ref)
+                                or (action.selector and e.get("selector") == action.selector)), None)
+                if element:
+                    receipt.update(target_name=str(element.get("name") or "")[:120],
+                                   target_role=element.get("role"))
+                receipt["page_url"] = run.url
                 if action.action in {"open", "new_tab"}:
                     receipt["target_url"] = action.url
                 if known:
@@ -1778,12 +1854,43 @@ class BrowserService:
         action_id = a._action_id or uuid.uuid4().hex
         before_id = (run.latest_observation or {}).get("observation_id")
         before_tabs = await self._refresh_tabs(run) if a.action in OBSERVE_AFTER else run.tabs
+        agent_driven = run.native and run.owner == "agent"
+        if run.owner == "agent":
+            # Page-opened windows (sign-in, payment) belong to the user, and a page loaded
+            # while one is open could script it.
+            popups = {tab["tab_id"] for tab in before_tabs if tab.get("popup")}
+            if a.action in {"switch_tab", "close_tab"} and a.tab_id in popups:
+                raise ValueError(POPUP_TARGET_REFUSAL)
+            if popups and a.action in {"open", "new_tab", "back", "forward", "reload"}:
+                raise ValueError(POPUP_NAVIGATION_REFUSAL)
+        own_tab = None
+        if a.action == "open" and agent_driven:
+            current = next((tab for tab in before_tabs if tab.get("active")), {})
+            own_tab = (current.get("tab_id") in run.agent_tabs
+                       or current.get("url", "") in {"", "about:blank"})
+        popups_seen = len(run.popups_blocked)
         if a.action in {"open", "new_tab", "switch_tab", "close_tab", "back", "forward", "reload", "select", "set_checked", "press", "type", "scroll", "hover"}:
             run.last_dispatch_id = a._action_id
+        kept_user_tab = False
         if a.action == "open":
             existing = next((tab for tab in before_tabs if tab.get("url") == a.url), None)
-            result = (None if existing.get("active") else await s.switch_tab(existing["tab_id"])) \
-                if existing else await s.navigate(a.url)
+            if existing:
+                result = None if existing.get("active") else await s.switch_tab(existing["tab_id"])
+            elif own_tab is False:
+                # The shown tab is the user's page: open the site beside it, never over it.
+                result = await s.new_tab(force_new=True)
+                if result.success:
+                    kept_user_tab = True
+                    if run.native_events:
+                        await run.native_events.install(s._internal.client)
+                    result = await s.navigate(a.url)
+            else:
+                result = await s.navigate(a.url)
+            # Only a tab that was already the agent's, or one it just created, becomes its
+            # own; a failed new_tab leaves the session bound to the user's page.
+            if (agent_driven and not existing and (own_tab or kept_user_tab)
+                    and getattr(s, "tab_id", None)):
+                run.agent_tabs.add(s.tab_id)
         elif a.action == "observe":
             frame_id = a.frame_id
             if any((a.text_offset, a.element_offset, a.option_offset, a.frame_offset)) and not a.scope_ref:
@@ -1827,6 +1934,8 @@ class BrowserService:
         elif a.action == "new_tab":
             result = await s.new_tab(force_new=True)
             if result.success:
+                if agent_driven and getattr(s, "tab_id", None):
+                    run.agent_tabs.add(s.tab_id)
                 if run.native_events:
                     await run.native_events.install(s._internal.client)
                 if a.url:
@@ -2054,6 +2163,9 @@ class BrowserService:
         if result is not None:
             success = result.success
             content = result.content if success else result.error
+            if kept_user_tab and success:
+                content = (f"{content}\nOpened in a new tab: the shown tab was the user's page, "
+                           "so it was left as it was.")
         elif effect == "not_confirmed":
             content = "Requested field state was not reached; inspect before retrying"
         elif a.action == "check_text":
@@ -2125,6 +2237,16 @@ class BrowserService:
                 artifact = self._save(run, await self._capture(run), ".jpg", "失败现场")
             except Exception:
                 pass  # Preserve the action failure even when the page cannot be captured.
+        if len(run.popups_blocked) > popups_seen:
+            content = f"{content}\n" + POPUP_BLOCKED_NOTE.format(url=run.popups_blocked[-1])
+        elif run.owner == "agent" and not run.native and a.action in TARGET_ACTIONS:
+            # A private browser cannot stop the window; it still belongs to the user.
+            before_ids = {tab["tab_id"] for tab in before_tabs}
+            fresh = [tab for tab in await self._refresh_tabs(run, force=True)
+                     if tab.get("popup") and tab["tab_id"] not in before_ids]
+            if fresh:
+                content = f"{content}\n" + POPUP_OPENED_NOTE.format(
+                    url=fresh[-1].get("url") or "still loading")
         run.error = None if success else str(content)
         # Keep explicit assertions for review, but never log fill values or full DOM text.
         if a.action in OBSERVE_AFTER and a.action != "screenshot":
@@ -2154,7 +2276,8 @@ class BrowserService:
                 except Exception:
                     pass  # A missing probe must not imply that the page failed to scroll.
             try:
-                observation = await observe(run, full=True, frame_id=a.frame_id)
+                # Interactive elements are what the next step acts on; level=full is on request.
+                observation = await observe(run, full=False, frame_id=a.frame_id)
                 if settle_warning:
                     observation.setdefault("warnings", []).append(settle_warning)
             except Exception as exc:
@@ -2350,6 +2473,15 @@ class BrowserService:
             if tabs.success:
                 run.tabs = (tabs.metadata or {}).get("tabs", [])
                 run.tab_cache_time = now
+                if not run.native:
+                    # Workbench reports its page-opened windows; a private browser's
+                    # targets say whether they can still reach their opener. A plain
+                    # target=_blank link also records an openerId, but is noopener.
+                    targets = await asyncio.wait_for(
+                        run.session._internal.client.send("Target.getTargets"), timeout=4)
+                    opened = {t.get("targetId") for t in targets.get("targetInfos", [])
+                              if t.get("canAccessOpener")}
+                    run.tabs = [{**tab, "popup": tab.get("tab_id") in opened} for tab in run.tabs]
         except Exception:
             pass  # Tab discovery must not discard a completed action receipt.
         return list(run.tabs)

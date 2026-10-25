@@ -1,56 +1,68 @@
-import { useEffect, useState } from 'react'
+import { CuaPreviewPermission } from './CuaPreviewPermission'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AppSettingsPatch, AppSettingsV1 } from '@shared/app-settings'
-import { readTomlBool } from '@shared/toml-section'
-
-type InheritedCua = { enabled: boolean; chrome: boolean; autoAllowApps: boolean }
-
-/** The runtime reads ``[cua]`` from the user config only; an absent switch is off. */
-async function readInheritedCua(): Promise<InheritedCua> {
-  const { content } = await window.dsGui.getDeepseekConfigFile()
-  return {
-    enabled: readTomlBool(content ?? '', 'enabled', { section: 'cua' }) ?? false,
-    chrome: readTomlBool(content ?? '', 'chrome', { section: 'cua' }) ?? false,
-    autoAllowApps: readTomlBool(content ?? '', 'auto_allow_apps', { section: 'cua' }) ?? false
-  }
-}
-
-type PrivacyEntry = { id: 'accessibility' | 'screen'; name: string }
-
-async function readPrivacyEntries(): Promise<PrivacyEntry[]> {
-  const response = await window.dsGui.runtimeRequest('/v1/cua/permissions', 'GET')
-  if (!response.ok) throw new Error('Permissions unavailable')
-  const value = JSON.parse(response.body) as { permissions?: PrivacyEntry[] }
-  if (!Array.isArray(value?.permissions)) throw new Error('Invalid permissions')
-  return value.permissions
-}
+import { settingsToolbarButtonClass } from './SettingsActionToolbar'
+import { SettingsToggle } from './SettingsToggle'
+import { getCuaSettingsData, type PrivacyEntry } from '../../lib/cua-settings-data'
 
 /** macOS grants belong to the runtime's own signed apps; name them and open their panes. */
-function SystemPermissions(): React.JSX.Element | null {
+function SystemPermissions({ showPreview }: { showPreview: boolean }): React.JSX.Element {
   const { t } = useTranslation('settings')
-  const [entries, setEntries] = useState<PrivacyEntry[] | null>(null)
-  const [failed, setFailed] = useState(false)
-  useEffect(() => {
-    let live = true
-    readPrivacyEntries().then(list => { if (live) setEntries(list) }, () => { if (live) setFailed(true) })
-    return () => { live = false }
-  }, [])
-  const open = (id: PrivacyEntry['id']): void => {
-    window.dsGui.runtimeRequest('/v1/cua/permissions/open', 'POST', JSON.stringify({ id }))
-      .then(response => { if (!response.ok) setFailed(true) }, () => setFailed(true))
+  const resource = getCuaSettingsData().permissions
+  const { value: entries, failed } = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const [opening, setOpening] = useState<string[]>([])
+  const [openFailed, setOpenFailed] = useState(false)
+  useEffect(() => { void resource.load() }, [resource])
+  const open = async (entry: PrivacyEntry): Promise<void> => {
+    setOpening(current => [...current, entry.path]); setOpenFailed(false)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const response = await Promise.race([
+        window.dsGui.runtimeRequest('/v1/cua/permissions/open', 'POST', JSON.stringify({ id: entry.id })),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Settings request timed out')), 10_000) })
+      ])
+      if (!response.ok) throw new Error('Settings unavailable')
+    } catch { setOpenFailed(true) }
+    finally {
+      clearTimeout(timer)
+      setOpening(current => current.filter(path => path !== entry.path))
+    }
   }
-  if (failed) return <p className="ds-llm-card__meta">{t('cuaPermissionsUnavailable')}</p>
-  if (!entries?.length) return null
-  return <>
-    {entries.map(entry => <div className="ds-llm-card" key={entry.id}>
-      <span>{t(entry.id === 'accessibility' ? 'cuaPermissionAccessibility' : 'cuaPermissionScreen',
-        { name: entry.name })}</span>
-      <button type="button" className="ds-llm-sheet__btn" onClick={() => open(entry.id)}>
-        {t('cuaPermissionOpen')}
-      </button>
-    </div>)}
-    <p className="ds-llm-card__meta">{t('cuaPermissionsHint')}</p>
-  </>
+  return <section className="ds-content-card rounded-2xl">
+    <div className="border-b border-ds-border-muted px-5 py-3">
+      <h2 className="text-[16px] font-semibold text-ds-ink">{t('cuaSystemPermissions')}</h2>
+      <p className="mt-1 text-[13px] leading-5 text-ds-muted">{t('cuaPermissionsHint')}</p>
+    </div>
+    <div className="divide-y divide-ds-border-muted px-5">
+      {showPreview && typeof window.dsGui.getCuaScreenPermission === 'function' && <CuaPreviewPermission />}
+      {!entries && !failed && <div role="status" aria-live="polite" aria-label={t('cuaPermissionsLoading')}>
+        {(['cuaPermissionControl', 'cuaPermissionRead'] as const).map(title => <div key={title} className="flex items-center justify-between gap-4 py-4">
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-medium text-ds-ink">{t(title)}</h3>
+            <p className="mt-1 text-[12px] leading-5 text-ds-muted">{t('cuaPermissionsLoading')}</p>
+          </div>
+          <span aria-hidden="true" className="h-8 w-20 shrink-0 rounded-xl bg-ds-subtle" />
+        </div>)}
+      </div>}
+      {(failed || entries?.length === 0) && <div className="flex items-center justify-between gap-4 py-4">
+        <p role="status" className="text-[13px] leading-5 text-ds-muted">{t(failed ? 'cuaPermissionsUnavailable' : 'cuaPermissionsEmpty')}</p>
+        <button type="button" className={`${settingsToolbarButtonClass()} shrink-0`} onClick={() => void resource.load(true)}>{t('cuaPermissionsRetry')}</button>
+      </div>}
+      {entries?.map(entry => <div className="flex items-center justify-between gap-4 py-4" key={`${entry.id}:${entry.path}`}>
+        <div className="min-w-0">
+          <h3 className="text-[14px] font-medium text-ds-ink">{t(entry.id === 'accessibility' ? 'cuaPermissionControl' : 'cuaPermissionRead')}</h3>
+          <p className="mt-1 break-words text-[12px] leading-5 text-ds-muted">{t(entry.id === 'accessibility' ? 'cuaPermissionAccessibility' : 'cuaPermissionScreen', { name: entry.name })}</p>
+        </div>
+        <button type="button" className={`${settingsToolbarButtonClass(opening.includes(entry.path))} shrink-0`}
+          aria-label={t('cuaPermissionOpenNamed', { name: entry.name, permission: t(entry.id === 'accessibility' ? 'cuaPermissionControl' : 'cuaPermissionRead') })}
+          disabled={opening.includes(entry.path)} onClick={() => void open(entry)}>
+          {t(opening.includes(entry.path) ? 'cuaPermissionOpening' : 'cuaPermissionOpen')}
+        </button>
+      </div>)}
+    </div>
+    {openFailed && <p role="alert" className="px-5 pb-4 text-[13px] text-ds-danger">{t('cuaPermissionOpenFailed')}</p>}
+  </section>
 }
 
 export function CuaSettingsPanel({ form, onUpdate }: {
@@ -60,76 +72,43 @@ export function CuaSettingsPanel({ form, onUpdate }: {
   const { t } = useTranslation('settings')
   // Matches the runtime adapter: LCU computer use has no Windows support.
   const supported = window.dsGui?.platform === 'darwin' || window.dsGui?.platform === 'linux'
-  // undefined while loading, null when the config file could not be read.
-  const [inherited, setInherited] = useState<InheritedCua | null | undefined>(undefined)
-  useEffect(() => {
-    if (!supported) return
-    let cancelled = false
-    readInheritedCua().then(
-      value => { if (!cancelled) setInherited(value) },
-      () => { if (!cancelled) setInherited(null) }
-    )
-    return () => { cancelled = true }
-  }, [supported])
+  const resource = getCuaSettingsData().config
+  const config = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const inherited = config.value ?? (config.failed ? null : undefined)
+  useEffect(() => { if (supported) void resource.load() }, [supported, resource])
 
   if (!supported) {
-    return <div className="ds-llm-panel__section">
-      <h3 className="ds-llm-panel__section-title">{t('cuaTitle')}</h3>
-      <p className="ds-llm-card__meta">{t('cuaUnsupported')}</p>
+    return <div className="space-y-4 text-sm text-ds-ink">
+      <p className="text-sm leading-relaxed text-ds-muted">{t('cuaUnsupported')}</p>
     </div>
   }
-  const inheritLabel = (key: keyof InheritedCua): string => inherited === null
-    ? t('cuaInheritedUnknown')
-    : t('cuaInherited', { state: inherited === undefined ? '…' : t(inherited[key] ? 'cuaOn' : 'cuaOff') })
   const enabled = form.cuaEnabled ?? inherited?.enabled
-  return <div className="ds-llm-panel__section">
-    <h3 className="ds-llm-panel__section-title">{t('cuaTitle')}</h3>
-    <p className="ds-llm-card__meta">{t('cuaDescription')}</p>
-    <label className="ds-llm-card">
-      <span>{t('cuaEnable')}</span>
-      <select aria-label={t('cuaEnable')}
-        value={form.cuaEnabled === undefined ? 'inherit' : String(form.cuaEnabled)}
-        onChange={event => onUpdate({ cuaEnabled: event.target.value === 'true' })}>
-        <option value="inherit" disabled>{inheritLabel('enabled')}</option>
-        <option value="false">{t('cuaOff')}</option>
-        <option value="true">{t('cuaOn')}</option>
-      </select>
-    </label>
-    <label className="ds-llm-card">
-      <span>{t('cuaChrome')}</span>
-      <select aria-label={t('cuaChromeShort')}
-        value={form.cuaChrome === undefined ? 'inherit' : String(form.cuaChrome)}
-        disabled={enabled === false}
-        onChange={event => onUpdate({ cuaChrome: event.target.value === 'true' })}>
-        <option value="inherit" disabled>{inheritLabel('chrome')}</option>
-        <option value="false">{t('cuaOff')}</option>
-        <option value="true">{t('cuaOn')}</option>
-      </select>
-    </label>
-    <label className="ds-llm-card">
-      <span>{t('cuaAutoAllowApps')}</span>
-      <select aria-label={t('cuaAutoAllowAppsShort')}
-        value={form.cuaAutoAllowApps === undefined ? 'inherit' : String(form.cuaAutoAllowApps)}
-        disabled={enabled === false}
-        onChange={event => onUpdate({ cuaAutoAllowApps: event.target.value === 'true' })}>
-        <option value="inherit" disabled>{inheritLabel('autoAllowApps')}</option>
-        <option value="false">{t('cuaOff')}</option>
-        <option value="true">{t('cuaOn')}</option>
-      </select>
-    </label>
-    <p className="ds-llm-card__meta">{t('cuaAutoAllowAppsHint')}</p>
-    <label className="ds-llm-card">
-      <span>{t('cuaWindowPreview')}</span>
-      <select aria-label={t('cuaWindowPreview')}
-        value={String(form.cuaWindowPreview !== false)}
-        disabled={enabled === false}
-        onChange={event => onUpdate({ cuaWindowPreview: event.target.value === 'true' })}>
-        <option value="true">{t('cuaOn')}</option>
-        <option value="false">{t('cuaOff')}</option>
-      </select>
-    </label>
-    <p className="ds-llm-card__meta">{t('cuaWindowPreviewHint')}</p>
-    <p className="ds-llm-card__meta">{t('cuaVisionHint')}</p>
-    {window.dsGui?.platform === 'darwin' && enabled !== false ? <SystemPermissions /> : null}
+  const rows = [
+    { key: 'cuaEnabled', title: 'cuaEnable', hint: 'cuaEnableHint', value: enabled },
+    { key: 'cuaWindowPreview', title: 'cuaWindowPreview', hint: 'cuaWindowPreviewHint', value: form.cuaWindowPreview !== false },
+    { key: 'cuaChrome', title: 'cuaChromeShort', hint: 'cuaChromeHint', value: form.cuaChrome ?? inherited?.chrome },
+    { key: 'cuaAutoAllowApps', title: 'cuaAutoAllowAppsShort', hint: 'cuaAutoAllowAppsSummary', value: form.cuaAutoAllowApps ?? inherited?.autoAllowApps }
+  ] as const
+  return <div className="space-y-6 text-sm text-ds-ink">
+    <section className="ds-content-card rounded-2xl">
+      <div className="divide-y divide-ds-border-muted px-2 py-1">
+        {rows.map(row => <div key={row.key} className="ds-density-row flex items-center justify-between gap-6 px-4 py-5">
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold">{t(row.title)}</div>
+            <p className="mt-0.5 max-w-md text-[13px] leading-relaxed text-ds-muted">{t(row.hint)}</p>
+            {row.value === undefined && <p role="status" className="mt-1 text-xs text-ds-muted">{t(inherited === null ? 'cuaInheritedUnknown' : 'cuaLoading')}</p>}
+            {row.key === 'cuaAutoAllowApps' && <details className="mt-2 max-w-md text-[13px] leading-relaxed text-ds-muted">
+              <summary className="cursor-pointer hover:text-ds-ink">{t('cuaAccessDetails')}</summary>
+              <p className="mt-2">{t('cuaAutoAllowAppsHint')}</p>
+            </details>}
+          </div>
+          <SettingsToggle label={t(row.title)} checked={row.value === true}
+            disabled={row.value === undefined || (row.key !== 'cuaEnabled' && enabled !== true)}
+            onChange={value => onUpdate({ [row.key]: value })} />
+        </div>)}
+      </div>
+    </section>
+    <p className="text-[13px] leading-relaxed text-ds-muted">{t('cuaVisionHint')}</p>
+    {window.dsGui?.platform === 'darwin' && enabled !== false ? <SystemPermissions showPreview={form.cuaWindowPreview !== false} /> : null}
   </div>
 }

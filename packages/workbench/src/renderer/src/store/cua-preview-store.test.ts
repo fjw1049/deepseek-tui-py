@@ -10,6 +10,8 @@ import {
   noteCuaCallStarted,
   noteCuaTurnEnded,
   phaseOnCallStart,
+  showCuaPreview,
+  restoreCuaPreview,
   useCuaPreviewStore
 } from './cua-preview-store'
 
@@ -115,4 +117,45 @@ it('sub-agent computer-use steps drive the parent thread card', () => {
   expect(session()).toMatchObject({ phase: 'armed', surface: 'app', appId: 'com.apple.Notes', still: null })
   expect(cuaEventFromMailbox({ ...step, tool_name: 'read_file', kind: 'tool_call_completed' })).toBeNull()
   expect(cuaEventFromMailbox({ ...step, kind: 'progress' })).toBeNull()
+})
+
+
+it('drops a previous surface screenshot and rejects late results from old turns', () => {
+  noteCuaCallStarted('thread', 'turn', started())
+  noteCuaCallFinished('thread', finished({ cua_surface: { kind: 'app', app_id: 'A' }, images: [shot('a')] }))
+  expect(session()!.still).not.toBeNull()
+  noteCuaCallFinished('thread', finished({ cua_surface: { kind: 'app', app_id: 'B' } }))
+  expect(session()!.still).toBeNull()
+  noteCuaCallStarted('thread', 'new-turn', started())
+  noteCuaCallFinished('thread', { ...finished({ cua_surface: { kind: 'app', app_id: 'old' } }), turnId: 'turn' })
+  expect(session()!.appId).toBeNull()
+})
+
+it('allows reopening a hidden preview without restarting its turn', () => {
+  noteCuaCallStarted('thread', 'turn', started())
+  hideCuaPreviewForTask('thread')
+  showCuaPreview('thread')
+  expect(session()).toMatchObject({ phase: 'live', turnId: 'turn' })
+})
+
+it('keeps the known stop or failure outcome across completion polling', () => {
+  noteCuaCallStarted('thread', 'turn', started())
+  noteCuaTurnEnded('thread', 'stopped')
+  noteCuaTurnEnded('thread')
+  expect(session()!.outcome).toBe('stopped')
+  noteCuaCallStarted('thread', 'next', started())
+  noteCuaTurnEnded('thread', 'failed')
+  expect(session()!.outcome).toBe('failed')
+})
+
+
+it('restores a new manual turn instead of keeping the previous ended preview', () => {
+  noteCuaCallStarted('thread', 'old', started())
+  noteCuaTurnEnded('thread')
+  restoreCuaPreview('thread', { used: true, active: true, turn_id: 'manual' })
+  expect(session()).toMatchObject({ phase: 'armed', turnId: 'manual', still: null })
+  expect(session()!.outcome).toBeUndefined()
+  hideCuaPreviewForTask('thread')
+  restoreCuaPreview('thread', { used: true, active: true, turn_id: 'manual' })
+  expect(session()!.phase).toBe('hidden-for-task')
 })

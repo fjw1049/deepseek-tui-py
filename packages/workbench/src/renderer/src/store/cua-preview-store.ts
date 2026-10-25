@@ -8,11 +8,13 @@ import type { SubagentMailboxPayload, ToolEventPayload } from '../agent/types'
  *   armed            a computer-use call started; the card waits for its first frame.
  *   live             the owning thread's card is on screen.
  *   hidden-for-task  the user closed it; it stays closed for the rest of this turn.
- *   ended            the turn finished; the card shows its last frame as done, then closes.
+ *   ended            the turn ended; its last frame and outcome remain until dismissed.
  *
  * Sessions are keyed by thread, so background work never moves the user's view: a
  * thread's card shows only while that thread is the one being viewed.
  */
+export type CuaPreviewOutcome = 'ended' | 'stopped' | 'failed'
+
 export type CuaPreviewPhase = 'armed' | 'live' | 'hidden-for-task' | 'ended'
 
 /** A screenshot a computer-use call recorded; served by `/v1/cua/frames`. */
@@ -29,6 +31,8 @@ export type CuaPreviewSession = {
   still: CuaPreviewStill | null
   /** Bumped by every finished call so the live stream re-checks the app's window. */
   revision: number
+  outcome?: CuaPreviewOutcome
+  capturedAt?: number
 }
 
 export type CuaPreviewPosition = { x: number; y: number }
@@ -110,7 +114,7 @@ function withPhase(session: CuaPreviewSession | undefined, phase: CuaPreviewPhas
 
 /** Live tool start: only `cua_js` during a live turn arms the card. */
 export function noteCuaCallStarted(threadId: string, turnId: string | null, ev: ToolEventPayload): void {
-  if (!turnId || ev.status !== 'running' || ev.toolName !== CUA_TOOL) return
+  if (!turnId || (ev.turnId && ev.turnId !== turnId) || ev.status !== 'running' || ev.toolName !== CUA_TOOL) return
   const label = stringField(ev.meta?.tool_input, 'title')
   update(threadId, (session) => {
     const newTurn = session?.turnId !== turnId
@@ -128,13 +132,14 @@ export function noteCuaCallFinished(threadId: string, ev: ToolEventPayload): voi
   const result = cuaCallResult(ev)
   if (!result) return
   update(threadId, (session) => {
-    if (!session || session.phase === 'ended') return session
+    if (!session || session.phase === 'ended' || (ev.turnId && ev.turnId !== session.turnId)) return session
     const touched = result.surface !== null
     return {
       ...session,
       surface: touched ? result.surface : session.surface,
       appId: touched ? result.appId : session.appId,
-      still: result.still ?? session.still,
+      still: result.still ?? (touched && (result.surface !== session.surface || result.appId !== session.appId) ? null : session.still),
+      capturedAt: result.still ? Date.now() : session.capturedAt,
       label: result.label ?? session.label,
       revision: session.revision + 1
     }
@@ -142,10 +147,11 @@ export function noteCuaCallFinished(threadId: string, ev: ToolEventPayload): voi
 }
 
 /** The thread's turn finished or was stopped: end its card (idempotent). */
-export function noteCuaTurnEnded(threadId: string): void {
+export function noteCuaTurnEnded(threadId: string, outcome: CuaPreviewOutcome = 'ended'): void {
   update(threadId, (session) => {
     const phase = phaseOnTurnEnd(session?.phase)
-    return phase === undefined ? undefined : withPhase(session, phase)
+    if (!session || phase === undefined) return undefined
+    return { ...session, phase, outcome: session.outcome ?? outcome }
   })
 }
 
@@ -189,5 +195,24 @@ export function setCuaPreviewFloating(threadId: string, position: CuaPreviewPosi
     if (position) floating[threadId] = position
     else delete floating[threadId]
     return { floating }
+  })
+}
+
+/** Visibility never changes control ownership. */
+export function showCuaPreview(threadId: string): void {
+  update(threadId, (session) => session?.phase === 'hidden-for-task'
+    ? { ...session, phase: 'live' } : session)
+}
+
+/** Reconnect to a live host session without replaying historical tool events. */
+export function restoreCuaPreview(threadId: string, state: {
+  used: boolean; active: boolean; turn_id: string | null
+  unresolved?: unknown; surface?: { kind: string; app_id?: string } | null
+}): void {
+  if (!state.used || (!state.active && !state.unresolved) || !state.turn_id) return
+  update(threadId, session => session?.turnId === state.turn_id ? session : {
+    phase: state.active ? 'armed' : 'ended', turnId: state.turn_id,
+    surface: state.surface?.kind === 'app' ? 'app' : state.surface?.kind === 'browser' ? 'browser' : null,
+    appId: state.surface?.app_id ?? null, label: null, still: null, revision: 0
   })
 }

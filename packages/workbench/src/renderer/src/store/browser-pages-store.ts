@@ -11,7 +11,16 @@ export type PageTab = {
   error: string | null
 }
 export type PageRect = { top: number; left: number; width: number; height: number }
-export type PageSession = { tabs: PageTab[]; activeTabId: string; retained?: boolean; inputBlocked?: boolean }
+export type PageSession = {
+  tabs: PageTab[]; activeTabId: string; retained?: boolean; inputBlocked?: boolean
+  /** While set, only this tab (the one the agent drives) is blocked; other tabs stay usable. */
+  blockedTabId?: string | null
+}
+
+/** Input stays blocked until a browser panel says otherwise. */
+export function tabInputBlocked(session: PageSession, tabId: string): boolean {
+  return (session.inputBlocked ?? true) && (!session.blockedTabId || session.blockedTabId === tabId)
+}
 
 export type PageWebview = HTMLElement & {
   canGoBack(): boolean
@@ -103,9 +112,11 @@ function prune(): void {
 }
 
 /** Also protects separate popup windows managed by the main process. */
-export function setBrowserInputBlocked(browserId: string, inputBlocked: boolean): void {
+export function setBrowserInputBlocked(browserId: string, inputBlocked: boolean, blockedTabId: string | null = null): void {
   const session = useBrowserPagesStore.getState().sessions[browserId]
-  if (session && session.inputBlocked !== inputBlocked) setSession(browserId, { ...session, inputBlocked })
+  if (session && (session.inputBlocked !== inputBlocked || (session.blockedTabId ?? null) !== blockedTabId)) {
+    setSession(browserId, { ...session, inputBlocked, blockedTabId })
+  }
 }
 
 /** A live runtime or recorder connection owns the page even when no panel shows it. */

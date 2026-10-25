@@ -751,6 +751,9 @@ async def run_http(
             host=options.host,
             port=options.port,
             log_level="info",
+            # Idle SSE subscriptions otherwise prevent lifespan cleanup forever.
+            # The manager still finalizes turns and persists state in lifespan.
+            timeout_graceful_shutdown=5,
             # Our ``_access_log`` middleware is the single source of truth and
             # strips query strings (SSE ?token=). Disable uvicorn's default access
             # log so bearer tokens never land in stderr.

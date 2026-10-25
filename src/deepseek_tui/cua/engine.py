@@ -60,6 +60,7 @@ class CuaEngineMixin:
                 self.tool_context.working_directory,
                 self._cycle_session_id or uuid.uuid4().hex,
                 ask,
+                owner_id=self.tool_context.metadata.get("runtime_thread_id"),
             )
             self._cua_session = session
         events = [self.handle.cancel_event, self.handle.pause.requested]
@@ -117,6 +118,9 @@ class CuaEngineMixin:
     async def _finish_cua_turn(self) -> None:
         session = getattr(self, "_cua_session", None)
         if session is not None:
+            session.turn_used = False
+            if session.human_reserved:
+                session.release_human()
             try:
                 await session.end_turn(interrupted=self.handle.cancel_event.is_set())
                 if self.handle.cancel_event.is_set():
@@ -143,4 +147,6 @@ class CuaEngineMixin:
     async def _close_cua(self) -> None:
         session = getattr(self, "_cua_session", None)
         if session is not None:
+            if session.human_reserved:
+                session.release_human()
             await session.close()

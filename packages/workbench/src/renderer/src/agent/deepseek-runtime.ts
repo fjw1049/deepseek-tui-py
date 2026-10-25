@@ -1845,6 +1845,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   }
                   const label = toolSummaryFromStartedPayload(payload, it.summary || it.kind)
                   sink.onTool({
+                    turnId: it.turn_id,
                     itemId: it.id,
                     summary: label,
                     status: 'running',
@@ -1972,6 +1973,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     liveDetail != null && liveDetail.length > TOOL_DETAIL_MAX_CHARS
                   const completedTool = readPayloadTool(payload)
                   sink.onTool({
+                    turnId: it.turn_id,
                     itemId: it.id,
                     summary: it.summary || (status === 'error' ? 'tool failed' : 'tool'),
                     status,

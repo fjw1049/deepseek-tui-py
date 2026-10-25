@@ -30,7 +30,10 @@ class BrowserUseTool(ToolSpec):
             "After help verify fresh evidence and continue within the user's authorization. "
             "Browser use activates task focus: request_task_tools exposes named capabilities for "
             "later stages. Deliver the whole task with finish_task, not just a browser step. "
-            "Ordinary navigation does not need confirmation. "
+            "Do not ask the user before ordinary navigation: the app asks them to approve each "
+            "new site itself and they may trust it for the session. "
+            "open keeps the user's own page: from a tab the user was using it opens a new tab. "
+            "Windows a page opens (sign-in, payment) belong to the user; ask them to finish those. "
             "Start with status to inspect control ownership without opening a browser. "
             "Use tabs and switch_tab with fresh tab IDs for popups; "
             "new_tab opens an http(s) URL or a blank tab; close_tab closes a discovered tab. "
@@ -50,7 +53,8 @@ class BrowserUseTool(ToolSpec):
             "For scrolling a list/panel, target its scroll_containers ref or fresh screenshot "
             "coordinates; "
             "without a target the wheel is sent at viewport center, which may be outside the list. "
-            "Actions return fresh observations automatically. execution is dispatch status; "
+            "Actions return fresh observations of interactive elements automatically; observe "
+            "level=full for more. execution is dispatch status; "
             "effect=unchecked does NOT mean the user's task succeeded. If observation fails "
             "after execution, observe again instead of repeating the completed operation. "
             "wait_state=hidden waits for text/element to disappear; visible is the default. "
@@ -140,6 +144,10 @@ class BrowserUseTool(ToolSpec):
         return [ToolCapability.NETWORK, ToolCapability.REQUIRES_APPROVAL]
 
     def approval_requirement_for_input(self, input_data: dict[str, Any]) -> ApprovalRequirement:
+        from deepseek_tui.browser.permissions import navigation_needs_approval
+
+        if navigation_needs_approval(input_data):
+            return ApprovalRequirement.REQUIRED
         return (
             ApprovalRequirement.AUTO
             if input_data.get("action")

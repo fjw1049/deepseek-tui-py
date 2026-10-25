@@ -906,6 +906,32 @@ async def test_popup_snapshot_and_dead_session_are_visible_to_agent(chrome):
     assert not service.state("t")["active"]
 
 
+async def test_new_tab_link_stays_an_ordinary_tab_for_the_agent(chrome):
+    """Only windows that keep their opener are page-opened windows; a plain link's tab is not."""
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(
+        client,
+        "document.body.innerHTML=`<a id=a target=_blank href='${location.href}?tab'>Tab</a>"
+        "<button id=b onclick=\"window.open(location.href+'?popup','_blank')\">Popup</button>`;"
+        "true",
+    )
+    original = next(tab["tab_id"] for tab in service.state("t")["tabs"] if tab.get("active"))
+    result = await act(service, await read(service), "click", selector="#a")
+    tab = next(tab for tab in result["tabs"] if tab["url"].endswith("?tab"))
+    assert not tab["popup"], result["tabs"]
+    switched = await service.action("t", BrowserAction(action="switch_tab", tab_id=tab["tab_id"]))
+    assert switched["success"], switched
+    await service.action("t", BrowserAction(action="switch_tab", tab_id=original))
+    result = await act(service, await read(service), "click", selector="#b")
+    popup = next(tab for tab in result["tabs"] if tab["url"].endswith("?popup"))
+    assert popup["popup"], result["tabs"]
+    from deepseek_tui.browser.service import BrowserActionError
+
+    with pytest.raises(BrowserActionError, match="window the page opened"):
+        await service.action("t", BrowserAction(action="switch_tab", tab_id=popup["tab_id"]))
+
+
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
 async def test_scoped_cross_origin_frames_and_parent_overlay(chrome, host):
     import json
@@ -2262,9 +2288,16 @@ async def test_user_new_tab_installs_native_events(chrome):
     assert run.session._internal.client in run.native_events.clients
 
 
-async def test_approval_changes_with_recipient(chrome):
+async def test_approval_changes_with_recipient_on_sensitive_sites(chrome, monkeypatch):
+    """Session trust covers an ordinary site; sensitive ones bind approval to the exact target."""
+    from deepseek_tui.browser import permissions
+
     service, run = chrome
     client = run.session._internal.client
+    trusted = service.approval_fingerprint(
+        "t", {"action": "click", "selector": "#send", "observation_id": "any"}, "same-task")
+    assert set(trusted) == {"browser_site"}
+    monkeypatch.setattr(permissions, "is_sensitive", lambda _site: True)
     await evaluate(
         client,
         "document.body.innerHTML='<form><label>Recipient<input id=to value=alice></label><button id=send type=button>Send</button></form>';true",

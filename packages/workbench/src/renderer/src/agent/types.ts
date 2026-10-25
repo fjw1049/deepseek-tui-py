@@ -299,6 +299,7 @@ export type ElevationRequestPayload = {
 }
 
 export type ToolEventPayload = {
+  turnId?: string
   toolName?: string
   itemId: string
   summary: string

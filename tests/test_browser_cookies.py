@@ -554,3 +554,96 @@ async def test_failed_or_partial_empty_cookie_read_preserves_existing_login(
     store.read_source.return_value = source
     await store.sync(run)
     assert jar[cookie_key(cookie())]["value"] == "PRIVATE_COOKIE_SENTINEL"
+
+
+def fake_keychain(items, *, answering=None, storing=True, argv=None):
+    """``security`` as the store uses it: ``-i`` reads the add command from stdin."""
+    import shlex
+    import subprocess
+
+    def keychain(*args, stdin=None):
+        if argv is not None:
+            argv.append(args)
+        if args[0] == "-i":
+            command = shlex.split(stdin)
+            if storing and command[0] == "add-generic-password":
+                items[command[command.index("-a") + 1]] = command[command.index("-w") + 1]
+            # ``security -i`` exits 0 even when its command fails.
+            return subprocess.CompletedProcess(args, 0, "", "")
+        account = args[args.index("-a") + 1]
+        if args[0] == "find-generic-password":
+            if answering is not None and not answering["find"]:
+                # What _keychain reports when an unlock prompt goes unanswered.
+                return subprocess.CompletedProcess(args, -1, "", "timed out")
+            found = account in items
+            return subprocess.CompletedProcess(args, 0 if found else 44, items.get(account, ""), "")
+        items.pop(account, None)
+        return subprocess.CompletedProcess(args, 0, "", "")
+    return keychain
+
+
+def test_vault_key_moves_into_the_keychain_and_leaves_no_file(tmp_path, monkeypatch):
+    from deepseek_tui.browser import cookies as module
+
+    items: dict[str, str] = {}
+    argv: list[tuple[str, ...]] = []
+    monkeypatch.setattr(module, "_keychain", fake_keychain(items, argv=argv))
+    root = tmp_path / "vault"
+    root.mkdir()
+    (root / "cookies.key").write_text(module.Fernet.generate_key().decode())
+    store = module.CookieStore(root)
+    store._write({"cookies": {"k": {"name": "n"}}, "sites": []})
+    assert not (root / "cookies.key").exists() and items
+    # The key travels on stdin, never in process arguments other users' tools can list.
+    key = next(iter(items.values()))
+    assert all(key not in arg for args in argv for arg in args)
+    # A fresh process reads the vault with the key from the keychain.
+    assert module.CookieStore(root)._read()["cookies"] == {"k": {"name": "n"}}
+    store._forget_key()
+    assert not items
+
+
+def test_a_silently_failed_keychain_store_keeps_the_key_file(tmp_path, monkeypatch):
+    from deepseek_tui.browser import cookies as module
+
+    items: dict[str, str] = {}
+    monkeypatch.setattr(module, "_keychain", fake_keychain(items, storing=False))
+    root = tmp_path / "vault"
+    root.mkdir()
+    module.CookieStore(root)._write({"cookies": {"k": {"name": "n"}}, "sites": []})
+    assert not items and (root / "cookies.key").exists()
+    assert module.CookieStore(root)._read()["cookies"] == {"k": {"name": "n"}}
+
+
+def test_unanswered_keychain_never_replaces_the_vault_key(tmp_path, monkeypatch):
+    from deepseek_tui.browser import cookies as module
+
+    items: dict[str, str] = {}
+    answering = {"find": True}
+    monkeypatch.setattr(module, "_keychain", fake_keychain(items, answering=answering))
+    root = tmp_path / "vault"
+    root.mkdir()
+    module.CookieStore(root)._write({"cookies": {"k": {"name": "n"}}, "sites": []})
+    key = dict(items)
+    answering["find"] = False
+    with pytest.raises(OSError):
+        module.CookieStore(root)._read()
+    assert items == key and not (root / "cookies.key").exists()
+    answering["find"] = True
+    assert module.CookieStore(root)._read()["cookies"] == {"k": {"name": "n"}}
+
+
+def test_keychain_timeout_reports_failure_not_absence(monkeypatch):
+    import subprocess
+
+    from deepseek_tui.browser import cookies as module
+
+    def run(command, **_kwargs):
+        raise subprocess.TimeoutExpired(command, 10)
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.delenv("DEEPSEEK_BROWSER_KEYCHAIN", raising=False)
+    monkeypatch.setattr(module, "Path", lambda _path: SimpleNamespace(exists=lambda: True))
+    monkeypatch.setattr(module.subprocess, "run", run)
+    result = module._keychain("find-generic-password", "-s", "x", "-a", "y", "-w")
+    assert result is not None and result.returncode not in {0, 44}

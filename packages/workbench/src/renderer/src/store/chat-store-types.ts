@@ -51,6 +51,7 @@ export type SettingsRouteSection =
   | 'appearance'
   | 'shortcuts'
   | 'models'
+  | 'computer-control'
   | 'permissions'
   | 'hooks'
   | 'data'

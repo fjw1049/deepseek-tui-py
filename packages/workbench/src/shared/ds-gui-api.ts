@@ -287,7 +287,7 @@ export type { UsageQueryResult, UsageRange } from './usage-ledger'
 
 /** The window a computer-use preview may capture for one app (macOS). */
 export type CuaPreviewWindowResult = {
-  status: 'ok' | 'permission' | 'no-window' | 'unsupported'
+  status: 'ok' | 'permission' | 'no-window' | 'ambiguous' | 'unsupported'
   /** Capturer source id of exactly that window; only with status `ok`. */
   sourceId?: string
   windowId?: number
@@ -307,6 +307,7 @@ export type DsGuiApi = {
   setWindowMaterial: (input: import('./appearance').WindowMaterial) => Promise<boolean>
   /** Frontmost capturable window of the app computer use last touched (macOS). */
   resolveCuaPreviewWindow: (bundleId: string) => Promise<CuaPreviewWindowResult>
+  getCuaScreenPermission: () => Promise<{ status: string; appName: string; appId?: string }>
   openScreenCaptureSettings: () => Promise<void>
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
   transcribeAudio: (payload: {

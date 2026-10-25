@@ -1,3 +1,4 @@
+import { preloadCuaSettings } from './lib/cua-settings-data'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useChatStore } from './store/chat-store'
 import i18n from './i18n'
@@ -50,6 +51,9 @@ export default function AppShell(): React.ReactElement {
   const setStartupPhase = useChatStore((s) => s.setStartupPhase)
   const initialSetupOpen = useChatStore((s) => s.initialSetupOpen)
   const runtimeConnection = useChatStore((s) => s.runtimeConnection)
+  useEffect(() => {
+    preloadCuaSettings(runtimeConnection === 'ready')
+  }, [runtimeConnection])
   const [revealPhase, setRevealPhase] = useState<RevealPhase>(
     coldStartCeremonyDone ? 'live' : 'waiting'
   )

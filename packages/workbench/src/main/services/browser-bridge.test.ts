@@ -221,3 +221,14 @@ it('cancels a paint wait when the browser is closed', async () => {
     expect(calls).toBeLessThanOrEqual(2)
   } finally { vi.useRealTimers() }
 })
+
+it('blocks windows a page opens while the agent drives its tab, and tells the runtime', async () => {
+  const h = await harness()
+  try {
+    expect(h.bridge.allowPopup(2, 'https://login.test/')).toBe(true)
+    h.bridge.setTabs('one', [{ tabId: 'tab', webContentsId: 2, active: true, visible: true, inputBlocked: true }])
+    expect(h.bridge.allowPopup(2, 'https://login.test/')).toBe(false)
+    expect(h.messages).toContainEqual({ method: 'Workbench.popupBlocked', params: { url: 'https://login.test/' } })
+    expect(h.bridge.allowPopup(99, 'https://unknown.test/')).toBe(true)
+  } finally { h.socket.close() }
+})

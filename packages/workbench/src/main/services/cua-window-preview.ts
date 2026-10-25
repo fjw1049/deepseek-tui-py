@@ -1,4 +1,5 @@
 import { app, desktopCapturer, ipcMain, shell, systemPreferences, type IpcMainInvokeEvent } from 'electron'
+import { release } from 'node:os'
 import { execFile } from 'node:child_process'
 import type { CuaPreviewWindowResult } from '../../shared/ds-gui-api'
 
@@ -6,14 +7,18 @@ import type { CuaPreviewWindowResult } from '../../shared/ds-gui-api'
  * Finds the window the computer-use preview should show for one app.
  *
  * The runtime names the app it touched (bundle id) but not its window, so this picks
- * the app's frontmost normal on-screen window. Only that one window is ever offered
+ * the app's only normal on-screen window. Only that one window is ever offered
  * for capture: an app without a capturable window yields no source, never the desktop.
  */
 
 const BUNDLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/
 /** Smaller layer-0 windows are title strips, palettes and popovers, not the app's content. */
 const MIN_WINDOW_SIDE = 100
-const SCREEN_SETTINGS = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+// Darwin 22 is macOS 13, which introduced the Settings extension routes.
+const privacyPane = Number.parseInt(release(), 10) >= 22
+  ? 'com.apple.settings.PrivacySecurity.extension'
+  : 'com.apple.preference.security'
+const SCREEN_SETTINGS = `x-apple.systempreferences:${privacyPane}?Privacy_ScreenCapture`
 
 // 17 = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements; the
 // list is ordered front to back. Windows on other Spaces are not on screen and
@@ -42,12 +47,12 @@ function run(argv) {
 export type AppWindow = { id: number; layer: number; alpha: number; width: number; height: number }
 type AppWindows = { name: string; path: string; windows: AppWindow[] }
 
-/** The app's frontmost normal window, or null when it shows none. */
+/** Never guess which of an app's windows belongs to the task. */
 export function pickPreviewWindow(windows: AppWindow[]): number | null {
-  const hit = windows.find(
+  const candidates = windows.filter(
     (w) => w.layer === 0 && w.alpha > 0 && w.width >= MIN_WINDOW_SIDE && w.height >= MIN_WINDOW_SIDE
   )
-  return hit?.id ?? null
+  return candidates.length === 1 ? candidates[0].id : null
 }
 
 function listAppWindows(bundleId: string): Promise<AppWindows | null> {
@@ -87,7 +92,7 @@ export async function resolveCuaPreviewWindow(bundleId: string): Promise<CuaPrev
   const identity = { appName: found?.name || undefined, icon: found ? await appIcon(found.path) : null }
   if (access === 'denied' || access === 'restricted') return { status: 'permission', ...identity }
   const windowId = found ? pickPreviewWindow(found.windows) : null
-  if (windowId === null) return { status: 'no-window', ...identity }
+  if (windowId === null) return { status: found?.windows.some(w => w.layer === 0 && w.alpha > 0 && w.width >= MIN_WINDOW_SIDE && w.height >= MIN_WINDOW_SIDE) ? 'ambiguous' : 'no-window', ...identity }
   // Every call re-checks the window; only a different window needs the capturer's list.
   if (listed?.windowId === windowId) return { status: 'ok', sourceId: listed.sourceId, windowId, ...identity }
   // Capture accepts only a source id the capturer itself lists; listing also raises the
@@ -107,7 +112,40 @@ export function registerCuaWindowPreviewIpc(fromMainWindow: (event: IpcMainInvok
       ? resolveCuaPreviewWindow(bundleId)
       : { status: 'unsupported' }
   )
+  ipcMain.handle('cua-preview:screen-permission', (event) => {
+    if (!fromMainWindow(event) || process.platform !== 'darwin') return { status: 'unsupported', appName: app.getName() }
+    // Development builds appear in macOS privacy settings as Electron.
+    const appName = process.execPath.match(/([^/]+)\.app\/Contents\//)?.[1] ?? app.getName()
+    return { status: systemPreferences.getMediaAccessStatus('screen'), appName, appId: process.execPath }
+  })
   ipcMain.handle('cua-preview:open-screen-settings', async (event) => {
-    if (process.platform === 'darwin' && fromMainWindow(event)) await shell.openExternal(SCREEN_SETTINGS)
+    if (process.platform !== 'darwin' || !fromMainWindow(event)) return
+    const before = systemPreferences.getMediaAccessStatus('screen')
+    if (before === 'granted') return
+    if (before === 'restricted') {
+      await shell.openExternal(SCREEN_SETTINGS)
+      return
+    }
+    // Request a real thumbnail: window enumeration with zero-sized thumbnails
+    // does not reliably trigger macOS consent. Never retain or send this image.
+    // Try even when reported denied: an unregistered development app can report
+    // denied before its first native request.
+    try {
+      await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+    } catch (error) {
+      // A denied capture can reject before enumeration completes. Still provide
+      // the system recovery page, instead of silently abandoning authorization.
+      const current = systemPreferences.getMediaAccessStatus('screen')
+      if (current === 'denied' || current === 'restricted') {
+        await shell.openExternal(SCREEN_SETTINGS)
+        return
+      }
+      throw error
+    }
+    // Let the first-use native dialog handle consent. Previously denied access
+    // may require the user to change the existing switch in System Settings.
+    if (before === 'denied' && systemPreferences.getMediaAccessStatus('screen') === 'denied') {
+      await shell.openExternal(SCREEN_SETTINGS)
+    }
   })
 }

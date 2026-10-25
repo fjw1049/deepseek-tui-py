@@ -70,7 +70,9 @@ export function createBrowserBridge(deps: Deps) {
     const focusedPopup = tabsOf(browserId).find(tab => tab.popup && tab.active)
     return tabsOf(browserId).flatMap(tab => {
       const guest = guestOf(tab)
-      return guest ? [{ tab_id: tab.tabId, url: guest.getURL(), title: guest.getTitle(), active: focusedPopup ? tab === focusedPopup : tab.active, popup: !!tab.popup }] : []
+      // `active` is what the user looks at (a focused popup wins); `panel` is the panel's tab.
+      return guest ? [{ tab_id: tab.tabId, url: guest.getURL(), title: guest.getTitle(), active: focusedPopup ? tab === focusedPopup : tab.active,
+        panel: !tab.popup && tab.active, popup: !!tab.popup }] : []
     })
   }
 
@@ -195,8 +197,11 @@ export function createBrowserBridge(deps: Deps) {
       try { message = parseMessage(String(raw)) } catch { socket.close(1003, 'Invalid message'); return }
       try {
         if (message.method === 'Workbench.clearCookies') {
-          // The runtime cleared its saved logins; Workbench's tabs share this partition.
-          await session.fromPartition(DEV_BROWSER_PARTITION).clearStorageData({ storages: ['cookies'] })
+          // The runtime cleared its saved logins; Workbench's tabs share this partition. Sites
+          // also keep sign-in tokens in storage, so signing out clears that too.
+          await session.fromPartition(DEV_BROWSER_PARTITION).clearStorageData({
+            storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql']
+          })
           socket.send(JSON.stringify({ id: message.id, result: {} }))
           return
         }
@@ -469,14 +474,24 @@ export function createBrowserBridge(deps: Deps) {
         tabs.set(tab.tabId, entry)
         watchTab(entry)
       }
-      const blocked = accepted.some(tab => tab.inputBlocked)
+      const anyBlocked = accepted.some(tab => tab.inputBlocked)
       for (const tab of tabsOf(browserId)) if (tab.popup) {
+        // A window follows the tab that opened it; one opened by another window, the browser.
+        const opener = accepted.find(item => item.tabId === tab.openerId)
+        const blocked = opener ? !!opener.inputBlocked : anyBlocked
         tab.inputBlocked = blocked
         tab.popup.setIgnoreMouseEvents(blocked)
         tab.popup.setFocusable(!blocked)
         if (blocked) tab.popup.blur()
       }
       notify()
+    },
+    /** A tab whose input is held for the agent may not open windows; the runtime hears why. */
+    allowPopup(openerId: number, url: string): boolean {
+      const opener = [...tabs.values()].find(tab => tab.webContentsId === openerId)
+      if (!opener?.inputBlocked) return true
+      sendToBrowser(opener.browserId, 'Workbench.popupBlocked', { url })
+      return false
     },
     reply(requestId: string, reply: BrowserBridgeReply): void {
       const waiting = pending.get(requestId)

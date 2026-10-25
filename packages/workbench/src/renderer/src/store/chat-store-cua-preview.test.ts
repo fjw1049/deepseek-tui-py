@@ -20,7 +20,7 @@ it('Stop ends the preview even though no completion event arrives', async () => 
   provider.interruptTurn.mockResolvedValue(undefined)
   await useChatStore.getState().interrupt()
   expect(useChatStore.getState().currentTurnId).toBeNull()
-  expect(useCuaPreviewStore.getState().sessions.a?.phase).toBe('ended')
+  expect(useCuaPreviewStore.getState().sessions.a).toMatchObject({ phase: 'ended', outcome: 'stopped' })
 })
 
 it('switching threads leaves the running task preview alone', () => {

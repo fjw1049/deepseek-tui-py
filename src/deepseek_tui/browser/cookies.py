@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -75,6 +76,44 @@ async def set_cookies(client, cookies: list[dict]) -> int:
     return await set_cookies(client, cookies[:middle]) + await set_cookies(client, cookies[middle:])
 
 
+_KEYCHAIN_SERVICE = "DeepSeek Workbench browser cookies"
+
+
+def _keychain(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str] | None:
+    """macOS login keychain via the system tool; None where it is unavailable.
+
+    A keychain that does not answer (an unlock prompt left open) reports failure, not absence.
+    Blocking: async callers run vault access in a thread.
+    """
+    if (sys.platform != "darwin" or os.environ.get("DEEPSEEK_BROWSER_KEYCHAIN") == "0"
+            or not Path("/usr/bin/security").exists()):
+        return None
+    command = ["/usr/bin/security", *args]
+    try:
+        return subprocess.run(command, input=stdin, capture_output=True, text=True, timeout=10,
+                              check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return subprocess.CompletedProcess(command, -1, "", str(exc))
+
+
+def _keychain_find(account: str) -> subprocess.CompletedProcess[str] | None:
+    return _keychain("find-generic-password", "-s", _KEYCHAIN_SERVICE, "-a", account, "-w")
+
+
+def _keychain_store(account: str, key: bytes) -> bool:
+    """Store the key without putting it in process arguments; True only once read back."""
+    if '"' in account or "\n" in account:
+        return False  # Cannot be quoted for ``security -i``; keep the key file instead.
+    # ``security -i`` reads the command from stdin, so the key never appears in ps output.
+    # It exits 0 even when the command fails: only a read-back proves the store.
+    stored = _keychain("-i", stdin=(f'add-generic-password -U -s "{_KEYCHAIN_SERVICE}" '
+                                    f'-a "{account}" -w {key.decode()}\n'))
+    if stored is None:
+        return False
+    found = _keychain_find(account)
+    return found is not None and found.returncode == 0 and found.stdout.strip() == key.decode()
+
+
 class CookieStore:
     def __init__(self, root: Path):
         self.root = root
@@ -87,6 +126,7 @@ class CookieStore:
         self.domains = saved.get("domains", 0)
         # Background saves report separately so one transient failure does not stick.
         self.save_error = False
+        self._cached_key: bytes | None = None
 
     def settings(self) -> dict:
         try:
@@ -128,39 +168,66 @@ class CookieStore:
         async with self.lock:
             async with FileLease(self.root / "cookies.lock"):
                 try:
-                    data = self._read()
+                    data = await asyncio.to_thread(self._read)
                 except (InvalidToken, ValueError, OSError):
                     # Explicit clear must also recover an unreadable local vault.
                     data = {"sites": []}
                     self.configure("disabled", None)
-                    (self.root / "cookies.key").unlink(missing_ok=True)
+                    await asyncio.to_thread(self._forget_key)
                 data.update(cookies={}, skip_legacy=True, native_pending=False,
                             native_migrated=True, native_removed=[])
                 # Keep visited sites so clearing cannot silently import old logins.
-                self._write(data)
+                await asyncio.to_thread(self._write, data)
         self.status, self.count, self.skipped, self.domains = "cleared", 0, 0, 0
         self.save_error = False
         write_text_atomic(self.root / "sync.json", json.dumps(self.state()))
+
+    def _key(self) -> bytes:
+        """The vault key lives in the macOS keychain, not beside the vault it unlocks.
+
+        Elsewhere (or when the keychain cannot store it) it stays in ``cookies.key``.
+        """
+        if self._cached_key:
+            return self._cached_key
+        key_path = self.root / "cookies.key"
+        account = str(self.root.resolve())
+        found = _keychain_find(account)
+        if found is not None and found.returncode == 0 and found.stdout.strip():
+            key = found.stdout.strip().encode()
+        else:
+            if (found is not None and found.returncode != 44 and (self.root / "cookies.enc").exists()
+                    and not key_path.exists()):
+                # A locked or refusing keychain must not replace the key of an existing vault.
+                raise OSError("The keychain holding the browser cookie key is unavailable")
+            key = key_path.read_bytes().strip() if key_path.exists() else Fernet.generate_key()
+            if _keychain_store(account, key):
+                key_path.unlink(missing_ok=True)
+            elif not key_path.exists():
+                write_text_atomic(key_path, key.decode())
+                os.chmod(key_path, 0o600)
+        self._cached_key = key
+        return key
+
+    def _forget_key(self) -> None:
+        self._cached_key = None
+        (self.root / "cookies.key").unlink(missing_ok=True)
+        _keychain("delete-generic-password", "-s", _KEYCHAIN_SERVICE, "-a", str(self.root.resolve()))
 
     def _read(self) -> dict:
         path = self.root / "cookies.enc"
         if not path.exists():
             return {"cookies": {}, "sites": []}
-        key = (self.root / "cookies.key").read_bytes()
-        return json.loads(Fernet(key).decrypt(path.read_bytes()))
+        return json.loads(Fernet(self._key()).decrypt(path.read_bytes()))
 
     def _write(self, data: dict) -> None:
-        key_path = self.root / "cookies.key"
-        if not key_path.exists():
-            write_text_atomic(key_path, Fernet.generate_key().decode())
-        encrypted = Fernet(key_path.read_bytes()).encrypt(json.dumps(data).encode())
+        encrypted = Fernet(self._key()).encrypt(json.dumps(data).encode())
         write_text_atomic(self.root / "cookies.enc", encrypted.decode())
 
     async def _edit(self, change) -> dict:
         async with self.lock:
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
             async with FileLease(self.root / "cookies.lock"):
-                data = self._read()
+                data = await asyncio.to_thread(self._read)
                 changed = change(data)
                 now = time.time()
                 expired = [
@@ -170,7 +237,7 @@ class CookieStore:
                 for key in expired:
                     del data["cookies"][key]
                 if changed or expired:
-                    self._write(data)
+                    await asyncio.to_thread(self._write, data)
                 return data
 
     async def restore(self, run) -> None:
@@ -207,7 +274,7 @@ class CookieStore:
         """Bring saved logins into Workbench's own browser without replacing its own:
         once for logins from the private browser, and after each Chrome sync made while
         it was not attached."""
-        data = self._read()
+        data = await asyncio.to_thread(self._read)
         migrate = not data.get("native_migrated")
         pending = bool(data.get("native_pending")) and self.settings()["consent"] == "enabled"
         gone = data.get("native_removed") or []
@@ -322,7 +389,7 @@ class CookieStore:
                 # Capture app changes before an explicit import overwrites matching cookies.
                 if run:
                     await self.capture(run)
-                previous = set(self._read().get("chrome_sites", []))
+                previous = set((await asyncio.to_thread(self._read)).get("chrome_sites", []))
                 selected = previous if sites is None else {site_of(site) for site in sites}
                 result = (
                     await self.read_source(settings["profile"], sorted(selected))

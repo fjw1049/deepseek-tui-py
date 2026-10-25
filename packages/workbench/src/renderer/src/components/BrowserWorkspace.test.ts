@@ -2,7 +2,7 @@
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, expect, it, vi } from 'vitest'
-import { BrowserWorkspace } from './BrowserWorkspace'
+import { BrowserWorkspace, searchUrl } from './BrowserWorkspace'
 import { requestBrowserDemo, useBrowserDemoStore } from '../store/browser-demo-store'
 import { markPageReady, registerPageWebview, updatePageTab, useBrowserPagesStore, type PageWebview } from '../store/browser-pages-store'
 
@@ -1062,13 +1062,30 @@ it('holds native input during standalone replay', async () => {
   } finally { await h.close() }
 })
 
-it('uses a readonly viewport instead of direct native input for unknown submissions', async () => {
-  const h = mount({ active: true, surface: 'native', owner: 'user', generation: 2, image: 'data:image/jpeg;base64,AA==', log: [], artifacts: [], unresolved: [{ action_id: 'submit', execution: 'unknown' }] })
+it('keeps the live page usable while an unknown agent outcome waits for review', async () => {
+  const h = mount({ active: true, surface: 'native', owner: 'user', generation: 2, image: 'data:image/jpeg;base64,AA==', log: [], artifacts: [],
+    unresolved: [{ action_id: 'submit', action: 'click', execution: 'unknown', target_name: 'Place order' }] })
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
-    expect(h.container.querySelector('.ds-shared-browser')!.classList.contains('is-native')).toBe(false)
-    expect(h.container.querySelector<HTMLInputElement>('[aria-label="browserAddressPlaceholder"]')!.disabled).toBe(true)
-    expect(useBrowserPagesStore.getState().sessions.one!.inputBlocked).toBe(true)
+    expect(h.container.querySelector('.ds-shared-browser')!.classList.contains('is-native')).toBe(true)
+    expect(h.container.querySelector<HTMLInputElement>('[aria-label="browserAddressPlaceholder"]')!.disabled).toBe(false)
+    expect(useBrowserPagesStore.getState().sessions.one!.inputBlocked).toBe(false)
+    // The review names what the agent acted on.
+    await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
+    expect(h.container.textContent).toContain('browserReviewActionTarget')
+  } finally { await h.close() }
+})
+
+it('holds only the tab the agent drives while it works', async () => {
+  const h = mount({ active: true, surface: 'native', owner: 'agent', task_running: true, generation: 2, log: [], artifacts: [],
+    tabs: [{ tab_id: 'agent-tab', title: 'Agent', url: 'https://example.test/', active: true }] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    const session = useBrowserPagesStore.getState().sessions.one!
+    expect(session.inputBlocked).toBe(true)
+    expect(session.blockedTabId).toBe('agent-tab')
+    // The user's own (active, different) tab stays usable.
+    expect(h.container.querySelector('.ds-browser-shield')).toBeNull()
   } finally { await h.close() }
 })
 
@@ -1227,4 +1244,9 @@ it('lets the user retry a recording preview without losing the saved result', as
     expect(h.container.querySelector('dialog video')).not.toBeNull()
     expect(attempts).toBe(2)
   } finally { await h.close() }
+})
+
+it('searches with an engine reachable in the interface language', () => {
+  expect(searchUrl('天气 北京', 'zh-CN')).toBe('https://www.baidu.com/s?wd=%E5%A4%A9%E6%B0%94%20%E5%8C%97%E4%BA%AC')
+  expect(searchUrl('weather', 'en')).toBe('https://www.google.com/search?q=weather')
 })

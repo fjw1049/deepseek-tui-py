@@ -1,4 +1,5 @@
 import pytest
+
 from deepseek_tui.cua.session import CuaSession
 from deepseek_tui.tools.registry import ToolError
 
@@ -19,7 +20,13 @@ async def test_cua_status_checks_files_without_connecting(client, monkeypatch, i
     monkeypatch.setattr(CuaSession, 'connect', no_connect)
     response = await client.get('/v1/cua/status')
     assert response.status_code == 200
-    assert response.json() == {'supported': True, 'installed': installed, 'enabled': False}
+    data = response.json()
+    assert {k: data[k] for k in ('supported', 'installed', 'enabled')} == {
+        'supported': True, 'installed': installed, 'enabled': False,
+    }
+    assert data['readiness'] == 'needs_setup'
+    assert data['permissions'] == 'unknown'
+    assert data['connection'] == 'unchecked'
 
 
 @pytest.mark.asyncio
@@ -91,9 +98,9 @@ async def test_cua_permissions_name_entries_and_open_only_listed_ones(
     assert unknown.status_code == 400
     opening = await client.post('/v1/cua/permissions/open', json={'id': 'screen'})
     assert opening.status_code == 200
+    from deepseek_tui.server.routes import _PRIVACY_PANES
     assert opened == [
-        ['-R', '/Applications/ChatGPT.app'],
-        ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'],
+        [_PRIVACY_PANES['screen']],
     ]
 
 
@@ -148,3 +155,75 @@ async def test_cua_preview_frame_requires_the_runtime_token(authed_runtime_app):
         assert (await client.get(path)).status_code == 401
         authorized = await client.get(path, headers={"Authorization": f"Bearer {token}"})
         assert authorized.status_code == 404
+
+
+def test_privacy_app_name_uses_installed_bundle_name(tmp_path):
+    import plistlib
+    from deepseek_tui.server.routes import _privacy_app_name
+
+    bundle = tmp_path / "Codex Computer Use.app"
+    (bundle / "Contents").mkdir(parents=True)
+    (bundle / "Contents" / "Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleName": "Codex Computer Use",
+        "CFBundleDisplayName": "ChatGPT Computer Use",
+    }))
+    assert _privacy_app_name(str(bundle), "old runtime label") == "Codex Computer Use"
+    assert _privacy_app_name(str(tmp_path / "Missing.app"), "reported") == "reported"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,pane", [("screen", "ScreenCapture"), ("accessibility", "Accessibility")])
+async def test_permission_open_does_not_wait_for_component_diagnostics(client, monkeypatch, kind, pane):
+    import asyncio
+    from deepseek_tui.server import routes
+
+    async def entries(_):
+        raise AssertionError("Opening settings must not run diagnostics")
+
+    calls = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def execute(program, *args, **kwargs):
+        assert program == "open"
+        calls.append(list(args))
+        return await real_exec("true")
+
+    monkeypatch.setattr('sys.platform', 'darwin')
+    monkeypatch.setattr(routes, "cua_permissions", entries)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", execute)
+    response = await client.post('/v1/cua/permissions/open', json={"id": kind, "path": "/ignored.app"})
+    assert response.status_code == 200
+    assert calls == [[routes._PRIVACY_PANES[kind]]]
+    denied = await client.post('/v1/cua/permissions/open', json={"id": "file:///tmp/other"})
+    assert denied.status_code == 400 and len(calls) == 1
+
+@pytest.mark.asyncio
+async def test_permission_open_times_out_and_reaps_launcher(client, monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    process = Mock(returncode=None)
+    process.wait = AsyncMock(return_value=-9)
+    monkeypatch.setattr('sys.platform', 'darwin')
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', AsyncMock(return_value=process))
+
+    async def timed_out(awaitable, timeout):
+        assert timeout == 5
+        await awaitable
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(asyncio, 'wait_for', timed_out)
+    response = await client.post('/v1/cua/permissions/open', json={'id': 'screen'})
+    assert response.status_code == 504
+    process.kill.assert_called_once()
+    assert process.wait.await_count == 2
+
+
+@pytest.mark.parametrize("version,pane", [
+    ("12.7", "com.apple.preference.security"),
+    ("13.0", "com.apple.settings.PrivacySecurity.extension"),
+    ("27.0", "com.apple.settings.PrivacySecurity.extension"),
+])
+def test_privacy_settings_route_matches_macos_version(monkeypatch, version, pane):
+    from deepseek_tui.server import routes
+    monkeypatch.setattr(routes.platform, "mac_ver", lambda: (version, (), ""))
+    assert routes._privacy_pane_prefix() == f"x-apple.systempreferences:{pane}?Privacy_"

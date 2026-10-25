@@ -130,6 +130,11 @@ class NativeBrowserEvents:
         def request_done(params):
             self.requests.pop(params.get("requestId"), None)
 
+        def popup_blocked(params):
+            blocked = self.run.popups_blocked
+            blocked.append(str(params.get("url") or "about:blank")[:300])
+            del blocked[:-20]
+
         def loading(started):
             def update(params):
                 if params.get("frameId") != state["identity"][0]:
@@ -152,6 +157,7 @@ class NativeBrowserEvents:
             "Page.fileChooserOpened": chooser_opened,
             "Browser.downloadWillBegin": download_started,
             "Browser.downloadProgress": download_progress,
+            "Workbench.popupBlocked": popup_blocked,
         }.items():
             client.on(event, callback)
         self.clients.add(client)

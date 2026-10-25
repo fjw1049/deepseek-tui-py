@@ -3,6 +3,12 @@ import { isBrowsableUrl, upgradeToBrowsableUrl } from '../../shared/dev-preview-
 import { DEV_BROWSER_PARTITION } from '../../shared/browser-bridge'
 import { logWarn } from '../logger'
 
+/** Decides whether a page may open a window now; false while the agent drives its tab. */
+let popupGate: ((openerId: number, url: string) => boolean) | null = null
+export function setPopupGate(gate: typeof popupGate): void {
+  popupGate = gate
+}
+
 export function installDevPreviewWebviewGuards(): void {
   // This partition is separate from the shell's microphone-enabled session.
   // Electron otherwise grants guest permission requests automatically.
@@ -75,6 +81,8 @@ export function installDevPreviewWebviewGuards(): void {
         return { action: 'deny' }
       }
       if (next !== url) return { action: 'deny' }
+      // Sign-in and payment windows open only from the user's own clicks, never the agent's.
+      if (popupGate && !popupGate(contents.id, url)) return { action: 'deny' }
       // A real child preserves opener/postMessage without replacing the draft page.
       return { action: 'allow', overrideBrowserWindowOptions: {
         autoHideMenuBar: true,

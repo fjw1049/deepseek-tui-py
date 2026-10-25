@@ -1573,7 +1573,7 @@ function buildThreadEventSink(
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
       emitPetEvent(threadId, { type: 'turn_complete' })
-      noteCuaTurnEnded(threadId)
+      noteCuaTurnEnded(threadId, payload?.status === 'cancelled' ? 'stopped' : payload?.status === 'failed' ? 'failed' : 'ended')
       const completedState = get()
       const completedThreadId = payload?.threadId ?? completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId
@@ -4082,7 +4082,7 @@ if (options.appView) {
 const unsubscribeCuaPreview = store.subscribe((state, previous) => {
   if (previous.currentTurnId && !state.currentTurnId && state.activeThreadId &&
       state.activeThreadId === previous.activeThreadId) {
-    noteCuaTurnEnded(state.activeThreadId)
+    noteCuaTurnEnded(state.activeThreadId, 'stopped')
   }
 })
 const unsubscribeQueue = store.subscribe((state, previous) => {

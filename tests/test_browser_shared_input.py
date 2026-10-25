@@ -412,16 +412,30 @@ async def test_manual_text_persists_receipt_once(shared, monkeypatch):
     result = await browser.input("one", BrowserInput(kind="text", text="test", generation=0))
     assert result["success"] and result["receipt"]["evidence"] == "unavailable"
 
-async def test_unresolved_result_allows_scroll_but_blocks_click_and_typing(shared):
+async def test_unresolved_result_holds_back_only_the_agent(shared):
     browser, run, client = shared
     run.unresolved['pending'] = {'action_id': 'pending', 'execution': 'unknown'}
-    await browser.input('one', BrowserInput(kind='wheel', x=50, y=80, delta_y=300, generation=0))
-    assert client.send.call_args.args[1]['type'] == 'mouseWheel'
-    for body in [BrowserInput(kind='mouse', event='mousePressed', x=50, y=80, generation=0),
-                 BrowserInput(kind='text', text='do not send', generation=0)]:
-        with pytest.raises(ValueError, match='outcome is unknown'):
-            await browser.input('one', body)
+    # The user sees the page and keeps clicking and typing; the receipt stays for review.
+    for body in [BrowserInput(kind='wheel', x=50, y=80, delta_y=300, generation=0),
+                 BrowserInput(kind='mouse', event='mousePressed', x=50, y=80, generation=0),
+                 BrowserInput(kind='text', text='typed by the user', generation=0)]:
+        assert (await browser.input('one', body))['success']
+    assert client.send.call_args.args[1] == {'text': 'typed by the user'}
     assert 'pending' in run.unresolved
+
+
+async def test_user_input_timeout_is_not_left_for_review(shared, monkeypatch):
+    from deepseek_tui.browser.service import BrowserActionError
+
+    browser, run, _ = shared
+
+    async def slow(*_args):
+        raise TimeoutError
+
+    monkeypatch.setattr(browser, '_execute_input', slow)
+    with pytest.raises(BrowserActionError):
+        await browser.input('one', BrowserInput(kind='text', text='x', generation=0))
+    assert not run.unresolved
 
 
 @pytest.mark.parametrize("disconnected", [True, False])

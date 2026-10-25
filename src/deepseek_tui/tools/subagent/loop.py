@@ -1277,6 +1277,13 @@ async def run_subagent_loop(
                 await cua_session.end_turn(interrupted=_subagent_cancelled(cancel, agent))
             finally:
                 await cua_session.close()
+                # Only an unreviewed outcome keeps a finished child on the parent panel.
+                manager = runtime.manager
+                if not cua_session.unresolved and getattr(manager, "cua_sessions", {}).pop(
+                        agent.id, None) is not None:
+                    # Keep the panel's revision monotonic after the child leaves the sum.
+                    manager.cua_retired_revision = (
+                        getattr(manager, "cua_retired_revision", 0) + cua_session.control_revision)
         if runtime.mailbox is not None and saw_usage:
             runtime.mailbox.send(MailboxMessage.token_usage(agent.id, effective_model, usage_totals))
 

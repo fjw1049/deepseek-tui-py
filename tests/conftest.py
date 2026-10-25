@@ -35,6 +35,12 @@ def _isolate_deepseek_home(
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "_deepseek-home"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Temporary cookie vaults must not leave items in the developer's login keychain."""
+    monkeypatch.setenv("DEEPSEEK_BROWSER_KEYCHAIN", "0")
+
+
 @pytest.fixture
 def isolated_config() -> Config:
     """Features on, MCP off — avoids hanging MCP handshakes in tests."""

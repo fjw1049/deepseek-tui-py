@@ -95,7 +95,8 @@ class FakeBridge:
 
     def listing(self):
         return [{"tab_id": key, "url": tab["url"], "title": tab["title"],
-                 "active": key == self.active} for key, tab in self.tabs.items()]
+                 "active": key == self.active, **({"popup": True} if tab.get("popup") else {})}
+                for key, tab in self.tabs.items()]
 
 
 @pytest.fixture
@@ -282,6 +283,20 @@ async def test_the_page_returns_to_the_user_between_tasks(browser):
     run.assistance = None
     await manager._hand_browser_back("thr_one")
     assert run.owner == "user"
+
+
+async def test_a_stopped_task_that_asked_for_help_returns_the_page(browser):
+    from deepseek_tui.server.threads.manager import RuntimeThreadManager
+
+    manager = RuntimeThreadManager.__new__(RuntimeThreadManager)
+    manager.browser_service = browser
+    run = await browser.ensure("thr_one")
+    run.assistance = {"id": "help", "turn_id": "turn_1", "status": "pending"}
+    # Another turn's request keeps waiting; the ended turn's does not.
+    await manager._hand_browser_back("thr_one", ended_turn_id="turn_0")
+    assert run.owner == "agent" and run.assistance
+    await manager._hand_browser_back("thr_one", ended_turn_id="turn_1")
+    assert run.owner == "user" and run.assistance is None
 
 
 async def test_clearing_cookies_clears_the_workbench_browser_too(browser, bridge):
@@ -657,3 +672,55 @@ async def test_user_recording_follows_visible_tab_without_retargeting_actions(br
         assert bridge.active == 'tab-b'
     finally:
         await browser.close('thr_one')
+
+
+async def test_agent_open_keeps_the_page_the_user_was_using(browser, bridge):
+    run = await browser.ensure("thr_one")
+    opened = await browser.action("thr_one", BrowserAction(action="open", url="https://other.test/"))
+    # The user's tab still shows their page; the site opened beside it.
+    assert bridge.tabs["tab-a"]["url"] == "https://example.test/"
+    assert run.session.tab_id == "tab-1" and "new tab" in opened["content"]
+    again = await browser.action("thr_one", BrowserAction(action="open", url="https://third.test/"))
+    # The agent's own tab is reused for its next page.
+    assert run.session.tab_id == "tab-1" and len(bridge.tabs) == 2
+    assert "new tab" not in again["content"]
+    await browser.close("thr_one")
+
+
+async def test_failed_new_tab_does_not_adopt_the_users_page(browser, bridge, monkeypatch):
+    run = await browser.ensure("thr_one")
+    session = run.session
+    create = session.new_tab
+
+    async def refuse(url=None, force_new=False):
+        return session._result("new_tab", 0.0, error="tab limit reached")
+
+    monkeypatch.setattr(session, "new_tab", refuse)
+    failed = await browser.action("thr_one", BrowserAction(action="open", url="https://other.test/"))
+    assert not failed["success"] and "tab-a" not in run.agent_tabs
+    monkeypatch.setattr(session, "new_tab", create)
+    await browser.action("thr_one", BrowserAction(action="open", url="https://third.test/"))
+    # The next open still goes beside the user's page instead of over it.
+    assert bridge.tabs["tab-a"]["url"] == "https://example.test/"
+    await browser.close("thr_one")
+
+
+async def test_agent_may_not_drive_windows_the_page_opened(browser, bridge):
+    from deepseek_tui.browser.service import BrowserActionError
+
+    await browser.ensure("thr_one")
+    bridge.tabs["popup-1"] = {"url": "https://login.test/", "title": "Sign in", "popup": True}
+    with pytest.raises(BrowserActionError, match="window the page opened"):
+        await browser.action("thr_one", BrowserAction(action="switch_tab", tab_id="popup-1"))
+    with pytest.raises(BrowserActionError, match="Navigation is paused"):
+        await browser.action("thr_one", BrowserAction(action="open", url="https://other.test/"))
+    assert bridge.active == "tab-a"
+    await browser.close("thr_one")
+
+
+async def test_a_focused_popup_is_not_taken_as_the_page_to_drive(browser, bridge):
+    bridge.tabs["popup-1"] = {"url": "https://login.test/", "title": "Sign in", "popup": True}
+    bridge.active = "popup-1"
+    run = await browser.ensure("thr_one")
+    assert run.session.tab_id == "tab-a"
+    await browser.close("thr_one")

@@ -55,12 +55,20 @@ def approval_question(params: dict[str, Any]) -> dict[str, Any] | None:
         ]:
             if scope in scopes:
                 options.append(
-                    {"label": label, "value": scope, "description": "使用运行时提供的授权范围"}
+                    {"label": label, "value": scope, "description": (
+                        "此运行会话内不再询问 / Remember for this runtime session"
+                        if scope == "session" else
+                        "记住对此应用的允许，可在电脑控制设置撤销 / "
+                        "Remember for this app; revocable"
+                    )}
                 )
     return {
         "id": "cua_permission",
-        "header": "电脑控制授权",
-        "question": params["message"],
+        "header": "应用访问确认" if native else "网站访问确认",
+        "question": params["message"] + (
+            "\n这是访问该应用的确认，不是重新申请系统录屏或辅助功能权限。"
+            " / App access, separate from system permissions." if native else ""
+        ),
         "options": options,
     }
 

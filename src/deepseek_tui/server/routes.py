@@ -13,6 +13,7 @@ from fastapi import Request
 from fastapi import APIRouter
 from pydantic import BaseModel
 import os
+import platform
 import re
 import sys
 from fastapi import BackgroundTasks
@@ -755,6 +756,35 @@ async def list_jobs(request: Request) -> dict[str, object]:
 router_mcp = APIRouter(prefix="/v1")
 
 
+@router_mcp.get("/threads/{thread_id}/cua")
+async def cua_thread_state(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        mgr.store.load_thread(thread_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise api_error(404, "Thread not found") from exc
+    return mgr.cua_task_state(thread_id)
+
+
+@router_mcp.post("/threads/{thread_id}/cua/control")
+async def cua_thread_control(request: Request, thread_id: str) -> dict[str, Any]:
+    from deepseek_tui.tools.registry import ToolError
+
+    payload = await body(request)
+    owner, revision, turn_id = payload.get("owner"), payload.get("revision"), payload.get("turn_id")
+    if (not isinstance(owner, str) or owner not in {"user", "assistant", "stopped"}
+            or type(revision) is not int
+            or not isinstance(turn_id, str) or not turn_id):
+        raise api_error(400, "Control requires an owner, revision and turn identity")
+    reviewed = payload.get("reviewed_call_id")
+    if reviewed is not None and not isinstance(reviewed, str):
+        raise api_error(400, "Invalid operation receipt")
+    try:
+        return await manager(request).control_cua(thread_id, owner, revision, turn_id, reviewed)
+    except (ValueError, ToolError, TimeoutError) as exc:
+        raise api_error(409, str(exc) or "Desktop transfer timed out; task remains paused") from exc
+
+
 @router_mcp.get("/cua/status")
 async def cua_status(request: Request) -> dict[str, Any]:
     """Inspect installed components without connecting or requesting desktop access."""
@@ -771,7 +801,18 @@ async def cua_status(request: Request) -> dict[str, Any]:
             installed = True
         except (OSError, ToolError):
             pass
-    return {"supported": supported, "installed": installed, "enabled": config.enabled}
+    from deepseek_tui.cua.readiness import vision_error
+    from deepseek_tui.cua.session import DesktopLease
+
+    app_config = runtime_from_request(request).config
+    error = vision_error(app_config, app_config.effective_provider_config().model)
+    holder = DesktopLease().holder() if supported else None
+    readiness = ("unavailable" if not supported else "needs_setup"
+                 if not installed or not config.enabled else "unavailable" if error
+                 else "busy" if holder else "ready")
+    return {"supported": supported, "installed": installed, "enabled": config.enabled,
+            "readiness": readiness, "reason": error or None, "holder": holder,
+            "permissions": "unknown", "connection": "unchecked"}
 
 
 async def _lcu(request: Request, *args: str, timeout: float = 20) -> dict[str, Any]:
@@ -877,13 +918,33 @@ async def cua_preview_frame(request: Request, item_id: str, asset_id: str) -> di
         raise api_error(404, "Screenshot unavailable", error="cua_frame_unavailable") from exc
 
 
-_PRIVACY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
+def _privacy_pane_prefix() -> str:
+    # Ventura replaced preference panes with Settings extensions.
+    major = (platform.mac_ver()[0] or "0").split(".")[0]
+    pane = "com.apple.settings.PrivacySecurity.extension" if int(major) >= 13 else "com.apple.preference.security"
+    return f"x-apple.systempreferences:{pane}?Privacy_"
+
+
+_PRIVACY_PANE = _privacy_pane_prefix()
 _PRIVACY_PANES = {
     "accessibility": _PRIVACY_PANE + "Accessibility",
     "screen": _PRIVACY_PANE + "ScreenCapture",
 }
 # e.g. "  Accessibility: ChatGPT Computer Use (/Applications/ChatGPT.app/.../X.app)"
 _PRIVACY_ENTRY = re.compile(r"^\s+(Accessibility|Screen[^:]*): (.+?) \((/.+\.app)\)$")
+
+
+def _privacy_app_name(path: str, reported: str) -> str:
+    """Prefer the installed bundle name over a runtime's potentially stale label."""
+    import plistlib
+
+    try:
+        with (Path(path) / "Contents" / "Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        name = info.get("CFBundleName") or info.get("CFBundleDisplayName")
+        return name if isinstance(name, str) and name.strip() else reported
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return reported
 
 
 @router_mcp.get("/cua/permissions")
@@ -896,22 +957,33 @@ async def cua_permissions(request: Request) -> dict[str, Any]:
     for line in result["stdout"].splitlines():
         if match := _PRIVACY_ENTRY.match(line):
             kind = "accessibility" if match[1] == "Accessibility" else "screen"
-            permissions.append({"id": kind, "name": match[2], "path": match[3]})
+            permissions.append({
+                "id": kind, "name": _privacy_app_name(match[3], match[2]), "path": match[3],
+            })
     return {"permissions": permissions}
 
 
 @router_mcp.post("/cua/permissions/open")
 async def cua_permissions_open(request: Request) -> dict[str, Any]:
-    """Select the app in Finder (ready to drag in) and open its Settings pane on top."""
-    kind = (await body(request)).get("id")
-    listed = (await cua_permissions(request))["permissions"]
-    entry = next((p for p in listed if p["id"] == kind), None)
-    if entry is None:
+    """Open the relevant privacy pane without requiring users to locate app bundles."""
+    payload = await body(request)
+    kind = payload.get("id")
+    # Opening a fixed OS pane does not depend on installed components or doctor.
+    # Legacy clients may send a path; it is never used to open or execute anything.
+    if not isinstance(kind, str) or kind not in _PRIVACY_PANES:
         raise api_error(400, "Unknown permission", error="cua_permission_unknown")
-    # -R only reveals: never launch the bundle.
-    for target in (["-R", entry["path"]], [_PRIVACY_PANES[entry["id"]]]):
-        process = await asyncio.create_subprocess_exec("open", *target)
+    if sys.platform != "darwin":
+        raise api_error(400, "System privacy panes require macOS", error="cua_permission_unsupported")
+    process = await asyncio.create_subprocess_exec("open", _PRIVACY_PANES[kind])
+    try:
+        code = await asyncio.wait_for(process.wait(), timeout=5)
+    except asyncio.TimeoutError as exc:
+        if process.returncode is None:
+            process.kill()
         await process.wait()
+        raise api_error(504, "Opening system settings timed out", error="cua_permission_open_timeout") from exc
+    if code != 0:
+        raise api_error(500, "Could not open system settings", error="cua_permission_open_failed")
     return {"ok": True}
 
 

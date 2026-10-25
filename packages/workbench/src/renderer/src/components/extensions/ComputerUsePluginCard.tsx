@@ -1,3 +1,4 @@
+import { CuaPermissionsDialog } from '../cua-preview/CuaPermissionsDialog'
 import { usePluginNow } from './start-chat-with-plugin'
 import { PluginDescription } from './PluginDescription'
 import { createPortal } from 'react-dom'
@@ -7,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cacheSettingsSnapshot } from '../../lib/settings-snapshot'
 
-type Status = { supported: boolean; installed: boolean; enabled: boolean }
+type Status = { supported: boolean; installed: boolean; enabled: boolean; readiness?: string; reason?: string | null }
 
 async function readCuaStatus(): Promise<Status> {
   const response = await window.dsGui.runtimeRequest('/v1/cua/status', 'GET')
@@ -76,6 +77,7 @@ function ApprovedApps(): React.JSX.Element {
 export function ComputerUsePluginCard(): React.JSX.Element {
   const { t } = useTranslation('common')
   const operationInFlight = useRef(false)
+  const [permissionsOpen, setPermissionsOpen] = useState(false)
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<Status | null>(null)
   const [busy, setBusy] = useState(false)
@@ -112,7 +114,7 @@ export function ComputerUsePluginCard(): React.JSX.Element {
     finally { operationInFlight.current = false; setBusy(false) }
   }
   const state = !status ? 'computerUseChecking' : !status.supported ? 'computerUseUnsupported'
-    : !status.installed ? 'computerUseMissing' : !status.enabled ? 'computerUseDisabled' : 'computerUseReady'
+    : !status.installed ? 'computerUseMissing' : !status.enabled ? 'computerUseDisabled' : status.readiness === 'busy' ? 'cuaControlWaiting' : status.readiness === 'unavailable' ? 'cuaControlUnavailable' : 'computerUseReady'
   return <>
     <PluginListItem pluginId="computer-use" title={t('computerUseTitle')}
       summary={t('computerUseSummary')} onOpen={() => setOpen(true)} busy={busy || !status}
@@ -124,9 +126,11 @@ export function ComputerUsePluginCard(): React.JSX.Element {
       })() }}
       onRemove={() => { void toggle().then(ok => { if (!ok) setOpen(true) }) }}
       removeLabel={t(status?.enabled ? 'computerUseDisable' : 'computerUseEnable')} />
+    {permissionsOpen && <CuaPermissionsDialog onClose={() => setPermissionsOpen(false)} />}
     {open ? createPortal(<PluginDialog pluginId="computer-use" title={t('computerUseTitle')}
       summary={t('computerUseSummary')} onClose={() => { setOpen(false) }}>
     <PluginDescription copyKey="computerUse" />
+    {window.dsGui.platform === 'darwin' && <button type="button" onClick={() => setPermissionsOpen(true)} className="mt-4 rounded-lg border border-ds-border px-3 py-2 text-sm text-ds-ink hover:bg-ds-hover">{t('cuaPermissionTitle')}</button>}
     <p role="status" className="mt-5 text-sm text-ds-muted">{t(state)}</p>
     {status?.supported && !status.installed ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseInstallHint')}</p> : null}
     {applied ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseApplying')}</p> : null}

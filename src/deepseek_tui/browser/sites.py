@@ -23,6 +23,10 @@ SENSITIVE_SITES = frozenset({
     "spdb.com.cn", "cib.com.cn", "cebbank.com", "psbc.com", "citicbank.com", "pingan.com",
     "chase.com", "bankofamerica.com", "wellsfargo.com", "citi.com", "hsbc.com", "wise.com",
     "revolut.com", "coinbase.com", "binance.com", "okx.com",
+    # Shopping with saved payment methods
+    "taobao.com", "tmall.com", "jd.com", "pinduoduo.com", "meituan.com",
+    # Workplace chat and documents
+    "feishu.cn", "larksuite.com", "dingtalk.com", "slack.com", "notion.so",
     # Cloud consoles and code hosting
     "amazon.com", "azure.com", "aliyun.com", "tencent.com", "huaweicloud.com",
     "volcengine.com", "digitalocean.com", "cloudflare.com", "vercel.com", "github.com",

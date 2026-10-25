@@ -19,6 +19,7 @@ const api = {
   notifyAppearanceApplied: () => ipcRenderer.invoke('window:appearance-applied'),
   setWindowMaterial: (input) => ipcRenderer.invoke('window:set-material', input),
   resolveCuaPreviewWindow: (bundleId) => ipcRenderer.invoke('cua-preview:resolve-window', bundleId),
+  getCuaScreenPermission: () => ipcRenderer.invoke('cua-preview:screen-permission'),
   openScreenCaptureSettings: () => ipcRenderer.invoke('cua-preview:open-screen-settings'),
   transcribeAudio: (payload) => ipcRenderer.invoke('asr:transcribe', payload),
   getAsrConfig: () => ipcRenderer.invoke('asr:config:read'),

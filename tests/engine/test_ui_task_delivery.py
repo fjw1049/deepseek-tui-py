@@ -147,7 +147,8 @@ async def test_reconnect_guide_reaches_the_model_once(tmp_path):
     ])
     engine.tool_registry.register(GuideTool())
     engine._cua_session = SimpleNamespace(
-        large_texts=[guide], instructions="", close=AsyncMock(), end_turn=AsyncMock())
+        large_texts=[guide], instructions="", human_reserved=False,
+        close=AsyncMock(), end_turn=AsyncMock())
     try:
         await engine._run_conversation([Message.user("Check Notes")], "test", "sys", None)
         results = {b.tool_use_id: str(b.content) for m in client.requests[-1].messages

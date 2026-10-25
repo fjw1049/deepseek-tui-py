@@ -1,3 +1,4 @@
+import { redactRuntimeCommand } from '../../shared/redact-runtime-command'
 import { dialog, ipcMain, session, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -453,7 +454,7 @@ async function diagnoseDeepseekRuntime(
       severity: 'warning',
       code: 'port_owned_by_other_process',
       title: 'Configured port is owned by another process',
-      message: `Port ${settings.deepseek.port} is currently owned by PID ${portOwner.pid}: ${portOwner.command}`
+      message: `Port ${settings.deepseek.port} is currently owned by PID ${portOwner.pid}: ${redactRuntimeCommand(portOwner.command)}`
     })
   }
 
@@ -491,8 +492,14 @@ async function diagnoseDeepseekRuntime(
     runtime: {
       baseUrl,
       configuredPort: settings.deepseek.port,
-      portOwner,
-      alternateRuntimes,
+      portOwner: portOwner ? {
+        ...portOwner, command: redactRuntimeCommand(portOwner.command),
+        parentCommand: portOwner.parentCommand ? redactRuntimeCommand(portOwner.parentCommand) : null
+      } : null,
+      alternateRuntimes: alternateRuntimes.map(entry => ({
+        ...entry, command: redactRuntimeCommand(entry.command),
+        parentCommand: entry.parentCommand ? redactRuntimeCommand(entry.parentCommand) : null
+      })),
       health,
       threadApi,
       workspaceStatus,

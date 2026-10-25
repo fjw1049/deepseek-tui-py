@@ -1,31 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Check, Maximize2, Minimize2, Monitor, X } from 'lucide-react'
+import { Monitor, X } from 'lucide-react'
 import { create } from 'zustand'
 import {
   dismissEndedCuaPreview,
-  hideCuaPreviewForTask,
+  restoreCuaPreview,
   markCuaPreviewLive,
-  setCuaPreviewFloating,
   useCuaPreviewStore,
-  type CuaPreviewPosition,
   type CuaPreviewSession
 } from '../../store/cua-preview-store'
+import { claimScreenPermissionPrompt } from './screen-permission-prompt'
+import { CuaPermissionsDialog } from './CuaPermissionsDialog'
+import { CuaControlBar } from './CuaControlBar'
 import { useCuaStillFrame } from './use-cua-still-frame'
 import { useCuaWindowStream } from './use-cua-window-stream'
 
-/**
- * The window computer use is operating, beside the conversation. View-only: Stop
- * stays in the composer. It docks under the operation panel and floats when that
- * column is absent or too narrow, or when the user pops it out.
- */
+/** A compact activity entry with an opt-in viewer. Controls stay mounted when
+ * the viewer closes or its capture target changes. */
 
 const MIN_DOCK_WIDTH = 200
-const FLOAT_MARGIN = 8
-const FLOAT_WIDTH = 480
-/** How long a finished task's card stays up, marked done, before it closes. */
-const ENDED_LINGER_MS = 4_000
 const FALLBACK_ASPECT = 16 / 10
 
 const useRailSlot = create<{ slot: HTMLElement | null }>(() => ({ slot: null }))
@@ -54,40 +48,63 @@ function useSlotUsable(slot: HTMLElement | null): boolean {
   return usable
 }
 
-function useViewportSize(): { width: number; height: number } {
-  const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight })
-  useEffect(() => {
-    const update = (): void => setSize({ width: window.innerWidth, height: window.innerHeight })
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [])
-  return size
-}
-
-export function clampFloat(
-  position: CuaPreviewPosition,
-  card: { width: number; height: number },
-  viewport: { width: number; height: number }
-): CuaPreviewPosition {
-  const maxX = Math.max(FLOAT_MARGIN, viewport.width - card.width - FLOAT_MARGIN)
-  const maxY = Math.max(FLOAT_MARGIN, viewport.height - card.height - FLOAT_MARGIN)
-  return {
-    x: Math.min(Math.max(position.x, FLOAT_MARGIN), maxX),
-    y: Math.min(Math.max(position.y, FLOAT_MARGIN), maxY)
-  }
-}
-
 export function CuaPreview({ threadId }: { threadId: string | null }): ReactElement | null {
+  const { t } = useTranslation('common')
   const session = useCuaPreviewStore((state) => (threadId ? state.sessions[threadId] : undefined))
+  const slot = useRailSlot((state) => state.slot)
+  const slotUsable = useSlotUsable(slot)
+  const [expandedFor, setExpandedFor] = useState<string | null>(null)
+  const permissionKey = `${threadId}:${session?.turnId}`
+  const expanded = expandedFor === permissionKey
+  const [permissionFor, setPermissionFor] = useState<string | null>(null)
+  // An ended card may close once nothing on it still needs the user's review.
+  const [reviewPending, setReviewPending] = useState(true)
+  useEffect(() => {
+    if (!expanded) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && permissionFor !== permissionKey) setExpandedFor(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [expanded, permissionFor, permissionKey])
+  const requestPermission = useCallback(() => {
+    setPermissionFor(`${threadId}:${session?.turnId}`)
+  }, [threadId, session?.turnId])
+  useEffect(() => {
+    if (!threadId || typeof window.dsGui?.runtimeRequest !== 'function') return
+    let cancelled = false
+    void window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/cua`, 'GET')
+      .then(response => {
+        if (!cancelled && response.ok) restoreCuaPreview(threadId, JSON.parse(response.body))
+      }).catch(() => { /* Live tool events can still arm the preview. */ })
+    return () => { cancelled = true }
+  }, [threadId])
   if (!threadId || !session) return null
-  // One mount per task: a new turn starts over with its own target and failures.
-  return <CuaPreviewSessionView key={`${threadId}:${session.turnId ?? ''}`} threadId={threadId} session={session} />
+  const card = <section aria-label={t('cuaPreviewRegion')} data-cua-preview={threadId}
+    className={`overflow-hidden rounded-xl border border-ds-border bg-white dark:bg-ds-card text-ds-ink shadow-panel ${
+      expanded ? 'fixed bottom-24 right-5 z-50 w-[640px] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-7rem)] overflow-y-auto'
+        : slotUsable ? 'relative w-full' : 'fixed bottom-24 right-5 z-50 w-80 max-w-[calc(100vw-2rem)]'
+    }`}>
+    <CuaPreviewSessionView key={`${threadId}:${session.turnId ?? ''}:${session.surface ?? ''}:${session.appId ?? ''}`}
+      threadId={threadId} session={session} expanded={expanded}
+      onExpand={() => setExpandedFor(permissionKey)} onCollapse={() => setExpandedFor(null)}
+      onPermissionRequired={requestPermission} onOpenPermissions={() => setPermissionFor(permissionKey)}
+      onDismiss={session.phase === 'ended' && !reviewPending ? () => dismissEndedCuaPreview(threadId) : undefined} />
+    <CuaControlBar key={threadId} threadId={threadId} compact onReviewPending={setReviewPending} />
+  </section>
+  // Keep the portal destination stable: expanding must not remount the controls.
+  return <>
+    {createPortal(card, slotUsable && slot ? slot : document.body)}
+    {permissionFor === permissionKey && <CuaPermissionsDialog onClose={() => setPermissionFor(null)} />}
+  </>
 }
 
-function CuaPreviewSessionView({ threadId, session }: { threadId: string; session: CuaPreviewSession }): ReactElement | null {
+function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss }: {
+  expanded: boolean; onExpand: () => void; onCollapse: () => void; onDismiss?: () => void
+  threadId: string; session: CuaPreviewSession; onPermissionRequired: () => void; onOpenPermissions: () => void
+}): ReactElement | null {
   const { t } = useTranslation('common')
-  // One canvas for the whole task, re-attached when the card docks or floats, so
-  // both sources keep drawing into the same pixels and a held frame survives moves.
+  // Keep the same canvas when expanding or collapsing the viewer.
   const canvas = useMemo(() => {
     const element = document.createElement('canvas')
     element.className = 'absolute inset-0 h-full w-full object-contain'
@@ -103,12 +120,12 @@ function CuaPreviewSessionView({ threadId, session }: { threadId: string; sessio
     let cancelled = false
     window.dsGui.getSettings().then(
       (settings) => { if (!cancelled) setAllowed(settings.cuaWindowPreview !== false) },
-      () => { if (!cancelled) setAllowed(true) }
+      () => { if (!cancelled) setAllowed(false) }
     )
     return () => { cancelled = true }
   }, [])
-  const shown = allowed === true && phase !== 'hidden-for-task'
-  const streaming = allowed === true && (phase === 'armed' || phase === 'live')
+  const shown = allowed === true
+  const streaming = expanded && allowed === true && (phase === 'armed' || phase === 'live')
 
   useEffect(() => {
     if (phase === 'armed') markCuaPreviewLive(threadId)
@@ -120,154 +137,84 @@ function CuaPreviewSessionView({ threadId, session }: { threadId: string; sessio
     revision: session.revision,
     enabled: streaming
   })
-  // The live window owns the canvas once it drew; a still never paints over it.
+  // A collapsed entry follows task screenshots without running screen capture.
+  const useStill = shown && (!live.hasFrame || (!expanded && phase !== 'ended'))
   const still = useCuaStillFrame({
-    canvasRef, still: session.still, enabled: shown && !live.hasFrame
+    canvasRef, still: session.still, enabled: useStill
   })
 
-  const frameSignal = live.hasFrame || still.status === 'ready'
-  const [hasFrame, setHasFrame] = useState(frameSignal)
-  if (frameSignal && !hasFrame) setHasFrame(true)
-  const decoded = live.hasFrame ? live.frameSize : still.frameSize ?? live.frameSize
-  const [frameSize, setFrameSize] = useState(decoded)
-  if (decoded && (decoded.width !== frameSize?.width || decoded.height !== frameSize?.height)) {
-    setFrameSize(decoded)
-  }
-
-  // An explicit capture problem opens the card before any frame, so it can explain.
-  const problem = !hasFrame && (live.status === 'permission' || live.status === 'failed') ? live.status : null
-  const visible = shown && (hasFrame || problem !== null)
-
+  const hasFrame = live.hasFrame || still.status === 'ready'
   useEffect(() => {
-    if (phase !== 'ended') return
-    const timer = window.setTimeout(() => dismissEndedCuaPreview(threadId), hasFrame ? ENDED_LINGER_MS : 0)
-    return () => window.clearTimeout(timer)
-  }, [phase, hasFrame, threadId])
+    canvas.style.visibility = shown && hasFrame ? 'visible' : 'hidden'
+  }, [canvas, shown, hasFrame])
+  const frameSize = useStill && still.status === 'ready' ? still.frameSize : live.frameSize ?? still.frameSize
 
-  const slot = useRailSlot((state) => state.slot)
-  const slotUsable = useSlotUsable(slot)
-  const userFloat = useCuaPreviewStore((state) => state.floating[threadId])
-  const viewport = useViewportSize()
-  const docked = !userFloat && slotUsable && slot !== null
-  const aspect = frameSize && frameSize.height > 0 ? frameSize.width / frameSize.height : FALLBACK_ASPECT
-  const floatWidth = Math.max(MIN_DOCK_WIDTH, Math.min(FLOAT_WIDTH, viewport.width - FLOAT_MARGIN * 2,
-    (viewport.height - FLOAT_MARGIN * 2) * aspect))
-  const floatSize = { width: floatWidth, height: floatWidth / aspect }
-  const position = docked
-    ? null
-    : clampFloat(userFloat ?? { x: viewport.width, y: viewport.height - 96 }, floatSize, viewport)
-
-  const cardRef = useRef<HTMLDivElement | null>(null)
-  const dragOffset = useRef<{ x: number; y: number } | null>(null)
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (!position || (event.target as Element).closest('button')) return
-    event.currentTarget.setPointerCapture(event.pointerId)
-    dragOffset.current = { x: event.clientX - position.x, y: event.clientY - position.y }
-  }
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const offset = dragOffset.current
-    if (!offset) return
-    setCuaPreviewFloating(threadId, clampFloat(
-      { x: event.clientX - offset.x, y: event.clientY - offset.y }, floatSize, viewport))
-  }
-  const onPointerEnd = (): void => {
-    dragOffset.current = null
-  }
-  const popOut = (): void => {
-    const rect = cardRef.current?.getBoundingClientRect()
-    setCuaPreviewFloating(threadId, rect ? { x: rect.right - floatWidth, y: rect.top } : { x: viewport.width, y: 0 })
-  }
-
-  if (!shown) return null
-
-  const appName = live.appName ?? (session.surface === 'browser' ? 'Chrome' : null)
+  // Capture problems are explained only inside the viewer.
+  const problem = live.status === 'permission' || live.status === 'failed' || live.status === 'no-window' || live.status === 'ambiguous' ? live.status : null
+  useEffect(() => {
+    if (!expanded || !shown || session.surface !== 'app' || phase === 'ended' || window.dsGui.platform !== 'darwin' || typeof window.dsGui.getCuaScreenPermission !== 'function') return
+    let cancelled = false
+    const check = async (returning = false): Promise<void> => {
+      try {
+        const permission = await window.dsGui.getCuaScreenPermission()
+        if (cancelled) return
+        if (claimScreenPermissionPrompt(permission)) onPermissionRequired()
+        if (permission.status === 'granted' && (returning || problem === 'permission')) {
+          window.dispatchEvent(new Event('cua-permission-recheck'))
+        }
+      } catch { /* Keep the inline entry available when detection fails. */ }
+    }
+    void check()
+    const onFocus = (): void => { void check(true) }
+    window.addEventListener('focus', onFocus)
+    return () => { cancelled = true; window.removeEventListener('focus', onFocus) }
+  }, [expanded, shown, phase, problem, threadId, session.turnId, session.surface, onPermissionRequired])
+  const appName = live.appName ?? t(session.surface === 'browser' ? 'cuaPreviewBrowser' : 'cuaPreviewComputer')
   const status = phase === 'ended'
-    ? t('cuaPreviewDone')
-    : session.label ?? t('cuaPreviewWorking', { app: appName ?? t('cuaPreviewComputer') })
+    ? t(session.outcome === 'stopped' ? 'cuaPreviewStopped' : session.outcome === 'failed' ? 'cuaPreviewIncomplete' : 'cuaPreviewEnded')
+    : session.label ?? t('cuaPreviewWorking', { app: appName })
+  const attachCanvas = (element: HTMLDivElement | null): void => {
+    if (element && canvas.parentElement !== element) element.prepend(canvas)
+  }
+  const placeholder = <Monitor className="h-5 w-5 text-ds-muted" aria-hidden />
 
-  const card = (
-    <div
-      ref={cardRef}
-      role="region"
-      aria-label={t('cuaPreviewRegion')}
-      aria-hidden={visible ? undefined : true}
-      data-cua-preview={threadId}
-      className={`group pointer-events-auto overflow-hidden rounded-2xl border border-white/10 bg-black text-white shadow-[0_16px_48px_-16px_rgb(0_0_0/0.55),0_2px_10px_-2px_rgb(0_0_0/0.3)] transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none ${
-        visible ? 'opacity-100' : 'pointer-events-none h-0 translate-y-1 border-0 opacity-0'
-      } ${position ? 'fixed z-50 cursor-grab touch-none select-none active:cursor-grabbing' : 'relative w-full'}`}
-      style={position ? { left: position.x, top: position.y, width: floatWidth } : undefined}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerEnd}
-      onPointerCancel={onPointerEnd}
-    >
-      <div
-        ref={(element) => {
-          if (element && canvas.parentElement !== element) element.prepend(canvas)
-        }}
-        className="relative w-full"
-        style={{ aspectRatio: frameSize ? `${frameSize.width} / ${frameSize.height}` : `${FALLBACK_ASPECT}` }}
-      >
-        {/* Finished edge over the captured window's antialiased fringe. */}
-        <div aria-hidden className="pointer-events-none absolute inset-0 shadow-[inset_0_0_0_1px_rgb(0_0_0/0.45)]" />
-        {problem ? (
-          <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-[12px] text-white/75">
-            <Monitor className="h-5 w-5 text-white/60" aria-hidden />
-            <span>{problem === 'permission' ? t('cuaPreviewPermission') : t('cuaPreviewFailed')}</span>
-            {problem === 'permission' ? (
-              <button
-                type="button"
-                onClick={() => void window.dsGui.openScreenCaptureSettings()}
-                className="rounded-full border border-white/25 px-2.5 py-0.5 text-[11px] text-white hover:bg-white/15"
-              >
-                {t('cuaPreviewOpenSettings')}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-5.5rem)] items-center gap-1.5 rounded-full border border-white/15 bg-black/55 py-0.5 pl-0.5 pr-2 text-[11px] font-medium backdrop-blur-md">
-          <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
-            {live.icon ? <img src={live.icon} alt="" className="h-5 w-5" /> : <Monitor className="h-3.5 w-3.5" aria-hidden />}
-            {phase === 'ended' ? (
-              <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-emerald-500">
-                <Check className="h-2 w-2" strokeWidth={3.5} aria-hidden />
-              </span>
-            ) : null}
-          </span>
-          <span className="truncate">{appName ?? t('cuaPreviewComputer')}</span>
+  return <>
+    {expanded ? <div className="flex items-center gap-2 px-3 py-2 text-xs">
+      <span className="min-w-0 flex-1 truncate">{appName}</span>
+      {hasFrame && <span className="text-ds-muted">{live.hasFrame && streaming && live.status === 'ok'
+        ? t('cuaPreviewLive') : t('cuaPreviewLastFrame')}</span>}
+      <button type="button" onClick={onCollapse} aria-label={t('cuaPreviewCollapse')} title={t('cuaPreviewCollapse')}
+        className="grid h-7 w-7 place-items-center rounded-md text-ds-muted hover:bg-ds-hover focus-visible:outline focus-visible:outline-2">
+        <X className="h-4 w-4" aria-hidden />
+      </button>
+    </div> : null}
+    {expanded ? <>
+      {shown && hasFrame && <div ref={attachCanvas} className="relative w-full bg-ds-subtle"
+        style={{ aspectRatio: frameSize ? `${frameSize.width} / ${frameSize.height}` : `${FALLBACK_ASPECT}` }} />}
+      {(!shown || !hasFrame || problem) && <div role="status" className="space-y-2 bg-ds-subtle px-3 py-4 text-xs text-ds-muted">
+        <p>{allowed === false ? t('cuaPreviewDisabled')
+          : problem === 'permission' ? t('cuaPreviewPermission')
+            : problem === 'ambiguous' ? t('cuaPreviewAmbiguous')
+            : problem === 'no-window' ? t('cuaPreviewNoWindow')
+              : problem === 'failed' || still.status === 'error' ? t('cuaPreviewFailed')
+                : phase === 'ended' ? t('cuaPreviewNoRecordedFrame')
+                  : live.status === 'unsupported' ? t('cuaPreviewUnsupported') : t('cuaPreviewWaitingFrame')}</p>
+        {problem === 'permission' && shown && <button type="button" onClick={onOpenPermissions}
+          className="rounded-md border border-ds-border px-2.5 py-1 text-ds-ink hover:bg-ds-hover">{t('cuaPreviewOpenSettings')}</button>}
+      </div>}
+      <p className="px-3 py-2 text-xs text-ds-ink">{status}</p>
+    </> : <div className="flex items-center">
+      <button type="button" onClick={onExpand} aria-label={`${t('cuaPreviewShow')}: ${status}`} aria-expanded={false}
+        className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left hover:bg-ds-hover focus-visible:outline focus-visible:outline-2">
+        <div ref={attachCanvas} className="relative grid h-12 w-20 shrink-0 place-items-center overflow-hidden rounded-md bg-ds-subtle">
+          {!shown || !hasFrame ? placeholder : null}
         </div>
-        <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border border-white/15 bg-black/55 px-2.5 py-1 text-[11px] font-medium backdrop-blur-md">
-          <span
-            aria-hidden
-            className={`h-1.5 w-1.5 shrink-0 rounded-full ${phase === 'ended' ? 'bg-emerald-400' : 'animate-pulse bg-sky-400'}`}
-          />
-          <span className="truncate">{status}</span>
-        </div>
-        <div className="absolute right-2 top-2 flex translate-y-1 items-center gap-1 rounded-full border border-white/20 bg-black/45 p-0.5 opacity-0 backdrop-blur-md transition-[opacity,transform] duration-200 group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 motion-reduce:transition-none">
-          {slotUsable ? (
-            <button
-              type="button"
-              onClick={userFloat ? () => setCuaPreviewFloating(threadId, null) : popOut}
-              title={userFloat ? t('cuaPreviewDock') : t('cuaPreviewFloat')}
-              aria-label={userFloat ? t('cuaPreviewDock') : t('cuaPreviewFloat')}
-              className="grid h-6 w-6 place-items-center rounded-full hover:bg-white/20"
-            >
-              {userFloat ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => hideCuaPreviewForTask(threadId)}
-            title={t('cuaPreviewHide')}
-            aria-label={t('cuaPreviewHide')}
-            className="grid h-6 w-6 place-items-center rounded-full hover:bg-white/20"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-  // Until its first frame the card waits out of the rail, so the dock does not shift.
-  return createPortal(card, docked && visible && slot ? slot : document.body)
+        <span className="min-w-0 text-xs leading-relaxed line-clamp-2">{status}</span>
+      </button>
+      {onDismiss ? <button type="button" onClick={onDismiss} aria-label={t('cuaPreviewDismiss')} title={t('cuaPreviewDismiss')}
+        className="mr-2 grid h-7 w-7 shrink-0 place-items-center rounded-md text-ds-muted hover:bg-ds-hover focus-visible:outline focus-visible:outline-2">
+        <X className="h-4 w-4" aria-hidden />
+      </button> : null}
+    </div>}
+  </>
 }

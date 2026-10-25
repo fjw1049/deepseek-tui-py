@@ -94,7 +94,7 @@ async def test_finish_reports_blocker_while_user_holds_browser(tmp_path):
 
     service = BrowserService(tmp_path)
     service.runs["one"] = BrowserRun("one", tmp_path, owner="user")
-    delivery = TaskDelivery(active=True, evidence={"tool:s"})
+    delivery = TaskDelivery(active=True, browser_used=True, evidence={"tool:s"})
     context = ToolContext(working_directory=tmp_path, metadata={
         "task_delivery": delivery, "browser_service": service, "runtime_thread_id": "one"})
     args = {"answer": "Return control so I can continue.", "evidence": ["tool:s"]}

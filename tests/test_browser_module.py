@@ -1077,6 +1077,20 @@ async def test_gif_sampler_failure_stops_and_keeps_prior_frames(browser, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_gif_sampler_rides_out_a_missed_sample(browser, monkeypatch):
+    run = browser.runs['one']
+    frame = await browser._capture(run)
+    run.frames = [frame] * 39
+    run.recording = True
+    missed = RuntimeError('No visible browser tab to record')
+    capture = AsyncMock(side_effect=[missed, missed, frame])
+    monkeypatch.setattr(browser, '_capture_recording', capture)
+    await browser._sample_frames(run, interval=0)
+    assert run.recording_error is None
+    assert run.artifacts[-1]['id'].endswith('.gif')
+
+
+@pytest.mark.asyncio
 async def test_gif_limit_automatically_saves(browser, monkeypatch):
     run = browser.runs['one']
     frame = await browser._capture(run)
@@ -1087,3 +1101,53 @@ async def test_gif_limit_automatically_saves(browser, monkeypatch):
     assert not run.recording and not run.frames
     assert run.artifacts[-1]['id'].endswith('.gif')
     assert browser.state('one')['recording_pending_save'] is False
+
+
+async def test_a_reclaimed_private_browser_says_so_to_its_chat(tmp_path):
+    import time
+
+    from deepseek_tui.browser.service import BrowserRun, BrowserService
+
+    service = BrowserService(tmp_path / "artifacts")
+    for index in range(8):
+        run = BrowserRun(f"t{index}", tmp_path / f"d{index}")
+        run.last_used = time.monotonic() - 3600 + index
+        service.runs[run.thread_id] = run
+    await service._reclaim_idle_session()
+    assert "t0" not in service.runs
+    assert service.state("t0")["reclaimed"] is True
+
+
+async def test_real_private_browser_keeps_page_opened_windows_with_the_user(tmp_path):
+    import functools
+    import http.server
+    import os
+    import threading
+
+    from deepseek_tui.browser.service import BrowserActionError
+
+    if os.environ.get("DEEPSEEK_BROWSER_E2E") != "1":
+        pytest.skip("Set DEEPSEEK_BROWSER_E2E=1 to run real Chromium")
+    (tmp_path / "signin.html").write_text(
+        "<button id='login' onclick=\"window.open('/login.html','login','width=400,height=500')\">"
+        "Sign in</button>", encoding="utf-8")
+    (tmp_path / "login.html").write_text("<button>Allow</button>", encoding="utf-8")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=tmp_path)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    service = BrowserService(tmp_path / "artifacts")
+    service.configure("t", False)
+    try:
+        opened = await service.action("t", BrowserAction(
+            action="open", url=f"http://127.0.0.1:{httpd.server_address[1]}/signin.html"))
+        login = next(e for e in opened["observation"]["elements"] if e.get("name") == "Sign in")
+        clicked = await service.action("t", BrowserAction(
+            action="click", ref=login["ref"], observation_id=opened["observation"]["observation_id"]),
+            require_observation=True)
+        assert "the page opened a window" in clicked["content"]
+        popup = next(tab for tab in service.runs["t"].tabs if tab.get("popup"))
+        with pytest.raises(BrowserActionError, match="window the page opened"):
+            await service.action("t", BrowserAction(action="switch_tab", tab_id=popup["tab_id"]))
+    finally:
+        await service.close_all()
+        httpd.shutdown()

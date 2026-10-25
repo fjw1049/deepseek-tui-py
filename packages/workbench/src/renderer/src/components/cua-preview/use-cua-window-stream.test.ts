@@ -26,7 +26,7 @@ beforeEach(() => {
   host = document.createElement('div')
   root = createRoot(host)
   canvasRef.current = document.createElement('canvas')
-  vi.spyOn(canvasRef.current, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D)
+  vi.spyOn(canvasRef.current, 'getContext').mockReturnValue({ drawImage: vi.fn(), clearRect: vi.fn() } as unknown as CanvasRenderingContext2D)
   vi.spyOn(performance, 'now').mockReturnValue(1000)
   const create = document.createElement.bind(document)
   vi.spyOn(document, 'createElement').mockImplementation((tag, options) => {
@@ -86,4 +86,36 @@ it('stops B before falling back for a previously failed A window', async () => {
   expect(stops.B).toHaveBeenCalledOnce()
   expect(state).toMatchObject({ status: 'failed', hasFrame: false, appName: 'A' })
   expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
+})
+
+it('retries a failed capture after permission recheck without replaying a desktop action', async () => {
+  failA = true
+  await render('A')
+  expect(state.status).toBe('failed')
+  failA = false
+  await act(async () => window.dispatchEvent(new Event('cua-permission-recheck')))
+  await act(async () => frame!())
+  expect(state.hasFrame).toBe(true)
+  expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
+})
+
+
+it('stops and clears a live window when the same app becomes ambiguous', async () => {
+  await render('A')
+  await act(async () => frame!())
+  expect(state.hasFrame).toBe(true)
+  vi.mocked(window.dsGui.resolveCuaPreviewWindow).mockResolvedValue({ status: 'ambiguous', appName: 'A' })
+  await act(async () => window.dispatchEvent(new Event('cua-permission-recheck')))
+  expect(stops.A).toHaveBeenCalledOnce()
+  expect(state).toMatchObject({ status: 'ambiguous', hasFrame: false })
+  expect(canvasRef.current!.getContext('2d')!.clearRect).toHaveBeenCalled()
+  expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1)
+})
+
+
+it('does not erase a task screenshot when no live window was captured', async () => {
+  vi.mocked(window.dsGui.resolveCuaPreviewWindow).mockResolvedValue({ status: 'ambiguous', appName: 'A' })
+  await render('A')
+  expect(canvasRef.current!.getContext('2d')!.clearRect).not.toHaveBeenCalled()
+  expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
 })

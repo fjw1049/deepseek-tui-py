@@ -56,6 +56,12 @@ async def prepare_subagent_cua(agent, runtime, context, registry, allowed_tools,
         return {"action": "decline"}
 
     session = CuaSession(config, context.working_directory, "subagent-" + agent.id, ask)
+    # Keep child uncertainty visible to the parent operation panel, including
+    # after the child loop closes its runtime connection.
+    if not hasattr(runtime.manager, "cua_sessions"):
+        runtime.manager.cua_sessions = {}
+    runtime.manager.cua_sessions[agent.id] = session
+    session.lease.owner = getattr(runtime.manager, "cua_owner_id", None) or session.session_id
     try:
         events = [cancel, agent.cancel_token, agent.interrupt_event]
         if agent.parent_cancel is not None:

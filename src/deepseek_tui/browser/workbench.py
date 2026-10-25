@@ -62,7 +62,8 @@ class WorkbenchBrowserSession(BrowserSession):
     @classmethod
     async def attach(cls, bridge: dict[str, Any], browser_id: str, directory: Path):
         tabs = await open_session(bridge, browser_id)
-        tab = next((item for item in tabs if item.get("active")), tabs[0])
+        pages = [item for item in tabs if not item.get("popup")] or tabs
+        tab = next((item for item in pages if item.get("panel", item.get("active"))), pages[0])
         cfg = OctopSettings(profiles_dir=directory, cdp_ws_url=tab_url(bridge, tab["tab_id"]))
         profiles = ProfileManager(base_dir=directory, settings=cfg)
         internal = _NativeInternal(profiles.get_or_create("workbench"), cfg)
@@ -86,8 +87,10 @@ class WorkbenchBrowserSession(BrowserSession):
     async def bind_tab(self, tab_id: str = "") -> bool:
         """Bind an explicit human request, or the shown tab, without changing the UI."""
         tabs = await open_session(self.bridge, self.browser_id)
+        # Without an explicit request, a focused page-opened window is not the page to drive.
+        pages = [item for item in tabs if not item.get("popup")] or tabs
         tab = next((item for item in tabs if item["tab_id"] == tab_id), None) if tab_id else next(
-            (item for item in tabs if item.get("active")), tabs[0])
+            (item for item in pages if item.get("panel", item.get("active"))), pages[0])
         if tab is None:
             raise ValueError("Requested browser tab no longer exists")
         if tab["tab_id"] == self.tab_id and self.connected:

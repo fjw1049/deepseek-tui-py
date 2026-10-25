@@ -15,7 +15,8 @@ from deepseek_tui.tools.user_input import validate_user_input_request
 
 @pytest.fixture
 def context(tmp_path):
-    state = TaskDelivery(active=True, focused=True, catalog={"browser_use", "read_file"},
+    state = TaskDelivery(active=True, focused=True, browser_used=True,
+                         catalog={"browser_use", "read_file"},
                          evidence={"tool:read"})
     run = SimpleNamespace(owner="agent", assistance=None, unresolved={})
     return ToolContext(
@@ -171,3 +172,23 @@ async def test_pending_browser_interaction_prevents_completion(context, pending)
             {**args, "status": "blocked", "remaining": ["Handle pending interaction"]}, context
         )
     ).success
+
+
+async def test_desktop_only_delivery_ignores_unrelated_browser_control(context):
+    state = context.metadata["task_delivery"]
+    state.browser_used = False
+    run = context.metadata["browser_service"].runs["t"]
+    run.owner = "user"
+    run.unresolved = {"old-submit": {"effect": "unknown"}}
+    result = await FinishTaskTool().execute(dict(
+        status="completed", answer="Read the local document", evidence=["tool:read"], remaining=[]
+    ), context)
+    assert result.success
+
+
+async def test_mixed_task_still_requires_browser_control(context):
+    context.metadata["browser_service"].runs["t"].owner = "user"
+    with pytest.raises(ToolError, match="user controls the browser"):
+        await FinishTaskTool().execute(dict(
+            status="completed", answer="Read both", evidence=["tool:read"], remaining=[]
+        ), context)

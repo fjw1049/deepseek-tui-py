@@ -30,6 +30,7 @@ class TaskDelivery:
     active: bool = False
     # The task also narrows the tool set (surfaces with focus=True).
     focused: bool = False
+    browser_used: bool = False
     extra_tools: set[str] = field(default_factory=set)
     evidence: set[str] = field(default_factory=set)
     # Evidence predating an uncertain desktop action cannot verify its outcome.
@@ -194,7 +195,7 @@ class FinishTaskTool(ToolSpec):
                 ". Choose only results supporting the answer; "
                 "use partial/blocked for unverified work."
             )
-        browser = context.metadata.get("browser_service")
+        browser = context.metadata.get("browser_service") if state.browser_used else None
         thread_id = str(context.metadata.get("runtime_thread_id"))
         run = getattr(browser, "runs", {}).get(thread_id)
         # Closing/recovering a browser must not erase an unresolved submission.

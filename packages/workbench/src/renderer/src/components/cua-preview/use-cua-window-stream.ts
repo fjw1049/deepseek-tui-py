@@ -34,9 +34,9 @@ export const NO_WINDOW_RECHECK_MS = 1_500
  */
 class WindowStream {
   private stream: MediaStream | null = null
+  private drewFrame = false
   /** The window being captured or starting to be captured. */
   private sourceId: string | null = null
-  private appId: string | null = null
   /** Newest window lookup wins; older lookups are ignored when they return. */
   private generation = 0
   /** Owner of the capture slot; bumped whenever the capture is replaced or stopped. */
@@ -62,10 +62,12 @@ class WindowStream {
     this.report({ appName: result.appName ?? null, icon: result.icon ?? null })
     const sourceId = result.status === 'ok' ? result.sourceId ?? null : null
     if (!sourceId) {
-      // The same app's stream keeps running until its own window goes away; another
-      // app's stream must never stand in for the newly touched one.
-      if (this.sourceId && this.appId === appId) return
+      const clearLiveFrame = this.drewFrame
       this.stopCapture()
+      if (clearLiveFrame) {
+        const canvas = this.canvas()
+        canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+      }
       this.report({ status: result.status === 'ok' ? 'no-window' : result.status, hasFrame: false })
       if (recheckIfMissing && result.status === 'no-window') {
         this.recheck = window.setTimeout(() => void this.target(appId, false), NO_WINDOW_RECHECK_MS)
@@ -81,7 +83,6 @@ class WindowStream {
     }
     const token = this.captureToken
     this.sourceId = sourceId
-    this.appId = appId
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -100,7 +101,6 @@ class WindowStream {
       this.dead.add(sourceId)
       if (token !== this.captureToken) return
       this.sourceId = null
-      this.appId = null
       this.report({ status: 'failed', hasFrame: false })
       return
     }
@@ -140,6 +140,7 @@ class WindowStream {
           canvas.height = height
         }
         context.drawImage(video, 0, 0, width, height)
+        this.drewFrame = true
         this.report({ hasFrame: true, frameSize: { width, height } })
       }
       schedule()
@@ -161,9 +162,14 @@ class WindowStream {
     this.captureToken += 1
     this.stream?.getTracks().forEach((track) => track.stop())
     this.stream = null
+    this.drewFrame = false
     this.sourceId = null
-    this.appId = null
     // The canvas keeps its last frame: stills or the next stream paint over it.
+  }
+
+  retry(appId: string): void {
+    this.dead.clear()
+    void this.target(appId)
   }
 
   stop(): void {
@@ -225,6 +231,12 @@ export function useCuaWindowStream(input: {
     }
     void controller.current?.target(appId)
   }, [active, appId, revision])
+
+  useEffect(() => {
+    const retry = (): void => { if (active && appId) controller.current?.retry(appId) }
+    window.addEventListener('cua-permission-recheck', retry)
+    return () => window.removeEventListener('cua-permission-recheck', retry)
+  }, [active, appId])
 
   return state
 }

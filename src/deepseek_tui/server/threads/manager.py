@@ -4773,11 +4773,14 @@ class RuntimeThreadManager:
                 state.handle.pause.resume()
             return {**self.browser_service.state(thread_id), **self.browser_task_state(thread_id)}
 
-    async def _hand_browser_back(self, thread_id: str) -> None:
+    async def _hand_browser_back(self, thread_id: str, ended_turn_id: str | None = None) -> None:
         """Between tasks the page is the user's; the next task takes it back."""
         run = self.browser_service.runs.get(thread_id)
         if run is not None:
             run.user_hold = False  # A takeover lasts for the turn it interrupted.
+            if ended_turn_id and (run.assistance or {}).get("turn_id") == ended_turn_id:
+                # Help asked by the turn that ended is no longer awaited.
+                run.assistance = None
         # Recordings the agent started span turns; handing over would end them.
         if (run is None or run.owner != "agent" or run.session is None
                 or run.recording or run.video is not None):
@@ -4791,6 +4794,118 @@ class RuntimeThreadManager:
                     run.handed_back = True
         except Exception:  # noqa: BLE001 — a hand-back must never fail turn release
             logger.debug("browser_handback_failed", exc_info=True)
+
+    def _cua_sessions(self, state) -> list:
+        if state is None:
+            return []
+        parent = getattr(state.engine, "_cua_session", None)
+        context = getattr(state.engine, "tool_context", None)
+        children = getattr(getattr(context, "subagent_manager", None), "cua_sessions", {})
+        return ([parent] if parent else []) + list(children.values())
+
+    def cua_task_state(self, thread_id: str) -> dict[str, Any]:
+        state = self._active.get(thread_id)
+        session = getattr(state.engine, "_cua_session", None) if state else None
+        active = state is not None and state.active_turn is not None
+        sessions = self._cua_sessions(state)
+        unresolved = next((item.unresolved for item in sessions if item.unresolved), None)
+        context = getattr(getattr(state, "engine", None), "tool_context", None)
+        retired = getattr(getattr(context, "subagent_manager", None), "cua_retired_revision", 0)
+        return {
+            **(session.control_state() if session else {
+                "owner": "idle", "revision": 0, "waiting": False,
+                "holder": None, "unresolved": None, "human_reason": None,
+                "connected": False,
+            }),
+            "surface": max(sessions, key=lambda item: item.last_activity).last_surface if sessions else None,
+            # This turn's calls only: a thread that used CUA earlier is not a CUA task now.
+            "used": any(
+                item.turn_used or item.unresolved or item.human_reserved for item in sessions
+            ),
+            "revision": sum(item.control_revision for item in sessions) + retired,
+            "unresolved": unresolved,
+            "waiting": any(item.waiting for item in sessions),
+            "awaiting_permission": any(bool(item.approvals) for item in sessions),
+            "active": active,
+            "turn_id": state.active_turn.turn_id if active else (
+                unresolved["turn_id"] if unresolved else None
+            ),
+            "paused": bool(active and state.handle.pause.paused),
+            "available": session is not None,
+        }
+
+    async def control_cua(
+        self, thread_id: str, owner: str, revision: int, turn_id: str,
+        reviewed_call_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Transfer the desktop only after native input has stopped."""
+        from deepseek_tui.cua.tools import HANDOFF_NOTICE
+        from deepseek_tui.tools.registry import ToolError
+
+        state = self._active.get(thread_id)
+        session = getattr(state.engine, "_cua_session", None) if state else None
+        if session is None:
+            raise ValueError("The computer-use task has ended")
+        async with session.control_lock:
+            sessions = self._cua_sessions(state)
+            snapshot = self.cua_task_state(thread_id)
+            uncertain = next((item for item in sessions if item.unresolved), None)
+            if state.active_turn is None:
+                if (owner == "assistant" and uncertain
+                        and uncertain.unresolved["turn_id"] == turn_id
+                        and snapshot["revision"] == revision and reviewed_call_id):
+                    await uncertain.acknowledge(reviewed_call_id)
+                    return self.cua_task_state(thread_id)
+                raise ValueError("The computer-use task has ended")
+            if state.active_turn.turn_id != turn_id:
+                raise ValueError("The original task has ended. Refresh control.")
+            # Stop and takeover check only the turn: every running call changes the
+            # revision, and these must not lose that race. Resuming checks it below.
+            if owner == "user":
+                if session.human_reserved:
+                    return self.cua_task_state(thread_id)
+                if not snapshot["used"]:
+                    raise ValueError("This task is not using computer control")
+                state.handle.pause.pause()
+                # Pause propagates to child tools. The lease covers this host even
+                # when the active caller was a child rather than the parent.
+                await asyncio.wait_for(session.reserve_human(), timeout=45)
+                if state.active_turn is None or state.active_turn.turn_id != turn_id or state.handle.cancel_event.is_set():
+                    session.release_human()
+                    raise ValueError("The original task ended during transfer")
+            elif owner == "assistant":
+                if snapshot["revision"] != revision:
+                    raise ValueError("Computer control changed. Refresh and try again.")
+                # Every uncertain outcome, the parent's or a child's, is reviewed before
+                # the task resumes by either route below.
+                if uncertain:
+                    if reviewed_call_id is None:
+                        raise ValueError("Check the uncertain operation before continuing")
+                    await uncertain.acknowledge(reviewed_call_id)
+                    if any(item.unresolved for item in sessions):
+                        return self.cua_task_state(thread_id)
+                if session.human_reason:
+                    from deepseek_tui.cua.tools import desktop_action_question
+                    question = desktop_action_question(session.human_reason, getattr(state.engine, "reply_locale", "zh"))
+                    resolved = await self.resolve_user_input(
+                        session.human_request_id,
+                        answers=[{"question_id": question["id"], "label": question["options"][0]["label"]}],
+                    ) if session.human_request_id else False
+                    if not resolved:
+                        raise ValueError("The assistance request changed. Refresh and try again.")
+                    return self.cua_task_state(thread_id)
+                session.release_human()
+                session.reset_reason = ""
+                state.handle.resume_context = HANDOFF_NOTICE
+                state.handle.pause.resume()
+            elif owner == "stopped":
+                await state.handle.cancel("user_cancelled")
+                await session.close()
+                session.release_human()
+                state.handle.pause.resume()
+            else:
+                raise ToolError("Unknown computer control owner")
+            return self.cua_task_state(thread_id)
 
     def browser_task_state(self, thread_id: str) -> dict[str, Any]:
         """The running turn as a browser task; other work leaves the browser free."""
@@ -4898,6 +5013,8 @@ class RuntimeThreadManager:
         result_ids = {item.id for item in automation_result_items(self.store, thread.id)}
         self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        if engine.tool_context.subagent_manager is not None:
+            engine.tool_context.subagent_manager.cua_owner_id = thread.id
         engine.tool_context.metadata["start_internal_turn"] = functools.partial(
             self._start_internal_turn, thread.id
         )
@@ -5400,7 +5517,7 @@ class RuntimeThreadManager:
             await self.browser_service.end_agent_capture(thread_id)
         except Exception:  # noqa: BLE001 — a capture must never fail turn release
             logger.debug("browser_capture_end_failed", exc_info=True)
-        await self._hand_browser_back(thread_id)
+        await self._hand_browser_back(thread_id, ended_turn_id=turn_id)
 
         # Clear active turn
         async with self._active_lock:

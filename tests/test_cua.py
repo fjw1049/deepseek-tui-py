@@ -22,6 +22,7 @@ VISION = {"model": "deepseek::deepseek-v4-flash-vision-exp"}
 def fresh_runtime_cache(tmp_path, monkeypatch):
     # Never contend with a real desktop session's lock.
     monkeypatch.setattr(cua_session, "LOCK_DIR", tmp_path)
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     cua_session.reset_runtime_cache()
     yield
     cua_session.reset_runtime_cache()
@@ -982,21 +983,24 @@ async def test_desktop_assistance_releases_desktop_and_requires_fresh_observatio
 
     engine._app_config = Config(cua=installation)
     engine.default_model = "deepseek-flash"
-    session = SimpleNamespace(end_turn=AsyncMock(), close=AsyncMock(), reset_reason="stale")
+    session = CuaSession(installation, tmp_path, "manual-step")
     engine._cua_session = session
     task = asyncio.create_task(engine._await_user_input("ask", action))
     for _ in range(50):
         if "ask" in engine.handle.pending_user_inputs:
             break
         await asyncio.sleep(0.01)
-    session.end_turn.assert_awaited_once()
-    session.close.assert_awaited_once()
-    assert session.reset_reason == ""
+    assert session.human_reserved
+    assert session.lease.fd is not None
+    other = DesktopLease()
+    with pytest.raises(ToolError, match="desktop is in use"):
+        await other.acquire(timeout=0.01)
     engine.handle.pending_user_inputs["ask"].set_result(
         {"answers": [{"question_id": "desktop_action", "label": "我已完成"}]}
     )
     result = await asyncio.wait_for(task, 1)
     payload = json.loads(result.content)
+    assert not session.human_reserved and session.lease.fd is None
     assert result.success and payload["choice"] == "done"
     assert "observe" in payload["instructions"] and "not a verified" in payload["instructions"]
 
@@ -1234,3 +1238,56 @@ def test_subagent_cua_step_reports_its_app_to_the_parent_ui():
     assert payload["cua_surface"] == surface
     plain = _mailbox_message_payload(MailboxMessage.tool_call_completed("child", "read_file", 3, True))
     assert plain["cua_surface"] is None
+
+@pytest.mark.asyncio
+async def test_human_reservation_survives_connection_close(installation, tmp_path):
+    session = CuaSession(installation, tmp_path, 'human-owner')
+    other = DesktopLease()
+    try:
+        await session.reserve_human()
+        await session.close()
+        assert session.control_state()['owner'] == 'user'
+        with pytest.raises(ToolError, match='desktop is in use'):
+            await other.acquire(timeout=0.01)
+        session.release_human()
+        await other.acquire(timeout=0.1)
+    finally:
+        session.release_human()
+        other.release()
+        await session.close()
+
+@pytest.mark.asyncio
+async def test_unknown_receipt_survives_reset_and_requires_matching_ack(installation, tmp_path):
+    session = CuaSession(installation, tmp_path, 'receipt-owner')
+    await session.record_outcome('turn', 'call', 'unknown')
+    await session.close()
+    restored = CuaSession(installation, tmp_path, 'receipt-owner')
+    assert restored.control_state()['unresolved']['call_id'] == 'call'
+    with pytest.raises(ToolError, match='changed'):
+        await restored.acknowledge('old-call')
+    await restored.acknowledge('call')
+    assert restored.control_state()['unresolved'] is None
+
+
+@pytest.mark.asyncio
+async def test_receipt_write_failure_still_closes_native_session(session, monkeypatch):
+    await session.connect()
+    original_request = session._request
+    original_record = session.record_outcome
+
+    async def request(kind, **values):
+        if kind == "call":
+            raise ToolError("connection lost")
+        return await original_request(kind, **values)
+
+    async def record(turn_id, call_id, outcome):
+        await original_record(turn_id, call_id, outcome)
+        if outcome == "unknown":
+            raise OSError("receipt storage unavailable")
+
+    monkeypatch.setattr(session, "_request", request)
+    monkeypatch.setattr(session, "record_outcome", record)
+    with pytest.raises(OSError, match="storage unavailable"):
+        await session.call("js", {"code": "submit"}, "turn", "call")
+    assert session.unresolved["call_id"] == "call"
+    assert session.process is None and session.lease.fd is None
