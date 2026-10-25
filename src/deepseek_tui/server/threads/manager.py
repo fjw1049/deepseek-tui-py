@@ -4834,6 +4834,14 @@ class RuntimeThreadManager:
             "available": session is not None,
         }
 
+    def note_cua_app_raised(self, thread_id: str) -> dict[str, Any]:
+        """The user raised the bound app from the panel: no takeover, but stale observation."""
+        state = self._active.get(thread_id)
+        if state is not None and state.active_turn is not None:
+            for session in self._cua_sessions(state):
+                session.outside_change = "The user brought the app to the front."
+        return self.cua_task_state(thread_id)
+
     async def control_cua(
         self, thread_id: str, owner: str, revision: int, turn_id: str,
         reviewed_call_id: str | None = None,

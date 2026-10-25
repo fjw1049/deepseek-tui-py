@@ -307,6 +307,7 @@ export type DsGuiApi = {
   setWindowMaterial: (input: import('./appearance').WindowMaterial) => Promise<boolean>
   /** Frontmost capturable window of the app computer use last touched (macOS). */
   resolveCuaPreviewWindow: (bundleId: string) => Promise<CuaPreviewWindowResult>
+  openCuaApp: (bundleId: string) => Promise<boolean>
   getCuaScreenPermission: () => Promise<{ status: string; appName: string; appId?: string }>
   openScreenCaptureSettings: () => Promise<void>
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>

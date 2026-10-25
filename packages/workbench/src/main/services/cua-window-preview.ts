@@ -20,6 +20,14 @@ const privacyPane = Number.parseInt(release(), 10) >= 22
   : 'com.apple.preference.security'
 const SCREEN_SETTINGS = `x-apple.systempreferences:${privacyPane}?Privacy_ScreenCapture`
 
+// Activate an existing process without sending an open/reopen event or launching it.
+const ACTIVATE_APP = `ObjC.import('AppKit')
+function run(argv) {
+  const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(argv[0])
+  if (Number(apps.count) !== 1) return 'false'
+  return apps.objectAtIndex(0).activateWithOptions(2) ? 'true' : 'false'
+}`
+
 // 17 = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements; the
 // list is ordered front to back. Windows on other Spaces are not on screen and
 // cannot be captured, so they are left out.
@@ -107,6 +115,13 @@ export async function resolveCuaPreviewWindow(bundleId: string): Promise<CuaPrev
 }
 
 export function registerCuaWindowPreviewIpc(fromMainWindow: (event: IpcMainInvokeEvent) => boolean): void {
+  ipcMain.handle('cua-preview:open-app', (event, bundleId: unknown) => {
+    if (!fromMainWindow(event) || process.platform !== 'darwin' || typeof bundleId !== 'string' || !BUNDLE_ID.test(bundleId)) return false
+    return new Promise<boolean>((resolve) => {
+      execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', ACTIVATE_APP, bundleId],
+        { timeout: 5_000 }, (error, stdout) => resolve(!error && stdout.trim() === 'true'))
+    })
+  })
   ipcMain.handle('cua-preview:resolve-window', (event, bundleId: unknown) =>
     fromMainWindow(event) && typeof bundleId === 'string'
       ? resolveCuaPreviewWindow(bundleId)

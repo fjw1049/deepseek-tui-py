@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest'
+import { runInNewContext } from 'node:vm'
 
 const electron = vi.hoisted(() => ({
   app: { getName: () => 'Workbench' },
@@ -9,6 +10,8 @@ const electron = vi.hoisted(() => ({
 }))
 vi.mock('electron', () => electron)
 vi.mock('node:os', () => ({ release: () => '25.0.0' }))
+const execute = vi.hoisted(() => vi.fn())
+vi.mock('node:child_process', () => ({ execFile: execute }))
 
 const { pickPreviewWindow, registerCuaWindowPreviewIpc } = await import('./cua-window-preview')
 
@@ -38,6 +41,43 @@ function handler(trusted = true) {
   registerCuaWindowPreviewIpc(() => trusted)
   return electron.ipcMain.handle.mock.calls.find(c => c[0] === 'cua-preview:open-screen-settings')![1]
 }
+it.skipIf(process.platform !== 'darwin').each(['1', 1, '0', '2'])('handles native application count %s', async count => {
+  const activate = vi.fn(() => true)
+  execute.mockImplementation((_file, args, _options, callback) => {
+    const result = runInNewContext(`${args[3]}; run(["com.soda.music"])`, {
+      ObjC: { import: () => {} },
+      $: { NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => ({
+        count, objectAtIndex: () => ({ activateWithOptions: activate })
+      }) } }
+    })
+    callback(null, result)
+  })
+  registerCuaWindowPreviewIpc(() => true)
+  const open = electron.ipcMain.handle.mock.calls.find(c => c[0] === 'cua-preview:open-app')![1]
+  expect(await open({}, 'com.soda.music')).toBe(Number(count) === 1)
+  expect(activate).toHaveBeenCalledTimes(Number(count) === 1 ? 1 : 0)
+})
+it.skipIf(process.platform !== 'darwin')('opens only a validated app from a trusted renderer', async () => {
+  execute.mockImplementation((_file, _args, _options, callback) => callback(null, 'true'))
+  registerCuaWindowPreviewIpc(() => true)
+  const open = electron.ipcMain.handle.mock.calls.find(c => c[0] === 'cua-preview:open-app')![1]
+  expect(await open({}, 'com.iqiyi.player')).toBe(true)
+  expect(execute).toHaveBeenCalledWith('/usr/bin/osascript',
+    ['-l', 'JavaScript', '-e', expect.stringContaining('activateWithOptions(2)'), 'com.iqiyi.player'],
+    { timeout: 5_000 }, expect.any(Function))
+  execute.mockImplementation((_file, _args, _options, callback) => callback(null, 'false'))
+  expect(await open({}, 'com.iqiyi.player')).toBe(false)
+  execute.mockImplementation((_file, _args, _options, callback) => callback(new Error('activation failed'), ''))
+  expect(await open({}, 'com.iqiyi.player')).toBe(false)
+  execute.mockClear()
+  expect(await open({}, '-a Calculator')).toBe(false)
+  expect(execute).not.toHaveBeenCalled()
+  electron.ipcMain.handle.mockClear()
+  registerCuaWindowPreviewIpc(() => false)
+  const untrusted = electron.ipcMain.handle.mock.calls.find(c => c[0] === 'cua-preview:open-app')![1]
+  expect(await untrusted({}, 'com.iqiyi.player')).toBe(false)
+  expect(execute).not.toHaveBeenCalled()
+})
 it.skipIf(process.platform !== 'darwin')('requests native consent without opening Finder or competing settings on first use', async () => {
   await handler()({})
   expect(electron.desktopCapturer.getSources).toHaveBeenCalledWith({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })

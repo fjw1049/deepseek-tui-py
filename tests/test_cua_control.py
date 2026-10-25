@@ -248,3 +248,17 @@ async def test_failed_takeover_keeps_the_running_call_lease(desktop):
     finally:
         other.release()
         session.lease.release()
+
+
+async def test_raising_the_app_flags_the_task_without_taking_control(desktop):
+    manager, state, session = desktop
+    try:
+        result = manager.note_cua_app_raised('thread')
+        assert result['owner'] == 'idle' and not state.handle.pause.paused
+        assert 'front' in session.outside_change
+        state.active_turn = None
+        session.outside_change = ''
+        manager.note_cua_app_raised('thread')  # A finished task has nothing to warn.
+        assert session.outside_change == ''
+    finally:
+        await session.close()

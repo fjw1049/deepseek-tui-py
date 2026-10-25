@@ -1093,6 +1093,20 @@ async def test_missing_api_error_points_back_to_the_documentation(session, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_call_after_the_user_raised_the_app_is_refused_once(session, tmp_path):
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        session.outside_change = "The user brought the app to the front."
+        with pytest.raises(ToolError, match="Not executed.*front.*Observe"):
+            await tool.execute({"code": "await app.click([1, 2]);"}, context)
+        assert (await tool.execute({"code": "ok"}, context)).content == "ok"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_results_flag_truncated_trees_and_unverified_coordinate_clicks(session, tmp_path):
     await session.connect()
     tool = CuaTool(session, session.descriptors[0])

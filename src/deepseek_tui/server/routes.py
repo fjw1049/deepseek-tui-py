@@ -785,6 +785,16 @@ async def cua_thread_control(request: Request, thread_id: str) -> dict[str, Any]
         raise api_error(409, str(exc) or "Desktop transfer timed out; task remains paused") from exc
 
 
+@router_mcp.post("/threads/{thread_id}/cua/raised")
+async def cua_thread_app_raised(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        mgr.store.load_thread(thread_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise api_error(404, "Thread not found") from exc
+    return mgr.note_cua_app_raised(thread_id)
+
+
 @router_mcp.get("/cua/status")
 async def cua_status(request: Request) -> dict[str, Any]:
     """Inspect installed components without connecting or requesting desktop access."""

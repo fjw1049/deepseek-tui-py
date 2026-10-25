@@ -157,6 +157,8 @@ class CuaSession:
         self._close_lock = asyncio.Lock()
         self._end_lock = asyncio.Lock()
         self.reset_reason = ""
+        # The user changed the bound app outside a takeover; the next call observes first.
+        self.outside_change = ""
         # True once model code has run in this connection's REPL.
         self._bound = False
         # Large text blocks the runtime returned, newest last; outlives reconnects.

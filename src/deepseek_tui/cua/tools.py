@@ -205,6 +205,13 @@ class CuaTool(ToolSpec):
 
         turn = context.metadata.get("cua_turn_id") or current_turn()
         call_id = context.metadata.get("cua_call_id") or current_tool()
+        if self.session.outside_change:
+            note, self.session.outside_change = self.session.outside_change, ""
+            raise ToolError(
+                "Not executed: " + note + " Menus, popovers or hover panels may have closed "
+                "and a window may have opened. Observe the app again before acting; the app "
+                "binding is still valid."
+            )
         if self.session.reset_reason:
             reason, self.session.reset_reason = self.session.reset_reason, ""
             raise ToolError(
