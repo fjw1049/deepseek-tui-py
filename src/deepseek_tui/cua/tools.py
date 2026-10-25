@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -15,6 +16,19 @@ MAX_CUA_TEXT_BYTES = 64 * 1024
 # Runtime text blocks this large are remembered so a verbatim repeat can be shortened.
 REPEATED_TEXT_MIN_BYTES = 4096
 MAX_REMEMBERED_TEXTS = 8
+# Large web views list only part of their tree; persistent navigation often sits past the cut.
+_AX_TRUNCATED = re.compile(r"\(showing \d+-(\d+) of (\d+) items\)")
+_COORDINATE_CLICK = re.compile(r"\.click\(\s*\[")
+AX_TRUNCATED_NOTE = (
+    "[Host note: this accessibility tree is truncated. Elements past the listed range exist "
+    "but are not shown, so an unlisted element is not evidence that it is absent, and a '+' "
+    "line can be an element that moved into the range. Locate unlisted targets with a screenshot.]"
+)
+COORDINATE_CLICK_NOTE = (
+    "[Host note: a coordinate click does not report what it hit. Before the next action, "
+    "confirm the intended target took effect; if not, look for the target's element index in "
+    "a fresh accessibility tree before trying coordinates again.]"
+)
 HANDOFF_NOTICE = (
     "[CUA session reset for desktop handoff. Old JavaScript variables and element references "
     "are invalid. Start with a documented CUA entry point and observe again before acting.]"
@@ -233,6 +247,15 @@ class CuaTool(ToolSpec):
                 "\nThat API does not exist. Use only the APIs in the documentation returned by "
                 "the first call; await cua.rewriteDocumentation() shows it again."
             ))
+        if result.success:
+            notes = []
+            ranges = _AX_TRUNCATED.findall(result.content)
+            if any(int(shown) < int(total) for shown, total in ranges):
+                notes.append(AX_TRUNCATED_NOTE)
+            if _COORDINATE_CLICK.search(str(input_data.get("code", ""))):
+                notes.append(COORDINATE_CLICK_NOTE)
+            if notes:
+                result = replace(result, content="\n".join([result.content, *notes]))
         if len(result.content.encode("utf-8")) > MAX_CUA_TEXT_BYTES:
             from deepseek_tui.tools.runtime import write_spillover
 

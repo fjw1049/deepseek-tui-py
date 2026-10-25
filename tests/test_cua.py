@@ -1093,6 +1093,23 @@ async def test_missing_api_error_points_back_to_the_documentation(session, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_results_flag_truncated_trees_and_unverified_coordinate_clicks(session, tmp_path):
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        code = "await app.click([114, 501]);\n2 HTML (showing 0-100 of 350 items)"
+        result = await tool.execute({"code": code}, context)
+        assert result.content.startswith(code)
+        assert "truncated" in result.content and "not evidence" in result.content
+        assert "coordinate click" in result.content
+        complete = "await app.click(75);\n2 HTML (showing 0-40 of 40 items)"
+        assert (await tool.execute({"code": complete}, context)).content == complete
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_runtime_surface_names_the_touched_app_for_the_preview(session, tmp_path):
     await session.connect()
     tool = CuaTool(session, session.descriptors[0])
