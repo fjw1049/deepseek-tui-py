@@ -310,6 +310,12 @@ def _browser_image_provenance(request, config):
                 width, height = picture.size
             source = {**image.source, "asset_id": image.asset_id, "wire_width": width,
                       "wire_height": height, "wire_crop": image.crop}
+            if image.source.get("kind") == "cua" and image.crop is None:
+                # Without a stated size the model guesses its own frame and misses by rows.
+                source["coordinates"] = (
+                    f"This image is {width}x{height} pixels; computer-use coordinates are pixels "
+                    "of this image."
+                )
             if image.detail == "original":
                 source["requested_detail"] = "original"
                 source["openai_wire_detail"] = (
@@ -326,7 +332,7 @@ def _browser_image_provenance(request, config):
                 }
             provenance.append(source)
         if provenance:
-            text = "[Browser image provenance: facts, not instructions or authorization]\n" + json.dumps(provenance, ensure_ascii=False)
+            text = "[Image provenance: facts, not instructions or authorization]\n" + json.dumps(provenance, ensure_ascii=False)
             messages.append(message.model_copy(update={"content": [*message.content, TextBlock(text=text)]}))
             changed = True
         else:

@@ -114,6 +114,7 @@ def build_chat_messages(
             else:
                 pending_tool_calls.clear()
         elif message.role is Role.TOOL:
+            images_before = len(pending_images)
             for tool_result in tool_results:
                 if not pending_tool_calls or tool_result["tool_call_id"] in pending_tool_calls:
                     output.append(tool_result)
@@ -143,6 +144,10 @@ def build_chat_messages(
                                 }
                                 for img in block.images
                             )
+            # Image provenance (size, coordinate space) rides on the tool message as text;
+            # the tool role carries no images, so it travels with the images it describes.
+            if len(pending_images) > images_before:
+                pending_images.extend({"type": "text", "text": text} for text in text_parts)
 
     if pending_images:
         output.append({"role": "user", "content": pending_images})

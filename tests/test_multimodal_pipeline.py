@@ -656,6 +656,26 @@ def test_browser_duplicate_pixels_keep_latest_provenance_without_mutating_histor
     assert message_images(request.messages[1])
 
 
+async def test_tool_screenshot_size_reaches_the_wire_for_both_protocols():
+    block = import_image(image_bytes(size=(300, 200))).model_copy(
+        update={"source": {"kind": "cua", "tool": "cua_js", "tool_call_id": "a"}}
+    )
+    request = MessageRequest(
+        model="unknown-capability",
+        messages=[
+            Message.user("look", origin=MessageOrigin.REAL_USER),
+            Message(role=Role.ASSISTANT, content=[ToolUseBlock(id="a", name="cua_js", input={})]),
+            Message.tool_result("a", "1 image(s) attached.", images=[block]),
+        ],
+    )
+    projected = await prepare_media_request(request, Config(), {})
+    observation = build_chat_messages(projected.messages, model="unknown-capability")[-1]
+    texts = [part["text"] for part in observation["content"] if part["type"] == "text"]
+    assert any("300x200 pixels" in text for text in texts)
+    _, anthropic = _build_anthropic_messages(projected.messages, system_prompt=None)
+    assert "300x200 pixels" in json.dumps(anthropic)
+
+
 def test_budget_never_silently_removes_current_screenshot(monkeypatch):
     block = import_image(image_bytes())
     monkeypatch.setattr("deepseek_tui.client.media.image_data_url", lambda *a, **k: "x" * 600_000)
