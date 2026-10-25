@@ -2091,8 +2091,8 @@ export function Workbench(): ReactElement {
             </div>
             </div>
             </div>
-            <CuaPreview threadId={activeThreadId} />
             </ChatSplitDropZone>
+            <CuaPreview threadId={activeThreadId} />
             {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
               <div
                 className="ds-bottom-terminal ds-no-drag flex shrink-0 flex-col border-t-2 border-ds-border"
