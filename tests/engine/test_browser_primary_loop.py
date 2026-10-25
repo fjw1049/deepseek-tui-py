@@ -230,14 +230,31 @@ async def test_delivery_returns_exact_answer_without_finalization_notice(tmp_pat
         await engine.shutdown_session()
 
 
-async def test_repeated_unstructured_stop_is_partial_not_infinite_loop(tmp_path):
+async def test_announced_step_without_tool_call_can_still_be_taken(tmp_path):
     engine, client = await delivery_engine(tmp_path, [
+        ToolCall(id="look", name="browser_use", arguments={"action": "observe"}),
+        "I'll open the report next.",
         ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        "Opened.", "Opened.",
+        finish(),
     ])
     try:
         result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 3
+        assert len(client.requests) == 4
+        assert "browser_use" in {(t.get("function") or t)["name"] for t in client.requests[2].tools}
+        assert result.task_outcome["status"] == "completed"
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_repeated_unstructured_stop_is_partial_not_infinite_loop(tmp_path):
+    engine, client = await delivery_engine(tmp_path, [
+        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
+        "Opened.", "Opened.", "Opened.",
+    ])
+    try:
+        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
+        # One round to continue, one to finalize, then a bounded partial.
+        assert len(client.requests) == 4
         assert result.task_outcome["status"] == "partial"
         assert "not verified" in result.assistant_message.text_content()
     finally:
@@ -399,11 +416,11 @@ async def test_rejected_delivery_has_one_correction_and_preserves_actual_answer(
 async def test_progress_narration_is_never_reused_as_answer(tmp_path):
     engine, client = await delivery_engine(tmp_path, [
         ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        "Retry with the screenshot ID.", "Trying again.",
+        "Retry with the screenshot ID.", "Trying again.", "Trying again.",
     ])
     try:
         result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 3
+        assert len(client.requests) == 4
         assert result.task_outcome["status"] == "partial"
         assert "Retry" not in result.assistant_message.text_content()
         assert "Trying" not in result.assistant_message.text_content()

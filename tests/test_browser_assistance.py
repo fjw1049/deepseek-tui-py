@@ -273,7 +273,7 @@ async def test_engine_fences_bing_until_explicit_user_decision(help_task, tmp_pa
         await manager.respond_browser_assistance("one", run.assistance["id"], "ignore")
         await asyncio.wait_for(task, 3)
         assert run.session.navigate.await_count == 0  # queued Bing action was discarded
-        assert len(requests) == 3
+        assert len(requests) == 4  # help, continue, finalize, then partial
         assert any("Do not skip" in m.text_content() for m in requests[1].messages)
     finally:
         task.cancel()

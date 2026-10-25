@@ -63,11 +63,12 @@ def names(request):
 async def test_desktop_stop_without_delivery_is_partial_not_completed(tmp_path):
     # A narrated next step ("I'll dismiss the dialog") must not end the task as done.
     engine, client = await desktop_engine(tmp_path, [
-        look(), "I'll dismiss the prompt next.", "Dismissing it now.",
+        look(), "I'll dismiss the prompt next.", "Dismissing it now.", "Dismissing it now.",
     ])
     try:
         result = await engine._run_conversation([Message.user("Message Ann")], "test", "sys", None)
-        assert len(client.requests) == 3
+        assert len(client.requests) == 4
+        assert "finish_task" in names(client.requests[2]) and len(names(client.requests[2])) > 1
         assert names(client.requests[-1]) == {"finish_task"}
         assert result.task_outcome["status"] == "partial"
         assert "not verified" in result.assistant_message.text_content()
@@ -193,5 +194,49 @@ async def test_site_replay_requires_delivery_and_verified_evidence(tmp_path, mon
                        for b in m.content if b.type == "tool_result"}
             assert results["done"].is_error
             assert "Unknown evidence" in results["done"].content
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_tool_list_stays_stable_when_a_desktop_task_starts(tmp_path):
+    # Adding the delivery controls at the first UI call voided the provider prefix cache.
+    engine, client = await desktop_engine(tmp_path, [
+        look(),
+        ToolCall(id="finish", name="finish_task", arguments={
+            "status": "completed", "answer": "Notes is open.",
+            "evidence": ["tool:look"], "remaining": [],
+        }),
+    ])
+    try:
+        await engine._run_conversation([Message.user("Check Notes")], "test", "sys", None)
+        assert "finish_task" in names(client.requests[0])
+        assert names(client.requests[0]) == names(client.requests[1])
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_finish_outside_a_ui_task_points_back_to_a_direct_answer(tmp_path):
+    engine, client = await desktop_engine(tmp_path, [
+        ToolCall(id="early", name="finish_task", arguments={
+            "status": "completed", "answer": "Hi", "evidence": [], "remaining": [],
+        }),
+        "Hi",
+    ])
+    try:
+        result = await engine._run_conversation([Message.user("Hello")], "test", "sys", None)
+        errors = [b.content for m in client.requests[-1].messages for b in m.content
+                  if b.type == "tool_result" and b.is_error]
+        assert any("directly" in str(e) for e in errors)
+        assert result.assistant_message.text_content() == "Hi"
+        assert result.task_outcome is None
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_sessions_without_ui_surfaces_do_not_offer_delivery_controls(tmp_path):
+    engine, client = await desktop_engine(tmp_path, ["Hello"], drop=("cua_js",))
+    try:
+        await engine._run_conversation([Message.user("Hello")], "test", "sys", None)
+        assert not {"finish_task", "request_task_tools"} & names(client.requests[0])
     finally:
         await engine.shutdown_session()

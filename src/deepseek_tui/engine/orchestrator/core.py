@@ -3243,7 +3243,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             await self.handle.pause.wait(self.handle.cancel_event)
             if self.handle.resume_context is not None:
                 delivery.outcome = None
-                delivery.stop_reminded = delivery.finalization_attempted = False
+                delivery.stop_reminded = delivery.finalization_attempted = delivery.continue_nudged = False
                 delivery.draft_answer = ""
                 self._ui_progress.reset()  # the person changed what the screen shows
                 from deepseek_tui.engine import reminders
@@ -3271,7 +3271,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 steer_text = steer_text.strip()
                 if not steer_text:
                     continue
-                delivery.stop_reminded = delivery.finalization_attempted = False
+                delivery.stop_reminded = delivery.finalization_attempted = delivery.continue_nudged = False
                 delivery.draft_answer = ""
                 self._ui_progress.reset()  # the person may have changed what the screen shows
                 # Honor @plugin: mount/unmount in steers (same as primary send).
@@ -3556,6 +3556,19 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     logger.info("turn_end_deferred_pending_steer")
                     continue
                 if delivery.active and delivery.outcome is None and not result.error_message:
+                    # Keep the last round for finalization.
+                    if not delivery.continue_nudged and round_idx + 1 < self.max_tool_round_trips:
+                        delivery.continue_nudged = True
+                        from deepseek_tui.engine import reminders
+
+                        messages.append(reminders.reminder_message(
+                            reminders.TASK_DELIVERY,
+                            "This round ended without a tool call while the task is still open. "
+                            "If you announced a next step, take it now with the tool call. If the "
+                            "task is finished or cannot progress, call finish_task."
+                        ))
+                        logger.info("task_delivery_continue_nudged")
+                        continue
                     if not delivery.stop_reminded and round_idx < self.max_tool_round_trips:
                         delivery.stop_reminded = True
                         from deepseek_tui.engine import reminders

@@ -36,6 +36,8 @@ class TaskDelivery:
     # Evidence predating an uncertain desktop action cannot verify its outcome.
     cua_failed_evidence: set[str] | None = None
     outcome: dict[str, Any] | None = None
+    # A stop without a tool call first gets one round, with all tools, to take its next step.
+    continue_nudged: bool = False
     stop_reminded: bool = False
     finalization_attempted: bool = False
     draft_answer: str = ""
@@ -51,17 +53,21 @@ class TaskDelivery:
         # stable preserves the provider prefix cache across focus changes.
         if self.active and self.stop_reminded:
             return [t for t in catalog if (t.get("function") or t)["name"] == "finish_task"]
-        return [
-            t
-            for t in catalog
-            if self.active or (t.get("function") or t)["name"] not in CONTROL_TOOLS
-        ]
+        names = {(t.get("function") or t)["name"] for t in catalog}
+        # Where a UI surface is offered, the controls stay listed: adding them at the first UI
+        # call changed the tool list mid-task and voided the prefix cache twice per task.
+        if self.active or names & surface_tools():
+            return list(catalog)
+        return [t for t in catalog if (t.get("function") or t)["name"] not in CONTROL_TOOLS]
 
 
 def _state(context: ToolContext) -> TaskDelivery:
     state = context.metadata.get("task_delivery")
     if not isinstance(state, TaskDelivery) or not state.active:
-        raise ToolError("No active UI task")
+        raise ToolError(
+            "No UI task is open in this turn. Answer the user directly in text, without "
+            "finish_task or request_task_tools."
+        )
     return state
 
 
@@ -132,7 +138,9 @@ class FinishTaskTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Submit the actual final answer for the whole user task, not an intermediate step. "
+            "Only for a turn that operated a UI surface (browser_use or cua_js); otherwise "
+            "answer directly. Submit the actual final answer for the whole user task, not an "
+            "intermediate step. "
             "Call alone. status=completed requires evidence and no remaining work. "
             "Use partial/blocked with concrete remaining items when unable to finish. Evidence "
             "references must copy evidence_ref from successful tool results, never action_id "
