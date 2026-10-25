@@ -1,14 +1,20 @@
 """Soft-resume reminder text for interrupted/failed Workbench turns.
 
-Builds a structured ``CONTINUE_NUDGE`` that lists resumable sub-agents
-and tasks so the parent model prefers resume over re-spawn.
+Builds a reminder that lists resumable sub-agents and tasks so the parent
+model prefers resume over re-spawn, while the user's new message decides
+whether the interrupted work continues at all.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from deepseek_tui.tools.durable_transcript import CONTINUE_NUDGE
+# An interruption is often a redirect, so the new message outranks the old objective.
+SOFT_RESUME_LEAD = (
+    "The previous turn was interrupted before it finished. Follow the user's next message: "
+    "continue the earlier objective only if it asks for that, and do not repeat tool calls "
+    "whose results are already in the conversation."
+)
 
 _SUMMARY_LIMIT = 80
 
@@ -57,10 +63,9 @@ def build_soft_resume_reminder(
 ) -> str:
     """Return reminder body (without ``<system-reminder>`` wrapper).
 
-    When no resumable entities are present, falls back to the generic
-    ``CONTINUE_NUDGE`` so soft-resume behavior does not regress.
+    When no resumable entities are present, returns only ``SOFT_RESUME_LEAD``.
     """
-    lines: list[str] = [CONTINUE_NUDGE]
+    lines: list[str] = [SOFT_RESUME_LEAD]
     agent_lines: list[str] = []
     for agent in agents or []:
         if not is_resumable_agent(agent):
@@ -98,12 +103,12 @@ def build_soft_resume_reminder(
         task_lines.append(line)
 
     if not agent_lines and not task_lines:
-        return CONTINUE_NUDGE
+        return SOFT_RESUME_LEAD
 
     lines.append("")
     lines.append(
-        "The previous turn was cut short. The following entities can be "
-        "resumed from durable checkpoints — prefer resume; do not spawn a "
+        "The following entities from that turn can be resumed from durable "
+        "checkpoints. If the work continues, prefer resume; do not spawn a "
         "new sub-agent or create a new task for the same objective:"
     )
     lines.extend(agent_lines)

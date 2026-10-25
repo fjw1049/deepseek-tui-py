@@ -5,11 +5,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from deepseek_tui.server.threads.soft_resume import (
+    SOFT_RESUME_LEAD,
     build_soft_resume_reminder,
     is_resumable_agent,
     is_resumable_task,
 )
-from deepseek_tui.tools.durable_transcript import CONTINUE_NUDGE
 from deepseek_tui.tools.subagent.types import (
     SubAgentAssignment,
     SubAgentResult,
@@ -46,15 +46,15 @@ def _agent(
     )
 
 
-def test_empty_lists_fall_back_to_continue_nudge() -> None:
-    assert build_soft_resume_reminder() == CONTINUE_NUDGE
-    assert build_soft_resume_reminder(agents=[], tasks=[]) == CONTINUE_NUDGE
+def test_empty_lists_fall_back_to_the_lead() -> None:
+    assert build_soft_resume_reminder() == SOFT_RESUME_LEAD
+    assert build_soft_resume_reminder(agents=[], tasks=[]) == SOFT_RESUME_LEAD
     assert (
         build_soft_resume_reminder(
             agents=[_agent("a1", kind="completed")],
             tasks=[SimpleNamespace(id="t1", status=TaskStatus.COMPLETED, prompt="x")],
         )
-        == CONTINUE_NUDGE
+        == SOFT_RESUME_LEAD
     )
 
 
@@ -66,7 +66,7 @@ def test_lists_resumable_agents_and_forbids_spawn() -> None:
             _agent("agent_fail", kind="failed", objective="x" * 120, steps=1),
         ]
     )
-    assert CONTINUE_NUDGE in text
+    assert SOFT_RESUME_LEAD in text
     assert "subagent agent_abc (cancelled, steps=4)" in text
     assert "objective=find bugs" in text
     assert "agent_done" not in text
@@ -107,3 +107,28 @@ def test_is_resumable_helpers() -> None:
     assert not is_resumable_agent(_agent("a", kind="running"))
     assert is_resumable_task(SimpleNamespace(status=TaskStatus.CANCELED))
     assert not is_resumable_task(SimpleNamespace(status=TaskStatus.RUNNING))
+
+
+def test_lead_defers_to_the_users_new_message() -> None:
+    assert "user's next message" in SOFT_RESUME_LEAD
+    assert "finish the original objective" not in SOFT_RESUME_LEAD
+
+
+async def test_manager_lists_only_this_threads_tasks() -> None:
+    from deepseek_tui.server.threads.manager import RuntimeThreadManager
+
+    def task(tid, thread):
+        return SimpleNamespace(
+            id=tid, status=TaskStatus.FAILED, prompt_summary=tid, thread_id=thread
+        )
+
+    async def list_tasks(limit=None):
+        return [task("task_here", "thr_a"), task("task_elsewhere", "thr_b")]
+
+    manager = SimpleNamespace(
+        _active={"thr_a": SimpleNamespace(engine=SimpleNamespace(tool_context=SimpleNamespace(
+            subagent_manager=None, task_manager=SimpleNamespace(list_tasks=list_tasks))))},
+        _shared_tool_runtime=None,
+    )
+    text = await RuntimeThreadManager._build_soft_resume_reminder_text(manager, "thr_a")
+    assert "task_here" in text and "task_elsewhere" not in text

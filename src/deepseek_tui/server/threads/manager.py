@@ -5163,7 +5163,8 @@ class RuntimeThreadManager:
                         listed = lister(limit=50)
                         if asyncio.iscoroutine(listed):
                             listed = await listed
-                        tasks = list(listed or [])
+                        # The task store is shared; only this thread's tasks are its to resume.
+                        tasks = [t for t in listed or [] if getattr(t, "thread_id", None) == thread_id]
                     except Exception:  # noqa: BLE001 — reminder must not block turn
                         logger.debug(
                             "soft_resume_list_tasks_failed thread=%s",
