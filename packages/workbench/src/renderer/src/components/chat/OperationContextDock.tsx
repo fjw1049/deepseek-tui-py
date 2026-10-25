@@ -48,6 +48,8 @@ import { GitBranchPicker } from './GitBranchPicker'
 import { TaskActivity } from './TaskActivity'
 
 type Props = {
+  forceCompact?: boolean
+  onExpandRequested?: () => void
   onCollapse?: () => void
   /** Project currently rendered by the owning Workbench. */
   workspaceRoot: string
@@ -152,6 +154,8 @@ function SectionHeader({
 
 export function OperationContextDock({
   workspaceRoot,
+  forceCompact = false,
+  onExpandRequested,
   onCollapse,
   onOpenChanges,
   onOpenFilesSidebar,
@@ -343,17 +347,17 @@ export function OperationContextDock({
 
   // Keep the expanded card mounted while collapsing (fade/squeeze) and while
   // expanding (fade in from the narrow rail). Only idle-compact uses the strip.
-  if (!onCollapse && compact && motion !== 'expanding') {
+  if (!onCollapse && (forceCompact || (compact && motion !== 'expanding'))) {
     return (
       <div
         className="ds-operation-dock ds-operation-dock--compact ds-no-drag relative z-10"
         data-compact="true"
-        data-phase={motion === 'idle' ? 'compact' : motion}
+        data-phase={forceCompact || motion === 'idle' ? 'compact' : motion}
       >
         <button
           type="button"
           className="ds-operation-dock-rail__btn ds-operation-dock-rail__btn--toggle"
-          onClick={() => setCompactMode(false)}
+          onClick={() => { onExpandRequested?.(); setCompactMode(false) }}
           title={t('operationDockExpand')}
           aria-label={t('operationDockExpand')}
           aria-expanded={false}

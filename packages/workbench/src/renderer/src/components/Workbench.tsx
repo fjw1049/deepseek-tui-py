@@ -656,7 +656,7 @@ export function Workbench(): ReactElement {
         ? 'pr-[8rem] sm:pr-[8.5rem]'
         : 'pr-9 sm:pr-10'
     : ''
-  const operationColumnActive = showOperationColumn && !rightSidebarOpen
+  const operationColumnActive = showOperationColumn
   const terminalSidebarOpen =
     rightSidebarOpen && rightSidebarTab === 'terminal' && !rightSidebarCollapsed
   const chatColumnInsetClass = useMemo(() => {
@@ -2072,6 +2072,8 @@ export function Workbench(): ReactElement {
                   <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex" style={operationColumnActive ? undefined : { display: 'none' }}>
                     <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
                       <OperationContextDock
+                        forceCompact={rightSidebarOpen}
+                        onExpandRequested={closeRightSidebar}
                         workspaceRoot={activeWorkspaceRoot}
                         onOpenChanges={handleBranchOpenDiff}
                         onOpenFilesSidebar={openFilesSidebar}

@@ -131,3 +131,23 @@ it('finishes expanding at full width even when animation frames are delayed', as
   expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-phase')).toBe('expanded')
   expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-compact')).toBe('false')
 })
+
+
+it('temporarily compacts for the sidebar and restores the expanded preference', async () => {
+  localStorage.setItem('deepseekgui.operationDock.compact', 'false')
+  await refresh()
+  expect(compact()).toBe(false)
+  await act(async () => root.render(createElement(OperationContextDock, { ...props, forceCompact: true })))
+  expect(compact()).toBe(true)
+  expect(localStorage.getItem('deepseekgui.operationDock.compact')).toBe('false')
+  await refresh()
+  expect(compact()).toBe(false)
+})
+
+it('requests sidebar closure when expanding the compact rail', async () => {
+  const onExpandRequested = vi.fn()
+  await act(async () => root.render(createElement(OperationContextDock, { ...props, forceCompact: true, onExpandRequested })))
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  expect(onExpandRequested).toHaveBeenCalledOnce()
+  expect(localStorage.getItem('deepseekgui.operationDock.compact')).toBe('false')
+})
