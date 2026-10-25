@@ -13,7 +13,7 @@ import type { SubagentMailboxPayload, ToolEventPayload } from '../agent/types'
  * Sessions are keyed by thread, so background work never moves the user's view: a
  * thread's card shows only while that thread is the one being viewed.
  */
-export type CuaPreviewOutcome = 'ended' | 'stopped' | 'failed'
+export type CuaPreviewOutcome = 'ended' | 'completed' | 'stopped' | 'failed'
 
 export type CuaPreviewPhase = 'armed' | 'live' | 'hidden-for-task' | 'ended'
 
@@ -151,7 +151,7 @@ export function noteCuaTurnEnded(threadId: string, outcome: CuaPreviewOutcome = 
   update(threadId, (session) => {
     const phase = phaseOnTurnEnd(session?.phase)
     if (!session || phase === undefined) return undefined
-    return { ...session, phase, outcome: session.outcome ?? outcome }
+    return { ...session, phase, outcome: session.outcome && session.outcome !== 'ended' ? session.outcome : outcome }
   })
 }
 

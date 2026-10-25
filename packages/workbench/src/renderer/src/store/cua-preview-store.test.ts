@@ -159,3 +159,13 @@ it('restores a new manual turn instead of keeping the previous ended preview', (
   restoreCuaPreview('thread', { used: true, active: true, turn_id: 'manual' })
   expect(session()!.phase).toBe('hidden-for-task')
 })
+
+
+it('replaces a generic end with a later verified result', () => {
+  useCuaPreviewStore.setState({ sessions: { thread: {
+    phase: 'live', turnId: 'turn', appId: null, surface: null, still: null, label: null, revision: 0
+  } } })
+  noteCuaTurnEnded('thread')
+  noteCuaTurnEnded('thread', 'completed')
+  expect(useCuaPreviewStore.getState().sessions.thread?.outcome).toBe('completed')
+})

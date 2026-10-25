@@ -481,3 +481,24 @@ describe('approval notification completion race', () => {
     }
   })
 })
+
+it.each(['completed', 'partial', 'blocked'] as const)('preserves task outcome %s separately from turn completion', async (taskStatus) => {
+  let deliver: (event: { streamId: string; data: unknown }) => void = () => {}
+  const controller = new AbortController()
+  const sink = { onSeq: vi.fn(), onDeltas: vi.fn(), onUserMessage: vi.fn(), onTool: vi.fn(),
+    onApproval: vi.fn(), onUserInput: vi.fn(), onUserInputStatus: vi.fn(), onTurnComplete: vi.fn(), onError: vi.fn() }
+  Object.defineProperty(window, 'dsGui', { configurable: true, value: {
+    getSettings: async () => ({ deepseek: { approvalPolicy: 'on-request' } }),
+    onSseEvent: (callback: typeof deliver) => { deliver = callback; return () => {} },
+    onSseError: () => () => {}, onSseEnd: () => () => {}, stopSse: vi.fn(),
+    startSse: async (_thread: string, _seq: number, streamId: string) => {
+      deliver({ streamId, data: { event: 'turn.completed', payload: {
+        turn: { id: 'turn', thread_id: 'thread', status: 'completed', task_outcome: { status: taskStatus } }
+      } } })
+    }
+  } })
+  const subscription = new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 0, sink, controller.signal)
+  try {
+    await vi.waitFor(() => expect(sink.onTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', taskStatus })))
+  } finally { controller.abort(); await subscription }
+})

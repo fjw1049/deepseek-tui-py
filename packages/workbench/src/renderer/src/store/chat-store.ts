@@ -1573,7 +1573,9 @@ function buildThreadEventSink(
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
       emitPetEvent(threadId, { type: 'turn_complete' })
-      noteCuaTurnEnded(threadId, payload?.status === 'cancelled' ? 'stopped' : payload?.status === 'failed' ? 'failed' : 'ended')
+      noteCuaTurnEnded(threadId, payload?.status === 'cancelled' ? 'stopped'
+        : payload?.status === 'failed' || payload?.taskStatus === 'partial' || payload?.taskStatus === 'blocked' ? 'failed'
+          : payload?.taskStatus === 'completed' ? 'completed' : 'ended')
       const completedState = get()
       const completedThreadId = payload?.threadId ?? completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId

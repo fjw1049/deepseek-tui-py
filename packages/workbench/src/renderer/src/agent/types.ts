@@ -375,6 +375,7 @@ export type ThreadDeltaEvent = {
 }
 
 export type TurnCompletePayload = {
+  taskStatus?: 'completed' | 'partial' | 'blocked'
   status?: 'completed' | 'failed' | 'cancelled'
   threadId?: string | null
   turnId?: string | null

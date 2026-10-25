@@ -2071,7 +2071,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     sink.onError(new Error(turnError))
                   }
                 }
+                const taskStatus = (turn?.task_outcome as { status?: unknown } | undefined)?.status
                 sink.onTurnComplete({
+                  taskStatus: taskStatus === 'completed' || taskStatus === 'partial' || taskStatus === 'blocked' ? taskStatus : undefined,
                   status: turnError || turn?.status === 'failed' ? 'failed'
                     : ['cancelled', 'canceled', 'interrupted'].includes(String(turn?.status)) ? 'cancelled' : 'completed',
                   threadId:
