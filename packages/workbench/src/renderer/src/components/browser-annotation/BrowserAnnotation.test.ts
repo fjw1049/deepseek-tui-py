@@ -250,3 +250,15 @@ it('keeps the captured page URL when the same tab navigates before adding', asyn
   await click('annotationAdd')
   expect(h.props.onAdd).toHaveBeenCalledWith(expect.any(File), false, 'https://example.test/a')
 })
+
+it('keeps recording actions available while picking and drawing', async () => {
+  const stop = vi.fn()
+  const h = mount({ activity: createElement('button', { onClick: stop }, 'Stop recording'), closable: false })
+  await h.render()
+  await click('annotationPick')
+  expect(button('Stop recording')).toBeTruthy()
+  await click('annotationPick')
+  await freeze()
+  await click('Stop recording')
+  expect(stop).toHaveBeenCalledOnce()
+})

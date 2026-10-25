@@ -159,3 +159,25 @@ class WorkbenchBrowserSession(BrowserSession):
         except Exception as exc:  # noqa: BLE001
             return self._result("close_tab", started, error=str(exc))
         return self._result("close_tab", started, tab_id)
+
+
+async def capture_visible_tab(bridge: dict[str, Any], browser_id: str) -> bytes:
+    """Capture the shown page without retargeting the agent's action connection."""
+    import base64
+    import websockets
+
+    result = await control(bridge, "Workbench.listTabs", {"browserId": browser_id})
+    tab = next((tab for tab in result["tabs"] if tab.get("active")), None)
+    if tab is None:
+        raise RuntimeError("No visible browser tab to record")
+    async with websockets.connect(tab_url(bridge, tab["tab_id"]), open_timeout=3) as ws:
+        await ws.send(json.dumps({"id": 1, "method": "Page.captureScreenshot",
+                                  "params": {"format": "jpeg", "quality": 75}}))
+        async with asyncio.timeout(4):
+            while True:
+                reply = json.loads(await ws.recv())
+                if reply.get("id") == 1:
+                    break
+    if "error" in reply:
+        raise RuntimeError(reply["error"].get("message") or "Browser capture failed")
+    return base64.b64decode(reply["result"]["data"], validate=True)

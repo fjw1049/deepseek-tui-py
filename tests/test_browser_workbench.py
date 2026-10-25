@@ -22,6 +22,7 @@ class FakeBridge:
         self.cookies: dict[tuple, dict] = {}
         self.cleared = 0
         self.methods: list[str] = []
+        self.capture_tabs: list[str] = []
 
     async def handler(self, ws):
         path = ws.request.path
@@ -55,6 +56,7 @@ class FakeBridge:
                     self.cookies[(cookie["name"], domain, stored["path"])] = stored
                 result = {}
             elif method == "Page.captureScreenshot":
+                self.capture_tabs.append(tab)
                 import base64
                 import io
 
@@ -403,6 +405,28 @@ async def test_a_takeover_during_the_turn_is_not_undone_by_that_turn(browser):
     assert run.owner == "agent"
 
 
+async def test_returning_control_reports_the_demonstration_it_ended(browser, monkeypatch):
+    from types import SimpleNamespace
+
+    from deepseek_tui.browser import workflows
+    from deepseek_tui.server.threads.manager import RuntimeThreadManager
+
+    async def finish(run):
+        run.recorder = None
+        return {"recordingId": "rec_demo", "steps": 3}
+
+    monkeypatch.setattr(workflows, "finish_recording", finish)
+    manager = RuntimeThreadManager.__new__(RuntimeThreadManager)
+    manager.browser_service = browser
+    manager._active = {}
+    run = await browser.ensure("thr_one")
+    await manager.control_browser("thr_one", "user")
+    run.recorder = SimpleNamespace(actor="user")
+    state = await manager.control_browser("thr_one", "agent")
+    assert run.owner == "agent"
+    assert state["demonstration"] == {"recordingId": "rec_demo", "steps": 3}
+
+
 async def test_sign_outs_from_a_sync_reach_the_workbench_browser(browser, bridge):
     def removed(data):
         data["native_migrated"] = True
@@ -612,3 +636,24 @@ async def test_agent_can_list_and_switch_after_controlled_popup_closes(browser, 
     assert run.session.connected and run.session.tab_id == "tab-a" and run.healthy
     assert not run.unresolved
     await browser.close("thr_one")
+
+
+@pytest.mark.parametrize('kind', ['record', 'video'])
+async def test_user_recording_follows_visible_tab_without_retargeting_actions(browser, bridge, kind):
+    import shutil
+    if kind == 'video' and not shutil.which('ffmpeg'):
+        pytest.skip('FFmpeg is required for video encoding')
+    run = await browser.ensure('thr_one')
+    await browser.control('thr_one', 'user')
+    await browser.action('thr_one', BrowserAction(action=f'{kind}_start'), actor='user')
+    bridge.tabs['tab-b'] = {'url': 'https://example.test/b', 'title': 'B'}
+    bridge.active = 'tab-b'
+    bridge.capture_tabs.clear()
+    try:
+        async with asyncio.timeout(3):
+            while 'tab-b' not in bridge.capture_tabs:
+                await asyncio.sleep(0.02)
+        assert run.session.tab_id == 'tab-a'
+        assert bridge.active == 'tab-b'
+    finally:
+        await browser.close('thr_one')

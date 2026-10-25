@@ -155,3 +155,16 @@ export function isBrowsableUrl(value: string): boolean {
     return false
   }
 }
+
+/** A browsable URL for `value`: itself, public http moved to https, or null when it may not load. */
+export function upgradeToBrowsableUrl(value: string): string | null {
+  if (isBrowsableUrl(value)) return value
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:') return null
+    url.protocol = 'https:'
+    return url.toString()
+  } catch {
+    return null
+  }
+}

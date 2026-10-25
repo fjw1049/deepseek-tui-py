@@ -72,9 +72,6 @@ async def start_recording(
     run = service.runs.get(thread_id)
     if not run or not run.session:
         raise ValueError("Open a browser page first")
-    if actor == "user" and getattr(run.recorder, "auto", False):
-        # A background capture yields to the user's demonstration.
-        await service.end_agent_capture(thread_id, completed=False)
     async with run.lock:
         if run.owner != actor or run.recorder or (run.demo_task and not run.demo_task.done()):
             raise ValueError("Take control and finish the current workflow first")

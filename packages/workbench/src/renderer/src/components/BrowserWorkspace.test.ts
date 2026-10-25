@@ -3,6 +3,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { BrowserWorkspace } from './BrowserWorkspace'
+import { requestBrowserDemo, useBrowserDemoStore } from '../store/browser-demo-store'
 import { markPageReady, registerPageWebview, updatePageTab, useBrowserPagesStore, type PageWebview } from '../store/browser-pages-store'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -282,7 +283,8 @@ it('keeps manual control and shows a retryable error when resume observation fai
     await h.click('browserReturnControl')
     await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.textContent).toContain('Page disconnected; retry')
-    expect(h.container.textContent).toContain('browserConnectionProblem')
+    expect(h.container.textContent).toContain('browserTaskPaused')
+    expect(h.container.textContent).toContain('browserReturnControl')
     await act(async () => h.container.querySelector<HTMLButtonElement>('.ds-browser-status-trigger')!.click())
     expect(h.container.querySelector('textarea')?.disabled).toBe(false)
     expect(resume).not.toHaveBeenCalled()
@@ -328,38 +330,72 @@ it('hides the resting bar between tasks and brings it back when the agent takes 
   const h = mount({ active: true, owner: 'user', task_running: false, generation: 2, image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] })
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
-    const status = h.container.querySelector('.ds-browser-status')!
-    expect(status.closest('.ds-annotation-toolbar')).toBeTruthy()
-    expect(status.querySelector('[role="status"]')?.textContent).toContain('browserUserControl')
-    expect(status.querySelector('.ds-browser-status-trigger')).toBeNull()
-    expect(status.querySelector('.ds-browser-control')).toBeNull()
+    // With no agent involved, "you have the page" says nothing, so the bar carries only its tools.
+    const toolbar = h.container.querySelector('.ds-annotation-toolbar')!
+    expect(toolbar.querySelector('.ds-browser-status')).toBeNull()
+    expect(toolbar.firstElementChild?.classList.contains('ds-annotation-toolbar__divider')).toBe(false)
     await h.click('annotationHide')
-    expect(h.container.querySelector('.ds-browser-status')).toBeNull()
+    expect(h.container.querySelector('.ds-annotation-toolbar')?.closest('[inert]')).toBeTruthy()
     await h.click('browserMore')
     await h.click('browserShowAnnotationTools')
-    expect(h.container.querySelector('.ds-browser-status')).not.toBeNull()
+    expect(h.container.querySelector('.ds-annotation-toolbar')?.closest('[inert]')).toBeNull()
     await h.click('annotationHide')
     h.request.mockImplementation(async () => ({ ok: true, status: 200, body: JSON.stringify({ active: true, owner: 'agent', task_running: true, generation: 3, image: 'data:image/jpeg;base64,AA==', log: [], artifacts: [] }) }))
     await act(async () => new Promise(resolve => setTimeout(resolve, 100)))
-    const bar = h.container.querySelector('.ds-browser-status')!
+    // The agent's page cannot be annotated, so the bar shows only the status and the takeover.
+    const bar = [...h.container.querySelectorAll('.ds-browser-status')].find(item => !item.closest('[inert]'))!
     expect(bar.classList.contains('is-agent')).toBe(true)
-    expect(h.container.querySelector('[aria-label="annotationHide"]')).toBeNull()
-    expect(h.container.querySelector<HTMLButtonElement>('[aria-label="annotationPen"]')?.disabled).toBe(true)
+    const shown = bar.closest('.ds-annotation-toolbar')!
+    expect(shown.querySelector('[aria-label="annotationPen"], [aria-label="browserDemoStart"], [aria-label="annotationHide"]')).toBeNull()
+    expect(shown.textContent).toContain('browserTakeControl')
+    expect(h.container.querySelector<HTMLButtonElement>('[aria-label="browserAnnotate"]')?.disabled).toBe(true)
   } finally { window.localStorage.removeItem('ds-browser-annotation-bar-shown'); await h.close() }
 })
 
-it('puts recording on the bar and greys it out while the agent has the page', async () => {
+it('keeps recording in the more menu, off the annotation bar', async () => {
   const h = mount({ active: true, owner: 'user', task_running: false, generation: 2, image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], capabilities: { video: { ready: false } } })
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
     const toolbar = h.container.querySelector('.ds-annotation-toolbar')!
     const order = [...toolbar.querySelectorAll('button')].map(b => b.getAttribute('aria-label'))
-    expect(order.slice(order.indexOf('annotationText'))).toEqual(['annotationText', 'browserVideoStart', 'browserRecordSteps', 'annotationHide'])
-    expect(toolbar.querySelector<HTMLButtonElement>('[aria-label="browserVideoStart"]')?.disabled).toBe(true)
-    expect(toolbar.querySelector('[aria-label="browserVideoStart"]')?.parentElement?.getAttribute('title')).toBe('browserVideoUnavailable')
-    await act(async () => toolbar.querySelector<HTMLButtonElement>('[aria-label="browserRecordSteps"]')!.click())
+    expect(order.slice(order.indexOf('annotationText'))).toEqual(['annotationText', 'browserDemoStart', 'annotationHide'])
+    await h.click('browserMore')
+    await h.click('browserRecordScreen')
+    expect(h.container.querySelector('.ds-dock-menu')).not.toBeNull()
+    const video = h.container.querySelector<HTMLButtonElement>('[aria-label="browserRecordVideo"]')!
+    expect(video.disabled).toBe(true)
+    expect(document.getElementById(video.getAttribute('aria-describedby')!)?.textContent).toBe('browserVideoUnavailable')
+    await h.click('browserRecordGif')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'record_start', generation: 2 }))
   } finally { await h.close() }
+})
+
+it('copies the FFmpeg install command when video is unavailable', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [], capabilities: { video: { ready: false } } })
+  const writeText = vi.fn(async () => {})
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await h.click('browserMore'); await h.click('browserRecordScreen'); await h.click('browserCopyFfmpegCommand')
+    expect(writeText).toHaveBeenCalledWith('brew install ffmpeg')
+    expect(h.container.querySelector('.ds-browser-feedback')?.textContent).toContain('browserFfmpegCommandCopied')
+  } finally { await h.close() }
+})
+
+it('keeps recording controls visible even when annotation tools were hidden', async () => {
+  window.localStorage.setItem('ds-browser-annotation-bar-shown', '0')
+  const h = mount({ active: true, owner: 'user', task_running: false, generation: 2, image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], recording: true, video_recording: true })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
+    const toolbar = h.container.querySelector('.ds-annotation-toolbar')!
+    expect(toolbar.closest('.is-collapsed')).toBeNull()
+    expect(toolbar.textContent).toContain('browserRecordingStop')
+    expect(toolbar.textContent).toContain('00:00')
+    expect(h.container.querySelector('[aria-label="annotationHide"]')).toBeNull()
+    await h.click('browserRecordingStop')
+    const actions = h.request.mock.calls.filter(([path]) => path.endsWith('/action')).map(([, , raw]) => JSON.parse(raw!).action)
+    expect(actions).toEqual(['video_stop', 'record_stop'])
+  } finally { window.localStorage.removeItem('ds-browser-annotation-bar-shown'); await h.close() }
 })
 
 it('disables screenshot input while frames are missing or polling fails', async () => {
@@ -400,15 +436,30 @@ it('keeps a resting annotation bar on the page that picks, freezes for drawing, 
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/view', 'GET', undefined)
     expect(h.container.querySelector('.ds-annotation__backdrop')?.getAttribute('src')).toBe('data:image/jpeg;base64,AA==')
     expect(viewport()?.style.cursor).toBe('')
-    expect(header()?.getAttribute('aria-pressed')).toBe('false')
+    expect(header()?.getAttribute('aria-pressed')).toBe('true')
     await h.click('annotationClose')
     expect(h.container.querySelector('.ds-annotation__stage')).toBeNull()
     expect(h.container.querySelector('[role="toolbar"]')?.getAttribute('data-state')).toBe('rest')
+    const content = h.container.querySelector<HTMLElement>('.ds-browser-content')!
+    vi.spyOn(content, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 80, 800, 600))
+    vi.spyOn(header()!, 'getBoundingClientRect').mockReturnValue(new DOMRect(730, 40, 30, 30))
     await h.click('annotationHide')
-    expect(h.container.querySelector('.ds-annotation')).toBeNull()
+    expect(content.style.getPropertyValue('--annotation-collapse-x')).toBe('745px')
+    expect(content.style.getPropertyValue('--annotation-collapse-bottom')).toBe('625px')
+    expect(h.container.querySelector('.ds-annotation')?.getAttribute('aria-hidden')).toBe('true')
+    expect(h.container.querySelector('.ds-annotation')?.hasAttribute('inert')).toBe(true)
+    expect(header()?.getAttribute('aria-pressed')).toBe('false')
+    expect(h.container.querySelector('.ds-annotation-launcher')).toBeNull()
+    expect(document.activeElement).toBe(header())
     expect(window.localStorage.getItem('ds-browser-annotation-bar-shown')).toBe('false')
-    await h.click('browserMore')
-    await h.click('browserShowAnnotationTools')
+    await h.click('browserAnnotate')
+    expect(h.container.querySelector('.ds-annotation-launcher')).toBeNull()
+    expect(h.container.querySelector('.ds-annotation')?.hasAttribute('inert')).toBe(false)
+    expect(header()?.getAttribute('aria-pressed')).toBe('true')
+    expect(h.container.querySelector('[role="toolbar"]')?.getAttribute('data-state')).toBe('rest')
+    await h.click('annotationHide')
+    await h.click('browserAnnotate')
+    expect(header()?.getAttribute('aria-pressed')).toBe('true')
     expect(h.container.querySelector('[role="toolbar"]')?.getAttribute('data-state')).toBe('rest')
   } finally { window.localStorage.removeItem('ds-browser-annotation-bar-shown'); await h.close() }
 })
@@ -537,67 +588,144 @@ it('prioritizes the review state and offers one next step before takeover', asyn
   } finally { await h.close() }
 })
 
-it('records a user demonstration and asks the agent to turn it into a skill', async () => {
+it('demonstrates from the bar, then lets the user review the steps in the activity card before adding them to the chat', async () => {
   const h = mount()
   let demonstrating = false
+  let finishStop: (() => void) | null = null
   const base = { active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] }
+  const steps = [
+    { id: '1', kind: 'open', url: 'https://example.test/shop' },
+    { id: '2', kind: 'click', target: { name: '\nBuy\nnow' } },
+    { id: '3', kind: 'fill', target: { name: 'Email' }, value: '{{email}}' },
+    { id: '4', kind: 'click', target: { role: 'link' } }
+  ]
   h.request.mockImplementation(async (path: string, _method: string, raw?: string) => {
     if (path.endsWith('/workflows')) {
-      const stop = JSON.parse(raw!).action === 'stop'
-      demonstrating = !stop
-      return { ok: true, status: 200, body: JSON.stringify(stop ? { recordingId: 'rec_demo', steps: 4 } : { ok: true }) }
+      const body = JSON.parse(raw!)
+      if (body.action === 'preview') return { ok: true, status: 200, body: JSON.stringify({ recordingId: 'rec_demo', steps }) }
+      if (body.action === 'stop') await new Promise<void>(resolve => { finishStop = resolve })
+      demonstrating = body.action === 'start'
+      return { ok: true, status: 200, body: JSON.stringify(body.action === 'stop' ? { recordingId: 'rec_demo', steps: 4 } : { ok: true }) }
     }
     return { ok: true, status: 200, body: JSON.stringify({ ...base, workflow_recording: demonstrating }) }
   })
   const saved = vi.fn()
+  const card = () => h.container.querySelector('.ds-annotation-toolbar .ds-browser-recording-activity.is-demo')
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: saved })))
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: saved, onAttachImage: vi.fn(async () => true) })))
     await h.click('browserMore')
+    expect(h.container.querySelector('[aria-label="browserDemoStart"][role="menuitem"]')).toBeNull()
     await h.click('browserDemoStart')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start","generation":2}')
-    expect(saved).not.toHaveBeenCalled()
-    await h.click('browserMore')
-    await h.click('browserDemoFinish')
+    expect(useBrowserDemoStore.getState().active.one).toBe(true)
+    const tool = h.container.querySelector<HTMLButtonElement>('.ds-annotation-toolbar [aria-label="browserDemoFinish"]')!
+    expect(tool.getAttribute('aria-pressed')).toBe('true')
+    // The demonstration lives in the card above the bar, the same place as screen recording.
+    expect(h.container.querySelector('.ds-browser-recording-badge')).toBeNull()
+    expect(card()?.textContent).toContain('browserDemoRecording00:00')
+    expect(card()?.textContent).toContain('browserDemoRecordingHint')
+    await act(async () => card()!.querySelector<HTMLButtonElement>('.ds-annotation-toolbar__primary')!.click())
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"stop"}')
-    expect(saved).toHaveBeenCalledExactlyOnceWith('browserDemoMessage')
-  } finally { await h.close() }
-})
-
-it('returning control ends a demonstration with a notice instead of another query', async () => {
-  const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
-  const saved = vi.fn()
-  resume.mockClear()
-  try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: saved })))
-    await h.click('browserReturnControl')
-    expect(h.container.textContent).toContain('browserDemoSavedNotice')
+    expect(card()?.textContent).toContain('browserDemoFinishing')
+    expect(card()!.querySelector<HTMLButtonElement>('[aria-busy="true"]')?.disabled).toBe(true)
+    expect(tool.disabled).toBe(true)
+    await act(async () => finishStop!())
+    expect(useBrowserDemoStore.getState().active.one).toBe(false)
+    // Nothing reaches the chat until the user adds it; the steps are there to check first.
     expect(saved).not.toHaveBeenCalled()
-    expect(resume).not.toHaveBeenCalled()
+    expect(card()?.textContent).toContain('browserDemoReviewTitle')
+    expect(card()?.querySelector('ol')).toBeNull()
+    await h.click('browserDemoReviewShow')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"preview","recording_id":"rec_demo"}')
+    expect([...card()!.querySelectorAll('li')].map(item => item.textContent))
+      .toEqual(['browserDemoStepOpen', 'browserDemoStepClick', 'browserDemoStepFill', 'browserDemoStepUnnamed'])
+    // Hiding and showing again reuses the steps already read.
+    await h.click('browserDemoReviewHide')
+    expect(card()?.querySelector('ol')).toBeNull()
+    await h.click('browserDemoReviewShow')
+    expect(h.request.mock.calls.filter(([, , raw]) => raw?.includes('"preview"'))).toHaveLength(1)
+    await h.click('browserDemoReviewAdd')
+    expect(saved).toHaveBeenCalledExactlyOnceWith('browserDemoMessage')
+    expect(card()).toBeNull()
+    expect(h.container.querySelector('.ds-browser-feedback')?.textContent).toContain('browserDemoDrafted')
   } finally { await h.close() }
 })
 
-it('offers a repeated workflow as a skill and remembers a dismissal', async () => {
-  const suggestion = { id: 'sig', site: 'shop.example', count: 3, recording_id: 'rec_auto' }
-  const state = { active: true, owner: 'agent', generation: 2, url: 'https://shop.example', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], skill_suggestion: suggestion, skill_suggestions_enabled: true }
-  const h = mount(state)
-  const posted: string[] = []
-  h.request.mockImplementation(async (path: string, _method: string, raw?: string) => {
-    if (!path.endsWith('/skill-suggestions')) return { ok: true, status: 200, body: JSON.stringify(state) }
-    posted.push(JSON.parse(raw!).action)
-    return { ok: true, status: 200, body: JSON.stringify(suggestion) }
+it('closing a demonstration review adds nothing to the chat', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
+  const original = h.request.getMockImplementation()!
+  let recording = true
+  h.request.mockImplementation(async (path: string, method: string, raw?: string) => {
+    if (path.endsWith('/workflows')) { recording = false; return { ok: true, status: 200, body: JSON.stringify({ recordingId: 'rec_demo', steps: 2 }) } }
+    const response = await original(path, method, raw)
+    return { ...response, body: JSON.stringify({ ...JSON.parse(response.body), workflow_recording: recording }) }
   })
   const saved = vi.fn()
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: saved })))
-    expect(h.container.textContent).toContain('browserSuggestSkill')
-    await h.click('browserSuggestDismiss')
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: saved, onAttachImage: vi.fn(async () => true) })))
+    await h.click('browserDemoFinish')
+    expect(h.container.querySelector('.ds-browser-recording-activity')?.textContent).toContain('browserDemoReviewTitle')
+    await h.click('browserDemoReviewDismiss')
+    expect(h.container.querySelector('.ds-browser-recording-activity')).toBeNull()
     expect(saved).not.toHaveBeenCalled()
-    await h.click('browserSuggestAccept')
-    expect(saved).toHaveBeenCalledExactlyOnceWith('browserSuggestMessage')
-    await h.click('browserMore')
-    await h.click('browserSuggestOff')
-    expect(posted).toEqual(['dismiss', 'accept', 'disable'])
   } finally { await h.close() }
+})
+
+it('keeps the demonstration review when its steps cannot be read, and reads them again on request', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
+  const original = h.request.getMockImplementation()!
+  let previews = 0
+  let recording = true
+  h.request.mockImplementation(async (path: string, method: string, raw?: string) => {
+    if (!path.endsWith('/workflows')) {
+      const response = await original(path, method, raw)
+      return { ...response, body: JSON.stringify({ ...JSON.parse(response.body), workflow_recording: recording }) }
+    }
+    if (!raw?.includes('"preview"')) { recording = false; return { ok: true, status: 200, body: JSON.stringify({ recordingId: 'rec_demo', steps: 1 }) } }
+    return ++previews === 1 ? { ok: false, status: 409, body: JSON.stringify({ detail: 'missing steps' }) }
+      : { ok: true, status: 200, body: JSON.stringify({ steps: [{ kind: 'press', key: 'Enter' }] }) }
+  })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: vi.fn(), onAttachImage: vi.fn(async () => true) })))
+    await h.click('browserDemoFinish')
+    await h.click('browserDemoReviewShow')
+    const card = h.container.querySelector('.ds-browser-recording-activity')!
+    expect(card.querySelector('[role="alert"]')?.textContent).toBe('browserDemoStepsFailed')
+    expect(card.textContent).toContain('browserDemoReviewTitle')
+    await h.click('browserDemoReviewHide')
+    await h.click('browserDemoReviewShow')
+    expect([...card.querySelectorAll('li')].map(item => item.textContent)).toEqual(['browserDemoStepPress'])
+  } finally { await h.close() }
+})
+
+it('returning control ends a demonstration in the activity card instead of another query', async () => {
+  for (const demonstration of [{ recordingId: 'rec_demo', steps: 3 }, { error: 'Recording contains incomplete browser capture' }, undefined]) {
+    const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
+    const original = h.request.getMockImplementation()!
+    let returned = false
+    h.request.mockImplementation(async (path: string, method: string, raw?: string) => {
+      const response = await original(path, method, raw)
+      returned ||= path.endsWith('/control')
+      const next = { ...JSON.parse(response.body), workflow_recording: !returned }
+      return { ...response, body: JSON.stringify(path.endsWith('/control') ? { ...next, demonstration } : next) }
+    })
+    const saved = vi.fn()
+    resume.mockClear()
+    try {
+      await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: saved })))
+      await h.click('browserReturnControl')
+      const card = h.container.querySelector('.ds-browser-recording-activity')
+      if (!demonstration) expect(h.container.textContent).toContain('browserDemoSavedNotice')
+      else if ('error' in demonstration) expect(card?.textContent).toContain('browserDemoIncomplete')
+      else expect(card?.textContent).toContain('browserDemoReviewTitle')
+      expect(saved).not.toHaveBeenCalled()
+      expect(resume).not.toHaveBeenCalled()
+      if (demonstration && !('error' in demonstration)) {
+        await h.click('browserDemoReviewAdd')
+        expect(saved).toHaveBeenCalledExactlyOnceWith('browserDemoMessage')
+      }
+    } finally { await h.close() }
+  }
 })
 
 it('leaves the hand-back between tasks to the runtime, which knows when a new task starts', async () => {
@@ -777,10 +905,10 @@ it('binds native recordings and demonstrations to the tab selected when requeste
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
     await act(async () => updatePageTab('one', nativeTab('one').id, { url: 'https://example.test/' }))
     const tab = nativeTab('one').id
-    await h.click('browserMore'); await h.click('browserRecordSteps')
+    await h.click('browserMore'); await h.click('browserRecordScreen'); await h.click('browserRecordGif')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST',
       JSON.stringify({ tab_id: tab, action: 'record_start', generation: 2 }))
-    await h.click('browserMore'); await h.click('browserDemoStart')
+    await act(async () => requestBrowserDemo('one'))
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST',
       JSON.stringify({ action: 'start', generation: 2, tab_id: tab }))
   } finally { await h.close() }
@@ -812,11 +940,74 @@ it('keeps the page usable while an ordinary action is in flight', async () => {
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
     await act(async () => updatePageTab('one', nativeTab('one').id, { url: 'https://example.test/' }))
-    await h.click('browserMore'); await h.click('browserRecordSteps')
+    await h.click('browserMore'); await h.click('browserRecordScreen'); await h.click('browserRecordGif')
     // Starting a recording must not take focus or input away from the page.
     expect(h.container.querySelector('.ds-browser-shield')).toBeNull()
     await act(async () => finish({ ok: true, status: 200, body: JSON.stringify({ success: true, content: '' }) }))
   } finally { await h.close() }
+})
+
+it('explains in plain words when a demonstration ends before its last step was captured, and starts again on request', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
+  const original = h.request.getMockImplementation()!
+  let recording = true
+  h.request.mockImplementation(async (path: string, method: string, raw?: string) => {
+    if (path.endsWith('/workflows')) {
+      recording = JSON.parse(raw!).action === 'start'
+      return recording ? { ok: true, status: 200, body: '{}' }
+        : { ok: false, status: 409, body: JSON.stringify({ detail: 'Recording contains incomplete browser capture; saved evidence requires review' }) }
+    }
+    const response = await original(path, method, raw)
+    return { ...response, body: JSON.stringify({ ...JSON.parse(response.body), workflow_recording: recording }) }
+  })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onDemonstrationSaved: vi.fn(), onAttachImage: vi.fn(async () => true) })))
+    await h.click('browserDemoFinish')
+    const card = h.container.querySelector('.ds-annotation-toolbar .ds-browser-recording-activity.is-failed')!
+    expect(card.querySelector('[role="alert"]')?.textContent).toBe('browserDemoSaveFailed')
+    expect(card.textContent).toContain('browserDemoIncomplete')
+    expect(h.container.querySelector('.ds-browser-feedback[role="alert"]')).toBeNull()
+    // A demonstration that could not be saved is not a broken connection.
+    expect(h.container.querySelector('.ds-browser-status')?.textContent).not.toContain('browserConnectionProblem')
+    await h.click('browserDemoRetry')
+    expect(h.request).toHaveBeenLastCalledWith('/v1/threads/one/browser/view', 'GET', undefined)
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start","generation":2}')
+    expect(h.container.querySelector('.ds-browser-recording-activity')?.textContent).toContain('browserDemoRecording')
+  } finally { await h.close() }
+})
+
+it('runs screen recording and demonstration one at a time', async () => {
+  useBrowserDemoStore.setState({ active: {}, request: null })
+  const recording = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], video_recording: true })
+  try {
+    await act(async () => recording.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
+    const tool = recording.container.querySelector<HTMLButtonElement>('.ds-annotation-toolbar [aria-label="browserDemoStart"]')!
+    expect(tool.disabled).toBe(true)
+    expect(tool.title).toBe('browserDemoBusyRecording')
+    await act(async () => requestBrowserDemo('one'))
+    expect(recording.request.mock.calls.some(([path]) => path.endsWith('/workflows'))).toBe(false)
+    expect(recording.container.querySelector('.ds-browser-feedback')?.textContent).toContain('browserDemoBusyRecording')
+  } finally { await recording.close() }
+  const demo = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
+  try {
+    await act(async () => demo.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
+    await demo.click('browserMore')
+    const record = demo.container.querySelector<HTMLButtonElement>('[aria-label="browserRecordScreen"]')!
+    expect(record.disabled).toBe(true)
+    expect(document.getElementById(record.getAttribute('aria-describedby')!)?.textContent).toBe('browserRecordBusyDemo')
+  } finally { await demo.close() }
+})
+
+it('brings hidden annotation tools back for a demonstration', async () => {
+  window.localStorage.setItem('ds-browser-annotation-bar-shown', '0')
+  const h = mount({ active: true, owner: 'user', task_running: false, generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
+    const toolbar = h.container.querySelector('.ds-annotation-toolbar')!
+    expect(toolbar.closest('.is-collapsed')).toBeNull()
+    expect(toolbar.textContent).toContain('browserDemoRecording')
+    expect(h.container.querySelector('[aria-label="annotationHide"]')).toBeNull()
+  } finally { window.localStorage.removeItem('ds-browser-annotation-bar-shown'); await h.close() }
 })
 
 it('explains why a demonstration tab cannot be recorded', async () => {
@@ -826,8 +1017,10 @@ it('explains why a demonstration tab cannot be recorded', async () => {
     generation: 2, log: [], artifacts: [] }
   const h = mount(state)
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
+    await act(async () => updatePageTab('one', nativeTab('one').id, { url: 'https://example.test/' }))
     expect(h.container.querySelector('[role="alert"]')).toBeNull()
+    expect(h.container.querySelector('.ds-browser-status')?.textContent).toContain('browserDemoAttaching')
     state.workflow_tab_errors = { [nativeTab('one').id]: 'page refused the recorder' }
     await act(async () => vi.advanceTimersByTimeAsync(600))
     expect(h.container.querySelector('[role="alert"]')?.textContent).toBe('browserDemoTabUnavailable')
@@ -891,13 +1084,147 @@ it('keeps a failed headless browser and offers explicit recovery', async () => {
   } finally { await h.close() }
 })
 
-it('exposes saved artifacts in the file manager', async () => {
-  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [{ id: 'proof.jpg', label: 'Proof', path: '/tmp/proof.jpg' }] })
+it('keeps a saved recording in the toolbar with a secondary file location action', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [] })
   const show = vi.fn(async () => {})
   window.dsGui.showItemInFolder = show
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
-    await h.click('Proof')
-    expect(show).toHaveBeenCalledWith('/tmp/proof.jpg')
+    h.request.mockImplementation(async (path: string) => path.endsWith('/action')
+      ? { ok: true, status: 200, body: JSON.stringify({ success: true, artifact: { id: 'a.gif', label: 'GIF', path: '/tmp/a.gif' } }) }
+      : { ok: true, status: 200, body: JSON.stringify({ active: true, owner: 'user', generation: 2, log: [], artifacts: [] }) })
+    await h.click('browserMore'); await h.click('browserRecordScreen'); await h.click('browserRecordGif')
+    expect(h.container.querySelector('.ds-browser-recording-activity')?.textContent).toContain('browserRecordingSaved')
+    expect(h.container.textContent).toContain('browserViewGif')
+    await h.click('browserRecordingFolder')
+    expect(show).toHaveBeenCalledWith('/tmp/a.gif')
+  } finally { await h.close() }
+})
+
+it('opens the most recent recording in an in-app preview from the menu', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [{ id: 'old.jpg', label: 'Old', path: '/tmp/old.jpg' }, { id: 'proof.gif', label: 'Proof', path: '/tmp/proof.gif' }] })
+  const show = vi.fn(async () => {})
+  window.dsGui.showItemInFolder = show
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('details')).toBeNull()
+    await h.click('browserMore'); await h.click('browserViewGif')
+    expect(h.container.querySelector('dialog[open]')).not.toBeNull()
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/artifacts/proof.gif', 'GET', undefined)
+    expect(show).not.toHaveBeenCalled()
+  } finally { await h.close() }
+})
+
+it('runs a demonstration requested from the chat composer, or explains why it cannot', async () => {
+  useBrowserDemoStore.setState({ active: {}, request: null })
+  const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await act(async () => requestBrowserDemo('two'))
+    expect(h.request.mock.calls.some(([path]) => path.endsWith('/workflows'))).toBe(false)
+    await act(async () => requestBrowserDemo('one'))
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start","generation":2}')
+    expect(useBrowserDemoStore.getState().request).toBeNull()
+  } finally { await h.close() }
+  const agent = mount({ active: true, owner: 'agent', task_running: true, generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] })
+  try {
+    await act(async () => agent.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await act(async () => requestBrowserDemo('one'))
+    expect(agent.request.mock.calls.some(([path]) => path.endsWith('/workflows'))).toBe(false)
+    expect(agent.container.querySelector('.ds-browser-feedback')?.textContent).toContain('browserDemoNeedsControl')
+    expect(useBrowserDemoStore.getState().request).toBeNull()
+  } finally { await agent.close() }
+})
+
+it('offers retry for a failed GIF save without starting another recording', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], recording: false, recording_pending_save: true, recording_error: 'disk full' })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    expect(h.container.querySelector('[role="alert"]')?.textContent).toContain('browserRecordingFailed')
+    await h.click('browserMore')
+    expect(h.container.querySelector('[aria-label="browserRecordScreen"]')).toBeNull()
+    await h.click('browserRecordingRetrySave')
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'record_stop', generation: 2 }))
+  } finally { await h.close() }
+})
+
+it('announces recordings saved by the runtime without a stop click', async () => {
+  const state = { active: true, owner: 'user', generation: 2, image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] as { id: string; path: string; label: string }[], video_recording: true }
+  const h = mount(state)
+  vi.useFakeTimers()
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    state.video_recording = false
+    state.artifacts = [{ id: 'auto.webm', path: '/tmp/auto.webm', label: 'Video' }]
+    await act(async () => { await vi.advanceTimersByTimeAsync(650) })
+    expect(h.container.textContent).toContain('browserRecordingSaved')
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+    expect(h.container.textContent).toContain('browserViewVideo')
+    await h.click('browserRecordingDismiss')
+    expect(h.container.querySelector('.ds-browser-recording-activity')).toBeNull()
+    expect(h.request.mock.calls.some(([, , body]) => body?.includes('video_stop'))).toBe(false)
+  } finally { await h.close(); vi.useRealTimers() }
+})
+
+it.each([['webm', 'video/webm', 'browserViewVideo'], ['gif', 'image/gif', 'browserViewGif']])('previews a saved %s inside the app', async (extension, mime, label) => {
+  const artifact = { id: `saved.${extension}`, label: 'Recording', path: `/tmp/saved.${extension}` }
+  const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [artifact] })
+  const original = h.request.getMockImplementation()!
+  h.request.mockImplementation(async (path, method, raw) => path.includes('/artifacts/')
+    ? { ok: true, status: 200, body: JSON.stringify({ image: `data:${mime};base64,AAAA` }) }
+    : original(path, method, raw))
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await h.click('browserMore'); await h.click(label)
+    const dialog = h.container.querySelector<HTMLDialogElement>('dialog')!
+    expect(dialog.open).toBe(true)
+    const media = dialog.querySelector(extension === 'webm' ? 'video' : 'img')!
+    expect(media.getAttribute('src')).toBe(`data:${mime};base64,AAAA`)
+    if (extension === 'webm') expect((media as HTMLVideoElement).controls).toBe(true)
+    await h.click('browserRecordingPreviewClose')
+    expect(h.container.querySelector('dialog')).toBeNull()
+    expect(h.container.textContent).toContain(label)
+  } finally { await h.close() }
+})
+
+it('keeps an explicit saving state until the stop request finishes', async () => {
+  const state = { active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [], video_recording: true }
+  const h = mount(state)
+  const original = h.request.getMockImplementation()!
+  let finish!: (result: { ok: boolean; status: number; body: string }) => void
+  h.request.mockImplementation(async (path, method, raw) => path.endsWith('/action')
+    ? new Promise(resolve => { finish = resolve }) : original(path, method, raw))
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await h.click('browserRecordingStop')
+    const saving = h.container.querySelector<HTMLButtonElement>('.ds-browser-recording-activity button')!
+    expect(saving.textContent).toBe('browserRecordingSaving')
+    expect(saving.disabled).toBe(true)
+    await act(async () => {
+      state.video_recording = false
+      finish({ ok: true, status: 200, body: JSON.stringify({ success: true, artifact: { id: 'a.webm', label: 'Video', path: '/tmp/a.webm' } }) })
+    })
+    expect(h.container.querySelector('.ds-browser-recording-activity')?.textContent).toContain('browserViewVideo')
+    expect(h.container.textContent).not.toContain('browserRecordingSaving')
+  } finally { await h.close() }
+})
+
+it('lets the user retry a recording preview without losing the saved result', async () => {
+  const artifact = { id: 'saved.webm', label: 'Video', path: '/tmp/saved.webm' }
+  const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [artifact] })
+  const original = h.request.getMockImplementation()!
+  let attempts = 0
+  h.request.mockImplementation(async (path, method, raw) => {
+    if (!path.includes('/artifacts/')) return original(path, method, raw)
+    if (++attempts === 1) throw new Error('Unavailable')
+    return { ok: true, status: 200, body: JSON.stringify({ image: 'data:video/webm;base64,AAAA' }) }
+  })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await h.click('browserMore'); await h.click('browserViewVideo')
+    expect(h.container.querySelector('dialog [role="alert"]')?.textContent).toContain('browserRecordingPreviewFailed')
+    await h.click('browserRecordingPreviewRetry')
+    expect(h.container.querySelector('dialog video')).not.toBeNull()
+    expect(attempts).toBe(2)
   } finally { await h.close() }
 })

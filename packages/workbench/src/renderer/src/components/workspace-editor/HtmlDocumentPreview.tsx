@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { EditorListSkeleton } from './EditorListSkeleton'
@@ -17,12 +17,18 @@ export function HtmlDocumentPreview({ path, workspaceRoot }: Props): ReactElemen
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [attempt, setAttempt] = useState(0)
+  // File whose document is on screen; workspace refreshes swap its src in place instead of flashing the skeleton.
+  const shownRef = useRef('')
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setUrl(null)
-    setError(null)
+    const shownKey = `${workspaceRoot}\0${path}`
+    if (shownRef.current !== shownKey) {
+      shownRef.current = ''
+      setLoading(true)
+      setUrl(null)
+      setError(null)
+    }
 
     const api = window.dsGui?.getWorkspaceHtmlPreviewUrl
     if (typeof api !== 'function') {
@@ -35,9 +41,11 @@ export function HtmlDocumentPreview({ path, workspaceRoot }: Props): ReactElemen
       .then((result) => {
         if (cancelled) return
         if (!result.ok) {
+          shownRef.current = ''
           setError(result.message)
           return
         }
+        shownRef.current = shownKey
         const nextUrl = new URL(result.url)
         nextUrl.searchParams.set('_ds_revision', String(revision))
         if (attempt > 0) nextUrl.searchParams.set('_ds_attempt', String(attempt))
@@ -45,6 +53,7 @@ export function HtmlDocumentPreview({ path, workspaceRoot }: Props): ReactElemen
       })
       .catch((err: unknown) => {
         if (cancelled) return
+        shownRef.current = ''
         setError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => {

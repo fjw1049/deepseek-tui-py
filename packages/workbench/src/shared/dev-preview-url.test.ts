@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isBrowsableUrl,
+  upgradeToBrowsableUrl,
   isLocalPreviewUrl,
   normalizeBrowseUrlInput,
   normalizeDevPreviewUrlInput
@@ -21,6 +22,17 @@ describe('normalizeDevPreviewUrlInput / isLocalPreviewUrl', () => {
     expect(normalizeDevPreviewUrlInput('https://www.baidu.com')).toBeNull()
     expect(normalizeDevPreviewUrlInput('https://www.bilibili.com')).toBeNull()
     expect(isLocalPreviewUrl('https://example.com')).toBe(false)
+  })
+})
+
+describe('upgradeToBrowsableUrl', () => {
+  it('keeps browsable URLs, moves public http to https, and rejects the rest', () => {
+    expect(upgradeToBrowsableUrl('https://example.com/a')).toBe('https://example.com/a')
+    expect(upgradeToBrowsableUrl('http://localhost:5173/')).toBe('http://localhost:5173/')
+    expect(upgradeToBrowsableUrl('http://www.baidu.com/link?url=abc')).toBe('https://www.baidu.com/link?url=abc')
+    for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'not a url']) {
+      expect(upgradeToBrowsableUrl(url), url).toBeNull()
+    }
   })
 })
 

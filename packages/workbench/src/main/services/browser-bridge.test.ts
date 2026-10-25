@@ -172,3 +172,52 @@ it('registers child windows with the parent browser and keeps ownership across r
     expect(child.destroy).toHaveBeenCalledOnce()
   } finally { h.socket.close() }
 })
+
+it('keeps screenshot capture alive across a temporarily unpainted page after navigation', async () => {
+  const h = await harness()
+  const painted = { isEmpty: () => false, getSize: () => ({ width: 640, height: 480 }), toJPEG: () => Buffer.from('frame') }
+  const capturePage = vi.fn().mockResolvedValue(painted)
+  Object.assign(h.guest, { capturePage })
+  const original = h.debug.sendCommand.getMockImplementation()!
+  h.debug.sendCommand.mockImplementation(async (method, params, sid) => method === 'Page.getLayoutMetrics'
+    ? { cssLayoutViewport: { clientWidth: 640, clientHeight: 480 } } : original(method, params, sid))
+  try {
+    expect((await h.send('Page.captureScreenshot')).result.data).toBe(Buffer.from('frame').toString('base64'))
+    h.guest.emit('did-start-navigation')
+    capturePage.mockResolvedValueOnce({ isEmpty: () => true }).mockResolvedValueOnce(painted)
+    const duringNavigation = await h.send('Page.captureScreenshot')
+    expect(duringNavigation.error).toBeUndefined()
+    expect(duringNavigation.result.data).toBe(Buffer.from('frame').toString('base64'))
+    expect(h.socket.readyState).toBe(h.socket.OPEN)
+  } finally { h.socket.close() }
+})
+
+it('reports a persistently unpainted page after a bounded wait', async () => {
+  vi.useFakeTimers()
+  const h = await harness()
+  const capturePage = vi.fn(async () => ({ isEmpty: () => true }))
+  Object.assign(h.guest, { capturePage })
+  try {
+    h.socket.emit('message', JSON.stringify({ id: 400, method: 'Page.captureScreenshot' }))
+    await vi.advanceTimersByTimeAsync(2100)
+    expect(h.messages.find(m => m.id === 400)?.error.message).toBe('The page has not been painted yet')
+    expect(capturePage.mock.calls.length).toBeLessThanOrEqual(41)
+  } finally { h.socket.close(); vi.useRealTimers() }
+})
+
+it('cancels a paint wait when the browser is closed', async () => {
+  vi.useFakeTimers()
+  const h = await harness()
+  const capturePage = vi.fn(async () => ({ isEmpty: () => true }))
+  Object.assign(h.guest, { capturePage })
+  try {
+    h.socket.emit('message', JSON.stringify({ id: 401, method: 'Page.captureScreenshot' }))
+    await vi.advanceTimersByTimeAsync(0)
+    h.socket.close()
+    await vi.advanceTimersByTimeAsync(100)
+    const calls = capturePage.mock.calls.length
+    await vi.advanceTimersByTimeAsync(2100)
+    expect(capturePage.mock.calls.length).toBe(calls)
+    expect(calls).toBeLessThanOrEqual(2)
+  } finally { vi.useRealTimers() }
+})

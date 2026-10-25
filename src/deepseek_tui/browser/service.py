@@ -286,6 +286,7 @@ class BrowserRun:
     control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     log: list[dict[str, Any]] = field(default_factory=list)
     recording: bool = False
+    recording_error: str | None = None
     frames: list[bytes] = field(default_factory=list)
     artifacts: list[dict[str, str]] = field(default_factory=list)
     demo_task: asyncio.Task[Any] | None = None
@@ -353,9 +354,6 @@ class BrowserService:
         self._cookie_change_lock = asyncio.Lock()
         self._cookies_changing = False
         self.workbench: dict[str, Any] | None = None  # Workbench's CDP bridge, when it runs
-        from deepseek_tui.browser.suggestions import SkillSuggestions
-
-        self.suggestions = SkillSuggestions(artifact_root / "skill-suggestions.json")
 
     def preferences(self, thread_id: str) -> dict[str, bool]:
         path = self.artifact_root / thread_id / "preferences.json"
@@ -697,8 +695,6 @@ class BrowserService:
                 "persistent": self.preferences(thread_id)["persistent"],
                 "unresolved": list(saved.get("unresolved", {}).values()),
                 "cookie_sync": self.cookies.state(),
-                "skill_suggestion": self.suggestions.pending.get(thread_id),
-                "skill_suggestions_enabled": self.suggestions.enabled,
             }
         return {
             "active": run.session is not None
@@ -721,6 +717,8 @@ class BrowserService:
             "viewport": {"width": run.width, "height": run.height},
             "tabs": run.tabs,
             "recording": run.recording,
+            "recording_error": run.recording_error,
+            "recording_pending_save": bool(run.frames) and not run.recording,
             "log": run.log[-80:],
             "artifacts": run.artifacts[-12:],
             "demo_status": run.demo_status,
@@ -737,8 +735,6 @@ class BrowserService:
             "capabilities": browser_capabilities(video_ready=bool(shutil.which("ffmpeg"))),
             "metrics": run.metrics[-40:],
             "cookie_sync": self.cookies.state(),
-            "skill_suggestion": self.suggestions.pending.get(thread_id),
-            "skill_suggestions_enabled": self.suggestions.enabled,
             **(run.native_events.state() if run.native_events else {
                 "dialog": None, "file_chooser": None, "downloads": [], "loading": False}),
         }
@@ -1218,6 +1214,13 @@ class BrowserService:
             raise ValueError("Artifact not found")
         return path
 
+    async def _capture_recording(self, run: BrowserRun) -> bytes:
+        if run.native and run.owner == "user":
+            from deepseek_tui.browser.workbench import capture_visible_tab
+
+            return await capture_visible_tab(self.workbench or run.session.bridge, run.thread_id)
+        return await self._capture(run)
+
     async def start_video(self, run: BrowserRun) -> None:
         from deepseek_tui.browser.video import BrowserVideo
 
@@ -1225,30 +1228,37 @@ class BrowserService:
             raise ValueError("Video is already recording")
         directory = self.artifact_root / run.thread_id
         directory.mkdir(parents=True, exist_ok=True)
-        video = BrowserVideo(directory / (uuid.uuid4().hex + ".webm"), lambda: self._capture(run))
+        video = BrowserVideo(directory / (uuid.uuid4().hex + ".webm"), lambda: self._capture_recording(run))
         await video.start()
         run.video, run.video_error = video, None
+        video.task.add_done_callback(lambda _: self._finish_video(run, video))
+
+    def _finish_video(self, run: BrowserRun, video: Any) -> dict[str, str] | None:
+        # Automatic completion and an explicit stop may both reach this method.
+        if run.video is not video:
+            return next((item for item in run.artifacts if item["id"] == video.path.name), None)
+        run.video = None
+        run.video_error = video.error
+        artifact = None
+        try:
+            if (video.frames and video.process.returncode == 0
+                    and video.path.is_file() and video.path.stat().st_size):
+                artifact = {"id": video.path.name, "path": str(video.path), "label": "连续视频"}
+                run.artifacts.append(artifact)
+            else:
+                video.path.unlink(missing_ok=True)
+                run.video_error = run.video_error or "No video frames were captured"
+            self._persist(run)
+        except OSError as exc:
+            run.video_error = str(exc) or "Video could not be saved"
+        return artifact
 
     async def stop_video(self, run: BrowserRun) -> dict[str, str] | None:
         video = run.video
         if not video:
             return None
         await video.stop()
-        run.video = None
-        run.video_error = video.error
-        if (
-            video.frames
-            and video.process.returncode == 0
-            and video.path.is_file()
-            and video.path.stat().st_size
-        ):
-            artifact = {"id": video.path.name, "path": str(video.path), "label": "连续视频"}
-            run.artifacts.append(artifact)
-            self._persist(run)
-            return artifact
-        video.path.unlink(missing_ok=True)
-        self._persist(run)
-        return None
+        return self._finish_video(run, video)
 
     def export_evidence(self, thread_id: str) -> Path:
         state = self.state(thread_id)
@@ -1315,9 +1325,12 @@ class BrowserService:
             if run.lock.locked():
                 continue  # The running action records its own frame.
             try:
-                frame = await self._capture(run)
-            except Exception:  # noqa: BLE001 - a missed sample only shortens the animation
-                continue
+                frame = await self._capture_recording(run)
+            except Exception as exc:
+                run.recording = False
+                run.recording_error = str(exc) or "Recording capture failed"
+                self._persist(run)
+                return
             digest = hashlib.sha256(frame).digest()
             if digest == last or not run.recording:
                 continue
@@ -1335,19 +1348,25 @@ class BrowserService:
         sampler, run.frame_task = run.frame_task, None
         if sampler and sampler is not asyncio.current_task():
             sampler.cancel()
-        frames, run.frames = run.frames, []
-        if not frames:
+        if not run.frames:
             return None
-        images = []
-        for frame in frames:
-            with Image.open(io.BytesIO(frame)) as image:
-                image.thumbnail((960, 608))
-                images.append(image.convert("RGB"))
-        output = io.BytesIO()
-        images[0].save(
-            output, format="GIF", save_all=True, append_images=images[1:], duration=900, loop=0
-        )
-        return self._save(run, output.getvalue(), ".gif", "步骤动图")
+        try:
+            images = []
+            for frame in run.frames:
+                with Image.open(io.BytesIO(frame)) as image:
+                    image.thumbnail((960, 608))
+                    images.append(image.convert("RGB"))
+            output = io.BytesIO()
+            images[0].save(
+                output, format="GIF", save_all=True, append_images=images[1:], duration=900, loop=0
+            )
+            artifact = self._save(run, output.getvalue(), ".gif", "操作动图")
+        except (OSError, ValueError) as exc:
+            run.recording_error = str(exc) or "GIF could not be saved"
+            return None
+        run.frames.clear()
+        run.recording_error = None
+        return artifact
 
     async def page_state(self, run: BrowserRun) -> dict[str, Any]:
         # Read from the controlled page, even when the preview panel is closed.
@@ -1560,7 +1579,7 @@ class BrowserService:
                 return await self._reject_action(run, action, "unresolved_operation_limit")
             if action.action == "reload" and await self._form_submission_page(run):
                 return await self._reject_action(run, action, "reload_would_resubmit_form")
-            if action.action == "record_start" and run.recording:
+            if action.action == "record_start" and (run.recording or run.frames):
                 raise ValueError("Recording is already running; finish it before starting again")
             if action.action == "video_start" and run.video:
                 raise ValueError("Video is already recording")
@@ -2047,6 +2066,7 @@ class BrowserService:
             content = a.action
         if a.action == "record_start":
             run.frames.clear()
+            run.recording_error = None
             run.recording = True
             if run.native:
                 # Input in a Workbench tab never reaches the runtime; sample the page.
@@ -2087,17 +2107,20 @@ class BrowserService:
                     )
                 else:
                     observation_error = "Page changed during capture; read a fresh screenshot"
-        if run.recording:
+        if run.recording and a.action != "record_stop":
             try:
-                run.frames.append(await self._capture(run))
+                run.frames.append(await self._capture_recording(run))
                 if len(run.frames) >= 40:
                     artifact = self._finish_recording(run)
             except Exception as exc:
                 evidence_warning = "Recording capture failed: " + (str(exc) or type(exc).__name__)
+                run.recording_error = evidence_warning
                 run.recording = False
         if a.action == "record_stop":
             artifact = self._finish_recording(run) or artifact
-        if not success:
+            if run.recording_error:
+                success, content = False, run.recording_error
+        if not success and a.action not in {"record_stop", "video_stop"}:
             try:
                 artifact = self._save(run, await self._capture(run), ".jpg", "失败现场")
             except Exception:
@@ -2382,6 +2405,7 @@ class BrowserService:
                 run.native_events.dialog["generation"] = run.generation
             run.native_events.chooser = None
         run.latest_observation = None
+        demonstration: dict[str, Any] | None = None
         try:
             if run.demo_task and not run.demo_task.done():
                 run.demo_task.cancel()
@@ -2400,12 +2424,14 @@ class BrowserService:
                         await self.stop_video(run)
                 elif owner == "agent" and self._demonstrating(run):
                     # A demonstration belongs to the user; agent actions must not join it.
-                    await self._end_demonstration(run)
+                    demonstration = await self._end_demonstration(run)
         finally:
             run.transferring = False
         if owner == "stopped":
             await self.close(thread_id)
-        return self.state(thread_id)
+        state = self.state(thread_id)
+        # The user reviews the saved demonstration, as after finishing it themselves.
+        return state if demonstration is None else {**state, "demonstration": demonstration}
 
     async def _claim_for_agent(self, run: BrowserRun) -> None:
         """A new agent task takes over a page the user was simply browsing.
@@ -2445,63 +2471,26 @@ class BrowserService:
         """A user demonstration is open; an agent capture continues across handoffs."""
         return run.recorder is not None and getattr(run.recorder, "actor", "user") == "user"
 
-    async def ensure_agent_capture(self, thread_id: str) -> None:
-        """Quietly capture the agent's browser task so repeated workflows can become skills."""
+    async def end_agent_capture(self, thread_id: str) -> None:
+        """Save an explicitly requested agent recording when its turn ends."""
         run = self.runs.get(thread_id)
-        if (not self.suggestions.enabled or not run or not run.session
-                or run.owner != "agent" or run.recorder):
+        if not run or getattr(run.recorder, "actor", None) != "agent":
             return
-        from deepseek_tui.browser.workflows import start_recording
-
-        try:
-            await start_recording(self, thread_id, actor="agent")
-        except Exception:
-            return  # Capture is optional; the agent's task never depends on it.
-        if run.recorder:
-            run.recorder.auto = True
-
-    async def end_agent_capture(self, thread_id: str, *, completed: bool) -> None:
-        """Finish the agent's capture with its turn; only completed automatic ones count."""
-        run = self.runs.get(thread_id)
-        recorder = run.recorder if run else None
-        if getattr(recorder, "actor", None) != "agent":
-            return
-        from deepseek_tui.browser.skills import covered_sites, site_of
-        from deepseek_tui.browser.workflows import finish_recording, read_workflow
-
         async with run.lock:
-            try:
-                result = await finish_recording(run)
-            except Exception:
-                result = None
-        if not getattr(recorder, "auto", False):
-            return
-        recording_id = recorder.manifest.recording_id
-        discard = [(thread_id, recording_id)]
-        if completed and result and result["steps"]:
-            doc = read_workflow(self, thread_id, recording_id)
-            discard = self.suggestions.observe(
-                thread_id, recording_id, doc, site_of(doc.start_url), covered_sites()
-            )
-        for owner, recording in discard:
-            self._discard_recording(owner, recording)
+            await self._end_demonstration(run)
 
-    def _discard_recording(self, thread_id: str, recording_id: str) -> None:
-        from deepseek_tui.browser.workflows import recording_store
+    async def _end_demonstration(self, run: BrowserRun) -> dict[str, Any]:
+        """Save the workflow recording; an incomplete capture stays saved for review.
 
-        if Path(thread_id).name != thread_id or not recording_id.startswith("rec_"):
-            return
-        directory = recording_store(self, thread_id).recording_dir(Path(recording_id).name)
-        shutil.rmtree(directory, ignore_errors=True)
-
-    async def _end_demonstration(self, run: BrowserRun) -> None:
-        """Save the workflow recording; an incomplete capture stays saved for review."""
+        Returns the saved recording id and step count, or the error that kept it unsaved.
+        """
         from deepseek_tui.browser.workflows import finish_recording
 
         try:
-            await finish_recording(run)
+            return await finish_recording(run)
         except Exception as exc:
             run.log.append({"action": "evidence", "success": False, "error": str(exc)})
+            return {"error": str(exc)}
 
     async def close(self, thread_id: str) -> None:
         run = self.runs.get(thread_id)
@@ -2533,11 +2522,7 @@ class BrowserService:
                 try:
                     await self.stop_video(run)
                     if run.recorder:
-                        automatic = (getattr(run.recorder, "auto", False)
-                                     and run.recorder.manifest.recording_id)
                         await self._end_demonstration(run)
-                        if automatic:
-                            self._discard_recording(thread_id, automatic)
                     if run.recording:
                         self._finish_recording(run)
                     self._persist(run)

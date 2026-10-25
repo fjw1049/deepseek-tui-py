@@ -204,6 +204,9 @@ class ScopedSemanticProcessor(SemanticProcessor):
 
 
 class WorkbenchRecordSession(RecordSession):
+    # Seconds a stop waits for pages still loading (often after the last click) to get a recorder.
+    flush_wait = 3.0
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.scripts = {}
@@ -266,8 +269,6 @@ class WorkbenchRecordSession(RecordSession):
             "targetId": target_id or "",
             "framePath": frame_path or [],
             "page": page,
-            # The agent reads pages and screenshots; a badge would show up in both.
-            "overlay": self.actor == "user",
         }
         source = Path(__file__).with_suffix(".js").read_text()
         source = source.replace("__VISIBLE__", VISIBLE).replace("__READ_TEXT__", READ_TEXT)
@@ -379,6 +380,24 @@ class WorkbenchRecordSession(RecordSession):
         async with self.frame_lock:
             await self._sync_frames_locked()
 
+    async def _install_on_frame(self, client, target_id, frame_id, key, page):
+        context = await FrameContext.create(client, frame_id)
+        try:
+            path = await context.owner_path()
+            await context._send("Runtime.enable")
+            if context.session_id:
+                context.on("Runtime.bindingCalled", self._on_binding_called)
+            await context._send(
+                "Runtime.addBinding",
+                {"name": self.binding_name, "executionContextId": context.context_id},
+            )
+            source = self._recorder_source(target_id, frame_path=path, page=page)
+            await evaluate(context, "(()=>{" + source + ";return true})()")
+            self.frames[key] = context, await document_identity(context)
+        except BaseException:
+            await context.close()
+            raise
+
     async def _sync_frames_locked(self):
         alive = set()
         for target_id, client in list(self._clients.items()):
@@ -408,22 +427,14 @@ class WorkbenchRecordSession(RecordSession):
                         pass
                     await context.close()
                     self.frames.pop(key, None)
-                context = await FrameContext.create(client, frame["id"])
                 try:
-                    path = await context.owner_path()
-                    await context._send("Runtime.enable")
-                    if context.session_id:
-                        context.on("Runtime.bindingCalled", self._on_binding_called)
-                    await context._send(
-                        "Runtime.addBinding",
-                        {"name": self.binding_name, "executionContextId": context.context_id},
-                    )
-                    source = self._recorder_source(target_id, frame_path=path, page=page)
-                    await evaluate(context, "(()=>{" + source + ";return true})()")
-                    self.frames[key] = context, await document_identity(context)
-                except BaseException:
-                    await context.close()
-                    raise
+                    await self._install_on_frame(client, target_id, frame["id"], key, page)
+                except Exception:
+                    # A frame torn down between listing and attaching (a navigation) is gone,
+                    # not missed: nothing more can happen in it. A frame still there is a gap.
+                    if any(f["id"] == frame["id"] for f in await discover_frames(client)):
+                        raise
+                    alive.discard(key)
         for key in self.frames.keys() - alive:
             context, _ = self.frames.pop(key)
             await context.close()
@@ -493,7 +504,38 @@ class WorkbenchRecordSession(RecordSession):
             with suppress(Exception):
                 await client.send("Runtime.removeBinding", {"name": self.binding_name})
 
+    async def _pages_recording(self):
+        clients = list({id(c): c for c in [self.client, *self._clients.values()]}.values())
+        for client in clients:
+            if id(client) not in self.scripts:
+                continue
+            # The same world name yields the current document's world, even after a navigation.
+            ready = await evaluate(
+                await self._world(client),
+                "(()=>{const r=globalThis.__deepseekRecorder;return document.readyState!=='loading'"
+                "&&!!r&&r.config.recordingId===" + json.dumps(self.manifest.recording_id) + "})()",
+            )
+            if ready is not True:
+                return False
+        return True
+
+    async def _settle_before_stop(self):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.flush_wait
+        while self.active:
+            try:
+                if await self._pages_recording():
+                    # Drops frames that went away, so the flush only checks live ones.
+                    await self._sync_frames()
+                    return
+            except Exception:
+                pass  # A page or frame between documents; checked again until the deadline.
+            if loop.time() >= deadline:
+                return
+            await asyncio.sleep(0.2)
+
     async def stop(self, **kwargs):
+        await self._settle_before_stop()
         await self._dispose()
         return await super().stop(**kwargs)
 

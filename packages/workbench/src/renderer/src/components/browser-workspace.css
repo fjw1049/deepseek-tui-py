@@ -13,8 +13,56 @@
    remains responsible for panel tabs, maximizing, and collapsing. */
 .ds-browser-chrome { flex-shrink: 0; z-index: 5; }
 .ds-browser-menu-anchor { position: relative; display: flex; flex-shrink: 0; }
-.ds-browser-menu-anchor .ds-dock-menu { max-height: min(420px, calc(100vh - 160px)); overflow-y: auto; }
-.ds-browser-menu-divider { height: 1px; margin: 5px 8px; background: var(--ds-border-muted); }
+.ds-browser-menu-anchor .ds-dock-menu {
+  width: 288px;
+  max-width: calc(100vw - 24px);
+  max-height: min(520px, calc(100vh - 120px));
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--ds-surface-elevated);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 12%), 0 2px 6px rgb(0 0 0 / 5%);
+  scrollbar-width: thin;
+}
+.ds-browser-menu-anchor .ds-dock-menu-item {
+  min-height: 36px;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.ds-browser-menu-anchor .ds-dock-menu-item > svg { flex-shrink: 0; color: var(--ds-text-muted); stroke-width: 1.7; }
+.ds-browser-menu-anchor .ds-dock-menu-item:disabled { background: transparent; }
+.ds-browser-menu-divider { height: 1px; margin: 6px 10px; background: var(--ds-border-muted); }
+.ds-browser-menu-anchor .ds-browser-menu-detail { min-height: 58px; align-items: center; }
+.ds-browser-menu-detail__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 30px;
+  height: 30px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: 9px;
+  background: var(--ds-bg-sidebar);
+  color: var(--ds-text-muted);
+}
+.ds-browser-menu-detail__icon svg { stroke-width: 1.7; }
+.ds-browser-menu-detail__text { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.ds-browser-menu-detail__text > span { font-weight: 500; }
+.ds-browser-menu-detail__text small { color: var(--ds-text-muted); font-size: 11px; font-weight: 400; line-height: 16px; text-wrap: pretty; }
+.ds-browser-menu-detail > .ds-browser-menu-chevron { color: var(--ds-text-muted); }
+.ds-browser-menu-choices {
+  margin: 2px 6px 6px;
+  padding: 4px;
+  border: 1px solid var(--ds-border-muted);
+  border-radius: 10px;
+  background: var(--ds-bg-sidebar);
+}
+.ds-browser-menu-choices .ds-browser-menu-detail__icon { flex-basis: 22px; height: 26px; border: 0; background: transparent; }
+.ds-browser-menu-choices .ds-browser-menu-detail { min-height: 52px; }
+@media (pointer: coarse) { .ds-browser-menu-anchor .ds-dock-menu-item { min-height: 44px; } }
+.ds-browser-menu-anchor .ds-dev-browser__icon-btn { position: relative; }
 .ds-shared-browser button:disabled { opacity: .4; cursor: default; }
 .ds-shared-browser button:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: -2px; }
 .ds-shared-browser .ds-dev-browser__tab:focus-within .ds-dev-browser__tab-close { opacity: 1; }
@@ -56,6 +104,7 @@
 .ds-browser-notice > span { flex: 1; min-width: 0; }
 .ds-browser-notice button { flex-shrink: 0; color: var(--ds-text); }
 .ds-shared-browser button[aria-pressed="true"].ds-dev-browser__icon-btn { color: var(--ds-accent); background: var(--ds-surface-hover); }
+
 
 /* Chrome's mark, drawn in CSS: three sectors around a white ring and a blue center. */
 .ds-chrome-logo { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle closest-side, #1a73e8 0 38%, #fff 39% 49%, transparent 50%), conic-gradient(from -60deg, #ea4335 0 120deg, #fbbc04 0 240deg, #34a853 0); }
@@ -138,7 +187,6 @@
 .ds-browser-control-details p { margin: 0 0 10px; font-size: 12px; line-height: 1.6; color: var(--ds-text-muted); }
 .ds-browser-control-details .ds-browser-control { width: 100%; }
 
-.ds-annotation-toolbar__btn.is-recording, .ds-annotation-toolbar__btn.is-recording[aria-pressed="true"] { color: var(--ds-danger); }
 
 .ds-browser-attention { color: var(--ds-warning); font-size: 11px; font-weight: 500; }
 .ds-browser-control-details .ds-browser-notice { flex-wrap: wrap; padding: 10px 0; border-bottom: 0; border-top: 1px solid var(--ds-border-muted); margin-top: 10px; }
@@ -159,6 +207,12 @@
 .ds-annotation__capturing { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 12px; color: var(--ds-text-muted); }
 /* Centered with auto margins: a left:50% box may only shrink-to-fit into half the pane and would wrap. */
 .ds-annotation-toolbar { position: absolute; bottom: 16px; left: 0; right: 0; margin-inline: auto; width: max-content; display: flex; align-items: center; gap: 2px; max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; padding: 5px 6px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg-sidebar); box-shadow: 0 6px 24px rgb(0 0 0 / 16%); pointer-events: auto; -webkit-app-region: no-drag; font-size: 12.5px; }
+/* Collapse toward the existing pointer button in the browser header. */
+.ds-annotation > .ds-annotation-toolbar { left: 50%; right: auto; margin-inline: 0; transform: translateX(-50%); transition: left 280ms ease, bottom 280ms ease, transform 280ms ease, opacity 280ms ease, visibility 280ms; }
+.ds-annotation.is-collapsed > .ds-annotation-toolbar { left: var(--annotation-collapse-x, calc(100% - 60px)); bottom: var(--annotation-collapse-bottom, 100%); transform: translate(-50%, 50%) scale(.08); opacity: 0; visibility: hidden; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ds-annotation > .ds-annotation-toolbar { transition: none; }
+}
 .ds-annotation-toolbar__btn { display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 8px; color: var(--ds-text); }
 .ds-annotation-toolbar__btn:hover:not(:disabled) { background: var(--ds-surface-hover); }
 .ds-annotation-toolbar__btn[aria-pressed="true"] { color: var(--ds-accent); background: var(--ds-surface-hover); }
@@ -172,5 +226,30 @@
 .ds-annotation-toolbar__check { margin-left: auto; color: var(--ds-accent); }
 .ds-annotation-toolbar__primary { height: 30px; padding: 0 12px; border-radius: 8px; background: var(--ds-text); color: var(--ds-bg-sidebar); font-weight: 600; white-space: nowrap; }
 .ds-annotation-toolbar__primary:disabled { opacity: .5; }
-.has-annotation-bar > .ds-browser-feedback { bottom: 64px; }
+.has-annotation-bar > .ds-browser-feedback { bottom: calc(var(--browser-toolbar-height, 40px) + 24px); }
+.ds-annotation-toolbar__btn.is-recording, .ds-annotation-toolbar__btn.is-recording[aria-pressed="true"] { color: var(--ds-danger); }
 .ds-annotation-toolbar__reason { display: inline-flex; }
+
+.ds-browser-recording-activity { display: flex; flex: 1 0 100%; align-items: center; flex-wrap: wrap; gap: 8px; padding: 7px 5px 10px; margin-bottom: 3px; border-bottom: 1px solid var(--ds-border-muted); }
+.ds-browser-recording-activity__copy { flex: 1; min-width: 140px; padding-right: 8px; }
+.ds-browser-recording-activity__copy strong { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; line-height: 20px; }
+.ds-browser-recording-activity__copy small { display: block; font-size: 11px; line-height: 18px; color: var(--ds-text-muted); }
+.ds-browser-recording-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ds-danger); }
+.ds-browser-recording-time { font-variant-numeric: tabular-nums; font-weight: 500; color: var(--ds-text-muted); }
+.ds-browser-recording-activity .ds-annotation-toolbar__primary { display: inline-flex; align-items: center; gap: 6px; }
+.ds-browser-recording-activity.is-failed strong { color: var(--ds-danger); }
+.ds-browser-recording-activity .ds-annotation-toolbar__btn .is-open { transform: rotate(180deg); }
+.ds-browser-demo-steps { flex: 1 0 100%; max-height: 180px; overflow-y: auto; padding: 2px 5px 0; font-size: 12px; line-height: 1.7; color: var(--ds-text-muted); }
+.ds-browser-demo-steps ol { margin: 0; padding-left: 20px; list-style: decimal; }
+.ds-recording-preview { width: min(800px, calc(100vw - 48px)); max-height: calc(100vh - 48px); padding: 0; margin: auto; border: 1px solid var(--ds-border); border-radius: 16px; background: var(--ds-surface-elevated); color: var(--ds-text); box-shadow: 0 24px 80px rgb(0 0 0 / 25%); pointer-events: auto; }
+.ds-recording-preview::backdrop { background: rgb(0 0 0 / 40%); }
+.ds-recording-preview header, .ds-recording-preview footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; font-size: 13px; }
+.ds-recording-preview button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 7px; }
+.ds-recording-preview button:hover { background: var(--ds-surface-hover); }
+.ds-recording-preview__media { display: flex; align-items: center; justify-content: center; min-height: 160px; background: var(--ds-bg-sidebar); }
+.ds-recording-preview__media video, .ds-recording-preview__media img { display: block; width: 100%; max-height: calc(100vh - 180px); object-fit: contain; }
+.ds-recording-preview__media > div, .ds-recording-preview__media > p { padding: 24px; font-size: 13px; text-align: center; }
+.ds-recording-preview footer { color: var(--ds-text-muted); font-size: 11px; }
+.ds-recording-preview footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-recording-preview footer button { flex-shrink: 0; font-size: 12px; }
+.ds-annotation-toolbar:has(.ds-browser-recording-activity) { width: 440px; }

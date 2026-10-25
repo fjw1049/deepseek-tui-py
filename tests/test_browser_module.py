@@ -808,9 +808,13 @@ async def test_returning_control_ends_the_user_demonstration(browser, monkeypatc
     monkeypatch.setattr(workflows, "finish_recording", finish)
     run = browser.runs["one"]
     run.owner, run.recorder = "user", object()
-    await browser.control("one", "agent")
+    state = await browser.control("one", "agent")
     assert run.owner == "agent" and run.recorder is None
     assert any(entry.get("error") for entry in run.log) == incomplete
+    # The user gets the result to review, as after finishing the demonstration themselves.
+    assert state["demonstration"] == ({"error": "Recording contains incomplete browser capture"}
+                                      if incomplete else {"recordingId": "rec_demo", "steps": 1})
+    assert "demonstration" not in await browser.control("one", "user")
 
 
 async def test_close_keeps_gif_evidence_when_demonstration_capture_is_incomplete(
@@ -829,7 +833,7 @@ async def test_close_keeps_gif_evidence_when_demonstration_capture_is_incomplete
     run.recorder, run.recording, run.frames = object(), True, [output.getvalue()]
     await browser.close("one")
     assert "one" not in browser.runs
-    assert [item["label"] for item in browser.state("one")["artifacts"]] == ["步骤动图"]
+    assert [item["label"] for item in browser.state("one")["artifacts"]] == ["操作动图"]
 
 
 @pytest.mark.parametrize("owner", ["user", "agent"])
@@ -960,3 +964,126 @@ async def test_native_download_reconciles_after_tab_connection_changes(tmp_path)
         {"guid": "download-id", "suggestedFilename": "invoice.pdf"}
     )
     assert native.state()["downloads"][0]["state"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_video_limit_finalizes_without_manual_stop(browser, monkeypatch):
+    import shutil
+    from deepseek_tui.browser.video import BrowserVideo
+
+    if not shutil.which('ffmpeg'):
+        pytest.skip('FFmpeg is required for video encoding')
+    monkeypatch.setattr(BrowserVideo, 'max_seconds', 0.2)
+    run = browser.runs['one']
+    await browser.start_video(run)
+    video = run.video
+    await video.task
+    await asyncio.sleep(0)
+    assert not browser.state('one')['video_recording']
+    assert run.video_error is None
+    assert len(run.artifacts) == 1
+    assert Path(run.artifacts[0]['path']).read_bytes().startswith(b'\x1aE\xdf\xa3')
+    assert browser._finish_video(run, video) == run.artifacts[0]
+    await browser.stop_video(run)
+    assert len(run.artifacts) == 1
+
+
+@pytest.mark.asyncio
+async def test_video_failure_is_reported_without_manual_stop(browser, monkeypatch):
+    import shutil
+
+    if not shutil.which('ffmpeg'):
+        pytest.skip('FFmpeg is required for video encoding')
+    monkeypatch.setattr(browser, '_capture_recording', AsyncMock(side_effect=RuntimeError('disconnected')))
+    run = browser.runs['one']
+    await browser.start_video(run)
+    video = run.video
+    await video.task
+    await asyncio.sleep(0)
+    state = browser.state('one')
+    assert state['video_recording'] is False
+    assert state['video_error'] == 'disconnected'
+    assert not run.artifacts
+    assert not video.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_video_stops_save_once(browser):
+    import shutil
+
+    if not shutil.which('ffmpeg'):
+        pytest.skip('FFmpeg is required for video encoding')
+    run = browser.runs['one']
+    await browser.start_video(run)
+    while not run.video.frames:
+        await asyncio.sleep(0.01)
+    first, second = await asyncio.gather(browser.stop_video(run), browser.stop_video(run))
+    assert first == second == run.artifacts[0]
+    assert len(run.artifacts) == 1
+
+
+@pytest.mark.asyncio
+async def test_gif_save_failure_preserves_frames_for_retry(browser, monkeypatch):
+    run = browser.runs['one']
+    await browser.action('one', BrowserAction(action='record_start'))
+    frames = list(run.frames)
+    save = browser._save
+    def fail_save(*args):
+        raise OSError('disk full')
+    monkeypatch.setattr(browser, '_save', fail_save)
+    assert browser._finish_recording(run) is None
+    assert run.frames == frames
+    state = browser.state('one')
+    assert state['recording'] is False
+    assert state['recording_pending_save'] is True
+    assert state['recording_error'] == 'disk full'
+    with pytest.raises(ValueError, match='already running'):
+        await browser.action('one', BrowserAction(action='record_start'))
+    monkeypatch.setattr(browser, '_save', save)
+    result = await browser.action('one', BrowserAction(action='record_stop'))
+    assert result['artifact']['id'].endswith('.gif')
+    assert not run.frames and run.recording_error is None
+    assert browser.state('one')['recording_pending_save'] is False
+
+
+@pytest.mark.asyncio
+async def test_video_capture_failure_preserves_partial_file(browser, monkeypatch):
+    import shutil
+    if not shutil.which('ffmpeg'):
+        pytest.skip('FFmpeg is required for video encoding')
+    run = browser.runs['one']
+    frame = await browser._capture(run)
+    monkeypatch.setattr(browser, '_capture_recording', AsyncMock(side_effect=[frame, RuntimeError('tab closed')]))
+    await browser.start_video(run)
+    video = run.video
+    await video.task
+    await asyncio.sleep(0)
+    assert run.video is None
+    assert run.video_error == 'tab closed'
+    assert len(run.artifacts) == 1
+    assert Path(run.artifacts[0]['path']).stat().st_size > 0
+
+
+@pytest.mark.asyncio
+async def test_gif_sampler_failure_stops_and_keeps_prior_frames(browser, monkeypatch):
+    run = browser.runs['one']
+    run.frames = [await browser._capture(run)]
+    run.recording = True
+    monkeypatch.setattr(browser, '_capture_recording', AsyncMock(side_effect=RuntimeError('tab closed')))
+    await browser._sample_frames(run, interval=0)
+    assert browser.state('one')['recording_pending_save'] is True
+    assert run.recording_error == 'tab closed'
+    assert not run.recording and len(run.frames) == 1
+
+
+@pytest.mark.asyncio
+async def test_gif_limit_automatically_saves(browser, monkeypatch):
+    run = browser.runs['one']
+    frame = await browser._capture(run)
+    run.frames = [frame] * 39
+    run.recording = True
+    monkeypatch.setattr(browser, '_capture_recording', AsyncMock(return_value=frame))
+    await browser._sample_frames(run, interval=0)
+    assert not run.recording and not run.frames
+    assert run.artifacts[-1]['id'].endswith('.gif')
+    assert browser.state('one')['recording_pending_save'] is False

@@ -89,8 +89,13 @@ describe('dev browser guards', () => {
     const contents = createContents()
     for (const name of ['will-navigate', 'will-redirect']) {
       const blocked = { preventDefault: vi.fn() }
-      contents.emit(name, blocked, 'http://public.example/', false, true)
+      contents.emit(name, blocked, 'file:///etc/passwd', false, true)
       expect(blocked.preventDefault).toHaveBeenCalledOnce()
+      // Public http is never loaded in cleartext; the same page is tried over https instead.
+      const upgraded = { preventDefault: vi.fn() }
+      contents.emit(name, upgraded, 'http://public.example/', false, true)
+      expect(upgraded.preventDefault).toHaveBeenCalledOnce()
+      expect(contents.loadURL).toHaveBeenLastCalledWith('https://public.example/')
       const allowed = { preventDefault: vi.fn() }
       contents.emit(name, allowed, 'http://localhost:5173/', false, true)
       expect(allowed.preventDefault).not.toHaveBeenCalled()
@@ -110,5 +115,22 @@ describe('dev browser guards', () => {
     }
     expect(open({ url: 'javascript:123' })).toEqual({ action: 'deny' })
     expect(contents.loadURL).not.toHaveBeenCalled()
+  })
+
+  it('loads new-tab links in the current tab instead of opening a window', () => {
+    const contents = createContents()
+    const open = contents.setWindowOpenHandler.mock.calls[0]![0]
+    for (const disposition of ['foreground-tab', 'background-tab']) {
+      expect(open({ url: 'https://example.com/result', disposition })).toEqual({ action: 'deny' })
+    }
+    expect(contents.loadURL).toHaveBeenCalledTimes(2)
+    expect(contents.loadURL).toHaveBeenCalledWith('https://example.com/result')
+    // Sized popups (sign-in windows) keep their opener; blank tabs are written to by their opener.
+    expect(open({ url: 'https://example.com/login', disposition: 'new-window' })).toMatchObject({ action: 'allow' })
+    expect(open({ url: 'about:blank', disposition: 'foreground-tab' })).toMatchObject({ action: 'allow' })
+    expect(contents.loadURL).toHaveBeenCalledTimes(2)
+    // Search engines link results through http redirectors; those open over https too.
+    expect(open({ url: 'http://www.baidu.com/link?url=abc', disposition: 'foreground-tab' })).toEqual({ action: 'deny' })
+    expect(contents.loadURL).toHaveBeenLastCalledWith('https://www.baidu.com/link?url=abc')
   })
 })

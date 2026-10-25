@@ -132,6 +132,8 @@ import { AutomationCenter } from './automation/AutomationCenter'
 import { ChannelCenter } from './channels/ChannelCenter'
 import { KanbanView } from './kanban/KanbanView'
 import { SettingsView } from './SettingsView'
+import { useBrowserDemoStore } from '../store/browser-demo-store'
+import { insertComposerSnippet } from '../lib/composer-insert'
 
 const LEFT_PANEL_WIDTH_KEY = 'deepseekgui.layout.leftSidebarWidth'
 const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
@@ -1059,6 +1061,12 @@ export function Workbench(): ReactElement {
     window.addEventListener(BROWSER_ACTIVITY_EVENT, onBrowserActivity)
     return () => window.removeEventListener(BROWSER_ACTIVITY_EVENT, onBrowserActivity)
   }, [activeThreadId, openRightSidebar])
+
+  // The composer's demonstrate button needs this conversation's browser on screen.
+  const browserDemoRequest = useBrowserDemoStore((store) => store.request)
+  useEffect(() => {
+    if (browserDemoRequest && browserDemoRequest.threadId === activeThreadId) openRightSidebar('preview')
+  }, [browserDemoRequest, activeThreadId, openRightSidebar])
 
   useEffect(() => {
     const onOpenPreviewUrl = (event: Event): void => {
@@ -2144,7 +2152,7 @@ export function Workbench(): ReactElement {
             onPreviewErrorConsumed={clearHtmlPreviewError}
             onPreviewPick={handlePreviewPick}
             onAttachImage={attachBrowserImage}
-            onDemonstrationSaved={(message) => { void sendMessage(message, mode) }}
+            onDemonstrationSaved={(message) => insertComposerSnippet(message, activeThreadId ?? undefined)}
             onTabChange={(tab) => {
               if (tab === 'changes' && rightSidebarTab !== 'changes') {
                 setChangesContext('branch')

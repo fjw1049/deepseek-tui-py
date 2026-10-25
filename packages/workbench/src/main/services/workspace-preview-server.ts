@@ -62,6 +62,18 @@ function isWithinRoot(root: string, targetPath: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
+/** Composer pastes and browser screenshots land here (see writePasteImageFile). */
+const PASTE_DIR_SEGMENTS = ['.deepseek', 'pastes']
+
+/** Hidden paths stay private, except images pasted into the composer. */
+function isHiddenPath(path: string): boolean {
+  const segments = path.split(sep)
+  const pastedImage = segments.length === PASTE_DIR_SEGMENTS.length + 1 &&
+    PASTE_DIR_SEGMENTS.every((segment, index) => segments[index] === segment) &&
+    !segments[segments.length - 1].startsWith('.') && isImagePreviewPath(path)
+  return !pastedImage && segments.some((segment) => segment.startsWith('.'))
+}
+
 function contentTypeFor(filePath: string): string {
   return MIME_BY_EXT[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
 }
@@ -107,9 +119,7 @@ async function serveFile(root: string, req: IncomingMessage, res: ServerResponse
     // links inside the workspace to expose files outside it.
     const target = await realpath(candidate)
     if (!isWithinRoot(root, target) ||
-      [relative(root, candidate), relative(root, target)].some((path) =>
-        path.split(sep).some((segment) => segment.startsWith('.'))
-      )) {
+      [relative(root, candidate), relative(root, target)].some(isHiddenPath)) {
       sendError(res, 404, 'Not found')
       return
     }

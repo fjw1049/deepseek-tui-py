@@ -176,14 +176,6 @@ def site_of(url: str) -> str:
     return host if re.fullmatch(r"[a-z0-9.-]{1,253}", host) else "local"
 
 
-def covered_sites() -> set[str]:
-    """Sites that already have a recorded example in a user-level skill."""
-    from deepseek_tui.integrations.skills import default_skills_dir
-
-    return {path.name[len("site-"):-len(".json")]
-            for path in default_skills_dir().glob("*/site-*.json")}
-
-
 def latest_demonstration(service: BrowserService, thread_id: str) -> str:
     """This chat's most recent completed demonstration."""
     completed = [item for item in recording_store(service, thread_id).list_recordings()

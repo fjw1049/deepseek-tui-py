@@ -171,10 +171,6 @@ async def _capture(action: str, context: ToolContext) -> dict[str, Any]:
         raise ValueError("Captures run in a Workbench runtime thread")
     run = browser.runs.get(str(thread_id))
     if action == "capture_start":
-        if run and getattr(run.recorder, "auto", False):
-            # Keep the background capture of this task as the explicit one.
-            run.recorder.auto = False
-            return {"recordingId": run.recorder.manifest.recording_id}
         return await workflows.start_recording(browser, str(thread_id), actor="agent")
     if not run or getattr(run.recorder, "actor", None) != "agent":
         raise ValueError("No agent capture is running")

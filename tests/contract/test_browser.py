@@ -703,19 +703,13 @@ async def test_workflow_list_is_newest_first(authed_client, authed_runtime_app):
     assert [item["id"] for item in response.json()["items"]] == ["rec_b", "rec_a", "rec_c"]
 
 
-async def test_skill_suggestions_can_be_turned_off_and_resolved(authed_client, authed_runtime_app):
+async def test_repeated_workflow_suggestions_are_removed(authed_client):
     client, _ = authed_client
-    browser = authed_runtime_app[0].state.thread_manager.browser_service
-    thread_id = (await client.post("/v1/threads", json={"title": "Suggest"})).json()["id"]
-    path = f"/v1/threads/{thread_id}/browser/skill-suggestions"
-    assert (await client.post(path, json={"action": "dismiss"})).status_code == 409
-    browser.suggestions.pending[thread_id] = {"id": "sig", "site": "shop.example", "count": 3,
-                                             "recording_id": "rec_auto"}
+    thread_id = (await client.post("/v1/threads", json={"title": "Browser"})).json()["id"]
     state = (await client.get(f"/v1/threads/{thread_id}/browser")).json()
-    assert state["skill_suggestion"]["recording_id"] == "rec_auto"
-    accepted = await client.post(path, json={"action": "accept"})
-    assert accepted.json()["recording_id"] == "rec_auto"
-    assert (await client.post(path, json={"action": "disable"})).json() == {"enabled": False}
-    assert (await client.get(f"/v1/threads/{thread_id}/browser")).json()[
-        "skill_suggestions_enabled"] is False
-    assert (await client.post(path, json={"action": "enable"})).json() == {"enabled": True}
+    assert "skill_suggestion" not in state
+    assert "skill_suggestions_enabled" not in state
+    response = await client.post(
+        f"/v1/threads/{thread_id}/browser/skill-suggestions", json={"action": "enable"}
+    )
+    assert response.status_code == 404

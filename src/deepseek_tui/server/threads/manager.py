@@ -4816,6 +4816,8 @@ class RuntimeThreadManager:
         run = browser.runs.get(thread_id)
         if run is None or run.session is None:
             raise ValueError("Open a browser page first")
+        # Returning control ends an open demonstration; its result goes back to the user.
+        transferred: dict[str, Any] = {}
         async with run.control_lock:
             if generation is not None and generation != run.generation:
                 if run.generation == generation + 1 and run.owner == owner:
@@ -4841,7 +4843,7 @@ class RuntimeThreadManager:
                     observed = await self._observe_browser_resume(thread_id, "user")
                     if state.active_turn is not turn or handle.cancel_event.is_set():
                         raise ValueError("The original task has ended. Refresh browser control.")
-                    await browser.control(thread_id, "agent")
+                    transferred = await browser.control(thread_id, "agent")
                     if observed.get("observation"):
                         observed["observation"]["control_generation"] = run.generation
                         run.latest_observation = observed["observation"]
@@ -4851,14 +4853,15 @@ class RuntimeThreadManager:
                     )
                     handle.pause.resume()
                 elif run.owner != "agent":
-                    await browser.control(thread_id, "agent")
+                    transferred = await browser.control(thread_id, "agent")
             else:
                 if handle is not None:
                     await handle.cancel("user_cancelled")
                     handle.resume_context = None
                     handle.pause.resume()
                 await browser.control(thread_id, "stopped")
-            return {**browser.state(thread_id), **self.browser_task_state(thread_id)}
+            ended = {k: v for k, v in transferred.items() if k == "demonstration"}
+            return {**browser.state(thread_id), **self.browser_task_state(thread_id), **ended}
 
     async def _build_engine_for_thread(
         self, thread: ThreadRecord
@@ -5394,9 +5397,7 @@ class RuntimeThreadManager:
         if run is not None:
             run.agent_task = False  # The next turn starts a new browser task.
         try:
-            await self.browser_service.end_agent_capture(
-                thread_id, completed=turn_status == RuntimeTurnStatus.COMPLETED
-            )
+            await self.browser_service.end_agent_capture(thread_id)
         except Exception:  # noqa: BLE001 — a capture must never fail turn release
             logger.debug("browser_capture_end_failed", exc_info=True)
         await self._hand_browser_back(thread_id)

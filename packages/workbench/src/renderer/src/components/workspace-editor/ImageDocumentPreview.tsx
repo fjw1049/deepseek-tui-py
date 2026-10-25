@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { EditorListSkeleton } from './EditorListSkeleton'
@@ -17,12 +17,18 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [attempt, setAttempt] = useState(0)
+  // File whose image is on screen; workspace refreshes swap its src in place instead of flashing the skeleton.
+  const shownRef = useRef('')
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setUrl(null)
-    setError(null)
+    const shownKey = `${workspaceRoot}\0${path}`
+    if (shownRef.current !== shownKey) {
+      shownRef.current = ''
+      setLoading(true)
+      setUrl(null)
+      setError(null)
+    }
 
     const api = window.dsGui?.getWorkspaceHtmlPreviewUrl
     if (typeof api !== 'function') {
@@ -35,9 +41,11 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
       .then((result) => {
         if (cancelled) return
         if (!result.ok) {
+          shownRef.current = ''
           setError(result.message)
           return
         }
+        shownRef.current = shownKey
         const nextUrl = new URL(result.url)
         nextUrl.searchParams.set('_ds_revision', String(revision))
         if (attempt > 0) nextUrl.searchParams.set('_ds_attempt', String(attempt))
@@ -45,6 +53,7 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
       })
       .catch((err: unknown) => {
         if (cancelled) return
+        shownRef.current = ''
         setError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => {
@@ -82,7 +91,10 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
         alt={path.split(/[/\\]/).pop() ?? path}
         className="max-h-full max-w-full object-contain"
         draggable={false}
-        onError={() => setError(t('workspaceImagePreviewFailed'))}
+        onError={() => {
+          shownRef.current = ''
+          setError(t('workspaceImagePreviewFailed'))
+        }}
       />
     </div>
   )

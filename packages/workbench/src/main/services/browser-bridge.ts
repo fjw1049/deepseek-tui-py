@@ -327,10 +327,18 @@ export function createBrowserBridge(deps: Deps) {
     /** Captures at CSS-pixel size, also while the panel is hidden. */
     async function screenshot(params: Record<string, unknown>): Promise<unknown> {
       if (params.clip || params.captureBeyondViewport) return debug.sendCommand('Page.captureScreenshot', params)
+      let image = await guest.capturePage(undefined, { stayHidden: true })
+      // A click/navigation can briefly replace the compositor surface. Wait for
+      // a painted frame instead of terminating an otherwise healthy recording.
+      const paintDeadline = Date.now() + 2000
+      while (image.isEmpty()) {
+        if (guest.isDestroyed() || socket.readyState !== socket.OPEN) throw new Error('Browser capture was closed')
+        if (Date.now() >= paintDeadline) throw new Error('The page has not been painted yet')
+        await new Promise(resolve => setTimeout(resolve, 50))
+        image = await guest.capturePage(undefined, { stayHidden: true })
+      }
       const metrics = await debug.sendCommand('Page.getLayoutMetrics') as { cssLayoutViewport: { clientWidth: number; clientHeight: number } }
       const { clientWidth: width, clientHeight: height } = metrics.cssLayoutViewport
-      let image = await guest.capturePage(undefined, { stayHidden: true })
-      if (image.isEmpty()) throw new Error('The page has not been painted yet')
       if (image.getSize().width !== width) image = image.resize({ width, height, quality: 'good' })
       const data = params.format === 'png' ? image.toPNG() : image.toJPEG(Number(params.quality ?? 80))
       return { data: data.toString('base64') }

@@ -142,21 +142,11 @@
   if(window===window.top) listen(window,'popstate',flushAll);
   listen(window,'pagehide',flushAll);
   listen(window,'beforeunload',flushAll);
-  const overlay=document.createElement('div');
-  if(window===window.top && config.overlay !== false) {
-    overlay.textContent='● Recording '+config.recordingId;
-    overlay.style.cssText='position:fixed;right:12px;top:12px;z-index:2147483647;'+
-      'background:#b91c1c;color:white;padding:6px 8px;font:12px sans-serif;pointer-events:none';
-    if(document.documentElement) document.documentElement.appendChild(overlay);
-    else listen(document,'DOMContentLoaded',()=>{
-      if(!stopped) document.documentElement.appendChild(overlay);
-    },{once:true});
-  }
   globalThis.__deepseekRecorder={config,flush:flushAll,refresh:()=>scan(document),dispose(){
     if(stopped) return;
     flushAll(); stopped=true;
     removals.forEach(remove=>remove()); observers.forEach(observer=>observer.disconnect());
-    overlay.remove(); globalThis.__deepseekRecorder=null;
+    globalThis.__deepseekRecorder=null;
   }};
   watch(document);
   if(window===window.top) emit('recorder_installed');

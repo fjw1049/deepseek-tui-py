@@ -322,24 +322,6 @@ async def workflow(request: Request, thread_id: str, body: WorkflowBody) -> dict
         raise HTTPException(409, str(exc)) from exc
 
 
-class SuggestionBody(BaseModel):
-    action: Literal["accept", "dismiss", "enable", "disable"]
-
-
-@router.post("/skill-suggestions")
-async def skill_suggestion(
-    request: Request, thread_id: str, body: SuggestionBody,
-) -> dict[str, Any]:
-    suggestions = service(request, thread_id).suggestions
-    try:
-        if body.action in {"enable", "disable"}:
-            suggestions.set_enabled(body.action == "enable")
-            return {"enabled": suggestions.enabled}
-        return suggestions.resolve(thread_id, accepted=body.action == "accept")
-    except (ValueError, OSError) as exc:
-        raise HTTPException(409, str(exc)) from exc
-
-
 @router.post("/control")
 async def control(request: Request, thread_id: str, body: ControlBody) -> dict[str, Any]:
     try:

@@ -16,6 +16,7 @@ import {
   FileDiff,
   Flag,
   GitFork,
+  GraduationCap,
   ListTodo,
   Loader2,
   MessageCircleQuestion,
@@ -91,6 +92,8 @@ import {
   type ComposerConnectorRow
 } from '../../lib/composer-connectors'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
+import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
+import { requestBrowserDemo, useBrowserDemoStore } from '../../store/browser-demo-store'
 import {
   formatPreviewPickChipLabel,
   formatPreviewPickWireMessage
@@ -419,6 +422,7 @@ export function FloatingComposer({
     args: string
   } | null>(null)
   const effectiveWorkspaceRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const browserDemoActive = useBrowserDemoStore((store) => !!activeThreadId && !!store.active[activeThreadId])
   const activePublishThread = activeThreadId
     ? threads.find((thread) => thread.id === activeThreadId)
     : undefined
@@ -1810,7 +1814,9 @@ export function FloatingComposer({
                 return (
                   <div
                     key={item.id}
-                    className="flex min-w-[200px] max-w-[260px] flex-col gap-1.5 overflow-hidden rounded-[14px] border border-ds-border-muted bg-ds-subtle px-2.5 py-2"
+                    // The file name stays the keyboard target; the rest of the card is a larger click area for it.
+                    onClick={() => previewWorkspaceFile({ path: item.path, workspaceRoot: effectiveWorkspaceRoot || undefined })}
+                    className="flex min-w-[200px] max-w-[260px] cursor-pointer flex-col gap-1.5 overflow-hidden rounded-[14px] border border-ds-border-muted bg-ds-subtle px-2.5 py-2 transition hover:bg-ds-hover"
                   >
                     <div className="flex items-center gap-2">
                       <span
@@ -1841,7 +1847,10 @@ export function FloatingComposer({
                       </div>
                       <button
                         type="button"
-                        onClick={() => removeAttachment(item.id)}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          removeAttachment(item.id)
+                        }}
                         className="shrink-0 rounded-full p-1 text-ds-faint transition hover:bg-[rgba(239,68,68,0.12)] hover:text-[#dc2626]"
                         aria-label={t('composerAttachmentRemove')}
                       >
@@ -2074,6 +2083,23 @@ export function FloatingComposer({
                   }}
                 />
               </div>
+            ) : null}
+
+            {footerPlan.showApprovalLabel && activeThreadId ? (
+              <button
+                type="button"
+                data-composer-browser-demo
+                disabled={!canCompose}
+                aria-pressed={browserDemoActive}
+                onClick={() => requestBrowserDemo(activeThreadId)}
+                className={`ds-no-drag inline-flex shrink-0 items-center justify-center rounded-full transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50 ${
+                  browserDemoActive ? 'text-ds-danger' : 'text-ds-muted hover:text-ds-ink'
+                } ${compactChrome ? 'h-7 w-7' : 'h-9 w-9'}`}
+                aria-label={t(browserDemoActive ? 'browserDemoFinish' : 'browserDemoStart')}
+                title={browserDemoActive ? t('browserDemoFinish') : `${t('browserDemoStart')}：${t('browserDemoDetail')}`}
+              >
+                <GraduationCap className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2} />
+              </button>
             ) : null}
 
             {mode !== 'agent' ? (

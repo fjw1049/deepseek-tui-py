@@ -17,12 +17,14 @@ const WIDTH_LABEL: Record<number, string> = { 2: 'annotationWidthThin', 4: 'anno
 
 type Menu = 'shape' | 'color' | 'width'
 
-export function AnnotationToolbar({ state, status, tools, closable = true, tool, disabled, pickEnabled, color, width, canUndo, canRedo, canClear, showHistory, canAdd, adding,
+export function AnnotationToolbar({ state, status, activity, tools, closable = true, tool, disabled, pickEnabled, color, width, canUndo, canRedo, canClear, showHistory, canAdd, adding,
   onPick, onTool, onColorChange, onWidthChange, onUndo, onRedo, onClear, onAdd, onClose }: {
   state: AnnotationBarState
   /** Who controls the page, shown ahead of the tools while the bar rests. */
   status?: ReactNode
-  /** More resting tools (recording), after the annotation tools. */
+  /** Persistent recording actions remain visible while selecting or drawing. */
+  activity?: ReactNode
+  /** More resting tools after the annotation tools (demonstrate to the agent). */
   tools?: ReactNode
   /** False while the bar must stay up (the agent has the page, or something needs the user). */
   closable?: boolean
@@ -71,6 +73,7 @@ export function AnnotationToolbar({ state, status, tools, closable = true, tool,
 
   return <div ref={root} className="ds-annotation-toolbar" role="toolbar" aria-label={t('annotationToolbar')} data-state={state}
     onKeyDown={(e) => { if (e.key === 'Escape' && menu) { e.preventDefault(); e.stopPropagation(); setMenu(null) } }}>
+    {activity}
     {state === 'rest' && status ? <>{status}<span className="ds-annotation-toolbar__divider" aria-hidden="true" /></> : null}
     {button('annotationPick', <MousePointer2 size={16} />, onPick, { pressed: state === 'pick', disabled: disabled || !pickEnabled })}
     {button('annotationPen', <Pencil size={16} />, () => onTool('pen'), { pressed: pressed === 'pen', disabled })}

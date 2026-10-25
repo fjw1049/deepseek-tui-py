@@ -33,7 +33,8 @@ function layoutZoom(element: HTMLElement): number {
  * to the element picker; any drawing tool freezes a screenshot and draws over it until the marks
  * are added to the chat. Picking is owned by the pane, which runs the picker.
  */
-export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingChange, capture, onAdd, onHide, onError, status, tools, closable, pageUrl, ref }: {
+export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingChange, capture, onAdd, onHide, onError, status, activity, tools, closable, collapsed = false, pageUrl, ref }: {
+  collapsed?: boolean
   disabled: boolean
   pickEnabled: boolean
   picking: boolean
@@ -49,7 +50,8 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
   onError: (message: string) => void
   /** Who controls the page, shown on the resting bar. */
   status?: ReactNode
-  /** More resting tools (recording), after the annotation tools. */
+  activity?: ReactNode
+  /** More resting tools after the annotation tools (demonstrate to the agent). */
   tools?: ReactNode
   /** False while the resting bar must stay up. */
   closable?: boolean
@@ -232,7 +234,7 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
     }
   }
 
-  return <div ref={root} className="ds-annotation" tabIndex={-1}
+  return <div ref={root} className={`ds-annotation${collapsed ? ' is-collapsed' : ''}`} aria-hidden={collapsed || undefined} inert={collapsed} tabIndex={-1}
     onKeyDown={(e) => {
       if (e.defaultPrevented || confirm) return
       if (e.key === 'Escape' && barState !== 'rest') { e.preventDefault(); requestClose(); return }
@@ -267,7 +269,7 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
         : null}
       </div> : <div className="ds-annotation__capturing" role="status">{t('annotationCapturing')}</div>}
     </div> : null}
-    <AnnotationToolbar state={barState} status={status} tools={tools} closable={closable} tool={tool} disabled={disabled} pickEnabled={pickEnabled} color={color} width={width}
+    <AnnotationToolbar state={barState} status={status} activity={activity} tools={tools} closable={closable} tool={tool} disabled={disabled} pickEnabled={pickEnabled} color={color} width={width}
       canUndo={history.past.length > 0} canRedo={history.future.length > 0} canClear={history.present.length > 0}
       showHistory={sketching && hasHistory(history)} canAdd={sketching && !!backdrop} adding={adding}
       onPick={togglePick} onTool={chooseTool} onColorChange={setColor} onWidthChange={setWidth}

@@ -61,6 +61,20 @@ for (const [extension, Component, selector] of [
   })
 }
 
+for (const [Component, selector] of [[ImageDocumentPreview, 'img'], [HtmlDocumentPreview, 'iframe']] as const) {
+  it(`keeps the shown ${selector} in place while a workspace refresh resolves`, async () => {
+    let resolveRefresh!: (value: { ok: true; url: string }) => void
+    preview.mockResolvedValueOnce({ ok: true, url: 'about:blank?file=first' })
+      .mockReturnValueOnce(new Promise(resolve => { resolveRefresh = resolve }))
+    await act(async () => root.render(createElement(Component, { path: `a.${selector === 'img' ? 'png' : 'html'}`, workspaceRoot: '/repo' })))
+    const shown = host.querySelector(selector)!
+    await act(async () => useWorkspaceEditorStore.setState({ previewVersion: 1 }))
+    expect(host.querySelector(selector)).toBe(shown)
+    await act(async () => resolveRefresh({ ok: true, url: 'about:blank?file=first' }))
+    expect(host.querySelector(selector)).toBe(shown)
+    expect(new URL(shown.getAttribute('src')!).searchParams.get('_ds_revision')).toBe('1')
+  })
+}
 
 for (const Component of [ImageDocumentPreview, HtmlDocumentPreview]) {
   it(`retries a failed ${Component.name} without reopening the file`, async () => {

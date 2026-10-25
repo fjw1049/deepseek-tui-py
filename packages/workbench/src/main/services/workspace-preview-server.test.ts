@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { get } from 'node:http'
@@ -74,6 +74,24 @@ describe('getWorkspacePreviewUrl', () => {
       const response = await fetch(new URL(path, result.url))
       expect(response.status, path).toBe(404)
       expect(await response.text()).not.toContain('secret')
+    }
+  })
+
+  it('serves pasted images but keeps other hidden paste files private', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ds-preview-pastes-'))
+    dirs.push(root)
+    await mkdir(join(root, '.deepseek', 'pastes', '.cache'), { recursive: true })
+    await writeFile(join(root, '.deepseek', 'pastes', 'image-a.png'), 'png')
+    await writeFile(join(root, '.deepseek', 'pastes', 'paste-a.txt'), 'secret paste')
+    await writeFile(join(root, '.deepseek', 'pastes', '.cache', 'image-b.png'), 'png')
+    await writeFile(join(root, '.deepseek', 'config.png'), 'png')
+    const result = await getWorkspacePreviewUrl({ path: '.deepseek/pastes/image-a.png', workspaceRoot: root })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect((await fetch(result.url)).status).toBe(200)
+    for (const path of ['.deepseek/pastes/paste-a.txt', '.deepseek/pastes/.cache/image-b.png', '.deepseek/config.png']) {
+      const response = await fetch(new URL(`/${path}`, result.url))
+      expect(response.status, path).toBe(404)
     }
   })
 

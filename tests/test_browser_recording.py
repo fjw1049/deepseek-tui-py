@@ -297,6 +297,7 @@ async def test_stop_flush_failure_is_saved_as_incomplete_and_blocks_reuse(tmp_pa
     client = SimpleNamespace(send=AsyncMock(side_effect=send), close=AsyncMock())
     recorder = WorkbenchRecordSession(client, store, manifest)
     recorder.active = True
+    recorder.flush_wait = 0
     recorder.scripts[id(client)] = "installed-script"
     run = SimpleNamespace(recorder=recorder)
     with pytest.raises(ValueError, match="incomplete browser capture"):
@@ -306,6 +307,76 @@ async def test_stop_flush_failure_is_saved_as_incomplete_and_blocks_reuse(tmp_pa
     with pytest.raises(ValueError, match="incomplete browser capture"):
         assert_capture_complete(service, "one", "rec_stop")
     client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("still_there", [False, True])
+async def test_frame_sync_skips_a_frame_torn_down_mid_sync(tmp_path, monkeypatch, still_there):
+    from octop_browser.record.models import RecordingManifest
+
+    from deepseek_tui.browser import recording
+    from deepseek_tui.browser.recording import WorkbenchRecordSession
+    from deepseek_tui.browser.service import BrowserService
+    from deepseek_tui.browser.workflows import recording_store
+
+    store = recording_store(BrowserService(tmp_path), "one")
+    manifest = RecordingManifest(recordingId="rec_frames", createdAt="2026-10-25")
+    store.create(manifest)
+    listings = [[{"id": "top"}, {"id": "ad", "parent_id": "top"}]]
+    listings.append(listings[0] if still_there else [{"id": "top"}])
+
+    async def discover(_client):
+        return listings.pop(0) if len(listings) > 1 else listings[0]
+
+    async def create(_parent, _frame_id):
+        raise ValueError("Frame must be a current descendant of this page")
+
+    monkeypatch.setattr(recording, "discover_frames", discover)
+    monkeypatch.setattr(recording.FrameContext, "create", create)
+    monkeypatch.setattr(recording, "evaluate", AsyncMock(return_value={"url": "https://a.example/"}))
+    recorder = WorkbenchRecordSession(SimpleNamespace(send=AsyncMock()), store, manifest)
+    recorder._clients["tab"] = SimpleNamespace()
+    if still_there:
+        with pytest.raises(ValueError, match="current descendant"):
+            await recorder._sync_frames()
+    else:
+        await recorder._sync_frames()
+        assert recorder.frames == {}
+
+
+async def test_stop_waits_for_a_page_still_loading_from_the_last_click(tmp_path):
+    from octop_browser.record.models import RecordingManifest
+
+    from deepseek_tui.browser.recording import WorkbenchRecordSession
+    from deepseek_tui.browser.service import BrowserService
+    from deepseek_tui.browser.workflows import finish_recording, recording_store
+
+    service = BrowserService(tmp_path)
+    store = recording_store(service, "one")
+    manifest = RecordingManifest(recordingId="rec_loading", createdAt="2026-10-25")
+    store.create(manifest)
+    checks = 0
+
+    async def send(method, params=None):
+        nonlocal checks
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": {"id": "top"}}}
+        if method == "Page.createIsolatedWorld":
+            return {"executionContextId": 1}
+        if method == "Runtime.evaluate":
+            checks += 1
+            # The new document has no recorder for the first few checks, as while it loads.
+            return {"result": {"value": checks > 3}}
+        return {}
+
+    client = SimpleNamespace(send=AsyncMock(side_effect=send), close=AsyncMock())
+    recorder = WorkbenchRecordSession(client, store, manifest)
+    recorder.active = True
+    recorder.flush_wait = 2
+    recorder.scripts[id(client)] = "installed-script"
+    result = await finish_recording(SimpleNamespace(recorder=recorder))
+    assert result["recordingId"] == "rec_loading"
+    assert store.read_manifest("rec_loading").status != "failed"
+    assert not [e for e in store.read_events("rec_loading") if e.get("kind") == "capture_warning"]
 
 
 def test_failed_manifest_without_warning_event_still_blocks_reuse(tmp_path):
@@ -379,3 +450,23 @@ async def test_only_prompt_dialogs_require_a_replay_answer(tmp_path, kind, input
         "rec_dialog", [_page_event(1, "recorder_installed"), event]).process()
     assert [step.kind for step in doc.steps] == ["open", "handle_dialog"]
     assert len(doc.inputs) == inputs
+
+
+@pytest.mark.parametrize("actor", ["agent", "user"])
+async def test_turn_end_saves_only_explicit_agent_recordings(tmp_path, monkeypatch, actor):
+    import asyncio
+    from deepseek_tui.browser.service import BrowserService
+    from deepseek_tui.browser import workflows
+
+    service = BrowserService(tmp_path)
+    run = SimpleNamespace(recorder=SimpleNamespace(actor=actor), lock=asyncio.Lock())
+    service.runs["thread"] = run
+    finish = AsyncMock()
+    monkeypatch.setattr(workflows, "finish_recording", finish)
+
+    await service.end_agent_capture("thread")
+
+    if actor == "agent":
+        finish.assert_awaited_once_with(run)
+    else:
+        finish.assert_not_awaited()
