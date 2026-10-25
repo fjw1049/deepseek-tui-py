@@ -27,6 +27,7 @@ from deepseek_tui.engine.context import (
 from deepseek_tui.engine.events import (
     EngineEvent,
     ErrorEvent,
+    StatusEvent,
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
@@ -43,6 +44,7 @@ from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import (
     StreamDone,
     StreamError,
+    StreamRetry,
     StreamTextDelta,
     StreamThinkingDelta,
     StreamToolCallComplete,
@@ -55,6 +57,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 MAX_STREAM_RETRIES = 3
+# Shown once per model request so a silent reconnect is not mistaken for a hang.
+RETRY_STATUS = {
+    "zh": "模型连接不稳定，正在重试…",
+    "en": "Model connection unstable, retrying…",
+}
 MAX_CONTEXT_RECOVERY_ATTEMPTS = 3
 TURN_MAX_OUTPUT_TOKENS = 262_144
 
@@ -206,6 +213,7 @@ class TurnLoop:
         self.client = client
         self.model_config = model_config
         self._compact_fn = compact_fn
+        self.locale = "zh"
 
     async def run(
         self,
@@ -372,7 +380,15 @@ class TurnLoop:
                 stream_done_logged = False
                 mark_llm_request_started(len(active_tools or []))
 
+                retry_noted = False
                 async for stream_event in self.client.stream_with_retry(stream_request):
+                    if isinstance(stream_event, StreamRetry):
+                        if not retry_noted:
+                            retry_noted = True
+                            await emit(StatusEvent(
+                                message=RETRY_STATUS.get(self.locale[:2], RETRY_STATUS["en"])
+                            ))
+                        continue
                     mark_first_sse_chunk()
                     if cancel_event.is_set():
                         return TurnResult(

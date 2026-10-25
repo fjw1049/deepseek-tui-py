@@ -455,3 +455,34 @@ async def test_stalled_correction_times_out_with_submitted_answer(tmp_path, monk
         assert "timed out" in result.task_outcome["remaining"][0]
     finally:
         await engine.shutdown_session()
+
+
+@pytest.mark.parametrize("locale,text", [("zh", "正在重试"), ("en", "retrying")])
+async def test_connection_retries_are_visible_once_per_request(tmp_path, locale, text):
+    from deepseek_tui.engine.events import StatusEvent
+    from deepseek_tui.protocol.responses import StreamRetry
+
+    class RetryingClient(ScriptedClient):
+        async def stream_chat_completion(self, request):
+            self.requests.append(request)
+            yield StreamRetry(attempt=1)
+            yield StreamRetry(attempt=2)
+            yield StreamTextDelta(text="Done.")
+            yield StreamDone()
+
+    client = RetryingClient([])
+    engine = await Engine.create(
+        handle=EngineHandle(), client=client, working_directory=tmp_path,
+        config=Config(features=FeatureConfig(
+            tasks=False, subagents=False, mcp=False, automations=False)),
+        start_mcp=False,
+    )
+    engine.reply_locale = locale
+    try:
+        result = await engine._run_conversation([Message.user("Hi")], "test", "sys", None)
+        assert result.assistant_message.text_content() == "Done."
+        notes = [e for e in engine.handle.drain_events()
+                 if isinstance(e, StatusEvent) and text in e.message]
+        assert len(notes) == 1
+    finally:
+        await engine.shutdown_session()

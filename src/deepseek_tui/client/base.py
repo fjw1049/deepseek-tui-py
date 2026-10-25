@@ -22,6 +22,7 @@ from deepseek_tui.protocol.responses import (
     StreamDone,
     StreamError,
     StreamEvent,
+    StreamRetry,
     StreamTextDelta,
     StreamThinkingDelta,
     StreamToolCallComplete,
@@ -173,6 +174,7 @@ class LLMClient(ABC):
                     and transparent_retries < self.retry_config.max_transparent_retries
                 ):
                     transparent_retries += 1
+                    yield StreamRetry(attempt=transparent_retries)
                     await asyncio.sleep(self.retry_config.delay(transparent_retries))
                     continue
                 if content_received:

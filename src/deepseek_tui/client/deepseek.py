@@ -20,7 +20,7 @@ from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_hea
 from deepseek_tui.client.streaming import OpenAIStreamParser
 from deepseek_tui.media import media_variant_scope
 from deepseek_tui.protocol.messages import MessageRequest
-from deepseek_tui.protocol.responses import StreamEvent
+from deepseek_tui.protocol.responses import StreamEvent, StreamRetry
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +281,7 @@ class DeepSeekClient(LLMClient):
                     ) from exc
                 if attempt < max_retries:
                     attempt += 1
+                    yield StreamRetry(attempt=attempt)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60.0)
                     continue

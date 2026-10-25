@@ -3415,6 +3415,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
 
                 await self.handle.emit(TextDeltaEvent(text=delivery.outcome["answer"]))
             else:
+                self.turn_loop.locale = str(getattr(self, "reply_locale", "") or "zh")
                 with usage_source("agent_round"):
                     # 跑一轮 LLM 流式调用，result(TurnResult) 含本轮产出与状态：
                     # assistant_message=回复 / tool_calls=待调工具(空=结束) / usage=token用量

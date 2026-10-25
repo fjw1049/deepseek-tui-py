@@ -125,6 +125,7 @@ class StreamEventType(str, Enum):
     TOOL_CALL_COMPLETE = "tool_call_complete"
     ERROR = "error"
     DONE = "done"
+    RETRY = "retry"
 
 
 class StreamTextDelta(BaseModel):
@@ -155,6 +156,13 @@ class StreamError(BaseModel):
     retryable: bool = False
 
 
+class StreamRetry(BaseModel):
+    """The request failed before any content and is being sent again (progress only)."""
+
+    type: Literal[StreamEventType.RETRY] = StreamEventType.RETRY
+    attempt: int
+
+
 class StreamDone(BaseModel):
     type: Literal[StreamEventType.DONE] = StreamEventType.DONE
     usage: Usage | None = None
@@ -170,6 +178,7 @@ StreamEvent = Annotated[
     | StreamToolCallDelta
     | StreamToolCallComplete
     | StreamError
-    | StreamDone,
+    | StreamDone
+    | StreamRetry,
     Field(discriminator="type"),
 ]
