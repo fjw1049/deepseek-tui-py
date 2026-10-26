@@ -116,7 +116,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
     </button>
     <span role="status" className="sr-only">{notice}</span>
     {open && createPortal(
-      <div ref={panelRef} onPointerEnter={enter} onPointerLeave={leave} className="ds-no-drag fixed z-[100] overflow-hidden rounded-2xl border border-ds-border bg-[color:var(--ds-card-strong)] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.14)]" style={{ left: position.left, top: position.top, width: 'max-content', minWidth: Math.min(position.width, position.maxWidth), maxWidth: position.maxWidth }}>
+      <div ref={panelRef} onPointerEnter={enter} onPointerLeave={leave} className="ds-session-queries-panel ds-no-drag fixed z-[100] overflow-hidden rounded-2xl border border-ds-border bg-[color:var(--ds-card-strong)] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.14)]" style={{ left: position.left, top: position.top, width: 'max-content', minWidth: Math.min(position.width, position.maxWidth), maxWidth: position.maxWidth }}>
         <div className="ds-session-queries-scroll overflow-y-auto overscroll-contain" style={{ maxHeight: position.maxHeight }}>
           {queries.map((query) => <div
             key={query.id}

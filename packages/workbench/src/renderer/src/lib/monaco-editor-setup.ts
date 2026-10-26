@@ -67,7 +67,7 @@ export function ensureWorkspaceMonacoThemes(): void {
       rule.token === '' ? { ...rule, foreground: theme.ink.slice(1) } : rule
     )
     for (const ideCanvas of [false, true]) {
-      const background = vars[ideCanvas ? '--bg-canvas' : '--bg-sidebar']
+      const background = vars['--bg-canvas']
       monaco.editor.defineTheme(`ds-${ideCanvas ? 'ide-' : ''}workspace-${variant}`, {
         base: variant === 'dark' ? 'vs-dark' : 'vs',
         inherit: true,

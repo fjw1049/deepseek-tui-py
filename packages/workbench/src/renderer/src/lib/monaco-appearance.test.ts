@@ -25,8 +25,9 @@ it('refreshes editor chrome for custom palettes without a light/dark mode change
     const variant = name.endsWith('dark') ? 'dark' : 'light'
     const theme = variant === 'dark' ? dark : light
     const vars = buildChromeThemeCssVars(theme, variant)
-    const background = vars[name.includes('-ide-') ? '--bg-canvas' : '--bg-sidebar']
+    const background = vars['--bg-canvas']
     expect(definition.colors['editor.background']).toBe(background)
+    expect(definition.colors['editorGutter.background']).toBe(background)
     expect(definition.colors['minimap.background']).toBe(background)
     expect(definition.colors['editor.selectionBackground']).toContain(vars['--ds-accent'])
     expect(definition.colors['editorGutter.addedBackground']).toBe(theme.semanticColors.diffAdded)

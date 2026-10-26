@@ -116,7 +116,7 @@ const PreparedWorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, 
     } | null>(null)
     const { t } = useTranslation('common')
 
-    // IDE workspace uses bg-app Monaco theme; chat-mode tool panel keeps sidebar.
+    // Both layouts share the chat canvas and retain their theme names.
     useLayoutEffect(() => {
       const ideCanvas = Boolean(hostRef.current?.closest('.ds-ide-workspace'))
       setMonacoTheme(workspaceMonacoTheme(ideCanvas))

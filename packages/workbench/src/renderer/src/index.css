@@ -7822,11 +7822,11 @@ select:focus-visible,
 }
 
 /* Right-panel content shares the chat canvas, independent of the left
-   navigation's contrast tint. Keep the alias local to preserve dark themes. */
-[data-theme='light'] .ds-workbench-right-panel,
-[data-theme='light'] .ds-change-inspector,
-[data-theme='light'] .ds-workspace-editor-pane,
-[data-theme='light'] .ds-diff-view--flush {
+   navigation's contrast tint, in both light and dark themes. */
+.ds-workbench-right-panel,
+.ds-change-inspector,
+.ds-workspace-editor-pane,
+.ds-diff-view--flush {
   --ds-bg-sidebar: var(--ds-bg-canvas);
 }
 
@@ -11927,6 +11927,24 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 .ds-turn-change-summary__review {
   border: 1px solid var(--ds-border-strong);
   background: var(--ds-surface-hover);
+}
+
+/* Dark conversation surfaces stay opaque and close to the canvas tone. */
+[data-theme='dark'] .ds-turn-change-summary {
+  --ds-card-soft: color-mix(in srgb, var(--ds-text) 4%, var(--ds-bg-canvas));
+  --ds-card-ghost: transparent;
+  --ds-border-strong: var(--ds-border);
+}
+
+[data-theme='dark'] .ds-turn-change-summary__icon {
+  background: color-mix(in srgb, var(--ds-text) 2%, var(--ds-card-soft));
+}
+
+/* Floating lists must cover the conversation or editor text beneath them. */
+[data-theme='dark'] .ds-session-queries-panel,
+[data-theme='dark'] .ds-ide-chat-menu,
+[data-theme='dark'] .ds-search-modal--quick-open {
+  background: color-mix(in srgb, var(--ds-text) 6%, var(--ds-bg-canvas));
 }
 
 /* Keep the same card proportions in the IDE rail instead of flattening the

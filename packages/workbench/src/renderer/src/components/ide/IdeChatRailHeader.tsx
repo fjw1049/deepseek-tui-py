@@ -193,7 +193,7 @@ export function IdeChatRailHeader({
           </button>
           {newMenuOpen ? (
             <div className="absolute right-0 top-full z-40 mt-1.5 w-44">
-              <div className="ds-glass overflow-hidden rounded-xl p-1.5 shadow-[0_14px_36px_rgba(15,23,42,0.16)]">
+              <div className="ds-ide-chat-menu ds-glass overflow-hidden rounded-xl p-1.5 shadow-[0_14px_36px_rgba(15,23,42,0.16)]">
                 <button
                   type="button"
                   role="menuitem"
@@ -241,7 +241,7 @@ export function IdeChatRailHeader({
           </button>
           {historyOpen ? (
             <div className="absolute right-0 top-full z-40 mt-1.5 w-72">
-              <div className="ds-glass max-h-[min(360px,50vh)] overflow-hidden rounded-xl p-1.5 shadow-[0_14px_36px_rgba(15,23,42,0.16)]">
+              <div className="ds-ide-chat-menu ds-glass max-h-[min(360px,50vh)] overflow-hidden rounded-xl p-1.5 shadow-[0_14px_36px_rgba(15,23,42,0.16)]">
                 {projectThreads.length === 0 ? (
                   <p className="px-2.5 py-2 text-[12px] text-ds-faint">{t('ideChatRailHistoryEmpty')}</p>
                 ) : (
