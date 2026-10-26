@@ -3,7 +3,7 @@ import {
   useCallback,
   useMemo,
   useEffect,
-  useRef,
+  useSyncExternalStore,
   useState,
   type ReactElement
 } from 'react'
@@ -71,27 +71,40 @@ const DOCK_SECTION_HEADER_CLASS =
   'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-ds-muted transition-colors hover:text-ds-ink'
 
 const DOCK_COMPACT_STORAGE_KEY = 'deepseekgui.operationDock.compact'
-/** Keep in sync with `.ds-operation-rail` width transition (220ms). */
-const DOCK_MOTION_MS = 220
+const DOCK_COMPACT_EVENT = 'deepseekgui:operation-dock-compact'
+const unsavedCompact = new Map<string, boolean>()
 
-function readStoredDockCompact(): boolean {
-  try {
-    return window.localStorage.getItem(DOCK_COMPACT_STORAGE_KEY) === 'true'
-  } catch {
-    return false
-  }
-}
-
-function persistDockCompact(value: boolean): void {
-  try {
-    window.localStorage.setItem(DOCK_COMPACT_STORAGE_KEY, String(value))
-  } catch {
-    /* ignore persistence failures */
-  }
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+function useDockCompact(threadId: string | null, workspaceRoot: string): [boolean, (value: boolean) => void] {
+  // A draft belongs to its workspace; saved conversations have their own identity.
+  const key = `${DOCK_COMPACT_STORAGE_KEY}:${JSON.stringify(threadId ? ['thread', threadId] : ['draft', workspaceRoot])}`
+  const subscribe = useCallback((notify: () => void) => {
+    window.addEventListener(DOCK_COMPACT_EVENT, notify)
+    window.addEventListener('storage', notify)
+    return () => {
+      window.removeEventListener(DOCK_COMPACT_EVENT, notify)
+      window.removeEventListener('storage', notify)
+    }
+  }, [])
+  const getSnapshot = useCallback(() => {
+    if (unsavedCompact.has(key)) return unsavedCompact.get(key)!
+    try {
+      return window.localStorage.getItem(key) === 'true'
+    } catch {
+      return false
+    }
+  }, [key])
+  const compact = useSyncExternalStore(subscribe, getSnapshot)
+  const setCompact = useCallback((value: boolean) => {
+    try {
+      window.localStorage.setItem(key, String(value))
+      unsavedCompact.delete(key)
+    } catch {
+      // Keep the control usable when local storage is unavailable.
+      unsavedCompact.set(key, value)
+    }
+    window.dispatchEvent(new Event(DOCK_COMPACT_EVENT))
+  }, [key])
+  return [compact, setCompact]
 }
 
 const ROW_ICON_TINTS = {
@@ -227,112 +240,12 @@ export function OperationContextDock({
   }
 
   const [collapsed, setCollapsed] = useState({ git: true, process: true })
-  const [compact, setCompact] = useState(readStoredDockCompact)
-  /** Drives rail width via `data-compact` — can lead the DOM swap during motion. */
-  const [widthCompact, setWidthCompact] = useState(readStoredDockCompact)
-  const [motion, setMotion] = useState<'idle' | 'collapsing' | 'expanding'>('idle')
-  const motionTimerRef = useRef<number | null>(null)
-  const motionRafsRef = useRef<number[]>([])
+  const [compact, setCompactMode] = useDockCompact(activeThreadId, visibleRoot)
   /** Which process todo row is expanded to full text (single-line by default). */
   const [expandedTodoKey, setExpandedTodoKey] = useState<string | null>(null)
   const toggle = (key: keyof typeof collapsed): void =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
-
-  const clearMotionTimer = useCallback((): void => {
-    if (motionTimerRef.current != null) {
-      window.clearTimeout(motionTimerRef.current)
-      motionTimerRef.current = null
-    }
-    motionRafsRef.current.forEach((id) => window.cancelAnimationFrame(id))
-    motionRafsRef.current = []
-  }, [])
-
-  useEffect(() => () => clearMotionTimer(), [clearMotionTimer])
-
-  const setCompactMode = useCallback(
-    (value: boolean): void => {
-      if (motion !== 'idle') {
-        // Interrupt mid-animation: jump straight to the requested state so a
-        // click during the 220ms transition is never swallowed.
-        clearMotionTimer()
-        setCompact(value)
-        setWidthCompact(value)
-        setMotion('idle')
-        persistDockCompact(value)
-        return
-      }
-      if (value === compact && value === widthCompact) return
-
-      clearMotionTimer()
-
-      if (prefersReducedMotion()) {
-        setCompact(value)
-        setWidthCompact(value)
-        setMotion('idle')
-        persistDockCompact(value)
-        return
-      }
-
-      if (value) {
-        // Collapse: shrink rail + fade/squeeze the card, then swap to icon strip.
-        setMotion('collapsing')
-        setWidthCompact(true)
-        motionTimerRef.current = window.setTimeout(() => {
-          setCompact(true)
-          setMotion('idle')
-          persistDockCompact(true)
-          motionTimerRef.current = null
-        }, DOCK_MOTION_MS)
-        return
-      }
-
-      // Expand: mount the card while still narrow, then widen + fade in together.
-      setCompact(false)
-      setMotion('expanding')
-      setWidthCompact(true)
-      persistDockCompact(false)
-      motionRafsRef.current.push(
-        window.requestAnimationFrame(() => {
-          motionRafsRef.current.push(
-            window.requestAnimationFrame(() => {
-              setWidthCompact(false)
-            })
-          )
-        })
-      )
-      motionTimerRef.current = window.setTimeout(() => {
-        // Finalize width even if the animation frames were delayed.
-        setWidthCompact(false)
-        setMotion('idle')
-        motionTimerRef.current = null
-      }, DOCK_MOTION_MS)
-    },
-    [clearMotionTimer, compact, motion, widthCompact]
-  )
-
   const hasTodos = totalCount > 0
-  const seenActivity = useRef(new Map<string, Set<string>>())
-  useEffect(() => {
-    if (!visibleRoot) return
-    const scope = JSON.stringify([activeThreadId, visibleRoot])
-    const seen = seenActivity.current.get(scope) ?? new Set<string>()
-    const keys = [
-      ...tasks.map((task) => `task:${task.id}`),
-      ...dockSubagents.map((agent) => `agent:${agent.agentId}`),
-      ...todos.map((todo) => `todo:${JSON.stringify([todo.id, todo.content])}`),
-      ...(hasChanges ? ['changes'] : [])
-    ]
-    const added = keys.filter((key) => !seen.has(key))
-    keys.forEach((key) => seen.add(key))
-    seenActivity.current.set(scope, seen)
-    if (!added.length) return
-    // Remember activity even while open, so dismissing it survives progress updates.
-    setCompactMode(false)
-    setCollapsed((prev) => ({
-      git: added.includes('changes') ? false : prev.git,
-      process: added.some((key) => key.startsWith('todo:')) ? false : prev.process
-    }))
-  }, [activeThreadId, visibleRoot, tasks, dockSubagents, todos, hasChanges, setCompactMode])
   // Follow content availability without overriding manual toggles on progress updates.
   useEffect(() => {
     setCollapsed((prev) => (prev.process === !hasTodos ? prev : { ...prev, process: !hasTodos }))
@@ -345,14 +258,12 @@ export function OperationContextDock({
 
   const workspaceLabel = workspaceLabelFromPath(visibleRoot)
 
-  // Keep the expanded card mounted while collapsing (fade/squeeze) and while
-  // expanding (fade in from the narrow rail). Only idle-compact uses the strip.
-  if (!onCollapse && (forceCompact || (compact && motion !== 'expanding'))) {
+  if (!onCollapse && (forceCompact || compact)) {
     return (
       <div
         className="ds-operation-dock ds-operation-dock--compact ds-no-drag relative z-10"
         data-compact="true"
-        data-phase={forceCompact || motion === 'idle' ? 'compact' : motion}
+        data-phase="compact"
       >
         <button
           type="button"
@@ -404,8 +315,8 @@ export function OperationContextDock({
   return (
     <div
       className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[18px]"
-      data-compact={!onCollapse && widthCompact ? 'true' : 'false'}
-      data-phase={motion === 'idle' ? 'expanded' : motion}
+      data-compact="false"
+      data-phase="expanded"
     >
       <div className="ds-operation-dock-topbar">
         <span className="ds-operation-dock-topbar__title min-w-0 max-w-[66.666%] flex-1 truncate" title={workspaceLabel}>

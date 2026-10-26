@@ -41,7 +41,7 @@ async function close() {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   activity.tasks = []; activity.agents = []; activity.todos = []; activity.dirty = 0
-  localStorage.setItem('deepseekgui.operationDock.compact', 'true')
+  localStorage.clear()
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList)
   useChatStore.setState({ activeThreadId: 'a', threads: [], blocks: [] })
   container = document.createElement('div'); root = createRoot(container)
@@ -49,97 +49,53 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   useChatStore.setState(original, true)
-  localStorage.removeItem('deepseekgui.operationDock.compact')
+  localStorage.clear()
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
-it('opens for new tasks and agents but respects dismissal during status updates', async () => {
+it('keeps each session independent and restores its choice after remount', async () => {
   await refresh()
-  expect(compact()).toBe(true)
-  activity.tasks = [{ id: 'one', status: 'running', prompt: 'First' }]
-  await refresh()
-  expect(compact()).toBe(false)
-  await close()
-  activity.tasks = [{ ...activity.tasks[0], status: 'completed' }]
-  await refresh()
-  expect(compact()).toBe(true)
-  activity.tasks = [...activity.tasks, { id: 'two', status: 'running', prompt: 'Second' }]
-  await refresh()
-  expect(compact()).toBe(false)
-  await close()
-  activity.agents = [{ id: 'block', agentId: 'agent-one', agentType: 'worker', status: 'running' }]
-  await refresh()
-  expect(compact()).toBe(false)
-  await close()
-  activity.agents = [{ ...activity.agents[0], status: 'completed' }]
-  await refresh()
-  expect(compact()).toBe(true)
-})
-
-it('reveals todos and changes without reopening on progress or diff refresh', async () => {
-  await refresh()
-  activity.todos = [{ id: '1', content: 'Implement', status: 'pending' }]
-  await refresh()
-  expect(compact()).toBe(false)
-  expect(container.querySelector('ul')?.textContent).toContain('Implement')
-  await close()
-  activity.todos = [{ ...activity.todos[0], status: 'completed' }]
-  await refresh()
-  expect(compact()).toBe(true)
-  activity.todos = [{ id: '1', content: 'New plan', status: 'pending' }]
-  await refresh()
-  expect(compact()).toBe(false)
-  await close()
-  activity.dirty = 1
-  await refresh()
-  expect(compact()).toBe(false)
-  expect(container.querySelector('[title="operationDockOpenChanges"]')).not.toBeNull()
-  await close()
-  activity.dirty = 2
-  await refresh()
-  expect(compact()).toBe(true)
-  activity.dirty = 0
-  await refresh()
-  activity.dirty = 1
-  await refresh()
-  expect(compact()).toBe(true)
-})
-
-it('discovers existing content and scopes seen activity to the conversation', async () => {
-  activity.tasks = [{ id: 'one', status: 'running', prompt: 'First' }]
-  await refresh()
-  expect(compact()).toBe(false)
   await close()
   await act(async () => { useChatStore.setState({ activeThreadId: 'b' }) })
   expect(compact()).toBe(false)
-  await close()
   await act(async () => { useChatStore.setState({ activeThreadId: 'a' }) })
+  expect(compact()).toBe(true)
+  await act(async () => root.render(null))
+  await refresh()
   expect(compact()).toBe(true)
 })
 
-it('finishes expanding at full width even when animation frames are delayed', async () => {
+it('does not reopen a dismissed card when saved or new activity arrives', async () => {
+  await refresh()
+  await close()
+  activity.tasks = [{ id: 'one', status: 'running', prompt: 'First' }]
+  activity.todos = [{ id: '1', content: 'Implement', status: 'pending' }]
+  activity.dirty = 1
+  await refresh()
+  expect(compact()).toBe(true)
+  await act(async () => root.render(null))
+  await refresh()
+  expect(compact()).toBe(true)
+})
+
+it('expands at full width without waiting for animation frames or timers', async () => {
   vi.useFakeTimers()
   vi.mocked(window.matchMedia).mockReturnValue({ matches: false } as MediaQueryList)
   vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
-  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
   await refresh()
-  activity.tasks = [{ id: 'one', status: 'running', prompt: 'First' }]
-  await refresh()
-  expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-phase')).toBe('expanding')
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-operation-dock-topbar__toggle')!.click())
   await act(async () => { vi.advanceTimersByTime(220) })
-  expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-phase')).toBe('expanded')
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  expect(compact()).toBe(false)
   expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-compact')).toBe('false')
+  expect(container.querySelector('.ds-operation-dock')?.getAttribute('data-phase')).toBe('expanded')
 })
 
-
-it('temporarily compacts for the sidebar and restores the expanded preference', async () => {
-  localStorage.setItem('deepseekgui.operationDock.compact', 'false')
+it('temporarily compacts for the sidebar without changing the session preference', async () => {
   await refresh()
-  expect(compact()).toBe(false)
   await act(async () => root.render(createElement(OperationContextDock, { ...props, forceCompact: true })))
   expect(compact()).toBe(true)
-  expect(localStorage.getItem('deepseekgui.operationDock.compact')).toBe('false')
   await refresh()
   expect(compact()).toBe(false)
 })
@@ -149,5 +105,45 @@ it('requests sidebar closure when expanding the compact rail', async () => {
   await act(async () => root.render(createElement(OperationContextDock, { ...props, forceCompact: true, onExpandRequested })))
   await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
   expect(onExpandRequested).toHaveBeenCalledOnce()
-  expect(localStorage.getItem('deepseekgui.operationDock.compact')).toBe('false')
+  await refresh()
+  expect(compact()).toBe(false)
+})
+
+it('keeps simultaneously mounted layouts in sync', async () => {
+  await act(async () => root.render(createElement('div', null,
+    createElement(OperationContextDock, props), createElement(OperationContextDock, props))))
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-operation-dock-topbar__toggle')!.click())
+  expect(container.querySelectorAll('.ds-operation-dock--compact')).toHaveLength(2)
+})
+
+it('does not carry the draft choice into a new session', async () => {
+  await act(async () => { useChatStore.setState({ activeThreadId: null }) })
+  await refresh()
+  await close()
+  await act(async () => { useChatStore.setState({ activeThreadId: 'new' }) })
+  expect(compact()).toBe(false)
+})
+
+it('keeps the toggle usable when saving is blocked', async () => {
+  await act(async () => { useChatStore.setState({ activeThreadId: 'storage-blocked' }) })
+  const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked') })
+  await refresh()
+  await close()
+  await act(async () => root.render(null))
+  await refresh()
+  expect(compact()).toBe(true)
+  save.mockRestore()
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  expect(compact()).toBe(false)
+})
+
+it('still displays loaded activity when the user opens the card', async () => {
+  await refresh()
+  await close()
+  activity.todos = [{ id: '1', content: 'Implement', status: 'pending' }]
+  activity.dirty = 1
+  await refresh()
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  expect(container.querySelector('ul')?.textContent).toContain('Implement')
+  expect(container.querySelector('[title="operationDockOpenChanges"]')).not.toBeNull()
 })
