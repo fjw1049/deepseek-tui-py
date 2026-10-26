@@ -19,7 +19,7 @@ const props: ComponentProps<typeof FloatingComposer> = {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   useChatStore.setState({ ...initial, activeThreadId: 'img-a', workspaceRoot: '/repo', runtimeConnection: 'ready', refreshPendingUserInputs: async () => {} }, true)
-  vi.stubGlobal('dsGui', { writePasteImageFile: vi.fn(async () => ({ ok: true, relativePath: 'shot.png', name: 'shot.png', size: 3 })) })
+  vi.stubGlobal('dsGui', { runtimeRequest: vi.fn(async () => ({ ok: true, status: 200, body: '{}' })), writePasteImageFile: vi.fn(async () => ({ ok: true, relativePath: 'shot.png', name: 'shot.png', size: 3 })) })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); useChatStore.setState(initial, true); vi.unstubAllGlobals(); vi.restoreAllMocks() })

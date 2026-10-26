@@ -18,13 +18,14 @@ const props: ComponentProps<typeof FloatingComposer> = {
 }
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  vi.stubGlobal('dsGui', { runtimeRequest: vi.fn(async () => ({ ok: true, status: 200, body: '{}' })) })
   useChatStore.setState({ ...initial, activeThreadId: 'demo-a', workspaceRoot: '/repo', runtimeConnection: 'ready', refreshPendingUserInputs: async () => {} }, true)
   useBrowserDemoStore.setState({ active: {}, request: null })
   // happy-dom lays nothing out; give the footer a roomy chat width.
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 720, 40))
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); useChatStore.setState(initial, true); vi.restoreAllMocks() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); useChatStore.setState(initial, true); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 it('keeps demonstration controls out of the composer, including while recording', async () => {
   await act(async () => root.render(createElement(FloatingComposer, props)))

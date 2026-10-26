@@ -21,7 +21,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   resolves = []
   useChatStore.setState({ ...initial, activeThreadId: 'paste-a', workspaceRoot: '/repo', runtimeConnection: 'ready', refreshPendingUserInputs: async () => {} }, true)
-  vi.stubGlobal('dsGui', { writePasteTextFile: vi.fn(() => new Promise(resolve => resolves.push(resolve))) })
+  vi.stubGlobal('dsGui', { runtimeRequest: vi.fn(async () => ({ ok: true, status: 200, body: '{}' })), writePasteTextFile: vi.fn(() => new Promise(resolve => resolves.push(resolve))) })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); useChatStore.setState(initial, true); vi.unstubAllGlobals(); vi.restoreAllMocks() })

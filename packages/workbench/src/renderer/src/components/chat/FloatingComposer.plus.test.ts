@@ -90,3 +90,59 @@ it('closes the panel when opening the file picker even if selection is cancelled
   expect(window.dsGui.pickWorkspaceFiles).toHaveBeenCalledOnce()
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
 })
+
+it('preloads the menu before opening and reuses the plugin and skill cache', async () => {
+  await act(async () => root.render(createElement(FloatingComposer, props)))
+  const request = vi.mocked(window.dsGui.runtimeRequest)
+  expect(trigger().getAttribute('aria-expanded')).toBe('false')
+  for (const path of ['/v1/skills', '/v1/plugins?workspace=%2Frepo', '/v1/mcp/servers']) {
+    expect(request.mock.calls.filter(([url]) => url === path)).toHaveLength(1)
+  }
+  await act(async () => trigger().click())
+  expect(host.textContent).toContain('Review changes')
+  for (const path of ['/v1/skills', '/v1/plugins?workspace=%2Frepo']) {
+    expect(request.mock.calls.filter(([url]) => url === path)).toHaveLength(1)
+  }
+})
+
+it('waits for the runtime and preloads again after reconnection without a click', async () => {
+  const render = async (runtimeReady: boolean) => {
+    await act(async () => root.render(createElement(FloatingComposer, { ...props, runtimeReady })))
+  }
+  const request = vi.mocked(window.dsGui.runtimeRequest)
+  await render(false)
+  expect(request.mock.calls.filter(([url]) => url === '/v1/skills')).toHaveLength(0)
+  await render(true)
+  expect(request.mock.calls.filter(([url]) => url === '/v1/skills')).toHaveLength(1)
+  await render(false)
+  await render(true)
+  expect(request.mock.calls.filter(([url]) => url === '/v1/skills')).toHaveLength(2)
+})
+
+it('does not loop on failed plugin preload and retries when the menu is opened', async () => {
+  const request = vi.mocked(window.dsGui.runtimeRequest)
+  request.mockResolvedValue({ ok: false, status: 503, body: '' })
+  await act(async () => root.render(createElement(FloatingComposer, props)))
+  const pluginCalls = () => request.mock.calls.filter(([url]) => url.startsWith('/v1/plugins'))
+  expect(pluginCalls()).toHaveLength(1)
+  await act(async () => trigger().click())
+  expect(pluginCalls()).toHaveLength(2)
+})
+
+it('ignores a slow plugin response from the previous workspace', async () => {
+  const request = vi.mocked(window.dsGui.runtimeRequest)
+  let finishOld!: (value: { ok: boolean; status: number; body: string }) => void
+  request.mockImplementation(async (url) => {
+    if (url === '/v1/plugins?workspace=%2Frepo') {
+      return new Promise(resolve => { finishOld = resolve })
+    }
+    return { ok: true, status: 200, body: JSON.stringify({ plugins: [{ name: 'new-workspace-plugin' }] }) }
+  })
+  await act(async () => root.render(createElement(FloatingComposer, props)))
+  await act(async () => { useChatStore.setState({ workspaceRoot: '/new-repo' }) })
+  await act(async () => trigger().click())
+  expect(host.textContent).toContain('new-workspace-plugin')
+  await act(async () => finishOld({ ok: true, status: 200, body: JSON.stringify({ plugins: [{ name: 'old-workspace-plugin' }] }) }))
+  expect(host.textContent).toContain('new-workspace-plugin')
+  expect(host.textContent).not.toContain('old-workspace-plugin')
+})

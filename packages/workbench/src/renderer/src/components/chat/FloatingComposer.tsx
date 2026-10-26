@@ -787,28 +787,7 @@ export function FloatingComposer({
     }
   }, [])
 
-  // When the runtime transitions from offline→ready, invalidate the cached
-  // skills/connectors lists. Without this, a user who opened the `+` menu
-  // before the runtime connected would see "no skills" / "no connectors"
-  // forever — loadComposerSkills/loadComposerConnectors short-circuit on
-  // `skillsLoaded`/`connectorsLoaded` and never re-fetch once the runtime is
-  // actually available.
-  const prevRuntimeReadyRef = useRef(runtimeReady)
-  useEffect(() => {
-    const prev = prevRuntimeReadyRef.current
-    prevRuntimeReadyRef.current = runtimeReady
-    if (!prev && runtimeReady) {
-      setSkillsLoaded(false)
-      setSkillsLoading(false)
-      setComposerSkills([])
-      setConnectorsLoaded(false)
-      setConnectorsLoading(false)
-      setComposerConnectors([])
-      setPluginsLoaded(false)
-      setPluginsLoading(false)
-      setComposerPlugins([])
-    }
-  }, [runtimeReady])
+  const menuLoadGeneration = useRef(0)
 
   useEffect(() => {
     if (!footerPlan.showPlus && plusMenuOpen) {
@@ -816,8 +795,9 @@ export function FloatingComposer({
     }
   }, [footerPlan.showPlus, plusMenuOpen])
 
-  const loadComposerSkills = useCallback((): void => {
-    if (skillsLoaded || skillsLoading) return
+  const loadComposerSkills = useCallback((force = false): void => {
+    if (!force && (skillsLoaded || skillsLoading)) return
+    const generation = menuLoadGeneration.current
     if (!runtimeReady) {
       setSkillsLoaded(true)
       return
@@ -826,16 +806,17 @@ export function FloatingComposer({
     void window.dsGui
       .runtimeRequest('/v1/skills', 'GET')
       .then((result) => {
-        if (!result.ok) return
+        if (generation !== menuLoadGeneration.current || !result.ok) return
         try {
           setComposerSkills((JSON.parse(result.body) as { skills?: typeof composerSkills }).skills ?? [])
+          setSkillsLoaded(true)
         } catch {
           // Malformed JSON: leave the list as-is rather than crashing the menu.
         }
       })
       .catch(() => undefined)
       .finally(() => {
-        setSkillsLoaded(true)
+        if (generation !== menuLoadGeneration.current) return
         setSkillsLoading(false)
       })
   }, [runtimeReady, skillsLoaded, skillsLoading])
@@ -909,6 +890,7 @@ export function FloatingComposer({
     (opts?: { force?: boolean }): void => {
       if (connectorsInFlight.current || (!opts?.force && connectorsLoaded)) return
       connectorsInFlight.current = true
+      const generation = menuLoadGeneration.current
       setConnectorsLoading(true)
 
       const loadDisk = async () => {
@@ -934,11 +916,13 @@ export function FloatingComposer({
 
       void Promise.all([loadDisk(), loadRuntime()])
         .then(([diskServers, runtimeServers]) => {
+          if (generation !== menuLoadGeneration.current) return
           setComposerConnectors(
             buildComposerConnectorRows({ diskServers, runtimeServers })
           )
         })
         .finally(() => {
+          if (generation !== menuLoadGeneration.current) return
           connectorsInFlight.current = false
           setConnectorsLoaded(true)
           setConnectorsLoading(false)
@@ -975,8 +959,9 @@ export function FloatingComposer({
     focusComposer()
   }
 
-  const loadComposerPlugins = useCallback((): void => {
-    if (pluginsLoaded || pluginsLoading) return
+  const loadComposerPlugins = useCallback((force = false): void => {
+    if (!force && (pluginsLoaded || pluginsLoading)) return
+    const generation = menuLoadGeneration.current
     if (!runtimeReady) {
       setPluginsLoaded(true)
       return
@@ -994,6 +979,7 @@ export function FloatingComposer({
       }).catch(() => false)
     ])
       .then(([result, cuaAvailable]) => {
+        if (generation !== menuLoadGeneration.current) return
         if (!result.ok) {
           // Keep pluginsLoaded false so a later open can retry after a blip.
           return
@@ -1027,9 +1013,33 @@ export function FloatingComposer({
       })
       .catch(() => undefined)
       .finally(() => {
+        if (generation !== menuLoadGeneration.current) return
         setPluginsLoading(false)
       })
   }, [runtimeReady, pluginsLoaded, pluginsLoading, effectiveWorkspaceRoot, t])
+
+  const preloadedMenuScope = useRef<string | null>(null)
+  useEffect(() => {
+    const scope = runtimeReady ? (effectiveWorkspaceRoot ?? '') : null
+    if (preloadedMenuScope.current === scope) return
+    preloadedMenuScope.current = scope
+    // Ignore responses from a previous workspace or runtime connection.
+    menuLoadGeneration.current += 1
+    connectorsInFlight.current = false
+    setComposerSkills([])
+    setComposerPlugins([])
+    setComposerConnectors([])
+    setSkillsLoaded(false)
+    setPluginsLoaded(false)
+    setConnectorsLoaded(false)
+    setSkillsLoading(false)
+    setPluginsLoading(false)
+    setConnectorsLoading(false)
+    if (!runtimeReady) return
+    loadComposerSkills(true)
+    loadComposerPlugins(true)
+    loadComposerConnectors({ force: true })
+  }, [runtimeReady, effectiveWorkspaceRoot, loadComposerSkills, loadComposerPlugins, loadComposerConnectors])
 
   const handlePickPlugin = (name: string): void => {
     // Hold the plugin as an inline chip; `@plugin:<name> ` is prepended only at

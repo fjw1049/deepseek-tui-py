@@ -37,7 +37,7 @@ export function ComposerPlusMenu({ groups, onClose }: {
   const selectable = visible.flatMap(group => group.items).filter(item => !item.disabled)
   const nav = useComboboxNav(selectable.length, true)
   const active = selectable[nav.highlighted]
-  useEffect(() => { searchRef.current?.focus() }, [])
+  useEffect(() => { searchRef.current?.focus({ preventScroll: true }) }, [])
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
   }, [active?.id])
