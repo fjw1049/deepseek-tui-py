@@ -4779,6 +4779,10 @@ samp {
   padding: 15px 14px 13px 18px;
 }
 
+.ds-search-modal--quick-open .ds-search-modal__input {
+  font-size: 14px;
+}
+
 .ds-search-modal--quick-open .ds-search-modal__body {
   max-height: calc(8 * 46px + 14px);
   padding: 7px 8px 10px;
@@ -4801,20 +4805,21 @@ samp {
 }
 
 .ds-search-modal--quick-open .ds-search-modal__row-main {
+  display: grid;
+  grid-template-columns: minmax(0, 42%) minmax(0, 1fr);
   gap: 14px;
   overflow: hidden;
 }
 
 .ds-search-modal--quick-open .ds-search-modal__row-title {
-  max-width: 48%;
-  flex: 0 0 auto;
-  font-size: 15px;
+  max-width: none;
+  font-size: 14px;
   font-weight: 500;
   letter-spacing: -0.018em;
+  line-height: 1.35;
 }
 
 .ds-search-modal--quick-open .ds-search-modal__row-path {
-  flex: 1;
   font-size: 14px;
   letter-spacing: -0.012em;
 }
