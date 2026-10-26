@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Clapperboard, Copy, FolderOpen, RotateCw, Globe2, Plus, X, MoreHorizontal, Hand, Play, Video, Film, Square, Pencil, ExternalLink, Bug, FileCode2, LoaderCircle, GraduationCap, CircleStop } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Clapperboard, Copy, FolderOpen, RotateCw, Globe2, Plus, X, MoreHorizontal, Hand, Play, Video, Film, Square, Pencil, ExternalLink, Bug, FileCode2, LoaderCircle, MousePointerClick, CircleStop } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
 import { extractWebviewConsoleMessage, parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
@@ -828,7 +828,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       tools={conversationId && state ? <button type="button" className={`ds-annotation-toolbar__btn${state.workflow_recording ? ' is-recording' : ''}`}
         aria-label={t(state.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')} aria-pressed={!!state.workflow_recording}
         title={state.workflow_recording ? t('browserDemoFinish') : recordingBusy ? t('browserDemoBusyRecording') : `${t('browserDemoStart')}：${t('browserDemoDetail')}`}
-        disabled={!userControls || demoChanging !== null || (recordingBusy && !state.workflow_recording)} onClick={() => void demonstrate()}><GraduationCap size={16} /></button> : null} /> : null}
+        disabled={!userControls || demoChanging !== null || (recordingBusy && !state.workflow_recording)} onClick={() => void demonstrate()}><MousePointerClick size={16} /></button> : null} /> : null}
     {statusBarOnly ? <div className="ds-annotation"><div className="ds-annotation-toolbar" role="toolbar" aria-label={t('browserControlLabel')} data-state="rest">{activityCard}{controlStatus}</div></div> : null}
     {recordingPreview?.threadId === threadId ? <BrowserRecordingPreview key={recordingPreview.artifact.id} threadId={threadId} recording={recordingPreview.artifact} onClose={() => setRecordingPreview(null)} /> : null}
     {pickHint || notice ? <div className="ds-browser-feedback" role="status"><span>{pickHint ? t('browserPickInstruction') : notice}</span>{!pickHint && savedNotice?.notice === notice ? <button onClick={() => {

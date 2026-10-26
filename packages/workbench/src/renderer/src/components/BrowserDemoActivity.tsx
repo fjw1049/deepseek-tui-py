@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, GraduationCap, LoaderCircle, Square, TriangleAlert, X } from 'lucide-react'
+import { ChevronDown, MousePointerClick, LoaderCircle, Square, TriangleAlert, X } from 'lucide-react'
 
 export type DemoStep = { kind: string; description?: string; url?: string | null; target?: { name?: string; text?: string } | null; value?: string | null; key?: string | null }
 /** A finished demonstration waiting for the user: check its steps, then add it to the chat. */
@@ -57,7 +57,7 @@ export function BrowserDemoActivity({ recording, finishing, elapsed, review, fai
   if (!review) return null
   return <div className="ds-browser-recording-activity is-demo" role="group" aria-label={t('browserDemoStart')}>
     <div className="ds-browser-recording-activity__copy">
-      <strong role="status"><GraduationCap size={15} />{t('browserDemoReviewTitle', { count: review.count })}</strong>
+      <strong role="status"><MousePointerClick size={15} />{t('browserDemoReviewTitle', { count: review.count })}</strong>
       <small>{t('browserDemoReviewHint')}</small>
     </div>
     <button type="button" className="ds-annotation-toolbar__primary" onClick={onAdd}>{t('browserDemoReviewAdd')}</button>

@@ -16,7 +16,6 @@ import {
   FileDiff,
   Flag,
   GitFork,
-  GraduationCap,
   ListTodo,
   Loader2,
   MessageCircleQuestion,
@@ -93,7 +92,6 @@ import {
 } from '../../lib/composer-connectors'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
 import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
-import { requestBrowserDemo, useBrowserDemoStore } from '../../store/browser-demo-store'
 import {
   formatPreviewPickChipLabel,
   formatPreviewPickWireMessage
@@ -422,7 +420,6 @@ export function FloatingComposer({
     args: string
   } | null>(null)
   const effectiveWorkspaceRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
-  const browserDemoActive = useBrowserDemoStore((store) => !!activeThreadId && !!store.active[activeThreadId])
   const activePublishThread = activeThreadId
     ? threads.find((thread) => thread.id === activeThreadId)
     : undefined
@@ -2083,23 +2080,6 @@ export function FloatingComposer({
                   }}
                 />
               </div>
-            ) : null}
-
-            {footerPlan.showApprovalLabel && activeThreadId ? (
-              <button
-                type="button"
-                data-composer-browser-demo
-                disabled={!canCompose}
-                aria-pressed={browserDemoActive}
-                onClick={() => requestBrowserDemo(activeThreadId)}
-                className={`ds-no-drag inline-flex shrink-0 items-center justify-center rounded-full transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50 ${
-                  browserDemoActive ? 'text-ds-danger' : 'text-ds-muted hover:text-ds-ink'
-                } ${compactChrome ? 'h-7 w-7' : 'h-9 w-9'}`}
-                aria-label={t(browserDemoActive ? 'browserDemoFinish' : 'browserDemoStart')}
-                title={browserDemoActive ? t('browserDemoFinish') : `${t('browserDemoStart')}：${t('browserDemoDetail')}`}
-              >
-                <GraduationCap className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2} />
-              </button>
             ) : null}
 
             {mode !== 'agent' ? (

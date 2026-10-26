@@ -26,14 +26,12 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); useChatStore.setState(initial, true); vi.restoreAllMocks() })
 
-it('asks the browser to start a demonstration and shows when one is running', async () => {
+it('keeps demonstration controls out of the composer, including while recording', async () => {
   await act(async () => root.render(createElement(FloatingComposer, props)))
-  const button = host.querySelector<HTMLButtonElement>('[data-composer-browser-demo]')!
-  expect(button.getAttribute('aria-pressed')).toBe('false')
-  await act(async () => button.click())
-  expect(useBrowserDemoStore.getState().request?.threadId).toBe('demo-a')
+  expect(host.querySelector('[data-composer-browser-demo]')).toBeNull()
   await act(async () => useBrowserDemoStore.setState({ active: { 'demo-a': true } }))
-  expect(button.getAttribute('aria-pressed')).toBe('true')
+  expect(host.querySelector('[data-composer-browser-demo]')).toBeNull()
+  expect(useBrowserDemoStore.getState().request).toBeNull()
 })
 
 it('has no demonstrate button without a conversation', async () => {
