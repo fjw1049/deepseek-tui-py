@@ -140,8 +140,9 @@ it('preserves dismissed cards across opening and closing the right sidebar', asy
     expect(cards).toHaveLength(2)
     await act(async () => cards.forEach(card => card.click()))
     expect(cards.map(card => card.textContent)).toEqual(['compact', 'compact'])
+    // The rail stays beside an open right sidebar.
     await act(async () => sidebarControl.setOpen(true))
-    expect(host.querySelector<HTMLElement>('.ds-operation-rail')!.style.display).toBe('none')
+    expect(host.querySelector<HTMLElement>('.ds-operation-rail')!.style.display).toBe('')
     await act(async () => sidebarControl.setOpen(false))
     expect([...host.querySelectorAll('[data-testid="dock"]')]).toEqual(cards)
     expect(cards.map(card => card.textContent)).toEqual(['compact', 'compact'])

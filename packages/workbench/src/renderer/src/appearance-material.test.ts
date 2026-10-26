@@ -199,14 +199,16 @@ describe('settings select material', () => {
 
 describe('light change inspector reading surface', () => {
   it('isolates diff content and nested headers from the sidebar contrast tint', () => {
-    const rule = stylesheet.match(
-      /\[data-theme='light'\] \.ds-change-inspector,\s*\[data-theme='light'\] \.ds-workspace-editor-pane,\s*\[data-theme='light'\] \.ds-diff-view--flush \{(?<body>[^}]*)\}/
-    )?.groups?.body
-    expect(rule).toContain('--ds-bg-sidebar: var(--ds-bg-canvas);')
+    // The alias applies in both themes, so it carries no [data-theme] prefix.
+    const alias = stylesheet.match(
+      /\n\.ds-workbench-right-panel,\s*\.ds-change-inspector,\s*\.ds-workspace-editor-pane,\s*\.ds-diff-view--flush \{(?<body>[^}]*)\}/
+    )
+    expect(alias?.groups?.body).toContain('--ds-bg-sidebar: var(--ds-bg-canvas);')
     // The local alias also covers the more specific right-panel background,
     // file-list group headers, and the flush diff's own header.
+    const afterAlias = alias!.index! + alias![0].length
     for (const selector of ['.ds-change-inspector', '.ds-diff-view--flush', '.ds-change-inspector__pane-header', '.ds-diff-view--flush .ds-diff-view__header']) {
-      const start = stylesheet.indexOf(`\n${selector} {`)
+      const start = stylesheet.indexOf(`\n${selector} {`, selector === '.ds-diff-view--flush' ? afterAlias : 0)
       const body = stylesheet.slice(start, stylesheet.indexOf('}', start))
       expect(body, selector).toContain('background: var(--ds-bg-sidebar);')
     }
