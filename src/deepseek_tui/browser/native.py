@@ -114,7 +114,8 @@ class NativeBrowserEvents:
                 received_bytes=params.get("receivedBytes", 0),
                 total_bytes=params.get("totalBytes", 0),
             )
-            path = directory / params["guid"]
+            path = (Path(params["filePath"]) if self.run.native and params.get("filePath")
+                    else directory / params["guid"])
             if params["state"] == "completed" and path.is_file() and not path.is_symlink():
                 item["path"] = str(path)
                 self.service._persist(self.run)

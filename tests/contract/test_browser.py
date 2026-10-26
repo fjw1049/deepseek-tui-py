@@ -713,3 +713,18 @@ async def test_repeated_workflow_suggestions_are_removed(authed_client):
         f"/v1/threads/{thread_id}/browser/skill-suggestions", json={"action": "enable"}
     )
     assert response.status_code == 404
+
+
+async def test_browser_settings_work_without_a_chat_and_require_auth(authed_client):
+    client, token = authed_client
+    headers = {"Authorization": f"Bearer {token}"}
+    path = '/v1/threads/workbench-preview/browser/settings'
+    assert (await client.get(path, headers={'Authorization': ''})).status_code == 401
+    response = await client.get(path, headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {'agent_enabled': True, 'grants': []}
+    response = await client.post(path, json={'agent_enabled': False}, headers=headers)
+    assert response.status_code == 200
+    assert not (await client.get(path, headers=headers)).json()['agent_enabled']
+    assert (await client.post(path, json={'agent_enabled': {}}, headers=headers)).status_code == 422
+    assert (await client.get('/v1/threads/missing/browser/settings', headers=headers)).status_code == 404

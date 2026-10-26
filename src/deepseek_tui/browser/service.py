@@ -380,6 +380,22 @@ class BrowserService:
         self._cookies_changing = False
         self.workbench: dict[str, Any] | None = None  # Workbench's CDP bridge, when it runs
 
+    def agent_settings(self) -> dict[str, bool]:
+        path = self.profile_root / "settings.json"
+        return json.loads(path.read_text()) if path.exists() else {"agent_enabled": True}
+
+    def configure_agent(self, enabled: bool) -> dict[str, bool]:
+        from deepseek_tui.utils import write_text_atomic
+
+        # Do not report disabled while an already dispatched action is still running.
+        if any(run.lock.locked() or run.transferring or run.demo_status == "running"
+               for run in self.runs.values()):
+            raise ValueError("Wait for the current browser action to finish or stop the task first")
+        self.profile_root.mkdir(parents=True, exist_ok=True)
+        value = {"agent_enabled": enabled}
+        write_text_atomic(self.profile_root / "settings.json", json.dumps(value))
+        return value
+
     def preferences(self, thread_id: str) -> dict[str, bool]:
         path = self.artifact_root / thread_id / "preferences.json"
         return json.loads(path.read_text()) if path.exists() else {"persistent": True}
@@ -1507,6 +1523,8 @@ class BrowserService:
         check_assistance: bool = True,
         require_observation: bool = False,
     ) -> dict[str, Any]:
+        if actor == "agent" and not self.agent_settings()["agent_enabled"]:
+            raise ValueError("AI browser control is disabled in Browser settings")
         run = self.runs.get(thread_id)
         if action.action == "operation_status":
             return self.operation(thread_id, action.operation_id)
@@ -1586,6 +1604,8 @@ class BrowserService:
         queued_at = asyncio.get_running_loop().time()
         action._deadline = asyncio.get_running_loop().time() + 35
         async with run.lock:
+            if actor == "agent" and not self.agent_settings()["agent_enabled"]:
+                raise ValueError("AI browser control is disabled in Browser settings")
             # Already user-owned when issued, rather than a takeover racing this action.
             if (actor == "agent" and run.owner == "user" and not run.transferring
                     and run.generation == generation):

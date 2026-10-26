@@ -1161,7 +1161,11 @@ class ToolExecutionMixin:
 
         approval_request.remembered = decision is ApprovalDecision.APPROVED_SESSION
         if use_cache:
-            self.approval_cache.insert(cache_key, approved_for_session=approval_request.remembered)
+            self.approval_cache.insert(
+                cache_key, approved_for_session=approval_request.remembered,
+                browser_site=fp_args.get("browser_site")
+                if fp_name == "browser_use" and isinstance(fp_args, dict) else None,
+            )
         return False
 
     @staticmethod

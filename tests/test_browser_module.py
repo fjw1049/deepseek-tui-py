@@ -919,7 +919,8 @@ async def test_temporary_session_never_attaches_shared_workbench(tmp_path, monke
         await browser.sync_cookies("private")
 
 
-async def test_native_download_reconciles_after_tab_connection_changes(tmp_path):
+@pytest.mark.parametrize("custom_destination", [False, True])
+async def test_native_download_reconciles_after_tab_connection_changes(tmp_path, custom_destination):
     from deepseek_tui.browser.native import NativeBrowserEvents
     from deepseek_tui.browser.service import BrowserRun
 
@@ -927,7 +928,7 @@ async def test_native_download_reconciles_after_tab_connection_changes(tmp_path)
     run = BrowserRun("one", tmp_path / "one", native=True)
     directory = tmp_path / "one" / "downloads"
     directory.mkdir(parents=True)
-    saved = directory / "download-id"
+    saved = tmp_path / "invoice.pdf" if custom_destination else directory / "download-id"
     saved.write_bytes(b"complete")
 
     class Client:
@@ -944,6 +945,7 @@ async def test_native_download_reconciles_after_tab_connection_changes(tmp_path)
                                 "guid": "download-id",
                                 "state": "completed",
                                 "receivedBytes": 8,
+                                **({"filePath": str(saved)} if custom_destination else {}),
                             },
                         }
                     ]

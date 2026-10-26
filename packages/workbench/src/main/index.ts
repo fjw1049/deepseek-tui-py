@@ -57,6 +57,7 @@ import { readAsrConfigFile, writeAsrConfigFile } from './asr-config'
 import { readWebSearchConfigFile, writeWebSearchConfigFile } from './web-search-config'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
 import { installDevPreviewWebviewGuards, setPopupGate } from './services/dev-browser-guards'
+import { configureBrowserDownload } from './services/browser-download-settings'
 import { createBrowserBridge, type BrowserBridge } from './services/browser-bridge'
 import { registerCuaWindowPreviewIpc } from './services/cua-window-preview'
 import { installMainWindowNavigationGuards } from './services/main-window-guards'
@@ -138,9 +139,9 @@ function emitStartupPhase(phase: StartupPhase, detail?: string): void {
 
 traceStartup('main module evaluated')
 
-// TEMP(scroll-jank diagnostics): remote debugging port for live GPU trace. Remove after.
+// Development diagnostics use an available port so parallel instances do not collide.
 if (process.env.ELECTRON_RENDERER_URL) {
-  app.commandLine.appendSwitch('remote-debugging-port', '9222')
+  app.commandLine.appendSwitch('remote-debugging-port', '0')
 }
 
 if (process.platform === 'win32') {
@@ -163,9 +164,10 @@ function resolvePreloadPath(): string {
   return join(mainDir, '../preload/index.mjs')
 }
 
+let browserDownloadSettings: AppSettingsV1
+
 function installDevBrowserDownloadHandler(): void {
-  // Downloads inside the dev-browser webview partition save to the system
-  // default download location; surface the outcome via a notification.
+  // Apply browser download preferences before the runtime bridge records the result.
   session.fromPartition('persist:deepseek-dev-browser').on('will-download', (_event, item) => {
     const fileName = item.getFilename()
     item.once('done', (_doneEvent, state) => {
@@ -189,6 +191,8 @@ function installDevBrowserDownloadHandler(): void {
       }
       notification.show()
     })
+    try { configureBrowserDownload(item, browserDownloadSettings, app.getPath('downloads')) }
+    catch { item.cancel() }
   })
 }
 
@@ -948,10 +952,10 @@ app.whenReady().then(async () => {
 
   traceStartup('install webview guards:start')
   installDevPreviewWebviewGuards()
-  installDevBrowserDownloadHandler()
   installMediaPermissionHandler()
   traceStartup('install webview guards:done')
   browserBridge = createBrowserBridge({
+    useDownloadPreferences: true,
     getHost: () => mainWindow?.webContents ?? null,
     sendCommand: (requestId, command) => mainWindow?.webContents.send('browser-bridge:command', { requestId, command }),
     announce: async (port, token) => {
@@ -979,6 +983,8 @@ app.whenReady().then(async () => {
   traceStartup('settings load:start')
   emitStartupPhase('settings')
   let initial = await store.load()
+  browserDownloadSettings = initial
+  installDevBrowserDownloadHandler()
   await writeNetworkSettings(initial.network)
   traceStartup('settings load:done')
 
@@ -1094,6 +1100,7 @@ app.whenReady().then(async () => {
     const saved = await store.patch(
       partial.webSearch !== undefined ? { ...partial, webSearch: next.webSearch } : partial
     )
+    browserDownloadSettings = saved
     await writeNetworkSettings(saved.network)
     if (saved.theme !== nativeTheme.themeSource) {
       nativeTheme.themeSource = saved.theme

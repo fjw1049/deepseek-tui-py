@@ -212,3 +212,12 @@ describe('JsonSettingsStore', () => {
     await expect(store.load()).rejects.toThrow(/Failed to read settings file/)
   })
 })
+
+it('persists browser preferences across reloads without resetting other browser fields', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'ds-browser-settings-'))
+  const store = new JsonSettingsStore({ home })
+  await store.patch({ browserLinkTarget: 'internal', browserLocalLinkTarget: 'external', browserDownloadDirectory: '/tmp/downloads' })
+  await store.patch({ browserAskDownloadLocation: false })
+  const restored = await new JsonSettingsStore({ home }).load()
+  expect(restored).toMatchObject({ browserLinkTarget: 'internal', browserLocalLinkTarget: 'external', browserDownloadDirectory: '/tmp/downloads', browserAskDownloadLocation: false })
+})

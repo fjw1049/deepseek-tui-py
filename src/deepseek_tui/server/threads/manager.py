@@ -500,6 +500,20 @@ class RuntimeThreadManager:
         except Exception:  # noqa: BLE001 — boot must not fail on GC
             logger.debug("turn_checkpoints_prune_failed", exc_info=True)
 
+    def browser_site_grants(self) -> list[dict[str, str]]:
+        return [{"thread_id": thread_id, "thread_title": self.store.load_thread(thread_id).title,
+                 "site": site}
+                for thread_id, state in self._active.items()
+                for site in state.engine.approval_cache.browser_sites()]
+
+    def revoke_browser_site(self, thread_id: str, site: str) -> None:
+        state = self._active.get(thread_id)
+        if state is None:
+            return
+        if state.active_turn is not None:
+            raise ValueError("Stop the task before revoking its website permission")
+        state.engine.approval_cache.revoke_browser_site(site)
+
     def _sync_trust_mode(self, engine: Engine, trust_mode: bool) -> None:
         """Mirror thread / turn trust onto ToolContext (TUI session parity).
 

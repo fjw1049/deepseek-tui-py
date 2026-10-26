@@ -2499,7 +2499,7 @@
   "browserCookieSitesSearch": "Search sites",
   "browserCookieSitesSensitive": "Sensitive sites (mail, payments, banking, cloud consoles…) are not imported by default",
   "browserCookieSensitiveConfirm": "This imports sign-ins for sensitive sites: {{sites}}. The agent will be able to act as you there. Continue?",
-  "browserCookieSelected": "Syncing {{count}} sites: {{sites}}",
+  "browserCookieSelected": "Selected {{count}} sites for sync: {{sites}}",
   "browserCookieChangeSites": "Change sites",
   "browserCookieKeepSites": "Keep current",
   "browserCookieSitesPermission": "macOS blocked access to Chrome's data. Allow the program running this app in System Settings › Privacy & Security › Full Disk Access (in development, the terminal or VS Code that started it), restart the app, then retry.",

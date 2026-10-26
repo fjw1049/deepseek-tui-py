@@ -1,3 +1,4 @@
+import { openBrowserLink } from '../../lib/open-browser-link'
 import { isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -100,7 +101,7 @@ export function MarkdownDocumentPreview({ content, path, workspaceRoot, fragment
               if (target) {
                 void onOpenFile(target.path, target.fragment).then((ok) => { if (!ok) setLinkError(true) }).catch(() => setLinkError(true))
               } else if (/^(https?:|mailto:)/i.test(href)) {
-                void window.dsGui.openExternal(href).catch(() => setLinkError(true))
+                void openBrowserLink(href).catch(() => setLinkError(true))
               }
             }}>{children}</a>
           }}>{body}</ReactMarkdown>

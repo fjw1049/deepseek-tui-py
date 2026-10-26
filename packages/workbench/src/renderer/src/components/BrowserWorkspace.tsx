@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Clapperboard, Copy, FolderOpen, RotateCw, Globe2, Plus, X, MoreHorizontal, Hand, Play, Video, Film, Square, Pencil, ExternalLink, Bug, FileCode2, LoaderCircle, MousePointerClick, CircleStop } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Clapperboard, Copy, FolderOpen, RotateCw, Globe2, Plus, X, MoreHorizontal, Hand, Play, Video, Film, Square, Pencil, ExternalLink, Bug, FileCode2, LoaderCircle, MousePointerClick, CircleStop, Settings2, MousePointerSquareDashed } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
 import { extractWebviewConsoleMessage, parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
@@ -18,6 +18,7 @@ import { DEFAULT_DEV_PREVIEW_URL, normalizeBrowseUrlInput } from '@shared/dev-pr
 import { useLightDismiss } from '../hooks/use-light-dismiss'
 import { copyText } from '../lib/copy-text'
 import { consumeBrowserDemoRequest, setBrowserDemoActive, useBrowserDemoStore } from '../store/browser-demo-store'
+import { useChatStore } from '../store/chat-store'
 import './browser-workspace.css'
 import { respondToAssistance } from './BrowserAssistance'
 import type { Assistance } from './BrowserAssistanceCard'
@@ -49,11 +50,6 @@ function formatClock(seconds: number): string {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-function BrowserPointerIcon(): ReactElement {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" aria-hidden="true">
-    <path d="M5.5 3.5 18.5 10.5 11.8 12.8 9.5 20Z" />
-  </svg>
-}
 
 type BrowserState = {
   persistent?: boolean
@@ -759,8 +755,8 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         <input className="ds-dev-browser__omnibox" aria-label={t('browserAddressPlaceholder')} placeholder={t('browserAddressPlaceholder')} value={url} disabled={!addressEnabled} onChange={(e) => setUrl(e.target.value)} />
         <button className="ds-dev-browser__icon-btn" aria-label={t('browserOpen')} title={t('browserOpen')} disabled={!addressEnabled || !url.trim()}><ArrowRight size={13} /></button>
         {onAttachImage ? <button ref={annotationButton} type="button" className="ds-dev-browser__icon-btn" aria-label={t(inspect ? 'browserExitSelection' : 'browserAnnotate')} title={t(inspect ? 'browserExitSelection' : 'browserAnnotate')} aria-pressed={annotationBarVisible} disabled={!annotationSurface || agentHolds}
-          onClick={() => { if (!annotationBarVisible) setAnnotationBarShown(true); else if (annotationReady && canInspect) annotation.current?.togglePick() }}><BrowserPointerIcon /></button>
-          : canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={remote ? !userControls : !canBrowse} onClick={() => setInspect(!inspect)}><BrowserPointerIcon /></button> : null}
+          onClick={() => { if (!annotationBarVisible) setAnnotationBarShown(true); else if (annotationReady && canInspect) annotation.current?.togglePick() }}><MousePointerSquareDashed size={16} strokeWidth={1.75} /></button>
+          : canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={remote ? !userControls : !canBrowse} onClick={() => setInspect(!inspect)}><MousePointerSquareDashed size={16} strokeWidth={1.75} /></button> : null}
         <div className="ds-browser-menu-anchor" ref={menuRoot}>
           <button ref={menuButton} type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserMore')} title={t('browserMore')} aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(!more)}><MoreHorizontal size={16} /></button>
           {more ? <div className="ds-dock-menu" role="menu" aria-label={t('browserMore')}
@@ -798,6 +794,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
             {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !userControls : !pageOpen} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
             {onAttachImage && !annotationBarShown ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!annotationSurface || agentHolds} onClick={() => setAnnotationBarShown(true)}><Pencil size={15} />{t('browserShowAnnotationTools')}</button> : null}
+            <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => { setMore(false); useChatStore.getState().openSettings('browser') }}><Settings2 size={15} />{t('settings:browserTitle')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!pageUrl || !normalizeBrowseUrlInput(pageUrl)} onClick={() => { if (pageUrl) void window.dsGui.openExternal(pageUrl).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
             {(state && state.persistent !== false) || remote || state?.task_running ? <div className="ds-browser-menu-divider" role="separator" /> : null}
             {state && state.persistent !== false ? <>

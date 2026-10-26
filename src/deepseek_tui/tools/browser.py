@@ -201,7 +201,12 @@ class BrowserUseTool(ToolSpec):
                 result = await browser.action(str(thread_id), action, require_observation=True)
                 if action.action == "downloads" and isinstance(context, ToolContext):
                     downloads = browser.artifact_root / str(thread_id) / "downloads"
-                    context.extra_read_roots = tuple(dict.fromkeys((*context.extra_read_roots, downloads)))
+                    items = result.get("content", [])
+                    saved_files = [Path(item["path"]) for item in items
+                                   if item.get("state") == "completed" and item.get("path")] \
+                        if isinstance(items, list) else []
+                    context.extra_read_roots = tuple(dict.fromkeys(
+                        (*context.extra_read_roots, downloads, *saved_files)))
             if input_data.get("action") == "status":
                 result["environment"] = browser.environment()
                 result["actions"] = BrowserAction.model_json_schema()["properties"]["action"][

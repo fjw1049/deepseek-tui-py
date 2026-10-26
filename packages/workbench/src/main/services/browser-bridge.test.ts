@@ -19,7 +19,7 @@ beforeEach(() => {
   mocks.guests.clear()
 })
 
-async function harness() {
+async function harness(useDownloadPreferences = false) {
   let sequence = 0
   const attached = new Map<string, string>()
   const debug = Object.assign(new EventEmitter(), {
@@ -43,7 +43,8 @@ async function harness() {
   mocks.guests.set(2, guest)
   let token = ''
   const commands: any[] = []
-  const bridge = createBrowserBridge({ getHost: () => ({ id: 1 }) as any,
+  const bridge = createBrowserBridge({
+    useDownloadPreferences, getHost: () => ({ id: 1 }) as any,
     announce: async (_port, value) => { token = value },
     sendCommand: (id, command) => { commands.push(command); bridge.reply(id, { ok: true }) }
   })
@@ -230,5 +231,18 @@ it('blocks windows a page opens while the agent drives its tab, and tells the ru
     expect(h.bridge.allowPopup(2, 'https://login.test/')).toBe(false)
     expect(h.messages).toContainEqual({ method: 'Workbench.popupBlocked', params: { url: 'https://login.test/' } })
     expect(h.bridge.allowPopup(99, 'https://unknown.test/')).toBe(true)
+  } finally { h.socket.close() }
+})
+
+it('keeps the configured download destination and reports the actual saved path', async () => {
+  const h = await harness(true)
+  await h.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: '/tmp/artifacts' })
+  const item = Object.assign(new EventEmitter(), { setSavePath: vi.fn(), getSavePath: () => '/tmp/chosen/report.pdf', getURL: () => 'https://example.test/file', getFilename: () => 'report.pdf', getReceivedBytes: () => 12, getTotalBytes: () => 12 })
+  try {
+    mocks.partition.emit('will-download', {}, item, h.guest)
+    expect(item.setSavePath).not.toHaveBeenCalled()
+    item.emit('done', {}, 'completed')
+    const result = await h.send('Workbench.getDownloads')
+    expect(result.result.downloads[0].progress).toMatchObject({ state: 'completed', filePath: '/tmp/chosen/report.pdf' })
   } finally { h.socket.close() }
 })

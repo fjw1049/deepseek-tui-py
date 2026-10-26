@@ -33,6 +33,41 @@ async def state(request: Request, thread_id: str) -> dict[str, Any]:
             **request.app.state.thread_manager.browser_task_state(thread_id)}
 
 
+class AgentSettingsBody(BaseModel):
+    agent_enabled: bool
+
+
+class RevokeSiteBody(BaseModel):
+    thread_id: str = Field(min_length=1, max_length=200)
+    site: str = Field(min_length=1, max_length=2048)
+
+
+@router.get("/settings")
+async def browser_settings(request: Request, thread_id: str) -> dict[str, Any]:
+    return {**service(request, thread_id).agent_settings(),
+            "grants": request.app.state.thread_manager.browser_site_grants()}
+
+
+@router.post("/settings")
+async def set_browser_settings(request: Request, thread_id: str,
+                               body: AgentSettingsBody) -> dict[str, Any]:
+    try:
+        return service(request, thread_id).configure_agent(body.agent_enabled)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/settings/revoke")
+async def revoke_browser_site(request: Request, thread_id: str,
+                              body: RevokeSiteBody) -> dict[str, Any]:
+    service(request, thread_id)
+    try:
+        request.app.state.thread_manager.revoke_browser_site(body.thread_id, body.site)
+        return {"grants": request.app.state.thread_manager.browser_site_grants()}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.get("/frame")
 async def frame(request: Request, thread_id: str) -> dict[str, Any]:
     try:

@@ -488,6 +488,10 @@ export type AppSettingsV1 = {
   defaultLlmProviderId: BuiltinLlmProviderId
   /** Provider-qualified native vision helper for text-only models. */
   visionModel?: string
+  browserLinkTarget?: 'external' | 'internal'
+  browserLocalLinkTarget?: 'external' | 'internal'
+  browserDownloadDirectory?: string
+  browserAskDownloadLocation?: boolean
   cuaEnabled?: boolean
   cuaChrome?: boolean
   cuaAutoAllowApps?: boolean
@@ -1462,6 +1466,10 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     iconAnimation: maybeSettings.iconAnimation === true,
     deepseek: llm.deepseek,
     defaultLlmProviderId: llm.defaultLlmProviderId,
+    browserLinkTarget: settings.browserLinkTarget === 'internal' ? 'internal' : 'external',
+    browserLocalLinkTarget: settings.browserLocalLinkTarget === 'internal' ? 'internal' : 'external',
+    browserDownloadDirectory: typeof settings.browserDownloadDirectory === 'string' ? settings.browserDownloadDirectory.trim() : '',
+    browserAskDownloadLocation: settings.browserAskDownloadLocation !== false,
     cuaEnabled: typeof settings.cuaEnabled === 'boolean' ? settings.cuaEnabled : undefined,
     cuaChrome: typeof settings.cuaChrome === 'boolean' ? settings.cuaChrome : undefined,
     cuaAutoAllowApps: typeof settings.cuaAutoAllowApps === 'boolean' ? settings.cuaAutoAllowApps : undefined,

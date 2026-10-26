@@ -143,6 +143,7 @@ class ApprovalCacheStatus(Enum):
 @dataclass(slots=True)
 class _CacheEntry:
     approved_for_session: bool
+    browser_site: str | None = None
 
 
 @dataclass(slots=True)
@@ -163,8 +164,18 @@ class ApprovalCache:
             return ApprovalCacheStatus.APPROVED
         return ApprovalCacheStatus.DENIED
 
-    def insert(self, key: ApprovalKey, approved_for_session: bool) -> None:
-        self._entries[key] = _CacheEntry(approved_for_session=approved_for_session)
+    def insert(self, key: ApprovalKey, approved_for_session: bool,
+               browser_site: str | None = None) -> None:
+        self._entries[key] = _CacheEntry(approved_for_session, browser_site)
+
+    def browser_sites(self) -> list[str]:
+        return sorted({entry.browser_site for entry in self._entries.values()
+                       if entry.approved_for_session and entry.browser_site})
+
+    def revoke_browser_site(self, site: str) -> None:
+        for key, entry in list(self._entries.items()):
+            if entry.browser_site == site:
+                del self._entries[key]
 
     def clear(self) -> None:
         self._entries.clear()

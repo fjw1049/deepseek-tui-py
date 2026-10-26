@@ -1,3 +1,4 @@
+import { openBrowserLink } from '../../lib/open-browser-link'
 import type { ComponentPropsWithRef, MouseEvent, ReactElement } from 'react'
 import { Streamdown, defaultRehypePlugins, type AnimateOptions, type StreamdownProps } from 'streamdown'
 import remarkGfm from 'remark-gfm'
@@ -129,7 +130,7 @@ function StreamdownLink({
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     if (href && typeof window.dsGui?.openExternal === 'function') {
       event.preventDefault()
-      void window.dsGui.openExternal(href)
+      void openBrowserLink(href)
     }
   }
 

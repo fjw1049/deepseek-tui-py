@@ -25,7 +25,7 @@ const chromeSites = [
   { site: 'bank.test', count: 2, sensitive: true }
 ]
 
-async function mount(profiles = [{ id: 'Default', name: 'Personal' }], state = initial, manage = false, anchor?: DOMRect, agentBusy = false, selectedSites: string[] = [], blank = false) {
+async function mount(profiles = [{ id: 'Default', name: 'Personal' }], state = initial, manage = false, anchor?: DOMRect, agentBusy = false, selectedSites: string[] = [], blank = false, settingsDialog = false) {
   let saved = state
   let selected = selectedSites
   api.mockReset().mockImplementation(async (_thread, path: string, body) => {
@@ -44,11 +44,11 @@ async function mount(profiles = [{ id: 'Default', name: 'Personal' }], state = i
     const [open, setOpen] = useState(manage)
     const [updateRequest, setUpdateRequest] = useState(0)
     requestUpdate = () => setUpdateRequest(count => count + 1)
-    return createElement(BrowserCookieSync, { threadId: 'one', generation: 4, manage: open, anchor, agentBusy, blank, updateRequest,
+    return createElement(BrowserCookieSync, { threadId: 'one', generation: 4, manage: open, anchor, agentBusy, blank, updateRequest, settingsDialog,
       onOpen: () => setOpen(true), onClose: () => { close(); setOpen(false) } })
   }
   await act(async () => root.render(createElement(Harness)))
-  const button = (text: string): HTMLButtonElement => [...host.querySelectorAll('button')].find(b => b.textContent === text || b.getAttribute('aria-label') === text)!
+  const button = (text: string): HTMLButtonElement => [...(settingsDialog ? document.body : host).querySelectorAll('button')].find(b => b.textContent === text || b.getAttribute('aria-label') === text)!
   const site = (name: string): HTMLInputElement => [...host.querySelectorAll('label')].find(l => l.textContent?.startsWith(name))!.querySelector('input')!
   const check = async (name: string): Promise<void> => { await act(async () => site(name).click()) }
   const update = async (): Promise<void> => { await act(async () => requestUpdate()) }
@@ -368,4 +368,36 @@ it('positions within the browser pane when it is offset from the window edge', a
     expect(dialog.style.left).toBe('360px')
     expect(dialog.style.top).toBe('58px')
   } finally { await h.unmount(); Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent'); width.mockRestore(); height.mockRestore() }
+})
+
+it('portals settings management outside the scrolling page and restores focus on close', async () => {
+  const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus()
+  const h = await mount(undefined, { ...initial, consent: 'enabled', status: 'cleared', profile: 'Default' }, true, undefined, false, ['example.test'], false, true)
+  try {
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(h.host.contains(dialog)).toBe(false)
+    expect(dialog.parentElement?.parentElement).toBe(document.body)
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(api.mock.calls.every(call => !call[2])).toBe(true)
+    expect(dialog.textContent).toContain('browserCookieStatus_cleared')
+    expect(dialog.textContent).toContain('browserCookieSelected')
+    await act(async () => dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  } finally { await h.unmount(); trigger.remove() }
+})
+
+it('keeps the settings manager open when a nested clear confirmation is canceled', async () => {
+  let resolve!: (approved: boolean) => void
+  confirm.mockImplementationOnce(() => new Promise<boolean>(done => { resolve = done }))
+  const h = await mount(undefined, initial, true, undefined, false, [], false, true)
+  try {
+    await act(async () => h.button('browserCookieClear').click())
+    await act(async () => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })))
+    expect(h.close).not.toHaveBeenCalled()
+    expect(h.button('browserCookieDismiss').disabled).toBe(true)
+    await act(async () => resolve(false))
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(api.mock.calls.some(call => call[2]?.action === 'clear')).toBe(false)
+  } finally { await h.unmount() }
 })

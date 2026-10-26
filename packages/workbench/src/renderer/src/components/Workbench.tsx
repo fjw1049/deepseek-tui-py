@@ -1073,13 +1073,14 @@ export function Workbench(): ReactElement {
       const url = (event as CustomEvent<OpenPreviewUrlDetail>).detail?.url
       const normalized = typeof url === 'string' ? normalizeBrowseUrlInput(url) : null
       if (!normalized) return
+      setRoute('chat')
       previewAutoOpenSuppressedRef.current = false
       setBrowsePreviewUrl(normalized)
       openRightSidebar('preview')
     }
     window.addEventListener(OPEN_PREVIEW_URL_EVENT, onOpenPreviewUrl)
     return () => window.removeEventListener(OPEN_PREVIEW_URL_EVENT, onOpenPreviewUrl)
-  }, [openRightSidebar])
+  }, [openRightSidebar, setRoute])
 
   useEffect(() => {
     if (previewThreadId.current === activeThreadId) return

@@ -68,6 +68,7 @@ import { WebSearchSettingsPanel } from './settings/WebSearchSettingsPanel'
 import { SessionImportPanel } from './settings/SessionImportPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
 import { SharingSettingsPanel } from './settings/SharingSettingsPanel'
+import { BrowserSettingsPanel } from './settings/BrowserSettingsPanel'
 import { CuaSettingsPanel } from './settings/CuaSettingsPanel'
 import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
@@ -616,7 +617,7 @@ export function SettingsView(): ReactElement {
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-ds-ink">
-                {category === 'computer-control' ? t('cuaTitle') : category === 'import' ? t('sessionImport.title') : category === 'models'
+                {category === 'browser' ? t('browserTitle') : category === 'computer-control' ? t('cuaTitle') : category === 'import' ? t('sessionImport.title') : category === 'models'
                   ? t('models')
                   : category === 'search'
                     ? t('search')
@@ -631,7 +632,7 @@ export function SettingsView(): ReactElement {
                             : t('title')}
               </h1>
               <p className="mt-1 text-[14px] text-ds-muted">
-                {category === 'computer-control' ? t('cuaDescription') : category === 'import' ? t('sessionImport.subtitle') : category === 'data'
+                {category === 'browser' ? t('browserDescription') : category === 'computer-control' ? t('cuaDescription') : category === 'import' ? t('sessionImport.subtitle') : category === 'data'
                   ? t('dataSubtitle')
                   : category === 'archive'
                     ? t('archiveSubtitle')
@@ -900,6 +901,7 @@ export function SettingsView(): ReactElement {
             </>
           )}
 
+          {category === 'browser' && <BrowserSettingsPanel form={form} onUpdate={update} />}
           {category === 'computer-control' && (
             <CuaSettingsPanel form={form} onUpdate={(patch) => update(patch)} />
           )}

@@ -2499,7 +2499,7 @@
   "browserCookieSitesSearch": "搜索网站",
   "browserCookieSitesSensitive": "敏感网站（邮箱、支付、银行、云控制台等），默认不导入",
   "browserCookieSensitiveConfirm": "将导入这些敏感网站的登录：{{sites}}。Agent 将能以你的身份访问它们，确定继续？",
-  "browserCookieSelected": "正在同步 {{count}} 个网站：{{sites}}",
+  "browserCookieSelected": "已选择 {{count}} 个网站用于同步：{{sites}}",
   "browserCookieChangeSites": "更改网站",
   "browserCookieKeepSites": "保持不变",
   "browserCookieSitesPermission": "macOS 阻止了读取 Chrome 数据。请在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」中允许运行本应用的程序（开发模式下是启动它的终端或 VS Code），重启应用后重试。",

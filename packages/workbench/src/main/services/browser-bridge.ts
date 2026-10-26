@@ -8,6 +8,7 @@ import { DEV_BROWSER_PARTITION, type BrowserBridgeCommand, type BrowserBridgeRep
 import { logWarn } from '../logger'
 
 type Deps = {
+  useDownloadPreferences?: boolean
   /** The window whose renderer hosts the tabs; guests of any other host are refused. */
   getHost: () => WebContents | null
   sendCommand: (requestId: string, command: BrowserBridgeCommand) => void
@@ -104,7 +105,7 @@ export function createBrowserBridge(deps: Deps) {
     const tab = [...tabs.values()].find(item => item.webContentsId === source.id)
     if (!directory || !tab) return
     const guid = randomUUID()
-    item.setSavePath(join(directory, guid))
+    if (!deps.useDownloadPreferences) item.setSavePath(join(directory, guid))
     const record: { browserId: string; begin: Record<string, unknown>; progress?: Record<string, unknown> } = {
       browserId: tab.browserId, begin: { guid, url: item.getURL(), suggestedFilename: item.getFilename(), frameId: '' }
     }
@@ -115,7 +116,8 @@ export function createBrowserBridge(deps: Deps) {
     downloads.set(guid, record)
     sendToBrowser(tab.browserId, 'Browser.downloadWillBegin', record.begin)
     const progress = (state: string): void => {
-      record.progress = { guid, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() }
+      record.progress = { guid, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes(),
+        ...(deps.useDownloadPreferences && state === 'completed' ? { filePath: item.getSavePath() } : {}) }
       sendToBrowser(tab.browserId, 'Browser.downloadProgress', record.progress)
     }
     item.on('updated', () => progress('inProgress'))

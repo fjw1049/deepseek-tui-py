@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { X, Globe2, CircleCheck, ChevronDown } from 'lucide-react'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
@@ -21,12 +22,13 @@ const inviteLaterKey = 'browser-cookie-invite-later'
 type Source = { id: string; name: string }
 type Site = { site: string; count: number; sensitive: boolean }
 
-export function BrowserCookieSync({ threadId, state, generation, agentBusy = false, blank = false, updateRequest = 0, manage, anchor, onOpen, onClose }: {
+export function BrowserCookieSync({ threadId, state, generation, agentBusy = false, blank = false, updateRequest = 0, manage, anchor, settingsDialog = false, onOpen, onClose }: {
   threadId: string; state?: CookieSyncState; generation?: number; agentBusy?: boolean
   /** The built-in browser shows an empty new tab, where the import invitation may appear. */
   blank?: boolean
   /** Increments when the user asks to update cookies from the browser menu. */
   updateRequest?: number
+  settingsDialog?: boolean
   manage: boolean; anchor?: DOMRect | null; onOpen: (anchor?: DOMRect) => void; onClose: () => void
 }): ReactElement | null {
   const { t } = useTranslation('common')
@@ -34,6 +36,7 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
   const [sources, setSources] = useState<Source[]>([])
   const [profile, setProfile] = useState('')
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
   const [inviteDismissed, setInviteDismissed] = useState(() => {
@@ -72,12 +75,14 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
   }, [blank, nativeCheck])
   useEffect(() => { if (!manage) setFromInvite(false) }, [manage])
   function closePanel(): void {
+    if (busy || confirming) return
     if (fromInvite) dismissInvite()
     onClose()
   }
   const panel = useRef<HTMLElement>(null)
   const [position, setPosition] = useState({ left: 12, top: 12 })
-  useLightDismiss({ open: manage, refs: [panel], onDismiss: closePanel })
+  useLightDismiss({ open: manage, refs: [panel], onDismiss: closePanel, enabled: !settingsDialog && !busy && !confirming })
+  const loaded = current !== null
   useLayoutEffect(() => {
     if (!manage || !anchor || fromInvite || !panel.current) return
     const place = () => {
@@ -101,8 +106,7 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
     observer.observe(panel.current)
     window.addEventListener('resize', place)
     return () => { observer.disconnect(); window.removeEventListener('resize', place) }
-  }, [manage, anchor, fromInvite, current !== null])
-  const loaded = current !== null
+  }, [manage, anchor, fromInvite, loaded])
   const closeButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (!manage) return
@@ -175,11 +179,31 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
   async function syncChosen(): Promise<void> {
     const list = [...chosen].sort()
     const risky = list.filter(site => sites?.some(row => row.site === site && row.sensitive))
-    if (risky.length && !(await confirmAsync(t('browserCookieSensitiveConfirm', { sites: risky.join(', ') })))) return
+    if (risky.length) {
+      setConfirming(true)
+      let approved = false
+      try { approved = await confirmAsync(t('browserCookieSensitiveConfirm', { sites: risky.join(', ') })) }
+      finally { setConfirming(false) }
+      if (!approved) return
+    }
     void perform(current?.consent === 'enabled' && current.profile === profile ? 'sync' : 'enable', list)
   }
 
-  if (!current) return null
+  async function clearSignIns(): Promise<void> {
+    setConfirming(true)
+    try {
+      if (await confirmAsync(t('browserCookieClearConfirm'), { destructive: true })) await perform('clear')
+    } finally { setConfirming(false) }
+  }
+  function modalSurface(content: ReactElement): ReactElement {
+    if (settingsDialog) return createPortal(<div className="ds-no-drag fixed inset-0 z-[130] flex items-center justify-center bg-black/30 p-4"
+      onMouseDown={event => { if (event.target === event.currentTarget) closePanel() }}>{content}</div>, document.body)
+    return <div className="ds-browser-cookie-modal">{content}</div>
+  }
+  if (!current) return manage ? modalSurface(<section ref={panel} className="ds-browser-cookie-settings is-modal" role="dialog" aria-modal={settingsDialog || undefined} aria-label={t('browserCookieManage')}>
+      <header><strong>{t('browserCookieManage')}</strong><button ref={closeButton} type="button" className="ds-cookie-close" disabled={busy || confirming} aria-label={t('browserCookieDismiss')} onClick={closePanel}><X size={16} /></button></header>
+      <p className="ds-browser-cookie-settings-body" role={error ? 'alert' : 'status'}>{t(error || 'browserCookieStatus_syncing')}</p>
+    </section>) : null
   const button = 'ds-cookie-button'
   if (!manage) {
     if (showInvite) return <div className="ds-browser-cookie-invite">
@@ -205,13 +229,22 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
       {!busy ? <button type="button" onClick={() => { setFeedback(''); setError('') }}>{t('browserCookieDismiss')}</button> : null}
     </div>
   }
-  const content = <section ref={panel} style={anchor && !fromInvite ? position : undefined} className={`ds-browser-cookie-settings${fromInvite ? ' is-modal' : ''}`} role="dialog" aria-label={t(fromInvite ? 'browserCookieImportTitle' : 'browserCookieTitle')}
+  const modal = fromInvite || !anchor
+  const content = <section ref={panel} style={anchor && !fromInvite ? position : undefined} className={`ds-browser-cookie-settings${modal ? ' is-modal' : ''}${settingsDialog ? ' is-settings-dialog' : ''}`} role="dialog" aria-modal={settingsDialog || undefined} aria-label={t(fromInvite ? 'browserCookieImportTitle' : 'browserCookieTitle')}
     onKeyDown={event => {
       if (event.key === 'Escape') { event.stopPropagation(); closePanel() }
+      if (settingsDialog && event.key === 'Tab') {
+        const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), summary')]
+          .filter(element => !element.closest('details:not([open])') || element.tagName === 'SUMMARY')
+        const first = controls[0], last = controls[controls.length - 1]
+        if (event.shiftKey ? document.activeElement === first : document.activeElement === last) {
+          event.preventDefault(); (event.shiftKey ? last : first)?.focus()
+        }
+      }
     }}>
     <header>
       {fromInvite ? <strong>{t('browserCookieImportTitle')}</strong> : <strong><Globe2 size={16} />{t('browserCookieManage')}</strong>}
-      <button ref={closeButton} type="button" className="ds-cookie-close" aria-label={t('browserCookieDismiss')} onClick={closePanel}><X size={16} /></button>
+      <button ref={closeButton} type="button" className="ds-cookie-close" disabled={busy || confirming} aria-label={t('browserCookieDismiss')} onClick={closePanel}><X size={16} /></button>
     </header>
     <div className="ds-browser-cookie-settings-body">
     {!sources.length ? <p className="ds-cookie-description">{t('browserCookieNoChrome')}</p> : null}
@@ -303,11 +336,11 @@ export function BrowserCookieSync({ threadId, state, generation, agentBusy = fal
       {manage && current.consent === 'enabled' ? <button type="button" className="ds-cookie-secondary" disabled={busy}
         onClick={() => void perform('disable')}>{t('browserCookieDisable')}</button> : null}
       {manage ? <button type="button" className="ds-cookie-danger" disabled={busy}
-        onClick={() => { void confirmAsync(t('browserCookieClearConfirm'), { destructive: true }).then((ok) => { if (ok) void perform('clear') }) }}>{t('browserCookieClear')}</button> : null}
+        onClick={() => void clearSignIns()}>{t('browserCookieClear')}</button> : null}
     </div>
     </details>}
     {error ? <p role="alert" className="mt-2 text-red-600">{t(error)}</p> : null}
     </div>
   </section>
-  return fromInvite ? <div className="ds-browser-cookie-modal">{content}</div> : content
+  return modal ? modalSurface(content) : content
 }
