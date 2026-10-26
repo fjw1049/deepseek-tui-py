@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { BLANK_PAGE, MAX_BROWSER_SESSIONS, retainBrowserSession, openPageTab, closePageTab, navigatePageTab, ensureBrowserSession, setPageDisplay, updatePageTab, useBrowserPagesStore } from './browser-pages-store'
+import { BLANK_PAGE, MAX_BROWSER_SESSIONS, setBrowserInputBlocked, retainBrowserSession, openPageTab, closePageTab, navigatePageTab, ensureBrowserSession, setPageDisplay, updatePageTab, useBrowserPagesStore } from './browser-pages-store'
 
 beforeEach(() => { vi.useFakeTimers(); useBrowserPagesStore.setState({ sessions: {}, display: null }) })
 afterEach(() => { vi.useRealTimers() })
@@ -62,7 +62,7 @@ it('protects a connected background browser across tab changes until its runtime
   expect(retainBrowserSession('running', true)).toBe(true)
   const tab = openPageTab('running', 'https://example.test/')
   navigatePageTab('running', tab, 'https://example.test/next')
-  closePageTab('running', useBrowserPagesStore.getState().sessions.running!.activeTabId)
+  closePageTab('running', useBrowserPagesStore.getState().sessions.running!.activeTabId, 'runtime')
   for (let i = 0; i < 7; i++) ensureBrowserSession(`other-${i}`)
   vi.advanceTimersByTime(11 * 60_000)
   ensureBrowserSession('ninth')
@@ -70,4 +70,19 @@ it('protects a connected background browser across tab changes until its runtime
   retainBrowserSession('running', false)
   ensureBrowserSession('tenth')
   expect(useBrowserPagesStore.getState().sessions.running).toBeUndefined()
+})
+
+
+it('guards the tab being closed while keeping runtime closes and user takeover working', () => {
+  const agentTab = ensureBrowserSession('one').activeTabId
+  const userTab = openPageTab('one', 'https://example.test/')
+  setBrowserInputBlocked('one', true, agentTab)
+  expect(closePageTab('one', agentTab)).toBe(false)
+  expect(closePageTab('one', userTab)).toBe(true)
+  expect(closePageTab('one', agentTab, 'runtime')).toBe(true)
+  const replacement = useBrowserPagesStore.getState().sessions.one!.activeTabId
+  setBrowserInputBlocked('one', true)
+  expect(closePageTab('one', replacement)).toBe(false)
+  setBrowserInputBlocked('one', false)
+  expect(closePageTab('one', replacement)).toBe(true)
 })

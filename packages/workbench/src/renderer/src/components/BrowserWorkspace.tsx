@@ -734,7 +734,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
                 onClick={() => { if (!tab.id) return; if (remote || isPopup(tab.id)) action({ action: 'switch_tab', tab_id: tab.id }); else activatePageTab(threadId, tab.id) }}>
                 {agentTab?.tab_id === tab.id ? <LoaderCircle className="ds-browser-control-spinner" size={12} aria-label={t('browserAgentControl')} /> : <Globe2 className="ds-dev-browser__tab-icon" />}<span className="ds-dev-browser__tab-label">{!tab.url || tab.url === BLANK_PAGE ? t('browserNewTab') : tab.title || tab.url}</span>
               </button>
-              {tab.id && !soleBlank ? <button className={`ds-dev-browser__tab-close${tab.active ? ' is-visible' : ''}`} aria-label={`${t('browserCloseTab')} ${tab.title}`} title={t('browserCloseTab')} disabled={remote ? !canNavigate : !canBrowse}
+              {tab.id && !soleBlank ? <button className={`ds-dev-browser__tab-close${tab.active ? ' is-visible' : ''}`} aria-label={`${t('browserCloseTab')} ${tab.title}`} title={t('browserCloseTab')} disabled={remote ? !canNavigate : !visible || !state || (blockNativeInput && (!blockedTabId || blockedTabId === tab.id))}
                 onClick={() => { if (remote || isPopup(tab.id)) action({ action: 'close_tab', tab_id: tab.id }); else closePageTab(threadId, tab.id) }}><X size={11} /></button> : null}
             </div>)}
         </div>

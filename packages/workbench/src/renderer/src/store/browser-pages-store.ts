@@ -158,10 +158,11 @@ export function activatePageTab(browserId: string, tabId: string): boolean {
   return true
 }
 
-export function closePageTab(browserId: string, tabId: string): boolean {
+export function closePageTab(browserId: string, tabId: string, source: 'user' | 'runtime' = 'user'): boolean {
   const session = useBrowserPagesStore.getState().sessions[browserId]
   const index = session?.tabs.findIndex(tab => tab.id === tabId) ?? -1
   if (!session || index < 0) return false
+  if (source === 'user' && tabInputBlocked(session, tabId)) return false
   const tabs = session.tabs.filter(tab => tab.id !== tabId)
   if (!tabs.length) tabs.push(createPageTab(BLANK_PAGE, null))
   const activeTabId = session.activeTabId === tabId ? tabs[Math.min(index, tabs.length - 1)]!.id : session.activeTabId

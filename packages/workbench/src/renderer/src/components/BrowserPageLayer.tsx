@@ -217,7 +217,7 @@ export function BrowserPageLayer(): ReactElement {
     if (command.kind === 'open') { ensureBrowserSession(command.browserId); reply(true); return }
     if (command.kind === 'create') { reply(true, { tabId: openPageTab(command.browserId, command.url, { background: command.background }) }); return }
     const done = command.kind === 'activate' ? activatePageTab(command.browserId, command.tabId)
-      : closePageTab(command.browserId, command.tabId)
+      : closePageTab(command.browserId, command.tabId, 'runtime')
     reply(done, done ? {} : { error: 'Tab no longer exists' })
   }), [])
 

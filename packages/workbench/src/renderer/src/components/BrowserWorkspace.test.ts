@@ -1250,3 +1250,25 @@ it('searches with an engine reachable in the interface language', () => {
   expect(searchUrl('天气 北京', 'zh-CN')).toBe('https://www.baidu.com/s?wd=%E5%A4%A9%E6%B0%94%20%E5%8C%97%E4%BA%AC')
   expect(searchUrl('weather', 'en')).toBe('https://www.google.com/search?q=weather')
 })
+
+it('protects the agent-owned tab while another tab is shown', async () => {
+  useBrowserPagesStore.setState({ sessions: { one: { activeTabId: 'human-tab', tabs: [
+    { id: 'agent-tab', url: 'https://example.test/a', title: 'Agent page', filePath: null, loading: false, error: null },
+    { id: 'human-tab', url: 'https://example.test/b', title: 'Human page', filePath: null, loading: false, error: null }
+  ] } }, display: null })
+  const h = mount({ active: true, surface: 'native', owner: 'agent', task_running: true, generation: 2, log: [], artifacts: [],
+    tabs: [{ tab_id: 'agent-tab', title: 'Agent page', url: 'https://example.test/a', active: true },
+      { tab_id: 'human-tab', title: 'Human page', url: 'https://example.test/b', active: false }] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    const button = h.container.querySelector<HTMLButtonElement>('[aria-label="browserCloseTab Agent page"]')!
+    expect(button.disabled).toBe(true)
+    await act(async () => button.click())
+    expect(useBrowserPagesStore.getState().sessions.one!.tabs.some(t => t.id === 'agent-tab')).toBe(true)
+    const humanClose = h.container.querySelector<HTMLButtonElement>('[aria-label="browserCloseTab Human page"]')!
+    expect(humanClose.disabled).toBe(false)
+    await act(async () => humanClose.click())
+    expect(useBrowserPagesStore.getState().sessions.one!.tabs.map(t => t.id)).toEqual(['agent-tab'])
+    expect(h.request.mock.calls.some(([path]) => path.endsWith('/control'))).toBe(false)
+  } finally { await h.close() }
+})
