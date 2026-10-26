@@ -19,16 +19,30 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 vi.mock('../lib/workspace-label', () => ({ terminalLabelFromPath: () => 'workspace' }))
 vi.mock('../lib/apply-theme', () => ({ readTerminalFontFamily: () => 'monospace' }))
 vi.mock('../lib/apply-appearance', () => ({ getTerminalFontSizePx: () => 14, subscribeAppearance: () => () => {} }))
-vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: class {
+  terminal?: { cols: number; rows: number; host?: HTMLElement }
+  activate(terminal: typeof this.terminal) { this.terminal = terminal }
+  fit() {
+    const terminal = this.terminal
+    const probe = terminal?.host?.parentElement
+    if (!terminal || probe?.style.position !== 'fixed') return
+    // Model the real terminal padding and split header when probing a new pane.
+    const padding = parseFloat(probe.style.padding) * 2
+    terminal.cols = Math.floor((parseFloat(probe.style.width) - padding - 20) / 10)
+    terminal.rows = Math.floor((parseFloat(probe.style.height) - padding - (probe.children.length > 1 ? 24 : 0) - 6) / 18)
+    expect(terminal.host?.classList.contains('ds-terminal-host')).toBe(true)
+  }
+} }))
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80
   rows = 24
   options = {}
   dispose = vi.fn()
   focus = vi.fn()
+  host?: HTMLElement
   constructor() { mocks.terminals.push(this) }
-  open(host: HTMLElement) { host.setAttribute('data-xterm', 'mounted') }
-  loadAddon() {}
+  open(host: HTMLElement) { this.host = host; host.setAttribute('data-xterm', 'mounted') }
+  loadAddon(addon: { activate: (terminal: unknown) => void }) { addon.activate(this) }
   onData() { return { dispose: vi.fn() } }
   write = vi.fn()
 } }))
@@ -45,6 +59,33 @@ beforeEach(() => {
     resizeTerminalSession: vi.fn(), closeTerminalSession: vi.fn(),
     onTerminalData: (callback: typeof mocks.onData) => { mocks.onData = callback; return () => {} }, onTerminalExit: () => () => {}
   } })
+})
+
+it('measures nested splits at their future pane size before spawning the shell', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.style.width.endsWith('%') ? 800 * parseFloat(this.style.width) / 100 : 800
+  })
+  const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.style.height.endsWith('%') ? 400 * parseFloat(this.style.height) / 100 : 400
+  })
+  state().addSession({ id: 'a', cwd: '/workspace', status: 'running' })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(AppTerminalPanel, { workspaceRoot: '/workspace', mountActive: true, mountSurface: 'sidebar' })))
+    await act(async () => (host.querySelector('[aria-label="terminalSplitRight"]') as HTMLButtonElement).click())
+    expect(window.dsGui.createTerminalSession).toHaveBeenLastCalledWith({ cwd: '/workspace', cols: 37, rows: 20 })
+    await act(async () => (host.querySelector('[aria-label="terminalSplitDown"]') as HTMLButtonElement).click())
+    expect(window.dsGui.createTerminalSession).toHaveBeenLastCalledWith({ cwd: '/workspace', cols: 37, rows: 9 })
+    await act(async () => (host.querySelector('[aria-label="terminalNewTab"]') as HTMLButtonElement).click())
+    expect(window.dsGui.createTerminalSession).toHaveBeenLastCalledWith({ cwd: '/workspace', cols: 78, rows: 21 })
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    width.mockRestore()
+    height.mockRestore()
+  }
 })
 
 it.each(['bottom', 'sidebar'] as const)('uses shared split controls on %s without remounting existing terminals', async (mountSurface) => {

@@ -152,6 +152,15 @@ export type TerminalCreateDimensions = {
   rows: number
 }
 
+type TerminalDimensionProvider = (split?: { targetId: string; direction: TerminalSplitDirection }) => TerminalCreateDimensions
+let terminalDimensionProvider: TerminalDimensionProvider | undefined
+
+/** The active terminal surface measures new tabs and splits before the shell starts. */
+export function registerTerminalDimensionProvider(provider: TerminalDimensionProvider): () => void {
+  terminalDimensionProvider = provider
+  return () => { if (terminalDimensionProvider === provider) terminalDimensionProvider = undefined }
+}
+
 export async function createTerminalSessionForWorkspace(
   workspaceRoot: string,
   dimensions?: TerminalCreateDimensions,
@@ -163,13 +172,13 @@ export async function createTerminalSessionForWorkspace(
   const store = useTerminalSessionStore.getState()
   if (store.creatingSession) return false
 
-  const cols = Math.max(20, Math.floor(dimensions?.cols ?? 120))
-  const rows = Math.max(8, Math.floor(dimensions?.rows ?? 32))
-
   ensureTerminalEvents()
   store.setCreatingSession(true)
   store.setCreateError(null)
   try {
+    const measured = dimensions ?? terminalDimensionProvider?.(split)
+    const cols = Math.max(2, Math.floor(measured?.cols ?? 120))
+    const rows = Math.max(1, Math.floor(measured?.rows ?? 32))
     const result = await window.dsGui.createTerminalSession({
       cwd,
       cols,

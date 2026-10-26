@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { terminalLayoutRects, terminalPaneIds } from '../lib/terminal-layout'
-import { readTerminalOutput, subscribeTerminalEvents, createTerminalSessionForWorkspace, splitTerminalSession, useTerminalSessionStore } from './terminal-session-store'
+import { readTerminalOutput, subscribeTerminalEvents, createTerminalSessionForWorkspace, registerTerminalDimensionProvider, splitTerminalSession, useTerminalSessionStore } from './terminal-session-store'
 
 const state = () => useTerminalSessionStore.getState()
 const add = (id: string) => state().addSession({ id, cwd: '/workspace', status: 'running' })
@@ -9,6 +9,25 @@ const add = (id: string) => state().addSession({ id, cwd: '/workspace', status: 
 beforeEach(() => state().resetSessions())
 
 describe('shared terminal splits', () => {
+  it('starts tabs and splits at measured sizes, including narrow and short panes', async () => {
+    let nextId = 0
+    const create = vi.fn(async () => ({ ok: true, session: { id: `new-${++nextId}`, cwd: '/workspace' } }))
+    Object.assign(window, { dsGui: { createTerminalSession: create } })
+    const measure = vi.fn((split?: { direction: string }) => split ? { cols: 17, rows: 5 } : { cols: 76, rows: 28 })
+    const unregister = registerTerminalDimensionProvider(measure)
+    try {
+      await createTerminalSessionForWorkspace('/workspace')
+      expect(create).toHaveBeenLastCalledWith({ cwd: '/workspace', cols: 76, rows: 28 })
+      await splitTerminalSession('/workspace', 'right')
+      expect(measure).toHaveBeenLastCalledWith({ targetId: 'new-1', direction: 'right' })
+      expect(create).toHaveBeenLastCalledWith({ cwd: '/workspace', cols: 17, rows: 5 })
+    } finally { unregister() }
+    await createTerminalSessionForWorkspace('/workspace', { cols: 66, rows: 20 })
+    expect(create).toHaveBeenLastCalledWith({ cwd: '/workspace', cols: 66, rows: 20 })
+    await createTerminalSessionForWorkspace('/workspace')
+    expect(create).toHaveBeenLastCalledWith({ cwd: '/workspace', cols: 120, rows: 32 })
+  })
+
   it('preserves siblings on focus, mixes directions, restores groups and collapses closed panes', () => {
     add('a')
     state().addSession({ id: 'b', cwd: '/workspace', status: 'running' }, { targetId: 'a', direction: 'right' })

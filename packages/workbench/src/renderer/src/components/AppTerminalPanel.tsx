@@ -1,6 +1,6 @@
 import { GlobalErrorNotice } from './GlobalFeedback'
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { FitAddon } from '@xterm/addon-fit'
@@ -16,6 +16,7 @@ import {
   readTerminalOutput,
   subscribeTerminalEvents,
   createTerminalSessionForWorkspace,
+  registerTerminalDimensionProvider,
   useTerminalSessionStore,
   type TerminalXtermMount
 } from '../store/terminal-session-store'
@@ -73,16 +74,25 @@ function readTerminalTheme(): ITheme {
 }
 
 /** Probe the viewport with a throwaway xterm so PTY starts at the real size. */
-function proposeTerminalDimensions(container: HTMLElement | null): { cols: number; rows: number } {
+function proposeTerminalDimensions(container: HTMLElement | null, split?: 'right' | 'down'): { cols: number; rows: number } {
   const fallback = { cols: 120, rows: 32 }
   if (!container) return fallback
-  const width = container.clientWidth
-  const height = container.clientHeight
-  if (width < 40 || height < 40) return fallback
+  const width = container.clientWidth / (split === 'right' ? 2 : 1)
+  const height = container.clientHeight / (split === 'down' ? 2 : 1)
+  if (width <= 0 || height <= 0) return fallback
 
+  const probe = document.createElement('div')
+  probe.className = 'flex flex-col overflow-hidden'
+  probe.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:${height}px;padding:${split ? 3 : 0}px;visibility:hidden;pointer-events:none`
+  if (split) {
+    const header = document.createElement('div')
+    header.className = 'h-6 shrink-0'
+    probe.appendChild(header)
+  }
   const host = document.createElement('div')
-  host.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:${height}px;overflow:hidden;visibility:hidden;pointer-events:none`
-  document.body.appendChild(host)
+  host.className = 'ds-terminal-host min-h-0 w-full flex-1'
+  probe.appendChild(host)
+  document.body.appendChild(probe)
 
   const terminal = new XTerm({
     fontFamily: readTerminalFontFamily(),
@@ -96,12 +106,12 @@ function proposeTerminalDimensions(container: HTMLElement | null): { cols: numbe
     terminal.open(host)
     fitAddon.fit()
     return {
-      cols: Math.max(20, terminal.cols || fallback.cols),
-      rows: Math.max(8, terminal.rows || fallback.rows)
+      cols: Math.max(2, terminal.cols || fallback.cols),
+      rows: Math.max(1, terminal.rows || fallback.rows)
     }
   } finally {
     terminal.dispose()
-    host.remove()
+    probe.remove()
   }
 }
 
@@ -179,10 +189,16 @@ export function AppTerminalPanel({
   }, [visibleIds, scheduleFit])
 
   const createSession = useCallback(async (): Promise<void> => {
-    // Spawn at the fitted viewport size so zsh prompt_sp can erase its EOL mark.
-    const dimensions = proposeTerminalDimensions(viewportRef.current)
-    await createTerminalSessionForWorkspace(trimmedWorkspaceRoot, dimensions)
+    await createTerminalSessionForWorkspace(trimmedWorkspaceRoot)
   }, [trimmedWorkspaceRoot])
+
+  useLayoutEffect(() => {
+    if (!mountActive) return
+    return registerTerminalDimensionProvider((split) => proposeTerminalDimensions(
+      split ? sessionNodeRefs.current[split.targetId]?.parentElement ?? null : viewportRef.current,
+      split?.direction
+    ))
+  }, [mountActive])
 
   useEffect(() => {
     if (mountActive) setXtermMount(mountSurface)
