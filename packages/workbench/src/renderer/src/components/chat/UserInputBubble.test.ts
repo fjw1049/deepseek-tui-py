@@ -35,28 +35,30 @@ it('accepts free text without choosing a fabricated option', async () => {
   }
 })
 
-it('shows complete permission scope and submits only an explicit permission option', async () => {
+it('renders context separately and respects closed choices for any question ID', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   resolveUserInput.mockClear()
   const host = document.createElement('div')
   const root = createRoot(host)
-  const question = 'Allow control of Notes?\nScope: this turn only. Read and edit documents.'
+  const question = 'Which format?'
+  const description = 'Choose a format for the export.'
   try {
     await act(async () => root.render(createElement(UserInputBubble, { block: {
       kind: 'user_input', id: 'permission', requestId: 'permission', status: 'pending',
-      questions: [{ id: 'cua_permission', header: 'Permission', question,
-        options: [{ label: 'Allow once', value: 'allow_once', description: 'This turn' }] }]
+      questions: [{ id: 'format', header: 'Format', question, description, allow_custom: false,
+        options: [{ label: 'PDF', value: 'pdf', description: '' }] }]
     } })))
     expect(host.textContent).toContain(question)
     expect(host.querySelector('h3')?.textContent).toBe(question)
+    expect(host.querySelector('.ds-question-description')?.textContent).toBe(description)
     expect(host.textContent).not.toContain('userInputOther')
     expect(host.querySelector('input')).toBeNull()
     const submit = [...host.querySelectorAll('button')].find(b => b.textContent === 'userInputSubmit')!
     expect(submit.disabled).toBe(true)
-    await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent?.includes('Allow once'))!.click())
+    await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent?.includes('PDF'))!.click())
     await act(async () => submit.click())
     expect(resolveUserInput).toHaveBeenCalledWith('permission', {
-      kind: 'submit', answers: [{ id: 'cua_permission', label: 'Allow once', value: 'allow_once' }]
+      kind: 'submit', answers: [{ id: 'format', label: 'PDF', value: 'pdf' }]
     })
   } finally { await act(async () => root.unmount()) }
 })

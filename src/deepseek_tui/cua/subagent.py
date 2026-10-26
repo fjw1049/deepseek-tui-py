@@ -30,14 +30,15 @@ async def prepare_subagent_cua(agent, runtime, context, registry, allowed_tools,
 
         if config.auto_allow_apps and (allowed := auto_allow_response(params)):
             return allowed
-        question = approval_question(params)
+        locale = getattr(getattr(runtime.config, "ui", None), "locale", "zh")
+        question = approval_question(params, locale)
         handler = getattr(runtime, "approval_handler", None)
         if question is None or handler is None:
             return {"action": "cancel"}
         request = build_approval_request(
             "cua_permission",
             [ToolCapability.REQUIRES_APPROVAL],
-            reason=question["question"] + "\n仅允许本次访问 / Allow once only",
+            reason=question["question"] + ("\n仅允许本次访问" if locale.startswith("zh") else "\nAllow once only"),
         )
         request.force_prompt = True
         call_id = "cua-permission-" + uuid.uuid4().hex

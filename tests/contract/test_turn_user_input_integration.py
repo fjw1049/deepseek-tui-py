@@ -51,6 +51,8 @@ async def test_monitor_turn_user_input_required_event_log(
             "id": "pick",
             "header": "Choose",
             "question": "Continue?",
+            "description": "Review before continuing.",
+            "allow_custom": False,
             "options": [{"label": "Yes", "description": ""}],
         }
     ]

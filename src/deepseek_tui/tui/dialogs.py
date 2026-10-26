@@ -772,13 +772,15 @@ class UserInputDialog(ModalScreen[dict[str, object] | None]):
         with Vertical(id="user-input-box"):
             yield Static("[bold bright_cyan]Input required[/]", id="user-input-title")
             yield Static("", id="user-input-question")
+            yield Static("", id="user-input-description")
             yield OptionList(id="user-input-options")
             yield Input(
                 placeholder="Type a custom answer and press Enter",
                 id="user-input-custom",
             )
             yield Static(
-                "[dim]Select an option, or enter a custom answer · Esc cancels[/]"
+                "[dim]Select an option, or enter a custom answer · Esc cancels[/]",
+                id="user-input-hint",
             )
 
     def on_mount(self) -> None:
@@ -798,6 +800,9 @@ class UserInputDialog(ModalScreen[dict[str, object] | None]):
         self.query_one("#user-input-question", Static).update(
             f"[bold]{number}/{total}[/]  {prompt}"
         )
+        description = str(question.get("description") or "")
+        self.query_one("#user-input-description", Static).update(escape(description))
+        self.query_one("#user-input-description", Static).display = bool(description)
         options = question.get("options")
         option_list = self.query_one("#user-input-options", OptionList)
         option_list.clear_options()
@@ -823,6 +828,11 @@ class UserInputDialog(ModalScreen[dict[str, object] | None]):
                 )
         custom = self.query_one("#user-input-custom", Input)
         custom.value = ""
+        custom.display = question.get("allow_custom") is not False
+        self.query_one("#user-input-hint", Static).update(
+            "Select an option, or enter a custom answer · Esc cancels"
+            if custom.display else "Select an option · Esc cancels"
+        )
         if self._option_values:
             option_list.focus()
         else:
@@ -839,7 +849,8 @@ class UserInputDialog(ModalScreen[dict[str, object] | None]):
         self._accept(value)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        self._accept(event.value)
+        if self.state.current and self.state.current.get("allow_custom") is not False:
+            self._accept(event.value)
 
     def _accept(self, value: str) -> None:
         if not value.strip():

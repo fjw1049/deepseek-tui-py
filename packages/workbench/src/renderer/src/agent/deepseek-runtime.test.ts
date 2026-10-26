@@ -189,7 +189,7 @@ describe('user_input hydration', () => {
     ]
   })
 
-  function stubDetail(turnStatus: string, itemStatus: string) {
+  function stubDetail(turnStatus: string, itemStatus: string, questionDetail = questionsDetail) {
     const runtimeRequest = vi.fn().mockResolvedValue({
       ok: true,
       body: JSON.stringify({
@@ -203,7 +203,7 @@ describe('user_input hydration', () => {
             kind: 'tool_call',
             status: itemStatus,
             summary: 'request_user_input',
-            detail: questionsDetail,
+            detail: questionDetail,
             metadata: { tool_call_id: 'cua-permission-abc' },
             started_at: '2026-10-22T08:26:45.000Z'
           }
@@ -227,6 +227,21 @@ describe('user_input hydration', () => {
   it('keeps an in-progress row pending while its turn is live', async () => {
     const detail = await stubDetail('in_progress', 'in_progress')
     expect(detail.blocks[0]).toMatchObject({ kind: 'user_input', status: 'pending' })
+  })
+
+  it('preserves context and closed choices without duplicating empty descriptions', async () => {
+    const questions = [{ id: 'format', header: 'Format', question: 'Which format?',
+      description: 'Export format', allow_custom: false, options: [{ label: 'PDF', description: '' }] }]
+    const detail = await stubDetail('in_progress', 'in_progress', JSON.stringify({ questions }))
+    expect(detail.blocks[0]).toMatchObject({ kind: 'user_input', questions })
+  })
+
+  it('restores free-text questions with omitted or empty options', async () => {
+    for (const options of [undefined, []]) {
+      const question = { id: 'name', header: 'Name', question: 'Your name?', options }
+      const detail = await stubDetail('in_progress', 'in_progress', JSON.stringify({ questions: [question] }))
+      expect(detail.blocks[0]).toMatchObject({ kind: 'user_input', questions: [{ ...question, options: [] }] })
+    }
   })
 
   it('renders a runtime-cancelled row as cancelled, not an error', async () => {

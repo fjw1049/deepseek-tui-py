@@ -100,6 +100,24 @@ def test_approval_does_not_widen_scope(native):
     assert approval_question(native) is None
 
 
+def test_approval_copy_uses_one_language_and_preserves_scope(native):
+    native["message"] = 'Allow Computer Use to use "汽水音乐 Helper"?'
+    native["_meta"]["persist"] = ["session", "always"]
+    zh = approval_question(native, "zh")
+    en = approval_question(native, "en")
+    assert zh["question"] == "允许操作「汽水音乐 Helper」吗？"
+    assert en["question"] == 'Allow control of "汽水音乐 Helper"?'
+    assert zh["allow_custom"] is False
+    assert [o["value"] for o in en["options"]] == ["decline", "once", "session", "always"]
+    assert en["options"][0]["label"] == "Deny"
+    assert approval_response(native, {"answers": [{"id": "cua_permission", "label": "Always allow"}]}) == {
+        "action": "accept", "content": {}, "_meta": {"persist": "always"}
+    }
+    assert zh["options"][0]["description"] == ""
+    native["message"] = "Custom access request with important scope details"
+    assert approval_question(native)["question"] == native["message"]
+
+
 def test_auto_allow_accepts_native_apps_only(native):
     assert auto_allow_response(native) == {
         "action": "accept", "content": {}, "_meta": {"persist": "session"}

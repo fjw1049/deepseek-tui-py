@@ -400,8 +400,8 @@ function readUserInputQuestions(value: unknown): UserInputQuestion[] | null {
   for (const rawQuestion of rawQuestions) {
     if (!rawQuestion || typeof rawQuestion !== 'object') return null
     const q = rawQuestion as Record<string, unknown>
-    const rawOptions = q.options
-    if (!Array.isArray(rawOptions) || rawOptions.length === 0) return null
+    const rawOptions = q.options ?? []
+    if (!Array.isArray(rawOptions)) return null
     const options = rawOptions
       .map(
         (
@@ -416,7 +416,7 @@ function readUserInputQuestions(value: unknown): UserInputQuestion[] | null {
           if (!label) return null
           return {
             label,
-            description: description || label,
+            description,
             ...(value ? { value } : {})
           }
         }
@@ -428,8 +428,12 @@ function readUserInputQuestions(value: unknown): UserInputQuestion[] | null {
     const header = typeof q.header === 'string' ? q.header.trim() : ''
     const id = typeof q.id === 'string' ? q.id.trim() : ''
     const question = typeof q.question === 'string' ? q.question.trim() : ''
-    if (!header || !id || !question || options.length === 0) return null
-    questions.push({ header, id, question, options })
+    if (!header || !id || !question || options.length !== rawOptions.length) return null
+    if (q.allow_custom === false && options.length === 0) return null
+    questions.push({ header, id, question, options,
+      ...(typeof q.description === 'string' ? { description: q.description.trim() } : {}),
+      ...(typeof q.allow_custom === 'boolean' ? { allow_custom: q.allow_custom } : {})
+    })
   }
   return questions
 }

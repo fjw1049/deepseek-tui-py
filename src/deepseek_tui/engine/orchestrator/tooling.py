@@ -1334,6 +1334,8 @@ class ToolExecutionMixin:
                 "id": q.id,
                 "question": q.question,
                 "options": q.options,
+                "description": q.description,
+                "allow_custom": q.allow_custom,
             }
             for q in questions
         ]

@@ -178,3 +178,22 @@ async def test_transcript_runtime_replaces_intent_and_completed_batch() -> None:
 
         assert len(transcript.query(InlineToolCell)) == 0
         assert len(transcript.query(_ActionBatchCell)) == 1
+
+
+@pytest.mark.asyncio
+async def test_closed_question_shows_context_without_custom_input():
+    from textual.app import App
+    from textual.widgets import Input, OptionList, Static
+    from deepseek_tui.tui.dialogs import UserInputDialog
+
+    app = App()
+    async with app.run_test() as pilot:
+        dialog = UserInputDialog([{
+            "id": "format", "question": "Which format?", "description": "Export format",
+            "allow_custom": False, "options": [{"label": "PDF", "value": "pdf"}],
+        }])
+        app.push_screen(dialog)
+        await pilot.pause()
+        assert not dialog.query_one("#user-input-custom", Input).display
+        assert dialog.query_one("#user-input-description", Static).display
+        assert dialog.query_one("#user-input-options", OptionList).option_count == 1

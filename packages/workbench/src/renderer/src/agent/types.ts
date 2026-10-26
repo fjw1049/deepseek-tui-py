@@ -13,6 +13,8 @@ export type UserInputQuestion = {
   header: string
   id: string
   question: string
+  description?: string
+  allow_custom?: boolean
   options: UserInputOption[]
 }
 

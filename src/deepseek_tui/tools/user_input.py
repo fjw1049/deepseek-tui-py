@@ -26,13 +26,16 @@ REQUEST_USER_INPUT_NAME = "request_user_input"
 class UserInputQuestion:
     """Validated question structure."""
 
-    __slots__ = ("header", "id", "question", "options")
+    __slots__ = ("header", "id", "question", "options", "description", "allow_custom")
 
-    def __init__(self, header: str, id: str, question: str, options: list[dict[str, str]]) -> None:
+    def __init__(self, header: str, id: str, question: str, options: list[dict[str, str]],
+                 description: str = "", allow_custom: bool = True) -> None:
         self.header = header
         self.id = id
         self.question = question
         self.options = options
+        self.description = description
+        self.allow_custom = allow_custom
 
 
 def validate_user_input_request(input_data: dict[str, Any]) -> list[UserInputQuestion]:
@@ -63,19 +66,28 @@ def validate_user_input_request(input_data: dict[str, Any]) -> list[UserInputQue
         if not isinstance(options, list) or len(options) not in {0, 2, 3, 4}:
             raise ToolError("each question must omit options or have 2-4 options")
 
+        description = item.get("description", "")
+        allow_custom = item.get("allow_custom", True)
+        if not isinstance(description, str) or not isinstance(allow_custom, bool):
+            raise ToolError("description must be a string and allow_custom must be a boolean")
+        if not options and not allow_custom:
+            raise ToolError("questions without options must allow custom answers")
+
         for opt in options:
             if not isinstance(opt, dict):
                 raise ToolError("each option must be an object")
             label = opt.get("label", "")
-            description = opt.get("description", "")
-            if any(not isinstance(v, str) or not v.strip() for v in (label, description)):
-                raise ToolError("option label and description are required and must be non-empty")
+            option_description = opt.get("description", "")
+            if not isinstance(label, str) or not label.strip() or not isinstance(option_description, str):
+                raise ToolError("option label must be non-empty and description must be a string")
 
         questions.append(UserInputQuestion(
             header=header,
             id=qid,
             question=question_text,
             options=[dict(opt) for opt in options],
+            description=description,
+            allow_custom=allow_custom,
         ))
 
     return questions
@@ -144,6 +156,8 @@ class RequestUserInputTool(ToolSpec):
                                     "the conversation language."
                                 ),
                             },
+                            "description": {"type": "string", "description": "Optional brief context; do not repeat the question."},
+                            "allow_custom": {"type": "boolean", "description": "Defaults to true. Set false for choices only."},
                             "options": {
                                 "type": "array",
                                 "description": (
@@ -168,7 +182,7 @@ class RequestUserInputTool(ToolSpec):
                                             ),
                                         },
                                     },
-                                    "required": ["label", "description"],
+                                    "required": ["label"],
                                 },
                                 "minItems": 2,
                                 "maxItems": 4,

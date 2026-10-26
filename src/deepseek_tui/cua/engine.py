@@ -44,7 +44,7 @@ class CuaEngineMixin:
             async def ask(params):
                 if config.auto_allow_apps and (allowed := auto_allow_response(params)):
                     return allowed
-                question = approval_question(params)
+                question = approval_question(params, getattr(self, "reply_locale", "zh"))
                 # Nobody can answer a detached run; only always-allowed apps stay usable.
                 if question is None or self.tool_context.metadata.get("unattended"):
                     return {"action": "cancel"}

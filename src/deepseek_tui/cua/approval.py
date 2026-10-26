@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -15,7 +16,7 @@ def _native_app(meta: dict[str, Any]) -> str | None:
     return app if meta.get("connector_id") == "computer-use" and isinstance(app, str) else None
 
 
-def approval_question(params: dict[str, Any]) -> dict[str, Any] | None:
+def approval_question(params: dict[str, Any], locale: str = "zh") -> dict[str, Any] | None:
     meta = params.get("_meta") or params.get("meta") or {}
     schema = params.get("requestedSchema") or {}
     if (
@@ -43,32 +44,31 @@ def approval_question(params: dict[str, Any]) -> dict[str, Any] | None:
         )
     if not native and not browser:
         return None
+    zh = locale.startswith("zh")
     options = [
-        {"label": "拒绝 / Deny", "value": "decline", "description": "不允许本次访问"},
-        {"label": "允许一次 / Allow once", "value": "once", "description": "仅允许本次请求"},
+        {"label": "拒绝" if zh else "Deny", "value": "decline", "description": ""},
+        {"label": "允许一次" if zh else "Allow once", "value": "once", "description": ""},
     ]
     if native:
         scopes = meta.get("persist", [])
-        for scope, label in [
-            ("session", "本次会话 / This session"),
-            ("always", "始终允许 / Always allow"),
+        for scope, label, description in [
+            ("session", "本次运行期间允许" if zh else "Allow for this runtime session", ""),
+            ("always", "始终允许" if zh else "Always allow",
+             "可在电脑控制设置中撤销" if zh else "Revocable in Computer Use settings"),
         ]:
             if scope in scopes:
-                options.append(
-                    {"label": label, "value": scope, "description": (
-                        "此运行会话内不再询问 / Remember for this runtime session"
-                        if scope == "session" else
-                        "记住对此应用的允许，可在电脑控制设置撤销 / "
-                        "Remember for this app; revocable"
-                    )}
-                )
+                options.append({"label": label, "value": scope, "description": description})
+    message = params["message"]
+    # Translate only the known upstream template; preserve unfamiliar scope text.
+    match = re.fullmatch(r'Allow Computer Use to use "(.+)"\?', message)
+    if native and match:
+        name = match.group(1)
+        message = f"允许操作「{name}」吗？" if zh else f'Allow control of "{name}"?'
     return {
         "id": "cua_permission",
-        "header": "应用访问确认" if native else "网站访问确认",
-        "question": params["message"] + (
-            "\n这是访问该应用的确认，不是重新申请系统录屏或辅助功能权限。"
-            " / App access, separate from system permissions." if native else ""
-        ),
+        "header": ("应用访问确认" if native else "网站访问确认") if zh else "Access request",
+        "question": message,
+        "allow_custom": False,
         "options": options,
     }
 
@@ -78,7 +78,9 @@ def approval_response(params: dict[str, Any], response: dict[str, Any] | None) -
     if not question or not response:
         return {"action": "cancel"}
     choices = {option["value"]: option["value"] for option in question["options"]}
-    choices.update({option["label"]: option["value"] for option in question["options"]})
+    for locale in ("zh", "en"):
+        localized = approval_question(params, locale)
+        choices.update({option["label"]: option["value"] for option in localized["options"]})
     for answer in response.get("answers", []):
         if (
             not isinstance(answer, dict)

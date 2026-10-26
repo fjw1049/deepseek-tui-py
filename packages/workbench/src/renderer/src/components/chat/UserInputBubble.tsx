@@ -123,7 +123,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
   const total = block.questions.length
   const clampedStep = Math.min(step, Math.max(0, total - 1))
   const question = block.questions[clampedStep]
-  const isPermission = question?.id === 'cua_permission'
+  const allowCustom = question?.allow_custom !== false
   const isLast = clampedStep >= total - 1
 
   const clearAutoAdvance = (): void => {
@@ -245,6 +245,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
       <h3 id={`question-${block.id}`} className="ds-question-title">
         {question?.question || t('userInputTitle')}
       </h3>
+      {question?.description ? <p className="ds-question-description">{question.description}</p> : null}
       {question ? <div className="ds-question-options" role="group" aria-labelledby={`question-${block.id}`}>
         {question.options.map((option, index) => {
           const optionValue = option.value || option.label
@@ -259,13 +260,13 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
             className="ds-question-option"
           >
             <span className="ds-question-option-copy">
-              <span className="ds-question-option-label">{option.label}</span>{' '}
+              <span className="ds-question-option-label">{option.label}</span>
               {option.description ? <span className="ds-question-option-description">{option.description}</span> : null}
             </span>
             <span className="ds-question-key" aria-hidden>{selected ? <Check size={14} /> : index + 1}</span>
           </button>
         })}
-        {!isPermission && question.options.length > 0 ? <button
+        {allowCustom && question.options.length > 0 ? <button
           type="button"
           disabled={submitting}
           aria-pressed={otherSelected}
@@ -279,7 +280,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
           </span>
           <span className="ds-question-key" aria-hidden>{otherSelected ? <Check size={14} /> : null}</span>
         </button> : null}
-        {!isPermission && otherSelected ? <input
+        {allowCustom && otherSelected ? <input
           ref={inputRef}
           value={answer?.value ?? ''}
           disabled={submitting}
