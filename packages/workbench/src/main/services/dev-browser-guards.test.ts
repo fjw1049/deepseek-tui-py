@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { installDevPreviewWebviewGuards } from './dev-browser-guards'
+import { installDevPreviewWebviewGuards, setPopupGate, setTabOpener } from './dev-browser-guards'
 
 const mocks = vi.hoisted(() => ({
   on: vi.fn(), logWarn: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock('../logger', () => ({ logWarn: mocks.logWarn }))
 
 function createContents(type = 'webview') {
   const contents = Object.assign(new EventEmitter(), {
-    getType: () => type,
+    id: 7, getType: () => type,
     loadURL: vi.fn(async (_url: string) => {}),
     setWindowOpenHandler: vi.fn()
   })
@@ -28,6 +28,8 @@ function createContents(type = 'webview') {
 describe('dev browser guards', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setPopupGate(null)
+    setTabOpener(null)
     installDevPreviewWebviewGuards()
   })
 
@@ -117,20 +119,45 @@ describe('dev browser guards', () => {
     expect(contents.loadURL).not.toHaveBeenCalled()
   })
 
-  it('loads new-tab links in the current tab instead of opening a window', () => {
+  it('keeps the source page intact when opening new-tab links', () => {
+    const openTab = vi.fn(async () => {})
+    setTabOpener(openTab)
     const contents = createContents()
     const open = contents.setWindowOpenHandler.mock.calls[0]![0]
     for (const disposition of ['foreground-tab', 'background-tab']) {
       expect(open({ url: 'https://example.com/result', disposition })).toEqual({ action: 'deny' })
     }
-    expect(contents.loadURL).toHaveBeenCalledTimes(2)
-    expect(contents.loadURL).toHaveBeenCalledWith('https://example.com/result')
+    expect(contents.loadURL).not.toHaveBeenCalled()
+    expect(openTab.mock.calls).toEqual([
+      [7, 'https://example.com/result', false], [7, 'https://example.com/result', true]
+    ])
     // Sized popups (sign-in windows) keep their opener; blank tabs are written to by their opener.
     expect(open({ url: 'https://example.com/login', disposition: 'new-window' })).toMatchObject({ action: 'allow' })
     expect(open({ url: 'about:blank', disposition: 'foreground-tab' })).toMatchObject({ action: 'allow' })
-    expect(contents.loadURL).toHaveBeenCalledTimes(2)
+    for (const details of [{ frameName: 'oauth' }, { features: 'width=600,height=400' }, { features: 'opener' }, { postBody: { data: [] } }]) {
+      expect(open({ url: 'https://example.com/login', disposition: 'foreground-tab', ...details })).toMatchObject({ action: 'allow' })
+    }
+    expect(openTab).toHaveBeenCalledTimes(2)
+    expect(contents.loadURL).not.toHaveBeenCalled()
     // Search engines link results through http redirectors; those open over https too.
     expect(open({ url: 'http://www.baidu.com/link?url=abc', disposition: 'foreground-tab' })).toEqual({ action: 'deny' })
-    expect(contents.loadURL).toHaveBeenLastCalledWith('https://www.baidu.com/link?url=abc')
+    expect(openTab).toHaveBeenLastCalledWith(7, 'https://www.baidu.com/link?url=abc', false)
+    expect(contents.loadURL).not.toHaveBeenCalled()
   })
+  it('retains the popup gate and never replaces the source on a tab-opening failure', async () => {
+    const openTab = vi.fn(async () => { throw new Error('renderer unavailable') })
+    setTabOpener(openTab)
+    const gate = vi.fn(() => false)
+    setPopupGate(gate)
+    const contents = createContents()
+    const open = contents.setWindowOpenHandler.mock.calls[0]![0]
+    expect(open({ url: 'https://example.com/login', disposition: 'new-window' })).toEqual({ action: 'deny' })
+    expect(gate).toHaveBeenCalledWith(7, 'https://example.com/login')
+    expect(openTab).not.toHaveBeenCalled()
+    expect(open({ url: 'https://example.com/result', disposition: 'foreground-tab' })).toEqual({ action: 'deny' })
+    await Promise.resolve()
+    expect(mocks.logWarn).toHaveBeenCalledWith('dev-browser-navigation', 'Could not open link in a new tab', expect.any(String))
+    expect(contents.loadURL).not.toHaveBeenCalled()
+  })
+
 })

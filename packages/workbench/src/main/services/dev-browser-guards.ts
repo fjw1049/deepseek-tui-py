@@ -9,6 +9,11 @@ export function setPopupGate(gate: typeof popupGate): void {
   popupGate = gate
 }
 
+let tabOpener: ((openerId: number, url: string, background: boolean) => Promise<void>) | null = null
+export function setTabOpener(opener: typeof tabOpener): void {
+  tabOpener = opener
+}
+
 export function installDevPreviewWebviewGuards(): void {
   // This partition is separate from the shell's microphone-enabled session.
   // Electron otherwise grants guest permission requests automatically.
@@ -68,16 +73,18 @@ export function installDevPreviewWebviewGuards(): void {
       if (isBrowser() && isMainFrame) guardNavigation(event, url)
     })
 
-    contents.setWindowOpenHandler(({ url, disposition }) => {
+    contents.setWindowOpenHandler(({ url, disposition, frameName, features, postBody }) => {
       if (!isBrowser()) return { action: 'allow' }
       const next = url === 'about:blank' ? url : upgradeToBrowsableUrl(url)
       if (!next) return { action: 'deny' }
-      // Plain new-tab links (search results) stay in the current tab: no bare window, and a
-      // demonstration keeps recording the same page. Sized popups (sign-in) keep their opener.
-      // A child window cannot be given another URL, so an upgraded link also stays here.
+      // Keep the source document alive. Named windows, POSTs and explicit window features
+      // need a real child to preserve opener, targeting and form-submission semantics.
       const tabLink = disposition === 'foreground-tab' || disposition === 'background-tab'
-      if (contents.getType() === 'webview' && next !== 'about:blank' && (tabLink || next !== url)) {
-        navigate(next)
+      if (tabOpener && contents.getType() === 'webview' && next !== 'about:blank' && tabLink &&
+          !postBody && !features && (!frameName || frameName === '_blank')) {
+        void tabOpener(contents.id, next, disposition === 'background-tab').catch((error: unknown) => {
+          logWarn('dev-browser-navigation', 'Could not open link in a new tab', String(error))
+        })
         return { action: 'deny' }
       }
       if (next !== url) return { action: 'deny' }

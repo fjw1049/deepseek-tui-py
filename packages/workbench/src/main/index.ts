@@ -56,7 +56,7 @@ import {
 import { readAsrConfigFile, writeAsrConfigFile } from './asr-config'
 import { readWebSearchConfigFile, writeWebSearchConfigFile } from './web-search-config'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
-import { installDevPreviewWebviewGuards, setPopupGate } from './services/dev-browser-guards'
+import { installDevPreviewWebviewGuards, setPopupGate, setTabOpener } from './services/dev-browser-guards'
 import { configureBrowserDownload } from './services/browser-download-settings'
 import { createBrowserBridge, type BrowserBridge } from './services/browser-bridge'
 import { registerCuaWindowPreviewIpc } from './services/cua-window-preview'
@@ -970,6 +970,10 @@ app.whenReady().then(async () => {
     }
   })
   setPopupGate((openerId, url) => browserBridge?.allowPopup(openerId, url) ?? true)
+  setTabOpener(async (openerId, url, background) => {
+    if (!browserBridge) throw new Error('Browser bridge is unavailable')
+    await browserBridge.openLink(openerId, url, background)
+  })
   void browserBridge.start().then(() => { if (runtimeReadyCache.isFresh()) void browserBridge?.announce() })
 
   // Packaged builds already ship a padded .icns via electron-builder — do not

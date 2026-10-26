@@ -145,7 +145,7 @@ async def test_run_trace_stops_before_secrets_and_resumes_after_the_user(service
 
     ran = []
 
-    async def step(service, run, step, inputs):
+    async def step(service, run, step, inputs, opened_tabs=()):
         ran.append((step.id, step.value))
         return {"success": True}
 
@@ -174,7 +174,7 @@ async def test_run_trace_hands_a_changed_page_back_to_the_agent(service, monkeyp
     from deepseek_tui.browser import workflows
     from deepseek_tui.browser.service import BrowserActionError
 
-    async def step(service, run, step, inputs):
+    async def step(service, run, step, inputs, opened_tabs=()):
         if step.kind == "open":
             return {"success": True}
         if reason == "mismatch":
@@ -208,7 +208,7 @@ async def test_tool_runs_a_saved_site_example_with_approval(service, tmp_path, m
                         lambda: tmp_path / "skills")
     ran = []
 
-    async def step(service, run, step, inputs):
+    async def step(service, run, step, inputs, opened_tabs=()):
         ran.append(step.id)
         return {"success": True}
 

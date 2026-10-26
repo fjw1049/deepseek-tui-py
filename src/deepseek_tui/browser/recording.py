@@ -348,9 +348,9 @@ class WorkbenchRecordSession(RecordSession):
                 for tab in listing["tabs"]]
 
     async def _attach_known_targets(self, targets=None):
-        if self.workbench is None:
-            return await super()._attach_known_targets()
         async with self.target_lock:
+            if self.workbench is None:
+                return await super()._attach_known_targets()
             for target in targets if targets is not None else await self._target_infos():
                 target_id = target["id"]
                 if target_id in self._clients:

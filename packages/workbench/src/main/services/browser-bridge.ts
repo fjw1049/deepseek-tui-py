@@ -488,6 +488,13 @@ export function createBrowserBridge(deps: Deps) {
       }
       notify()
     },
+    async openLink(openerId: number, url: string, background: boolean): Promise<void> {
+      const opener = [...tabs.values()].find(tab => tab.webContentsId === openerId && !tab.popup)
+      if (!opener || !isTabGuest(openerId)) throw new Error('Source tab no longer exists')
+      if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) pages can be opened')
+      const reply = await request({ kind: 'create', browserId: opener.browserId, url, background })
+      if (!reply.ok || !reply.tabId) throw new Error(reply.error ?? 'Workbench could not open a tab')
+    },
     /** A tab whose input is held for the agent may not open windows; the runtime hears why. */
     allowPopup(openerId: number, url: string): boolean {
       const opener = [...tabs.values()].find(tab => tab.webContentsId === openerId)

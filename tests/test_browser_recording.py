@@ -470,3 +470,91 @@ async def test_turn_end_saves_only_explicit_agent_recordings(tmp_path, monkeypat
         finish.assert_awaited_once_with(run)
     else:
         finish.assert_not_awaited()
+
+
+@pytest.mark.parametrize("opened,popup,expected", [
+    ([], False, "new_tab"),
+    (["fresh"], False, "switch_tab"),
+    (["fresh"], True, "new_tab"),
+    (["fresh", "another"], False, "ambiguous"),
+])
+async def test_replay_adopts_only_an_unambiguous_fresh_ordinary_tab(opened, popup, expected):
+    from deepseek_tui.browser.workflows import _step
+
+    url = "https://example.test/child"
+    tabs = [{"tab_id": "user", "url": url, "active": True},
+            {"tab_id": "fresh", "url": url, "popup": popup},
+            {"tab_id": "another", "url": url}]
+    run = SimpleNamespace(thread_id="t", generation=2, replay_tabs={}, tabs=tabs)
+    service = SimpleNamespace(_refresh_tabs=AsyncMock(return_value=tabs),
+                              action=AsyncMock(return_value={"success": True}))
+    step = SimpleNamespace(kind="new_tab", url=url, target={"tabAlias": "child"})
+    if expected == "ambiguous":
+        with pytest.raises(ValueError, match="More than one"):
+            await _step(service, run, step, {}, opened)
+        service.action.assert_not_awaited()
+    else:
+        assert (await _step(service, run, step, {}, opened))["success"]
+        action = service.action.await_args.args[1]
+        assert action.action == expected
+        if expected == "switch_tab":
+            assert action.tab_id == "fresh" and run.replay_tabs["child"] == "fresh"
+
+
+@pytest.mark.parametrize("driver", ["trace", "replay"])
+async def test_replay_keeps_explicit_new_tabs_distinct_and_only_carries_click_results(tmp_path, monkeypatch, driver):
+    from unittest.mock import Mock
+    from octop_browser.record.models import SemanticStep, StepsDocument
+    from deepseek_tui.browser import workflows
+    from deepseek_tui.browser.service import BrowserRun
+
+    run = BrowserRun("one", tmp_path, owner="agent")
+    service = SimpleNamespace(ensure=AsyncMock(return_value=run), _capture=AsyncMock(return_value=b""),
+                              _save=Mock(), stop_video=AsyncMock(), _finish_recording=Mock(), _persist=Mock())
+    doc = StepsDocument(recordingId="rec_tabs", steps=[
+        SemanticStep(id="1", kind="open", url="https://example.test/"),
+        SemanticStep(id="2", kind="click", target={"selectorCandidates": ["#link"]}),
+        SemanticStep(id="3", kind="new_tab", url="https://example.test/child", target={"tabAlias": "child"}),
+        SemanticStep(id="4", kind="new_tab", url="https://example.test/child", target={"tabAlias": "other"}),
+    ])
+    received = []
+
+    async def execute(service, run, step, inputs, opened):
+        received.append(list(opened))
+        return {"success": True, "tab_changes": {"opened": ["opened-by-" + step.id]}}
+
+    monkeypatch.setattr(workflows, "_step", execute)
+    monkeypatch.setattr(workflows.shutil, "which", lambda _: None)
+    if driver == "trace":
+        result = await workflows.run_trace(service, "one", doc, {}, secrets=set())
+        assert result["completed"] == ["1", "2", "3", "4"]
+    else:
+        await workflows._replay(service, run, doc, None)
+        assert run.demo_status == "passed", run.error
+    assert received == [[], [], ["opened-by-2"], []]
+
+
+async def test_concurrent_page_discovery_installs_one_recorder_per_tab(tmp_path, monkeypatch):
+    import asyncio
+    from octop_browser.record import recorder as upstream
+    from octop_browser.record.models import RecordingManifest
+    from deepseek_tui.browser.recording import WorkbenchRecordSession
+
+    store = RecordingStore(RecordReplaySettings(base_dir=tmp_path))
+    manifest = RecordingManifest(recordingId="rec_concurrent", createdAt="2026-10-26")
+    store.create(manifest)
+    recorder = WorkbenchRecordSession(SimpleNamespace(), store, manifest)
+    recorder._target_infos = AsyncMock(return_value=[{
+        "id": "new-tab", "webSocketDebuggerUrl": "ws://example.test/page", "url": "https://example.test/"
+    }])
+    installed = []
+
+    async def install(client, target_id):
+        await asyncio.sleep(0)
+        installed.append(target_id)
+
+    monkeypatch.setattr(upstream, "CDPClient", lambda **_: SimpleNamespace(connect=AsyncMock(), close=AsyncMock()))
+    monkeypatch.setattr(recorder, "_install_on_client", install)
+    await asyncio.gather(recorder._attach_known_targets(), recorder._attach_known_targets())
+    assert installed == ["new-tab"]
+    assert list(recorder._clients) == ["new-tab"]

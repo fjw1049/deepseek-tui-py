@@ -143,10 +143,10 @@ export function ensureBrowserSession(browserId: string): PageSession {
 }
 
 export function openPageTab(browserId: string, url: string,
-  { filePath = null }: { filePath?: string | null } = {}): string {
+  { filePath = null, background = false }: { filePath?: string | null; background?: boolean } = {}): string {
   const session = ensureBrowserSession(browserId)
   const tab = createPageTab(url, filePath)
-  setSession(browserId, { ...session, tabs: [...session.tabs, tab], activeTabId: tab.id })
+  setSession(browserId, { ...session, tabs: [...session.tabs, tab], activeTabId: background ? session.activeTabId : tab.id })
   return tab.id
 }
 

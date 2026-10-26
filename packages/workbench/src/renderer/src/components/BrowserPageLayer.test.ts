@@ -156,3 +156,19 @@ it('shows where the shown page is scrolled, and nothing once the page fits', asy
     expect(page.querySelector('.ds-browser-scrollbar')).toBeNull()
   } finally { await h.close(); vi.useRealTimers() }
 })
+
+
+it('opens background links without replacing or activating the source page', async () => {
+  const h = mount()
+  try {
+    const source = openPageTab('one', 'https://example.test/draft')
+    await act(async () => h.root.render(createElement(BrowserPageLayer)))
+    const webview = h.container.querySelector('webview[src="https://example.test/draft"]')
+    await h.send('link', { kind: 'create', browserId: 'one', url: 'https://example.test/result', background: true })
+    const session = useBrowserPagesStore.getState().sessions.one!
+    expect(session.activeTabId).toBe(source)
+    expect(session.tabs.at(-1)?.url).toBe('https://example.test/result')
+    expect(h.bridge.reply).toHaveBeenLastCalledWith('link', { ok: true, tabId: session.tabs.at(-1)!.id })
+    expect(h.container.querySelector('webview[src="https://example.test/draft"]')).toBe(webview)
+  } finally { await h.close() }
+})

@@ -2530,3 +2530,34 @@ async def test_shared_form_scope_scanned_once_per_scene(chrome):
     second = await service._scene(run)
     assert first["scene_id"] != second["scene_id"]
     assert await evaluate(context, "window.auditScopeWalks") == 2
+
+
+async def test_recorded_new_tab_link_does_not_open_twice(chrome, monkeypatch):
+    import sys
+    from deepseek_tui.browser.workflows import start_recording, finish_recording, read_workflow, start_replay
+
+    service, run = chrome
+    monkeypatch.setattr(sys.modules[__name__], "PAGE", PAGE +
+                        b'<a id="newlink" href="/child" target="_blank">Child page</a>')
+    await service.action("t", BrowserAction(action="reload"))
+    await service.control("t", "user")
+    started = await start_recording(service, "t")
+    await service.action("t", BrowserAction(action="fill", selector="#q", text="draft"), actor="user")
+    clicked = await service.action("t", BrowserAction(action="click", selector="#newlink"), actor="user")
+    assert clicked["success"], clicked
+    await run.recorder._attach_known_targets()
+    tab = next(t for t in run.tabs if t["url"].endswith("/child"))
+    await service.action("t", BrowserAction(action="switch_tab", tab_id=tab["tab_id"]), actor="user")
+    await service.action("t", BrowserAction(action="fill", selector="#q", text="child draft"), actor="user")
+    await finish_recording(run)
+    doc = read_workflow(service, "t", started["recordingId"])
+    fills = [s for s in doc.steps if s.kind == "fill"]
+    inputs = {s.value[2:-2]: f"replayed {i}" for i, s in enumerate(fills)}
+    before = {t["tab_id"] for t in await service._refresh_tabs(run, force=True)}
+    await start_replay(service, "t", started["recordingId"], inputs)
+    await asyncio.wait_for(run.demo_task, 30)
+    assert run.demo_status == "passed", run.error
+    after = await service._refresh_tabs(run, force=True)
+    fresh = [t for t in after if t["tab_id"] not in before]
+    assert len([t for t in fresh if t["url"].endswith("/child")]) == 1
+    assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == "replayed 1"

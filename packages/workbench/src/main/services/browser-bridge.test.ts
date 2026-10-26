@@ -46,7 +46,7 @@ async function harness(useDownloadPreferences = false) {
   const bridge = createBrowserBridge({
     useDownloadPreferences, getHost: () => ({ id: 1 }) as any,
     announce: async (_port, value) => { token = value },
-    sendCommand: (id, command) => { commands.push(command); bridge.reply(id, { ok: true }) }
+    sendCommand: (id, command) => { commands.push(command); bridge.reply(id, { ok: true, ...(command.kind === 'create' ? { tabId: 'created' } : {}) }) }
   })
   await bridge.start(); await bridge.announce()
   bridge.setTabs('one', [{ tabId: 'tab', webContentsId: 2, active: true, visible: true }])
@@ -244,5 +244,19 @@ it('keeps the configured download destination and reports the actual saved path'
     item.emit('done', {}, 'completed')
     const result = await h.send('Workbench.getDownloads')
     expect(result.result.downloads[0].progress).toMatchObject({ state: 'completed', filePath: '/tmp/chosen/report.pdf' })
+  } finally { h.socket.close() }
+})
+
+
+it('routes a page-opened link to its own browser and preserves background disposition', async () => {
+  const h = await harness()
+  try {
+    await h.bridge.openLink(2, 'https://example.test/result', true)
+    expect(h.commands.at(-1)).toEqual({ kind: 'create', browserId: 'one', url: 'https://example.test/result', background: true })
+    const count = h.commands.length
+    await expect(h.bridge.openLink(999, 'https://example.test/result', false)).rejects.toThrow('Source tab')
+    await expect(h.bridge.openLink(2, 'file:///tmp/private', false)).rejects.toThrow('http(s)')
+    expect(h.commands).toHaveLength(count)
+    expect(h.guest.getURL()).toBe('http://example.test')
   } finally { h.socket.close() }
 })

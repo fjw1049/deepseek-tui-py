@@ -8,7 +8,7 @@ export type BrowserBridgeTab = { tabId: string; webContentsId: number; active: b
 export type BrowserBridgeCommand =
   | { kind: 'retain'; browserId: string; retained: boolean }
   | { kind: 'open'; browserId: string }
-  | { kind: 'create'; browserId: string; url: string }
+  | { kind: 'create'; browserId: string; url: string; background?: boolean }
   | { kind: 'activate'; browserId: string; tabId: string }
   | { kind: 'close'; browserId: string; tabId: string }
 

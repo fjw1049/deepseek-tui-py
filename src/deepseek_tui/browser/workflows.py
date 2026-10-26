@@ -302,7 +302,8 @@ def compile_workflow(doc, inputs):
     return doc
 
 
-async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dict[str, str] | None):
+async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dict[str, str] | None,
+                opened_tabs: list[str] | tuple[str, ...] = ()):
     generation = run.generation
     alias = (step.target or {}).get("tabAlias", "main")
     if step.kind == "handle_dialog":
@@ -323,6 +324,21 @@ async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dic
             raise ValueError("Recorded task tab was not opened in this replay")
         return {"success": True, "content": "Recorded task tab selected"}
     if step.kind in {"open", "navigate", "new_tab"}:
+        if step.kind == "new_tab" and opened_tabs:
+            # A recorded click may already have opened this page. Only adopt a new tab
+            # reported by the immediately preceding step, never an existing user tab.
+            tabs = await service._refresh_tabs(run, force=True)
+            matches = [tab for tab in tabs if tab["tab_id"] in opened_tabs
+                       and not tab.get("popup") and tab["url"] == step.url]
+            if len(matches) > 1:
+                raise ValueError("More than one newly opened tab matches the recorded page")
+            if matches:
+                tab_id = matches[0]["tab_id"]
+                result = await service.action(run.thread_id, BrowserAction(
+                    action="switch_tab", tab_id=tab_id, generation=generation))
+                if result["success"]:
+                    run.replay_tabs[alias] = tab_id
+                return result
         action = BrowserAction(action="new_tab" if step.kind == "new_tab" else "open",
                                url=_url(step.url or ""), generation=generation)
         result = await service.action(run.thread_id, action)
@@ -462,11 +478,14 @@ async def _replay(service: BrowserService, run: BrowserRun, doc: Any, inputs: di
         async with run.lock:
             run.frames.clear()
             run.recording = True
+        opened_tabs = []
         for index, step in enumerate(doc.steps, 1):
             if run.owner != "agent":
                 raise ValueError("Browser control changed")
             run.demo_step = index
-            result = await _step(service, run, step, inputs)
+            result = await _step(service, run, step, inputs, opened_tabs)
+            opened_tabs = (result.get("tab_changes", {}).get("opened", [])
+                           if step.kind not in {"open", "navigate", "new_tab", "switch_tab"} else [])
             if not result["success"]:
                 raise ValueError(str(result.get("content") or "Replay action failed"))
             if index == 1 and shutil.which("ffmpeg") and run.video is None:
@@ -561,13 +580,16 @@ async def run_trace(
             result["resume_from"] = ids[index] if index < len(ids) else None
         return result
 
+    opened_tabs = []
     for step in doc.steps[start:]:
         if step.kind in {"upload", "handle_dialog"}:
             return stopped(step, "manual_step")
         if any(placeholder in (step.value or "") for placeholder in placeholders.values()):
             return stopped(step, "needs_user")
         try:
-            result = await _step(service, run, step, None)
+            result = await _step(service, run, step, None, opened_tabs)
+            opened_tabs = (result.get("tab_changes", {}).get("opened", [])
+                           if step.kind not in {"open", "navigate", "new_tab", "switch_tab"} else [])
         except BrowserActionError as exc:
             return stopped(step, "outcome_unknown", str(exc))
         except (ValueError, RuntimeError) as exc:
