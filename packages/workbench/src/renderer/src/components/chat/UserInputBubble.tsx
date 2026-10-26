@@ -66,7 +66,7 @@ function SubmittedUserInputBubble({
       <div className="flex items-center gap-1.5 text-[12px] leading-4 text-ds-faint">
         <CheckCircle2
           aria-hidden
-          className="size-3.5 shrink-0 text-emerald-600/80 dark:text-emerald-400/80"
+          className="size-3.5 shrink-0 text-ds-success"
           strokeWidth={1.9}
         />
         <span className="font-medium tracking-[-0.01em]">{t('userInputAnswered')}</span>

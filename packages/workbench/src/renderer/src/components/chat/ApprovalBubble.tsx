@@ -47,15 +47,15 @@ function splitImpactLine(line: string): { label: string; value: string } {
 
 function statusBadgeClass(status: ApprovalVisualStatus): string {
   if (status === 'pending') {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+    return 'border-ds-warning/30 bg-ds-warning-soft text-ds-warning'
   }
   if (status === 'approving') {
-    return 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400'
+    return 'border-accent/30 bg-accent-soft text-accent'
   }
   if (status === 'allowed') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+    return 'border-ds-success/30 bg-ds-success-soft text-ds-success'
   }
-  return 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400'
+  return 'border-ds-danger/30 bg-ds-danger-soft text-ds-danger'
 }
 
 function StatusIcon({
@@ -170,7 +170,7 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
       aria-busy={visualStatus === 'approving'}
       className={`ds-approval-bubble w-full overflow-hidden rounded-2xl border text-[13px] leading-5 ${
         block.status === 'error'
-          ? 'border-rose-500/25 bg-ds-danger-soft text-ds-ink'
+          ? 'border-ds-danger/25 bg-ds-danger-soft text-ds-ink'
           : 'border-ds-border bg-ds-subtle text-ds-ink'
       }`}
     >
@@ -181,9 +181,9 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
             visualStatus === 'error' || (destructive && visualStatus === 'pending')
               ? 'text-ds-danger'
               : visualStatus === 'allowed'
-                ? 'text-emerald-600 dark:text-emerald-400'
+                ? 'text-ds-success'
                 : visualStatus === 'denied'
-                  ? 'text-rose-600 dark:text-rose-400'
+                  ? 'text-ds-danger'
                   : ''
           }`}
         >

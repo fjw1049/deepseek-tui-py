@@ -46,6 +46,8 @@ export default {
           ink: themeColor('--ds-text'),
           muted: themeColor('--ds-text-muted'),
           faint: themeColor('--ds-text-faint'),
+          warning: themeColor('--ds-warning'),
+          'warning-soft': themeColor('--ds-warning-soft'),
           success: themeColor('--ds-success'),
           'success-soft': themeColor('--ds-success-soft'),
           danger: themeColor('--ds-danger'),

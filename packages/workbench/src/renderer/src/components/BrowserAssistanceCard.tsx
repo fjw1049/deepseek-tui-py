@@ -36,7 +36,7 @@ export function AssistanceCard({ request, onRespond, onReveal }: {
       <div className="min-w-0 flex-1 pb-3.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-semibold tracking-[-0.02em] text-ds-ink">{t(request.status === 'human' ? 'browserAssistHuman' : 'browserAssistTitle')}</span>
-          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${request.status === 'human' || pending ? 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
+          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${request.status === 'human' || pending ? 'border-accent/30 bg-accent-soft text-accent' : 'border-ds-warning/30 bg-ds-warning-soft text-ds-warning'}`}>
             {t(pending ? 'browserWorking' : request.status === 'human' ? 'browserAssistUserControl' : 'browserAssistPaused')}
           </span>
         </div>

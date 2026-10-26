@@ -66,10 +66,10 @@ export function CuaPermissionsDialog({ onClose }: { onClose: () => void }): Reac
     } catch { if (alive.current) setError(true) }
     finally { if (alive.current) setOpening(null) }
   }
-  const button = 'shrink-0 rounded-lg border border-ds-border bg-white px-3 py-1.5 text-xs text-ds-ink hover:bg-ds-hover disabled:opacity-40 dark:bg-ds-card'
+  const button = 'shrink-0 rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 text-xs text-ds-ink hover:bg-ds-hover disabled:opacity-40'
   return createPortal(<div className="ds-no-drag fixed inset-0 z-[100] flex items-center justify-center bg-black/30 p-5" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
     <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
-      className="relative max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-ds-border bg-white p-4 text-ds-ink shadow-panel dark:bg-ds-card">
+      className="relative max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-ds-border bg-ds-card p-4 text-ds-ink shadow-panel">
       <button type="button" onClick={onClose} aria-label={t('pluginCloseDetail')} className="absolute right-3 top-3 rounded-lg p-2 text-ds-muted hover:bg-ds-hover"><X className="h-4 w-4" /></button>
       <h2 id={titleId} className="pr-8 text-lg font-semibold">{t('cuaPermissionTitle')}</h2>
       <section className="mt-5 rounded-xl border border-ds-border p-3">

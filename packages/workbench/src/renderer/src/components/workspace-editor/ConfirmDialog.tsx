@@ -6,7 +6,7 @@ type Props = {
   body?: string
   confirmLabel: string
   cancelLabel: string
-  /** Destructive confirms (discard changes) render a red confirm button. */
+  /** Destructive confirms (discard changes) use the theme danger colors. */
   destructive?: boolean
   secondaryAction?: { label: string; onClick: () => void }
   onConfirm: () => void
@@ -97,7 +97,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             className={`inline-flex h-8 items-center justify-center rounded-lg px-3 text-[13.5px] font-medium transition active:scale-[0.98] ${
-              destructive ? 'bg-red-600 text-white hover:bg-red-500' : 'bg-accent text-accent-foreground hover:bg-accent/85'
+              destructive ? 'bg-ds-danger-soft text-ds-danger hover:bg-ds-danger/20' : 'bg-accent text-accent-foreground hover:bg-accent/85'
             }`}
           >
             {confirmLabel}

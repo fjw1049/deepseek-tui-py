@@ -15,9 +15,9 @@ type Props = {
 export function FeedbackNotice({ tone, title, message, details, actions, onDismiss }: Props): ReactElement {
   const { t } = useTranslation('common')
   const Icon = tone === 'error' ? AlertCircle : tone === 'warning' ? TriangleAlert : tone === 'success' ? CheckCircle2 : Info
-  const accent = tone === 'error' ? 'text-red-700 dark:text-red-300'
-    : tone === 'warning' ? 'text-amber-700 dark:text-amber-300'
-      : tone === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-ds-muted'
+  const accent = tone === 'error' ? 'text-ds-danger'
+    : tone === 'warning' ? 'text-ds-warning'
+      : tone === 'success' ? 'text-ds-success' : 'text-ds-muted'
   const longMessage = message.length > 160
   const detailText = longMessage ? [message, details].filter(Boolean).join('\n\n') : details
   return (

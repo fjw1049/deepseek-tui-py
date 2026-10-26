@@ -1,6 +1,6 @@
 .ds-user-input-pending {
-  --ds-question-background: #ffffff;
-  --ds-question-hover: #f8f8f8;
+  --ds-question-background: var(--ds-surface-card);
+  --ds-question-hover: var(--ds-surface-hover);
   width: 100%;
   min-width: 0;
   max-height: min(360px, 40vh);
@@ -14,10 +14,6 @@
   color: var(--ds-text);
   font-size: 14px;
   line-height: 20px;
-}
-[data-theme='dark'] .ds-user-input-pending {
-  --ds-question-background: var(--ds-surface-card);
-  --ds-question-hover: var(--ds-surface-hover);
 }
 .ds-question-meta {
   display: flex;
