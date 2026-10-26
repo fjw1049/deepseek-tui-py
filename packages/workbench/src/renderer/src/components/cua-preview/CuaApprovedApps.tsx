@@ -82,14 +82,14 @@ export function CuaApprovedApps(): React.JSX.Element {
     </div>
     {apps === null && !error ? <p role="status" className="px-5 py-4 text-sm text-ds-muted">{t('computerUseChecking')}</p> : null}
     {apps?.length === 0 ? <p className="px-5 py-4 text-sm text-ds-muted">{t('computerUseApprovedAppsEmpty')}</p> : null}
-    {apps?.length ? <ul className="divide-y divide-ds-border-muted px-5">
+    {apps?.length ? <ul className="max-h-[323px] divide-y divide-ds-border-muted overflow-y-auto px-5">
       {apps.map(app => <li key={app.bundleId} className="flex min-h-[80px] items-center gap-5 py-4">
         <AppIcon app={app} />
         <span className="min-w-0 flex-1 truncate text-[16px] font-medium text-ds-ink" title={app.name || app.bundleId}>{app.name || app.bundleId}</span>
         <button type="button" disabled={pending !== null} onClick={() => void update(app.bundleId, 'revoke')}
           aria-label={`${t('computerUseRevoke')} ${app.name || app.bundleId}`} title={t('computerUseRevoke')}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-red-500/10 text-red-500 hover:bg-red-500/20 active:scale-95 disabled:opacity-40">
-          {pending === app.bundleId ? <LoaderCircle size={21} className="motion-safe:animate-spin" aria-hidden="true" /> : <Trash2 size={21} aria-hidden="true" />}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 active:scale-95 disabled:opacity-40">
+          {pending === app.bundleId ? <LoaderCircle size={16} className="motion-safe:animate-spin" aria-hidden="true" /> : <Trash2 size={16} aria-hidden="true" />}
         </button>
       </li>)}
     </ul> : null}

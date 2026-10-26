@@ -55,7 +55,7 @@ export function BrowserSettingsPanel({ form, onUpdate }: {
     </section>
   }
   function linkTarget(key: 'browserLinkTarget' | 'browserLocalLinkTarget'): React.JSX.Element {
-    return <SettingsSelect aria-label={t(key)} value={form[key] ?? 'external'} onChange={e => onUpdate({ [key]: e.target.value })}>
+    return <SettingsSelect aria-label={t(key)} className="w-36" value={form[key] ?? 'external'} onChange={e => onUpdate({ [key]: e.target.value })}>
       <option value="external">{t('browserExternal')}</option><option value="internal">{t('browserInternal')}</option>
     </SettingsSelect>
   }
@@ -77,10 +77,10 @@ export function BrowserSettingsPanel({ form, onUpdate }: {
       {row('browserDownloadDirectory', form.browserDownloadDirectory ? <span>{form.browserDownloadDirectory}</span> : 'browserSystemDownloads', <div className="flex gap-2"><button className={button} onClick={() => void chooseDirectory()}>{t('browserChange')}</button>
         {form.browserDownloadDirectory && <button className={button} onClick={() => onUpdate({ browserDownloadDirectory: '' })}>{t('browserReset')}</button>}</div>)}
       {row('browserAskDownloadLocation', 'browserAskDownloadLocationHint', <SettingsToggle label={t('browserAskDownloadLocation')} checked={form.browserAskDownloadLocation !== false} onChange={value => onUpdate({ browserAskDownloadLocation: value })} />)}
-      <p className="px-5 py-4 text-[13px] leading-5 text-ds-muted">{t('browserDownloadScope')}</p>
     </>)}
     {section('browserPermissions', <>
       <p className="px-5 py-4 text-[13px] leading-5 text-ds-muted">{t('browserPermissionsHint')}</p>
+      {!runtime && !error && <p className="px-5 py-4 text-sm text-ds-muted">{t('browserLoading')}</p>}
       {runtime?.grants.length === 0 && <p className="px-5 py-4 text-sm text-ds-muted">{t('browserNoGrants')}</p>}
       {runtime?.grants.map(grant => <div key={`${grant.thread_id}:${grant.site}`} className="flex items-center justify-between gap-4 px-5 py-4">
         <div className="min-w-0"><p className="break-all text-sm">{grant.site}</p><p className="break-all text-xs text-ds-muted">{t('browserGrantConversation', { id: grant.thread_title || t('browserUntitledChat') })}</p></div>

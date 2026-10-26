@@ -40,7 +40,7 @@ export function CuaPreviewPermission(): React.JSX.Element {
         <p className="mt-1 text-[12px] leading-5 text-ds-muted">{t('cuaPreviewPermissionHint')}</p>
       </div>
       {permission?.status === 'granted'
-        ? <span role="status" className="shrink-0 text-[13px] text-ds-muted">{t('cuaPreviewPermissionGranted')}</span>
+        ? <span role="status" className="shrink-0 border border-transparent px-3 py-2 text-[13px] font-medium leading-none text-ds-muted">{t('cuaPreviewPermissionGranted')}</span>
         : <button type="button" disabled={busy} className={`${settingsToolbarButtonClass(busy)} shrink-0`} onClick={() => void request()}>{t(busy ? 'cuaPermissionOpening' : 'cuaPreviewPermissionRequest')}</button>}
     </div>
     {failed && <p role="alert" className="mt-2 text-[13px] text-ds-danger">{t('cuaPreviewPermissionFailed')}</p>}

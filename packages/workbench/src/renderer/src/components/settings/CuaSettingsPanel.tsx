@@ -33,7 +33,6 @@ function SystemPermissions({ showPreview }: { showPreview: boolean }): React.JSX
   return <section className="ds-content-card rounded-2xl">
     <div className="border-b border-ds-border-muted px-5 py-3">
       <h2 className="text-[16px] font-semibold text-ds-ink">{t('cuaSystemPermissions')}</h2>
-      <p className="mt-1 text-[13px] leading-5 text-ds-muted">{t('cuaPermissionsHint')}</p>
     </div>
     <div className="divide-y divide-ds-border-muted px-5">
       {showPreview && typeof window.dsGui.getCuaScreenPermission === 'function' && <CuaPreviewPermission />}
@@ -98,10 +97,6 @@ export function CuaSettingsPanel({ form, onUpdate }: {
             <div className="text-[14px] font-semibold">{t(row.title)}</div>
             <p className="mt-0.5 max-w-md text-[13px] leading-relaxed text-ds-muted">{t(row.hint)}</p>
             {row.value === undefined && <p role="status" className="mt-1 text-xs text-ds-muted">{t(inherited === null ? 'cuaInheritedUnknown' : 'cuaLoading')}</p>}
-            {row.key === 'cuaAutoAllowApps' && <details className="mt-2 max-w-md text-[13px] leading-relaxed text-ds-muted">
-              <summary className="cursor-pointer hover:text-ds-ink">{t('cuaAccessDetails')}</summary>
-              <p className="mt-2">{t('cuaAutoAllowAppsHint')}</p>
-            </details>}
           </div>
           <SettingsToggle label={t(row.title)} checked={row.value === true}
             disabled={row.value === undefined || (row.key !== 'cuaEnabled' && enabled !== true)}

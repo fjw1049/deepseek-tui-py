@@ -2653,7 +2653,7 @@
   "cuaPreviewCollapse": "Collapse viewer",
   "cuaPreviewDisabled": "Preview off",
   "cuaPreviewAmbiguous": "Multiple windows; showing screenshots",
-  "computerUseApprovedAppsHint": "Choose Always allow when first using an app to keep access across chats and restarts until revoked. Chrome website permissions are managed separately. These grants belong to the computer-use runtime; revoking also affects other clients sharing its approval store.",
+  "computerUseApprovedAppsHint": "Always allow keeps access until you revoke it. Chrome website permissions are managed separately.",
   "computerUseAddApp": "Add app",
   "computerUseClosePicker": "Close",
   "computerUseSearchApps": "Search installed apps",
