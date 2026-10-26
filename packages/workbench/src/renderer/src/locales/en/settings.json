@@ -791,7 +791,7 @@
   "browserDownloadDirectory": "Default save location",
   "browserSystemDownloads": "System Downloads folder",
   "browserAskDownloadLocation": "Ask where to save each download",
-  "browserAskDownloadLocationHint": "When off, save automatically to the default location without replacing existing files.",
+  "browserAskDownloadLocationHint": "When off, save automatically to the default location without replacing existing files. Downloads during AI control always save automatically, without a dialog.",
   "browserDownloadScope": "Applies to new built-in browser downloads; existing files are not moved. Temporary browser downloads remain task artifacts. Recordings and demonstrations keep their existing location.",
   "browserPermissions": "Website permissions",
   "browserPermissionsHint": "Lists remembered site grants in currently loaded chats. Grants do not survive a restart. Stop a task before revoking its grant. Existing rules for sensitive sites and uploads still apply. External Chrome grants are managed separately.",

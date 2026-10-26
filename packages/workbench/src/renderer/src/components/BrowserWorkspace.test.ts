@@ -3,7 +3,6 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { BrowserWorkspace, searchUrl } from './BrowserWorkspace'
-import { requestBrowserDemo, useBrowserDemoStore } from '../store/browser-demo-store'
 import { markPageReady, registerPageWebview, updatePageTab, useBrowserPagesStore, type PageWebview } from '../store/browser-pages-store'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -358,7 +357,7 @@ it('keeps recording in the more menu, off the annotation bar', async () => {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
     const toolbar = h.container.querySelector('.ds-annotation-toolbar')!
     const order = [...toolbar.querySelectorAll('button')].map(b => b.getAttribute('aria-label'))
-    expect(order.slice(order.indexOf('annotationText'))).toEqual(['annotationText', 'browserDemoStart', 'annotationHide'])
+    expect(order.slice(order.indexOf('annotationText'))).toEqual(['annotationText', 'annotationHide'])
     await h.click('browserMore')
     await h.click('browserRecordScreen')
     expect(h.container.querySelector('.ds-dock-menu')).not.toBeNull()
@@ -367,6 +366,23 @@ it('keeps recording in the more menu, off the annotation bar', async () => {
     expect(document.getElementById(video.getAttribute('aria-describedby')!)?.textContent).toBe('browserVideoUnavailable')
     await h.click('browserRecordGif')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'record_start', generation: 2 }))
+  } finally { await h.close() }
+})
+
+it('opens recording formats in a flyout that Escape closes back to the menu', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [], capabilities: { video: { ready: true } } })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
+    await h.click('browserMore'); await h.click('browserRecordScreen')
+    const record = h.container.querySelector<HTMLButtonElement>('[role="menuitem"][aria-haspopup="menu"]')!
+    const flyout = h.container.querySelector('.ds-browser-menu-flyout')!
+    expect(record.getAttribute('aria-expanded')).toBe('true')
+    expect(flyout.closest('.ds-dock-menu:not(.ds-browser-menu-flyout)')).toBeNull()
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('browserRecordVideo')
+    await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(h.container.querySelector('.ds-browser-menu-flyout')).toBeNull()
+    expect(h.container.querySelector('[role="menu"]')).not.toBeNull()
+    expect(document.activeElement).toBe(record)
   } finally { await h.close() }
 })
 
@@ -617,9 +633,8 @@ it('demonstrates from the bar, then lets the user review the steps in the activi
     expect(h.container.querySelector('[aria-label="browserDemoStart"][role="menuitem"]')).toBeNull()
     await h.click('browserDemoStart')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start","generation":2}')
-    expect(useBrowserDemoStore.getState().active.one).toBe(true)
-    expect(h.container.querySelector('.ds-dev-browser__chrome [aria-label="browserDemoFinish"]')?.getAttribute('aria-pressed')).toBe('true')
-    const tool = h.container.querySelector<HTMLButtonElement>('.ds-annotation-toolbar [aria-label="browserDemoFinish"]')!
+    const tool = h.container.querySelector<HTMLButtonElement>('.ds-dev-browser__chrome [aria-label="browserDemoFinish"]')!
+    expect(h.container.querySelector('.ds-annotation-toolbar [aria-label="browserDemoFinish"]')).toBeNull()
     expect(tool.getAttribute('aria-pressed')).toBe('true')
     // The demonstration lives in the card above the bar, the same place as screen recording.
     expect(h.container.querySelector('.ds-browser-recording-badge')).toBeNull()
@@ -631,7 +646,6 @@ it('demonstrates from the bar, then lets the user review the steps in the activi
     expect(card()!.querySelector<HTMLButtonElement>('[aria-busy="true"]')?.disabled).toBe(true)
     expect(tool.disabled).toBe(true)
     await act(async () => finishStop!())
-    expect(useBrowserDemoStore.getState().active.one).toBe(false)
     // Nothing reaches the chat until the user adds it; the steps are there to check first.
     expect(saved).not.toHaveBeenCalled()
     expect(card()?.textContent).toContain('browserDemoReviewTitle')
@@ -909,7 +923,7 @@ it('binds native recordings and demonstrations to the tab selected when requeste
     await h.click('browserMore'); await h.click('browserRecordScreen'); await h.click('browserRecordGif')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST',
       JSON.stringify({ tab_id: tab, action: 'record_start', generation: 2 }))
-    await act(async () => requestBrowserDemo('one'))
+    await h.click('browserDemoStart')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST',
       JSON.stringify({ action: 'start', generation: 2, tab_id: tab }))
   } finally { await h.close() }
@@ -978,17 +992,14 @@ it('explains in plain words when a demonstration ends before its last step was c
 })
 
 it('runs screen recording and demonstration one at a time', async () => {
-  useBrowserDemoStore.setState({ active: {}, request: null })
   const recording = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], video_recording: true })
   try {
     await act(async () => recording.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(async () => true) })))
-    const tool = recording.container.querySelector<HTMLButtonElement>('.ds-annotation-toolbar [aria-label="browserDemoStart"]')!
+    const tool = recording.container.querySelector<HTMLButtonElement>('.ds-dev-browser__chrome [aria-label="browserDemoStart"]')!
     expect(tool.disabled).toBe(true)
     expect(tool.title).toBe('browserDemoBusyRecording')
-    expect(recording.container.querySelector<HTMLButtonElement>('.ds-dev-browser__chrome [aria-label="browserDemoStart"]')?.disabled).toBe(true)
-    await act(async () => requestBrowserDemo('one'))
+    await act(async () => tool.click())
     expect(recording.request.mock.calls.some(([path]) => path.endsWith('/workflows'))).toBe(false)
-    expect(recording.container.querySelector('.ds-browser-feedback')?.textContent).toContain('browserDemoBusyRecording')
   } finally { await recording.close() }
   const demo = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [], workflow_recording: true })
   try {
@@ -1142,7 +1153,8 @@ it('keeps a saved recording in the toolbar with a secondary file location action
 })
 
 it('opens the most recent recording in an in-app preview from the menu', async () => {
-  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [{ id: 'old.jpg', label: 'Old', path: '/tmp/old.jpg' }, { id: 'proof.gif', label: 'Proof', path: '/tmp/proof.gif' }] })
+  const proof = { id: 'proof.gif', label: 'Proof', path: '/tmp/proof.gif' }
+  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [{ id: 'old.jpg', label: 'Old', path: '/tmp/old.jpg' }, proof], recent_recording: proof })
   const show = vi.fn(async () => {})
   window.dsGui.showItemInFolder = show
   try {
@@ -1155,25 +1167,14 @@ it('opens the most recent recording in an in-app preview from the menu', async (
   } finally { await h.close() }
 })
 
-it('runs a demonstration requested from the chat composer, or explains why it cannot', async () => {
-  useBrowserDemoStore.setState({ active: {}, request: null })
-  const h = mount({ active: true, owner: 'user', generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] })
+it('does not offer recordings restored from an earlier browser session', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, log: [], artifacts: [{ id: 'old.gif', label: 'Old', path: '/tmp/old.gif' }], recent_recording: null })
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
-    await act(async () => requestBrowserDemo('two'))
-    expect(h.request.mock.calls.some(([path]) => path.endsWith('/workflows'))).toBe(false)
-    await act(async () => requestBrowserDemo('one'))
-    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start","generation":2}')
-    expect(useBrowserDemoStore.getState().request).toBeNull()
+    await h.click('browserMore')
+    expect(h.container.querySelector('[aria-label="browserViewGif"], [aria-label="browserViewVideo"]')).toBeNull()
+    expect(h.container.querySelector('.ds-dock-menu')?.textContent).not.toContain('browserViewGif')
   } finally { await h.close() }
-  const agent = mount({ active: true, owner: 'agent', task_running: true, generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [], log: [], artifacts: [] })
-  try {
-    await act(async () => agent.root.render(createElement(BrowserWorkspace, { threadId: 'one' })))
-    await act(async () => requestBrowserDemo('one'))
-    expect(agent.request.mock.calls.some(([path]) => path.endsWith('/workflows'))).toBe(false)
-    expect(agent.container.querySelector('.ds-browser-feedback')?.textContent).toContain('browserDemoNeedsControl')
-    expect(useBrowserDemoStore.getState().request).toBeNull()
-  } finally { await agent.close() }
 })
 
 it('offers retry for a failed GIF save without starting another recording', async () => {
@@ -1208,7 +1209,7 @@ it('announces recordings saved by the runtime without a stop click', async () =>
 
 it.each([['webm', 'video/webm', 'browserViewVideo'], ['gif', 'image/gif', 'browserViewGif']])('previews a saved %s inside the app', async (extension, mime, label) => {
   const artifact = { id: `saved.${extension}`, label: 'Recording', path: `/tmp/saved.${extension}` }
-  const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [artifact] })
+  const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [artifact], recent_recording: artifact })
   const original = h.request.getMockImplementation()!
   h.request.mockImplementation(async (path, method, raw) => path.includes('/artifacts/')
     ? { ok: true, status: 200, body: JSON.stringify({ image: `data:${mime};base64,AAAA` }) }
@@ -1251,7 +1252,7 @@ it('keeps an explicit saving state until the stop request finishes', async () =>
 
 it('lets the user retry a recording preview without losing the saved result', async () => {
   const artifact = { id: 'saved.webm', label: 'Video', path: '/tmp/saved.webm' }
-  const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [artifact] })
+  const h = mount({ active: true, owner: 'user', generation: 2, tabs: [], log: [], artifacts: [artifact], recent_recording: artifact })
   const original = h.request.getMockImplementation()!
   let attempts = 0
   h.request.mockImplementation(async (path, method, raw) => {

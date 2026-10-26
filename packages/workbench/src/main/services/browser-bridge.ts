@@ -495,6 +495,10 @@ export function createBrowserBridge(deps: Deps) {
       const reply = await request({ kind: 'create', browserId: opener.browserId, url, background })
       if (!reply.ok || !reply.tabId) throw new Error(reply.error ?? 'Workbench could not open a tab')
     },
+    /** Whether the agent holds this page's input, so nobody is there to answer a save dialog. */
+    agentControls(webContentsId: number): boolean {
+      return [...tabs.values()].some(tab => tab.webContentsId === webContentsId && !!tab.inputBlocked)
+    },
     /** A tab whose input is held for the agent may not open windows; the runtime hears why. */
     allowPopup(openerId: number, url: string): boolean {
       const opener = [...tabs.values()].find(tab => tab.webContentsId === openerId)

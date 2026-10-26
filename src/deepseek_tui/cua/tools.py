@@ -18,6 +18,7 @@ REPEATED_TEXT_MIN_BYTES = 4096
 MAX_REMEMBERED_TEXTS = 8
 # Large web views list only part of their tree; persistent navigation often sits past the cut.
 _AX_TRUNCATED = re.compile(r"\(showing \d+-(\d+) of (\d+) items\)")
+_AX_RANGE_MARKER = re.compile(r"\(showing\b", re.IGNORECASE)
 _COORDINATE_CLICK = re.compile(r"\.click\(\s*\[")
 AX_TRUNCATED_NOTE = (
     "[Host note: this accessibility tree is truncated. Elements past the listed range exist "
@@ -87,6 +88,15 @@ def desktop_action_result(question: dict[str, Any], response: dict[str, Any]) ->
         "user_text": text if choice == "information" else "",
         "instructions": guidance + " " + HANDOFF_NOTICE,
     }
+
+
+def ax_complete(text: str) -> bool:
+    """Whether an accessibility listing shows every item it reports."""
+    ranges = _AX_TRUNCATED.findall(text)
+    # A range marker in an unfamiliar format may hide a truncation; never read it as complete.
+    if len(ranges) < len(_AX_RANGE_MARKER.findall(text)):
+        return False
+    return all(int(shown) >= int(total) for shown, total in ranges)
 
 
 def cua_surface(meta: Any) -> dict[str, str] | None:
@@ -192,6 +202,7 @@ class CuaTool(ToolSpec):
         observing = self.descriptor["name"] == "observe"
         if delivery is not None:
             delivery.cua_used = True
+            delivery.cua_acted |= self.descriptor["name"] == "js"
             delivery.cua_observation_evidence.clear()
             if not observing:
                 if self.session.last_surface:
@@ -245,6 +256,7 @@ class CuaTool(ToolSpec):
             observation = payload.get("observation")
             metadata["task_evidence"] = result.success and isinstance(observation, dict)
             if isinstance(observation, dict):
+                observation["complete"] = ax_complete(str(observation.get("text", "")))
                 metadata["cua_observation"] = observation
                 # Inspecting a different app cannot verify the app we just operated.
                 observed_surface = cua_surface(payload.get("_meta"))
@@ -270,8 +282,7 @@ class CuaTool(ToolSpec):
             ))
         if result.success:
             notes = []
-            ranges = _AX_TRUNCATED.findall(result.content)
-            if any(int(shown) < int(total) for shown, total in ranges):
+            if not ax_complete(result.content):
                 notes.append(AX_TRUNCATED_NOTE)
             if _COORDINATE_CLICK.search(str(input_data.get("code", ""))):
                 notes.append(COORDINATE_CLICK_NOTE)

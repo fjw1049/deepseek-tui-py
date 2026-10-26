@@ -168,7 +168,7 @@ let browserDownloadSettings: AppSettingsV1
 
 function installDevBrowserDownloadHandler(): void {
   // Apply browser download preferences before the runtime bridge records the result.
-  session.fromPartition('persist:deepseek-dev-browser').on('will-download', (_event, item) => {
+  session.fromPartition('persist:deepseek-dev-browser').on('will-download', (_event, item, contents) => {
     const fileName = item.getFilename()
     item.once('done', (_doneEvent, state) => {
       const completed = state === 'completed'
@@ -191,7 +191,10 @@ function installDevBrowserDownloadHandler(): void {
       }
       notification.show()
     })
-    try { configureBrowserDownload(item, browserDownloadSettings, app.getPath('downloads')) }
+    try {
+      configureBrowserDownload(item, browserDownloadSettings, app.getPath('downloads'),
+        browserBridge?.agentControls(contents.id) ?? false)
+    }
     catch { item.cancel() }
   })
 }

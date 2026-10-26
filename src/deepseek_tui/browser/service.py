@@ -310,6 +310,7 @@ class BrowserRun:
     recording_error: str | None = None
     frames: list[bytes] = field(default_factory=list)
     artifacts: list[dict[str, str]] = field(default_factory=list)
+    restored_artifacts: int = 0  # Leading artifacts loaded from disk rather than made by this run
     demo_task: asyncio.Task[Any] | None = None
     demo_status: str = "idle"
     demo_step: int = 0
@@ -560,6 +561,7 @@ class BrowserService:
                 generation=self._saved_state(thread_id).get("generation", -1) + 1,
             )
             self.runs[thread_id].artifacts = self._saved_state(thread_id).get("artifacts", [])
+            self.runs[thread_id].restored_artifacts = len(self.runs[thread_id].artifacts)
             self.runs[thread_id].operations = self._saved_state(thread_id).get("operations", {})
             self.runs[thread_id].unresolved = self._saved_state(thread_id).get("unresolved", {})
             self.runs[thread_id].requests = self._saved_state(thread_id).get("requests", {})
@@ -770,6 +772,9 @@ class BrowserService:
             "recording_pending_save": bool(run.frames) and not run.recording,
             "log": run.log[-80:],
             "artifacts": run.artifacts[-12:],
+            # Only this run's recordings are offered for viewing; restored ones stay in artifacts.
+            "recent_recording": next((item for item in reversed(run.artifacts[run.restored_artifacts:])
+                                      if item["id"].endswith((".gif", ".webm"))), None),
             "demo_status": run.demo_status,
             "activity": run.activity,
             "workflow_recording": self._demonstrating(run),

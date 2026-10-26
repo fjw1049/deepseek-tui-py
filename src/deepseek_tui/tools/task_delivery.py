@@ -34,6 +34,8 @@ class TaskDelivery:
     extra_tools: set[str] = field(default_factory=set)
     evidence: set[str] = field(default_factory=set)
     cua_used: bool = False
+    # Computer-use code ran; observing alone needs no verification contract.
+    cua_acted: bool = False
     cua_verification_target: dict[str, str] | None = None
     cua_observation_evidence: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Evidence predating an uncertain desktop action cannot verify its outcome.
@@ -155,8 +157,8 @@ class FinishTaskTool(ToolSpec):
             "references must copy evidence_ref from successful tool results, never action_id "
             "or observation_id. Explain "
             "what those results establish in answer; dispatch alone is not business success. "
-            "After computer use, cite a fresh cua_observe result and provide verification: "
-            "each claim and its limitations must appear in answer, with supporting evidence. "
+            "After running cua_js, cite a fresh cua_observe result and provide verification "
+            "linking each claim to supporting evidence; state the limitations in answer. "
             "Report only observed facts, not untested internal behavior. "
             "The Engine delivers answer verbatim after its existing stop checks."
         )
@@ -183,7 +185,7 @@ class FinishTaskTool(ToolSpec):
                 },
                 "verification": {
                     "type": "array",
-                    "description": "Required for completed computer-use tasks. Match each "
+                    "description": "Required for completed tasks that ran cua_js. Match each "
                         "conclusion to observed evidence. Disclose incomplete reads and "
                         "untested behavior; one successful example cannot verify all rules.",
                     "items": {"type": "object", "properties": {
@@ -264,29 +266,31 @@ class FinishTaskTool(ToolSpec):
                                 or session.reset_reason):
                     raise ToolError("Computer-use state is unresolved or changed. Inspect with "
                                     "cua_observe; report partial/blocked until resolved.")
-                checks = input_data.get("verification")
-                if not isinstance(checks, list) or not checks:
-                    raise ToolError("Supply verification linking each conclusion to its observed "
-                                    "evidence, including limitations, or report partial/blocked.")
-                for check in checks:
-                    if not isinstance(check, dict):
-                        raise ToolError("Each verification must be an object")
-                    claim, refs, limits = (
-                        check.get(k) for k in ("claim", "evidence", "limitations"))
-                    if (not isinstance(claim, str) or not claim.strip() or claim not in answer
-                            or not isinstance(refs, list) or not refs
-                            or any(not isinstance(ref, str) or ref not in evidence for ref in refs)
-                            or not isinstance(limits, list)
-                            or any(not isinstance(s, str) or not s.strip() or s not in answer
-                                   for s in limits)):
-                        raise ToolError("Verification needs a claim and limitations quoted in "
-                                        "answer, and supporting references selected in evidence.")
-                    if any(not state.cua_observation_evidence[ref].get("complete", False)
-                           for ref in refs if ref in observations) and not limits:
-                        raise ToolError("An incomplete observation needs explicit limitations "
-                                        "in the answer; it cannot establish a complete result.")
-                if not any(observations.intersection(check["evidence"]) for check in checks):
-                    raise ToolError("Verification must use the fresh observation evidence.")
+                if state.cua_acted:
+                    checks = input_data.get("verification")
+                    if not isinstance(checks, list) or not checks:
+                        raise ToolError("Supply verification linking each conclusion to its "
+                                        "observed evidence, including limitations, or report "
+                                        "partial/blocked.")
+                    for check in checks:
+                        if not isinstance(check, dict):
+                            raise ToolError("Each verification must be an object")
+                        claim, refs, limits = (
+                            check.get(k) for k in ("claim", "evidence", "limitations"))
+                        if (not isinstance(claim, str) or not claim.strip()
+                                or not isinstance(refs, list) or not refs
+                                or any(not isinstance(ref, str) or ref not in evidence
+                                       for ref in refs)
+                                or not isinstance(limits, list)
+                                or any(not isinstance(s, str) or not s.strip() for s in limits)):
+                            raise ToolError("Verification needs a claim, its limitations, and "
+                                            "supporting references selected in evidence.")
+                        if any(not state.cua_observation_evidence[ref].get("complete", False)
+                               for ref in refs if ref in observations) and not limits:
+                            raise ToolError("An incomplete observation needs explicit limitations "
+                                            "in the answer; it cannot establish a complete result.")
+                    if not any(observations.intersection(check["evidence"]) for check in checks):
+                        raise ToolError("Verification must use the fresh observation evidence.")
             if (state.cua_failed_evidence is not None
                     and not (set(evidence) - state.cua_failed_evidence)):
                 raise ToolError(
@@ -307,7 +311,7 @@ class FinishTaskTool(ToolSpec):
             "evidence": evidence,
             "remaining": remaining,
         }
-        if state.cua_used and status == "completed":
+        if state.cua_acted and status == "completed":
             state.outcome["verification"] = input_data["verification"]
         return ToolResult(
             True,

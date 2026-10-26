@@ -23,6 +23,13 @@ it('auto-saves without replacing an existing file', () => {
   expect(readFileSync(join(directory, 'report.txt'), 'utf8')).toBe('keep')
   download.emit('done')
 })
+it('auto-saves agent downloads even when the user is asked for their own', () => {
+  const download = item()
+  configureBrowserDownload(download as unknown as DownloadItem, { browserDownloadDirectory: directory } as AppSettingsV1, '/fallback', true)
+  expect(download.setSaveDialogOptions).not.toHaveBeenCalled()
+  expect(download.setSavePath).toHaveBeenCalledWith(join(directory, 'report.txt'))
+  download.emit('done')
+})
 it('reserves different paths for simultaneous same-name downloads', () => {
   const first = item(), second = item()
   const settings = { browserAskDownloadLocation: false } as AppSettingsV1

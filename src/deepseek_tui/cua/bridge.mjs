@@ -58,9 +58,8 @@ async function handle(request) {
             const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
             const images = (result.content ?? []).filter(b => b.type === 'image');
             // The observation is captured before joining documentation/entry-point output.
-            const ranges = [...text.matchAll(/\(showing \d+-(\d+) of (\d+) items\)/g)];
+            // The host judges completeness from this text (cua/tools.py).
             result.observation = { target: app ? {app} : {browser, tab_id}, text,
-              complete: !ranges.some(([, shown, total]) => Number(shown) < Number(total)),
               expectations: (request.arguments.expect ?? []).map(expected => ({
                 text: expected, matched: text.includes(expected),
               })) };

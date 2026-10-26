@@ -791,7 +791,7 @@
   "browserDownloadDirectory": "默认保存位置",
   "browserSystemDownloads": "系统下载文件夹",
   "browserAskDownloadLocation": "下载前询问保存位置",
-  "browserAskDownloadLocationHint": "关闭后自动保存到默认位置，已有同名文件会保留。",
+  "browserAskDownloadLocationHint": "关闭后自动保存到默认位置，已有同名文件会保留。AI 操作时的下载始终自动保存，不弹出对话框。",
   "browserDownloadScope": "适用于内置浏览器的新下载；不会移动已有文件。临时浏览器仍将下载保存在当前任务产物中，录屏和操作演示的保存位置不受影响。",
   "browserPermissions": "网站授权",
   "browserPermissionsHint": "这里只列出当前已加载聊天中记住的网站许可，重启后不保留。撤销前请停止对应任务；之后按当前审批模式重新判断。敏感网站和文件上传仍沿用原有审批规则；此列表不包含外部 Chrome 授权。",

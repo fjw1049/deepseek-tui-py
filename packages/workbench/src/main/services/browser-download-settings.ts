@@ -5,12 +5,16 @@ import type { AppSettingsV1 } from '../../shared/app-settings'
 
 const pendingPaths = new Set<string>()
 
-/** Called synchronously in will-download, before Electron chooses its destination. */
-export function configureBrowserDownload(item: DownloadItem, settings: AppSettingsV1, defaultDirectory: string): void {
+/**
+ * Called synchronously in will-download, before Electron chooses its destination.
+ * Agent downloads always save automatically: a save dialog would stall the task.
+ */
+export function configureBrowserDownload(item: DownloadItem, settings: AppSettingsV1, defaultDirectory: string,
+  agent = false): void {
   const requested = settings.browserDownloadDirectory
   const directory = requested && isAbsolute(requested) ? requested : defaultDirectory
   const name = basename(item.getFilename()) || 'download'
-  if (settings.browserAskDownloadLocation !== false) {
+  if (!agent && settings.browserAskDownloadLocation !== false) {
     item.setSaveDialogOptions({ defaultPath: join(directory, name) })
     return
   }

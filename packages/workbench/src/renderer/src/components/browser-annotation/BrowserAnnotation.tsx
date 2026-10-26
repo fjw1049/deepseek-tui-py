@@ -33,7 +33,7 @@ function layoutZoom(element: HTMLElement): number {
  * to the element picker; any drawing tool freezes a screenshot and draws over it until the marks
  * are added to the chat. Picking is owned by the pane, which runs the picker.
  */
-export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingChange, capture, onAdd, onHide, onError, status, activity, tools, closable, collapsed = false, pageUrl, ref }: {
+export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingChange, capture, onAdd, onHide, onError, status, activity, closable, collapsed = false, pageUrl, ref }: {
   collapsed?: boolean
   disabled: boolean
   pickEnabled: boolean
@@ -51,8 +51,6 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
   /** Who controls the page, shown on the resting bar. */
   status?: ReactNode
   activity?: ReactNode
-  /** More resting tools after the annotation tools (demonstrate to the agent). */
-  tools?: ReactNode
   /** False while the resting bar must stay up. */
   closable?: boolean
   ref?: Ref<BrowserAnnotationHandle>
@@ -269,7 +267,7 @@ export function BrowserAnnotation({ disabled, pickEnabled, picking, onPickingCha
         : null}
       </div> : <div className="ds-annotation__capturing" role="status">{t('annotationCapturing')}</div>}
     </div> : null}
-    <AnnotationToolbar state={barState} status={status} activity={activity} tools={tools} closable={closable} tool={tool} disabled={disabled} pickEnabled={pickEnabled} color={color} width={width}
+    <AnnotationToolbar state={barState} status={status} activity={activity} closable={closable} tool={tool} disabled={disabled} pickEnabled={pickEnabled} color={color} width={width}
       canUndo={history.past.length > 0} canRedo={history.future.length > 0} canClear={history.present.length > 0}
       showHistory={sketching && hasHistory(history)} canAdd={sketching && !!backdrop} adding={adding}
       onPick={togglePick} onTool={chooseTool} onColorChange={setColor} onWidthChange={setWidth}

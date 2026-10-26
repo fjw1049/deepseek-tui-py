@@ -7516,8 +7516,13 @@ select:focus-visible,
 }
 
 .ds-right-panel-surface.is-browser > .ds-dock-header {
-  background: var(--ds-bg-sidebar);
+  background-color: var(--ds-bg-sidebar);
   pointer-events: auto;
+}
+
+/* Same light chrome as the other panels' tab bars. */
+[data-theme='light'] .ds-right-panel-surface.is-browser > .ds-dock-header {
+  background-color: var(--ds-workbench-chrome);
 }
 
 .ds-workbench-shell.is-resizing .ds-chat-column > section,

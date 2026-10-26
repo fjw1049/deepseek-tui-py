@@ -17,15 +17,13 @@ const WIDTH_LABEL: Record<number, string> = { 2: 'annotationWidthThin', 4: 'anno
 
 type Menu = 'shape' | 'color' | 'width'
 
-export function AnnotationToolbar({ state, status, activity, tools, closable = true, tool, disabled, pickEnabled, color, width, canUndo, canRedo, canClear, showHistory, canAdd, adding,
+export function AnnotationToolbar({ state, status, activity, closable = true, tool, disabled, pickEnabled, color, width, canUndo, canRedo, canClear, showHistory, canAdd, adding,
   onPick, onTool, onColorChange, onWidthChange, onUndo, onRedo, onClear, onAdd, onClose }: {
   state: AnnotationBarState
   /** Who controls the page, shown ahead of the tools while the bar rests. */
   status?: ReactNode
   /** Persistent recording actions remain visible while selecting or drawing. */
   activity?: ReactNode
-  /** More resting tools after the annotation tools (demonstrate to the agent). */
-  tools?: ReactNode
   /** False while the bar must stay up (the agent has the page, or something needs the user). */
   closable?: boolean
   /** The drawing tool in use while sketching. */
@@ -88,7 +86,6 @@ export function AnnotationToolbar({ state, status, activity, tools, closable = t
       </div> : null}
     </span>
     {button('annotationText', <Type size={16} />, () => onTool('text'), { pressed: pressed === 'text', disabled })}
-    {state === 'rest' && tools ? <><span className="ds-annotation-toolbar__divider" aria-hidden="true" />{tools}</> : null}
     {state !== 'rest' || closable ? <span className="ds-annotation-toolbar__divider" aria-hidden="true" /> : null}
     {state !== 'rest' ? <>
       <span className="ds-annotation-toolbar__split">

@@ -20,7 +20,8 @@ BLOCKED = HOST_APP_IDS | {
 def installed_apps() -> dict[str, tuple[str, Path, str]]:
     apps = {}
     for directory in (Path('/Applications'), Path('/Applications/Utilities'),
-                      Path('/System/Applications'), Path.home() / 'Applications'):
+                      Path('/System/Applications'), Path('/System/Applications/Utilities'),
+                      Path.home() / 'Applications'):
         for bundle in sorted(directory.glob('*.app')):
             try:
                 info = plistlib.loads((bundle / 'Contents/Info.plist').read_bytes())

@@ -557,21 +557,16 @@ class CuaSession:
                 if name == "js":
                     await self.record_outcome(turn_id, call_id, "returned")
                 if name == "observe" and not result.get("isError"):
-                    from deepseek_tui.cua.tools import cua_surface
-
                     if self.observation_generation != observed_generation:
                         result["isError"] = True
                         result.setdefault("content", []).append({"type": "text", "text":
                             "The app changed during observation. Use cua_observe again."})
                         result.pop("observation", None)
-                    elif (not self.last_surface
-                          or cua_surface(result.get("_meta")) == self.last_surface):
+                    else:
+                        # Observing another target switches work to it, so a target that
+                        # quit or crashed cannot hold code execution blocked for good.
                         self.outside_change = ""
                         self.reset_reason = ""
-                    elif self.outside_change or self.reset_reason:
-                        result.setdefault("content", []).append({"type": "text", "text":
-                            "The changed target still needs observation before further code: "
-                            + json.dumps(self.last_surface)})
                 self._catalog(result)
                 if self.instructions != known_instructions:
                     result.setdefault("content", []).append(

@@ -206,20 +206,20 @@ async def test_other_app_cannot_verify_previous_action(session, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_other_app_does_not_release_recovery_guard(session, tmp_path):
+async def test_observing_another_app_switches_target_and_releases_guard(session, tmp_path):
+    # The original app may have quit; a fresh view of another target must not deadlock.
     context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
     await session.connect()
     try:
         tool = CuaTool(session, session.descriptors[0])
         await tool.execute({"code": "surface:dev.original"}, context)
         session.invalidate_observation("The original app changed")
-        for _ in range(2):
-            await CuaObserveTool(session).execute({"app": "dev.other"}, context)
-            assert session.outside_change
-            with pytest.raises(ToolError, match="cua_observe"):
-                await tool.execute({"code": "click"}, context)
-        await CuaObserveTool(session).execute({"app": "dev.original"}, context)
+        with pytest.raises(ToolError, match="cua_observe"):
+            await tool.execute({"code": "click"}, context)
+        await CuaObserveTool(session).execute({"app": "dev.other"}, context)
         assert not session.outside_change
+        assert session.last_surface == {"kind": "app", "app_id": "dev.other"}
+        assert (await tool.execute({"code": "ok"}, context)).success
     finally:
         await session.close()
 
@@ -286,6 +286,7 @@ async def test_completion_discloses_incomplete_evidence(tmp_path):
     state = TaskDelivery(
         active=True,
         cua_used=True,
+        cua_acted=True,
         evidence={"tool:seen"},
         cua_observation_evidence={"tool:seen": observation},
     )
@@ -362,3 +363,52 @@ async def test_engine_delivers_only_after_observation(session, tmp_path):
     finally:
         await session.close()
         await engine.shutdown_session()
+
+
+@pytest.mark.asyncio
+async def test_verification_need_not_quote_answer(tmp_path):
+    state = TaskDelivery(
+        active=True,
+        cua_used=True,
+        cua_acted=True,
+        evidence={"tool:seen"},
+        cua_observation_evidence={"tool:seen": {"complete": True}},
+    )
+    context = ToolContext(tmp_path, metadata={"task_delivery": state})
+    args = dict(
+        status="completed",
+        answer="文档已保存。",
+        evidence=["tool:seen"],
+        remaining=[],
+        verification=[{"claim": "Document saved", "evidence": ["tool:seen"], "limitations": []}],
+    )
+    assert (await FinishTaskTool().execute(args, context)).success
+
+
+@pytest.mark.asyncio
+async def test_observing_only_needs_no_verification(session, tmp_path):
+    state = TaskDelivery(active=True)
+    context = ToolContext(
+        tmp_path, metadata={"task_delivery": state, "cua_turn_id": "t", "cua_call_id": "c"}
+    )
+    try:
+        result = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
+        state.remember_evidence("tool:seen", result.metadata)
+        assert not state.cua_acted
+        outcome = await FinishTaskTool().execute(
+            dict(status="completed", answer="The window shows the fixture.",
+                 evidence=["tool:seen"], remaining=[]),
+            context,
+        )
+        assert outcome.success and "verification" not in outcome.metadata["task_outcome"]
+    finally:
+        await session.close()
+
+
+def test_ax_completeness_never_reads_an_unknown_range_as_complete():
+    from deepseek_tui.cua.tools import ax_complete
+
+    assert ax_complete("Window: Notes\n1 button Save")
+    assert ax_complete("2 HTML (showing 0-40 of 40 items)")
+    assert not ax_complete("2 HTML (showing 0-100 of 350 items)")
+    assert not ax_complete("2 HTML (Showing first 100 of 350)")

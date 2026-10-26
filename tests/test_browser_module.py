@@ -89,8 +89,10 @@ async def test_action_evidence_and_recording_module(browser):
         assert image.format == "GIF"
     assert "private" not in str(browser.state("one")["log"])
     assert browser.state("two")["log"] == []
+    assert browser.state("one")["recent_recording"]["id"] == animation["artifact"]["id"]
     await browser.close("one")
     assert len(browser.state("one")["artifacts"]) == 3
+    assert browser.state("one").get("recent_recording") is None
     assert browser.approval_scope("one") != scope
     with pytest.raises(ValueError):
         browser.artifact("two", shot["artifact"]["id"])
@@ -186,6 +188,16 @@ async def test_takeover_discards_waiting_agent_action_and_stop_cleans_up(browser
     assert not run.directory.exists()
     assert not browser.state("one")["active"]
     assert browser.state("two")["active"]
+
+
+def test_restored_recordings_are_not_offered_as_recent(browser):
+    run = browser.runs["one"]
+    run.artifacts = [{"id": "old.gif", "path": "/tmp/old.gif", "label": "old"}]
+    run.restored_artifacts = 1
+    assert browser.state("one")["recent_recording"] is None
+    run.artifacts.append({"id": "new.webm", "path": "/tmp/new.webm", "label": "new"})
+    run.artifacts.append({"id": "shot.jpg", "path": "/tmp/shot.jpg", "label": "shot"})
+    assert browser.state("one")["recent_recording"]["id"] == "new.webm"
 
 
 @pytest.mark.asyncio

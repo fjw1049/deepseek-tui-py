@@ -66,7 +66,7 @@ it('keeps each session independent and restores its choice after remount', async
   expect(compact()).toBe(true)
 })
 
-it('does not reopen a dismissed card when saved or new activity arrives', async () => {
+it('does not reopen a dismissed card for saved activity loaded without a running turn', async () => {
   await refresh()
   await close()
   activity.tasks = [{ id: 'one', status: 'running', prompt: 'First' }]
@@ -77,6 +77,39 @@ it('does not reopen a dismissed card when saved or new activity arrives', async 
   await act(async () => root.render(null))
   await refresh()
   expect(compact()).toBe(true)
+})
+
+it('reopens for new tasks, agents, todos and changes from a running turn, not for progress', async () => {
+  await refresh()
+  await close()
+  await act(async () => { useChatStore.setState({ busy: true }) })
+  activity.tasks = [{ id: 'one', status: 'running', prompt: 'First' }]
+  await refresh()
+  expect(compact()).toBe(false)
+  await close()
+  activity.tasks = [{ ...activity.tasks[0]!, status: 'completed' }]
+  await refresh()
+  expect(compact()).toBe(true)
+  activity.agents = [{ id: 'block', agentId: 'agent-one', agentType: 'worker', status: 'running' }]
+  await refresh()
+  expect(compact()).toBe(false)
+  await close()
+  activity.todos = [{ id: '1', content: 'Implement', status: 'pending' }]
+  await refresh()
+  expect(compact()).toBe(false)
+  expect(container.querySelector('ul')?.textContent).toContain('Implement')
+  await close()
+  activity.todos = [{ ...activity.todos[0]!, status: 'completed' }]
+  await refresh()
+  expect(compact()).toBe(true)
+  activity.dirty = 1
+  await refresh()
+  expect(compact()).toBe(false)
+  expect(container.querySelector('[title="operationDockOpenChanges"]')).not.toBeNull()
+  // The reopened card is the session's choice now, and survives a remount.
+  await act(async () => root.render(null))
+  await refresh()
+  expect(compact()).toBe(false)
 })
 
 it('expands at full width without waiting for animation frames or timers', async () => {

@@ -3,6 +3,7 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useRef,
   useSyncExternalStore,
   useState,
   type ReactElement
@@ -182,13 +183,15 @@ export function OperationContextDock({
     blocks,
     activeThreadId,
     threads,
-    workspaceDirtyTick
+    workspaceDirtyTick,
+    busy
   } = useChatStore(
     useShallow((s) => ({
       blocks: s.blocks,
       activeThreadId: s.activeThreadId,
       threads: s.threads,
-      workspaceDirtyTick: s.workspaceDirtyTick
+      workspaceDirtyTick: s.workspaceDirtyTick,
+      busy: s.busy
     }))
   )
   const visibleRoot = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
@@ -253,6 +256,30 @@ export function OperationContextDock({
   useEffect(() => {
     setCollapsed((prev) => (prev.git === !hasChanges ? prev : { ...prev, git: !hasChanges }))
   }, [hasChanges])
+
+  const seenActivity = useRef(new Map<string, Set<string>>())
+  useEffect(() => {
+    if (!visibleRoot) return
+    const scope = JSON.stringify([activeThreadId, visibleRoot])
+    const seen = seenActivity.current.get(scope) ?? new Set<string>()
+    const keys = [
+      ...tasks.map((task) => `task:${task.id}`),
+      ...dockSubagents.map((agent) => `agent:${agent.agentId}`),
+      ...todos.map((todo) => `todo:${JSON.stringify([todo.id, todo.content])}`),
+      ...(hasChanges ? ['changes'] : [])
+    ]
+    const added = keys.filter((key) => !seen.has(key))
+    keys.forEach((key) => seen.add(key))
+    seenActivity.current.set(scope, seen)
+    // Only a running turn reopens the card: loaded history keeps the session's saved choice.
+    // Remember activity even while open, so dismissing it survives progress updates.
+    if (!added.length || !busy) return
+    setCompactMode(false)
+    setCollapsed((prev) => ({
+      git: added.includes('changes') ? false : prev.git,
+      process: added.some((key) => key.startsWith('todo:')) ? false : prev.process
+    }))
+  }, [activeThreadId, visibleRoot, tasks, dockSubagents, todos, hasChanges, busy, setCompactMode])
 
   if (!visibleRoot) return null
 

@@ -77,14 +77,20 @@ export function installDevPreviewWebviewGuards(): void {
       if (!isBrowser()) return { action: 'allow' }
       const next = url === 'about:blank' ? url : upgradeToBrowsableUrl(url)
       if (!next) return { action: 'deny' }
-      // Keep the source document alive. Named windows, POSTs and explicit window features
-      // need a real child to preserve opener, targeting and form-submission semantics.
+      // Plain new-tab links (search results) stay in the current tab: the agent and a
+      // demonstration follow one page. Only an explicit background open (Cmd/middle-click)
+      // adds a tab, and it leaves this page shown. Named windows, POSTs and explicit window
+      // features need a real child to preserve opener, targeting and form-submission semantics.
       const tabLink = disposition === 'foreground-tab' || disposition === 'background-tab'
-      if (tabOpener && contents.getType() === 'webview' && next !== 'about:blank' && tabLink &&
+      if (contents.getType() === 'webview' && next !== 'about:blank' && tabLink &&
           !postBody && !features && (!frameName || frameName === '_blank')) {
-        void tabOpener(contents.id, next, disposition === 'background-tab').catch((error: unknown) => {
-          logWarn('dev-browser-navigation', 'Could not open link in a new tab', String(error))
-        })
+        if (disposition === 'background-tab' && tabOpener) {
+          void tabOpener(contents.id, next, true).catch((error: unknown) => {
+            logWarn('dev-browser-navigation', 'Could not open link in a new tab', String(error))
+          })
+        } else {
+          navigate(next)
+        }
         return { action: 'deny' }
       }
       if (next !== url) return { action: 'deny' }

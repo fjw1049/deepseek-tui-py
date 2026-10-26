@@ -119,7 +119,7 @@ describe('dev browser guards', () => {
     expect(contents.loadURL).not.toHaveBeenCalled()
   })
 
-  it('keeps the source page intact when opening new-tab links', () => {
+  it('loads new-tab links in the current tab and opens only background links as tabs', () => {
     const openTab = vi.fn(async () => {})
     setTabOpener(openTab)
     const contents = createContents()
@@ -127,22 +127,20 @@ describe('dev browser guards', () => {
     for (const disposition of ['foreground-tab', 'background-tab']) {
       expect(open({ url: 'https://example.com/result', disposition })).toEqual({ action: 'deny' })
     }
-    expect(contents.loadURL).not.toHaveBeenCalled()
-    expect(openTab.mock.calls).toEqual([
-      [7, 'https://example.com/result', false], [7, 'https://example.com/result', true]
-    ])
+    expect(contents.loadURL.mock.calls).toEqual([['https://example.com/result']])
+    expect(openTab.mock.calls).toEqual([[7, 'https://example.com/result', true]])
     // Sized popups (sign-in windows) keep their opener; blank tabs are written to by their opener.
     expect(open({ url: 'https://example.com/login', disposition: 'new-window' })).toMatchObject({ action: 'allow' })
     expect(open({ url: 'about:blank', disposition: 'foreground-tab' })).toMatchObject({ action: 'allow' })
     for (const details of [{ frameName: 'oauth' }, { features: 'width=600,height=400' }, { features: 'opener' }, { postBody: { data: [] } }]) {
       expect(open({ url: 'https://example.com/login', disposition: 'foreground-tab', ...details })).toMatchObject({ action: 'allow' })
     }
-    expect(openTab).toHaveBeenCalledTimes(2)
-    expect(contents.loadURL).not.toHaveBeenCalled()
+    expect(openTab).toHaveBeenCalledTimes(1)
+    expect(contents.loadURL).toHaveBeenCalledTimes(1)
     // Search engines link results through http redirectors; those open over https too.
     expect(open({ url: 'http://www.baidu.com/link?url=abc', disposition: 'foreground-tab' })).toEqual({ action: 'deny' })
-    expect(openTab).toHaveBeenLastCalledWith(7, 'https://www.baidu.com/link?url=abc', false)
-    expect(contents.loadURL).not.toHaveBeenCalled()
+    expect(contents.loadURL).toHaveBeenLastCalledWith('https://www.baidu.com/link?url=abc')
+    expect(openTab).toHaveBeenCalledTimes(1)
   })
   it('retains the popup gate and never replaces the source on a tab-opening failure', async () => {
     const openTab = vi.fn(async () => { throw new Error('renderer unavailable') })
@@ -154,7 +152,7 @@ describe('dev browser guards', () => {
     expect(open({ url: 'https://example.com/login', disposition: 'new-window' })).toEqual({ action: 'deny' })
     expect(gate).toHaveBeenCalledWith(7, 'https://example.com/login')
     expect(openTab).not.toHaveBeenCalled()
-    expect(open({ url: 'https://example.com/result', disposition: 'foreground-tab' })).toEqual({ action: 'deny' })
+    expect(open({ url: 'https://example.com/result', disposition: 'background-tab' })).toEqual({ action: 'deny' })
     await Promise.resolve()
     expect(mocks.logWarn).toHaveBeenCalledWith('dev-browser-navigation', 'Could not open link in a new tab', expect.any(String))
     expect(contents.loadURL).not.toHaveBeenCalled()

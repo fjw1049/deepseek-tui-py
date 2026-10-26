@@ -227,7 +227,9 @@ it('blocks windows a page opens while the agent drives its tab, and tells the ru
   const h = await harness()
   try {
     expect(h.bridge.allowPopup(2, 'https://login.test/')).toBe(true)
+    expect(h.bridge.agentControls(2)).toBe(false)
     h.bridge.setTabs('one', [{ tabId: 'tab', webContentsId: 2, active: true, visible: true, inputBlocked: true }])
+    expect(h.bridge.agentControls(2)).toBe(true)
     expect(h.bridge.allowPopup(2, 'https://login.test/')).toBe(false)
     expect(h.messages).toContainEqual({ method: 'Workbench.popupBlocked', params: { url: 'https://login.test/' } })
     expect(h.bridge.allowPopup(99, 'https://unknown.test/')).toBe(true)

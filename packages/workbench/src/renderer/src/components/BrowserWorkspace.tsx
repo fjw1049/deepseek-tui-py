@@ -17,13 +17,13 @@ import { formatAutomationApiError } from '../lib/automation-runtime-client'
 import { DEFAULT_DEV_PREVIEW_URL, normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
 import { copyText } from '../lib/copy-text'
-import { consumeBrowserDemoRequest, setBrowserDemoActive, useBrowserDemoStore } from '../store/browser-demo-store'
 import { useChatStore } from '../store/chat-store'
 import './browser-workspace.css'
 import { respondToAssistance } from './BrowserAssistance'
 import type { Assistance } from './BrowserAssistanceCard'
 
 const FFMPEG_INSTALL_COMMAND = 'brew install ffmpeg'
+const RECORD_FLYOUT_WIDTH = 228
 
 /** Seconds since `active` last turned on, counted here (the runtime does not report a start time). */
 function useElapsedSeconds(active: boolean): number {
@@ -68,6 +68,8 @@ type BrowserState = {
   workflow_tab_errors?: Record<string, string>
   error: string | null; log: { action: string; success: boolean }[]
   artifacts: { id: string; label: string; path: string }[]
+  /** The newest recording made in this browser session; ones restored from disk are left out. */
+  recent_recording?: { id: string; label: string; path: string } | null
   scene?: { scene_id: string; tab_id: string; document_id: string; viewport_epoch: number }
   view_sequence?: number
   frame_status?: 'ready' | 'busy' | 'changed'
@@ -149,8 +151,12 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const [demoReview, setDemoReview] = useState<DemoReview | null>(null)
   const [controlTarget, setControlTarget] = useState<'agent' | 'user' | 'stopped' | null>(null)
   const [more, setMore] = useState(false)
-  const [recordChoice, setRecordChoice] = useState(false)
-  useEffect(() => { if (!more) setRecordChoice(false) }, [more])
+  // Recording formats open in a flyout left of the menu, lined up with the record entry.
+  const [recordChoice, setRecordChoice] = useState<{ top: number; right: number } | null>(null)
+  useEffect(() => { if (!more) setRecordChoice(null) }, [more])
+  const recordItem = useRef<HTMLButtonElement>(null)
+  const recordFlyout = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (recordChoice) recordFlyout.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus() }, [recordChoice])
   const menuDetailId = useId()
   const controlOptionsId = useId()
   const [controlOpen, setControlOpen] = useState(false)
@@ -172,6 +178,26 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   useEffect(() => {
     if (more) menuRoot.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
   }, [more])
+  function openRecordChoice(): void {
+    const item = recordItem.current
+    const menu = item?.closest<HTMLElement>('.ds-dock-menu')
+    if (!item || !menu || !menuRoot.current) return
+    // Narrow panels slide the flyout over the menu instead of past the browser's left edge.
+    const browserLeft = menuRoot.current.closest('.ds-shared-browser')?.getBoundingClientRect().left
+    const room = browserLeft === undefined ? Infinity : menuRoot.current.getBoundingClientRect().right - browserLeft - RECORD_FLYOUT_WIDTH - 8
+    setRecordChoice({ top: menu.offsetTop + item.offsetTop - menu.scrollTop, right: Math.max(0, Math.min(menu.offsetWidth + 6, room)) })
+  }
+  function closeRecordChoice(): void {
+    setRecordChoice(null)
+    recordItem.current?.focus()
+  }
+  // Arrow keys walk a menu's enabled items, wrapping at either end.
+  function moveMenuFocus(menu: HTMLElement, key: string): void {
+    const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
+    const index = items.indexOf(document.activeElement as HTMLButtonElement)
+    const next = key === 'Home' ? 0 : key === 'End' ? items.length - 1 : (index + (key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+    items[next]?.focus()
+  }
   const alive = useRef(true)
   const transferring = useRef(false)
   const latestGeneration = useRef(-1)
@@ -206,7 +232,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
     if (state?.video_recording || state?.recording) { setSavedRecording(null); setDemoReview(null); setDemoFailure(null) }
   }, [state?.video_recording, state?.recording, threadId])
   const recordingResult = savedRecording?.threadId === threadId ? savedRecording.artifact : null
-  const latestRecording = [...(state?.artifacts ?? [])].reverse().find(item => /\.(gif|webm)$/i.test(item.id))
+  const latestRecording = state?.recent_recording ?? null
 
   // A saved file stays reachable while its notice is the one on screen.
   const [savedNotice, setSavedNotice] = useState<{ notice: string; path: string } | null>(null)
@@ -229,7 +255,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
   const videoSeconds = useElapsedSeconds(!!state?.video_recording)
   const gifSeconds = useElapsedSeconds(!!state?.recording)
   const demoSeconds = useElapsedSeconds(!!state?.workflow_recording)
-  const demoRequest = useBrowserDemoStore(store => store.request)
   // A menu entry with a one-line explanation; the label stays its accessible name.
   const menuDetailItem = (id: string, icon: ReactNode, label: string, detail: string, props: ComponentProps<'button'>, trailing?: ReactNode): ReactElement =>
     <button type="button" role="menuitem" className="ds-dock-menu-item ds-browser-menu-detail" aria-label={label} aria-describedby={`${menuDetailId}-${id}`} {...props}>
@@ -476,14 +501,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       if (alive.current) setDemoReview(current => current?.id === demoReview.id ? { ...current, steps: undefined, stepsError: true } : current)
     }
   }
-  useEffect(() => { if (conversationId) setBrowserDemoActive(conversationId, !!state?.workflow_recording) }, [conversationId, state?.workflow_recording])
-  // The composer's demonstrate button lands here once this conversation's browser is showing.
-  useEffect(() => {
-    if (!demoRequest || demoRequest.threadId !== conversationId || !visible || !state || !fresh || pending) return
-    consumeBrowserDemoRequest(demoRequest.id)
-    if (userControls) void demonstrate()
-    else setNotice(t('browserDemoNeedsControl'))
-  }, [demoRequest, conversationId, visible, state, fresh, pending, userControls]) // eslint-disable-line react-hooks/exhaustive-deps
   async function control(owner: 'agent' | 'user' | 'stopped'): Promise<void> {
     // Returning control saves an open demonstration without sending another query; its result shows like a finished one.
     const demonstrating = owner === 'agent' && !!state?.workflow_recording
@@ -768,14 +785,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
             onClick={(e) => { if ((e.target as Element).closest('button:not([aria-expanded])')) setMore(false) }}
             onKeyDown={(e) => {
               if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setMore(false); menuButton.current?.focus() }
-              else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
-                e.preventDefault()
-                const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]
-                const index = items.indexOf(document.activeElement as HTMLButtonElement)
-                const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
-                items[next]?.focus()
-              } else if (e.key === 'Tab') setMore(false)
-            }}>
+              else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveMenuFocus(e.currentTarget, e.key) }
+              else if (e.key === 'ArrowLeft' && document.activeElement === recordItem.current && !recordItem.current?.disabled) { e.preventDefault(); openRecordChoice() }
+              else if (e.key === 'Tab') setMore(false)
+            }} onScroll={() => setRecordChoice(null)}>
             {/* Grouped by what the user wants to do; recording formats sit behind one entry. */}
             {state?.video_recording ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void stopRecording()}><Video size={15} />{t('browserVideoStop')}</button> : null}
             {state?.recording_pending_save ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => void stopRecording()}><Film size={15} />{t('browserRecordingRetrySave')}</button> : null}
@@ -783,18 +796,10 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
             {latestRecording ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => {
               setSavedRecording({ threadId, artifact: latestRecording }); setRecordingPreview({ threadId, artifact: latestRecording })
             }}><Play size={15} />{t(latestRecording.id.endsWith('.webm') ? 'browserViewVideo' : 'browserViewGif')}</button> : null}
-            {screenRecording ? null : menuDetailItem('record', <Clapperboard size={15} />, t('browserRecordScreen'), t(demoBusy ? 'browserRecordBusyDemo' : 'browserRecordScreenDetail'),
-              { disabled: !userControls || demoBusy, 'aria-expanded': recordChoice, onClick: () => setRecordChoice(!recordChoice) },
-              recordChoice ? <ChevronDown size={14} className="ds-browser-menu-chevron" /> : <ChevronRight size={14} className="ds-browser-menu-chevron" />)}
-            {recordChoice && !screenRecording ? <div className="ds-browser-menu-choices">
-              {menuDetailItem('video', <Video size={15} />, t('browserRecordVideo'), t(videoUnavailable ? 'browserVideoUnavailable' : 'browserRecordVideoDetail'),
-                { disabled: !userControls || videoUnavailable, onClick: () => action({ action: 'video_start' }) })}
-              {videoUnavailable ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => {
-                void copyText(FFMPEG_INSTALL_COMMAND).then(copied => { if (copied) setNotice(t('browserFfmpegCommandCopied')) })
-              }}><Copy size={15} />{t('browserCopyFfmpegCommand')}</button> : null}
-              {menuDetailItem('gif', <Film size={15} />, t('browserRecordGif'), t('browserRecordGifDetail'),
-                { disabled: !userControls, onClick: () => action({ action: 'record_start' }) })}
-            </div> : null}
+            {/* Only a demonstration in progress needs explaining; otherwise the entry is a plain row. */}
+            {screenRecording ? null : demoBusy ? menuDetailItem('record', <Clapperboard size={15} />, t('browserRecordScreen'), t('browserRecordBusyDemo'), { disabled: true })
+              : <button ref={recordItem} type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} aria-haspopup="menu" aria-expanded={!!recordChoice}
+                onClick={() => { if (recordChoice) setRecordChoice(null); else openRecordChoice() }}><Clapperboard size={15} />{t('browserRecordScreen')}<ChevronRight size={14} className="ds-browser-menu-chevron" /></button>}
             <div className="ds-browser-menu-divider" role="separator" />
             {filePath && isHtmlPreviewPath(filePath) && onOpenFileInEditor ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => onOpenFileInEditor(filePath)}><FileCode2 size={15} />{t('browserEditSource')}</button> : null}
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={remote ? !userControls : !pageOpen} onClick={() => void openDevTools()}><Bug size={15} />{t('browserDevTools')}</button>
@@ -808,6 +813,22 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
             </> : null}
             {/* Workbench tabs stay open; ending only matters for a task or a private browser. */}
             {remote || state?.task_running ? <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.active || pending} onClick={() => void control('stopped')}><Square size={15} />{t(state?.task_running ? 'browserEndTaskAndSession' : 'browserEndSession')}</button> : null}
+          </div> : null}
+          {more && recordChoice && !screenRecording ? <div ref={recordFlyout} className="ds-dock-menu ds-browser-menu-flyout" role="menu" aria-label={t('browserRecordScreen')}
+            style={{ top: `calc(100% + 8px + ${recordChoice.top}px)`, right: recordChoice.right, width: RECORD_FLYOUT_WIDTH }}
+            onClick={(e) => { if ((e.target as Element).closest('button')) setMore(false) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); closeRecordChoice() }
+              else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveMenuFocus(e.currentTarget, e.key) }
+              else if (e.key === 'Tab') setMore(false)
+            }}>
+            {menuDetailItem('video', <Video size={15} />, t('browserRecordVideo'), t(videoUnavailable ? 'browserVideoUnavailable' : 'browserRecordVideoDetail'),
+              { disabled: !userControls || videoUnavailable, onClick: () => action({ action: 'video_start' }) })}
+            {videoUnavailable ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={() => {
+              void copyText(FFMPEG_INSTALL_COMMAND).then(copied => { if (copied) setNotice(t('browserFfmpegCommandCopied')) })
+            }}><Copy size={15} />{t('browserCopyFfmpegCommand')}</button> : null}
+            {menuDetailItem('gif', <Film size={15} />, t('browserRecordGif'), t('browserRecordGifDetail'),
+              { disabled: !userControls, onClick: () => action({ action: 'record_start' }) })}
           </div> : null}
         </div>
       </form>
@@ -826,11 +847,7 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         if (attached) setNotice(t('annotationAdded'))
         return attached
       }}
-      onHide={() => { setAnnotationBarShown(false); setInspect(false) }} onError={setError} status={controlStatus} activity={activityCard} closable={!controlForced && !activityForced}
-      tools={conversationId && state ? <button type="button" className={`ds-annotation-toolbar__btn${state.workflow_recording ? ' is-recording' : ''}`}
-        aria-label={t(state.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')} aria-pressed={!!state.workflow_recording}
-        title={state.workflow_recording ? t('browserDemoFinish') : recordingBusy ? t('browserDemoBusyRecording') : `${t('browserDemoStart')}：${t('browserDemoDetail')}`}
-        disabled={!userControls || demoChanging !== null || (recordingBusy && !state.workflow_recording)} onClick={() => void demonstrate()}><MousePointerClick size={16} /></button> : null} /> : null}
+      onHide={() => { setAnnotationBarShown(false); setInspect(false) }} onError={setError} status={controlStatus} activity={activityCard} closable={!controlForced && !activityForced} /> : null}
     {statusBarOnly ? <div className="ds-annotation"><div className="ds-annotation-toolbar" role="toolbar" aria-label={t('browserControlLabel')} data-state="rest">{activityCard}{controlStatus}</div></div> : null}
     {recordingPreview?.threadId === threadId ? <BrowserRecordingPreview key={recordingPreview.artifact.id} threadId={threadId} recording={recordingPreview.artifact} onClose={() => setRecordingPreview(null)} /> : null}
     {pickHint || notice ? <div className="ds-browser-feedback" role="status"><span>{pickHint ? t('browserPickInstruction') : notice}</span>{!pickHint && savedNotice?.notice === notice ? <button onClick={() => {
