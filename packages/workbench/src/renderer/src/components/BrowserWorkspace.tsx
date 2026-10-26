@@ -754,6 +754,11 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
         </div>
         <input className="ds-dev-browser__omnibox" aria-label={t('browserAddressPlaceholder')} placeholder={t('browserAddressPlaceholder')} value={url} disabled={!addressEnabled} onChange={(e) => setUrl(e.target.value)} />
         <button className="ds-dev-browser__icon-btn" aria-label={t('browserOpen')} title={t('browserOpen')} disabled={!addressEnabled || !url.trim()}><ArrowRight size={13} /></button>
+        {conversationId && state ? <button type="button" className="ds-dev-browser__icon-btn"
+          aria-label={t(state.workflow_recording ? 'browserDemoFinish' : 'browserDemoStart')} aria-pressed={!!state.workflow_recording}
+          title={state.workflow_recording ? t('browserDemoFinish') : recordingBusy ? t('browserDemoBusyRecording') : !userControls ? t('browserDemoNeedsControl') : `${t('browserDemoStart')}：${t('browserDemoDetail')}`}
+          disabled={!userControls || demoChanging !== null || (recordingBusy && !state.workflow_recording)}
+          onClick={() => void demonstrate()}><MousePointerClick size={16} /></button> : null}
         {onAttachImage ? <button ref={annotationButton} type="button" className="ds-dev-browser__icon-btn" aria-label={t(inspect ? 'browserExitSelection' : 'browserAnnotate')} title={t(inspect ? 'browserExitSelection' : 'browserAnnotate')} aria-pressed={annotationBarVisible} disabled={!annotationSurface || agentHolds}
           onClick={() => { if (!annotationBarVisible) setAnnotationBarShown(true); else if (annotationReady && canInspect) annotation.current?.togglePick() }}><MousePointerSquareDashed size={16} strokeWidth={1.75} /></button>
           : canInspect ? <button type="button" className="ds-dev-browser__icon-btn" aria-label={t('browserInspect')} title={t('browserInspectHint')} aria-pressed={inspect} disabled={remote ? !userControls : !canBrowse} onClick={() => setInspect(!inspect)}><MousePointerSquareDashed size={16} strokeWidth={1.75} /></button> : null}

@@ -422,7 +422,7 @@ it('keeps a resting annotation bar on the page that picks, freezes for drawing, 
   // Between tasks: nothing to hand over, so the bar may be hidden.
   const h = mount({ active: true, owner: 'user', task_running: false, generation: 2, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', tabs: [{ tab_id: 'first', title: 'Example', url: 'https://example.test/', active: true }], log: [], artifacts: [] })
   const viewport = () => h.container.querySelector<HTMLElement>('.ds-browser-viewport')
-  const header = () => h.container.querySelector<HTMLButtonElement>('.ds-dev-browser__toolbar [aria-pressed]')
+  const header = () => h.container.querySelector<HTMLButtonElement>('.ds-dev-browser__toolbar [aria-label="browserAnnotate"], .ds-dev-browser__toolbar [aria-label="browserExitSelection"]')
   try {
     await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', onAttachImage: vi.fn(), onPreviewPick: vi.fn() })))
     expect(h.container.querySelector('[role="toolbar"]')?.getAttribute('data-state')).toBe('rest')
@@ -618,6 +618,7 @@ it('demonstrates from the bar, then lets the user review the steps in the activi
     await h.click('browserDemoStart')
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST', '{"action":"start","generation":2}')
     expect(useBrowserDemoStore.getState().active.one).toBe(true)
+    expect(h.container.querySelector('.ds-dev-browser__chrome [aria-label="browserDemoFinish"]')?.getAttribute('aria-pressed')).toBe('true')
     const tool = h.container.querySelector<HTMLButtonElement>('.ds-annotation-toolbar [aria-label="browserDemoFinish"]')!
     expect(tool.getAttribute('aria-pressed')).toBe('true')
     // The demonstration lives in the card above the bar, the same place as screen recording.
@@ -984,6 +985,7 @@ it('runs screen recording and demonstration one at a time', async () => {
     const tool = recording.container.querySelector<HTMLButtonElement>('.ds-annotation-toolbar [aria-label="browserDemoStart"]')!
     expect(tool.disabled).toBe(true)
     expect(tool.title).toBe('browserDemoBusyRecording')
+    expect(recording.container.querySelector<HTMLButtonElement>('.ds-dev-browser__chrome [aria-label="browserDemoStart"]')?.disabled).toBe(true)
     await act(async () => requestBrowserDemo('one'))
     expect(recording.request.mock.calls.some(([path]) => path.endsWith('/workflows'))).toBe(false)
     expect(recording.container.querySelector('.ds-browser-feedback')?.textContent).toContain('browserDemoBusyRecording')
@@ -996,6 +998,27 @@ it('runs screen recording and demonstration one at a time', async () => {
     expect(record.disabled).toBe(true)
     expect(document.getElementById(record.getAttribute('aria-describedby')!)?.textContent).toBe('browserRecordBusyDemo')
   } finally { await demo.close() }
+})
+
+it.each([true, false])('starts a demonstration from the address bar icon with hidden or absent annotation tools (attached: %s)', async (attached) => {
+  window.localStorage.setItem('ds-browser-annotation-bar-shown', '0')
+  const h = mount({ active: true, surface: 'native', owner: 'user', task_running: false,
+    generation: 2, log: [], artifacts: [] })
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, {
+      threadId: 'one', onAttachImage: attached ? vi.fn(async () => true) : undefined
+    })))
+    await act(async () => updatePageTab('one', nativeTab('one').id, { url: 'https://example.test/' }))
+    const entry = h.container.querySelector<HTMLButtonElement>('.ds-dev-browser__chrome [aria-label="browserDemoStart"]')
+    expect(entry).not.toBeNull()
+    expect(entry!.disabled).toBe(false)
+    expect(entry!.querySelector('svg')).not.toBeNull()
+    expect(entry!.title).toContain('browserDemoDetail')
+    await act(async () => entry!.click())
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/workflows', 'POST',
+      JSON.stringify({ action: 'start', generation: 2, tab_id: nativeTab('one').id }))
+    expect(h.container.querySelector('[role="menu"]')).toBeNull()
+  } finally { window.localStorage.removeItem('ds-browser-annotation-bar-shown'); await h.close() }
 })
 
 it('brings hidden annotation tools back for a demonstration', async () => {
