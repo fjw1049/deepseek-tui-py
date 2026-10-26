@@ -439,7 +439,7 @@ class ToolExecutionMixin:
         }):
             if tool_call.name != "browser_use" or tool_call.arguments.get("action") != "request_assistance":
                 evidence_ref = "tool:" + tool_call.id
-                delivery.evidence.add(evidence_ref)
+                delivery.remember_evidence(evidence_ref, result.metadata)
                 metadata = {**result.metadata, "evidence_ref": evidence_ref}
                 if isinstance(metadata.get("browser"), dict):
                     browser = {**metadata["browser"]}
@@ -992,7 +992,6 @@ class ToolExecutionMixin:
                 from deepseek_tui.cua.tools import HANDOFF_NOTICE
 
                 result = replace(result, content=result.content + "\n\n" + HANDOFF_NOTICE)
-                session.reset_reason = ""
             return result
 
     async def _handle_approval_flow(
@@ -1379,8 +1378,6 @@ class ToolExecutionMixin:
             )
         finally:
             session.release_human()
-            # The returned handoff notice requires a fresh observation.
-            session.reset_reason = ""
         if response is None:
             return ToolResult(
                 content="Desktop assistance cancelled (turn cancelled)", success=False

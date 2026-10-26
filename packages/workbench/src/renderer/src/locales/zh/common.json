@@ -2652,5 +2652,15 @@
   "cuaPreviewDismiss": "关闭",
   "cuaPreviewCollapse": "收起画面",
   "cuaPreviewDisabled": "预览已关闭",
-  "cuaPreviewAmbiguous": "多个窗口，仅显示截图"
+  "cuaPreviewAmbiguous": "多个窗口，仅显示截图",
+  "computerUseApprovedAppsHint": "首次使用应用时选择「始终允许」，即可在后续对话和重启后继续使用，直到你撤销授权。Chrome 网站授权单独管理。此列表由电脑操控运行时统一管理，撤销会影响共用此授权记录的其他客户端。",
+  "computerUseAddApp": "添加应用",
+  "computerUseClosePicker": "收起",
+  "computerUseSearchApps": "搜索已安装的应用",
+  "computerUseAllowHint": "选择应用并完成 Touch ID 或登录密码验证，即可始终允许。",
+  "computerUseNoApps": "没有匹配的未授权应用，请确认应用已安装。",
+  "computerUseAppBlocked": "不支持控制",
+  "computerUseAlwaysAllow": "始终允许",
+  "computerUseOwnerAuth": "请在系统提示中完成 Touch ID 或登录密码验证…",
+  "computerUsePermissionDetails": "授权说明"
 }

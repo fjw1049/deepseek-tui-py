@@ -33,6 +33,7 @@ async def test_cua_status_checks_files_without_connecting(client, monkeypatch, i
 async def test_cua_apps_lists_and_revokes_only_listed_identities(client, monkeypatch, tmp_path):
     import json
 
+    monkeypatch.setattr('deepseek_tui.cua.apps.installed_apps', lambda: {})
     calls = tmp_path / 'calls.txt'
     state = tmp_path / 'apps.json'
     state.write_text(json.dumps({'apps': [
@@ -227,3 +228,72 @@ def test_privacy_settings_route_matches_macos_version(monkeypatch, version, pane
     from deepseek_tui.server import routes
     monkeypatch.setattr(routes.platform, "mac_ver", lambda: (version, (), ""))
     assert routes._privacy_pane_prefix() == f"x-apple.systempreferences:{pane}?Privacy_"
+
+
+@pytest.mark.asyncio
+async def test_allow_uses_installed_identity_and_runtime_auth(client, monkeypatch, tmp_path):
+    from deepseek_tui.server import routes
+    from deepseek_tui.cua import apps
+
+    monkeypatch.setattr(apps, 'installed_apps', lambda: {
+        'com.soda.music': ('汽水音乐', tmp_path, ''),
+        'com.github.Electron': ('Workbench', tmp_path, ''),
+    })
+    calls = []
+
+    async def lcu(request, *args, timeout=20):
+        calls.append((args, timeout))
+        return {'stdout': ''}
+
+    async def listed(request):
+        return {'apps': [{'name': '汽水音乐', 'bundleId': 'com.soda.music'}]}
+
+    monkeypatch.setattr(routes, '_lcu', lcu)
+    monkeypatch.setattr(routes, 'cua_apps', listed)
+    for value in ['--unattended', '/tmp/Fake.app', 'unknown.app', None, ['com.soda.music']]:
+        response = await client.post('/v1/cua/apps/allow', json={'app': value})
+        assert response.status_code == 400
+    blocked = await client.post('/v1/cua/apps/allow', json={'app': 'com.github.Electron'})
+    assert blocked.status_code == 403
+    assert calls == []
+    response = await client.post('/v1/cua/apps/allow', json={'app': 'com.soda.music'})
+    assert response.status_code == 200
+    assert response.json()['apps'][0]['bundleId'] == 'com.soda.music'
+    assert calls == [(('apps', 'allow', str(tmp_path)), 180)]
+
+
+@pytest.mark.asyncio
+async def test_allow_does_not_report_success_when_auth_cancelled(client, monkeypatch, tmp_path):
+    from deepseek_tui.server import routes
+    monkeypatch.setattr('deepseek_tui.cua.apps.installed_apps', lambda: {
+        'com.soda.music': ('汽水音乐', tmp_path, ''),
+    })
+
+    async def cancelled(*args, **kwargs):
+        raise routes.api_error(502, 'authentication cancelled')
+
+    monkeypatch.setattr(routes, '_lcu', cancelled)
+    response = await client.post('/v1/cua/apps/allow', json={'app': 'com.soda.music'})
+    assert response.status_code == 502
+
+
+def test_installed_catalog_icons_and_identity(tmp_path, monkeypatch):
+    import plistlib
+    from PIL import Image
+    from deepseek_tui.cua import apps
+    directory = tmp_path / 'Applications'
+    bundle = directory / 'Music.app'
+    resources = bundle / 'Contents/Resources'
+    resources.mkdir(parents=True)
+    (bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+        'CFBundleIdentifier': 'test.music', 'CFBundleDisplayName': '音乐', 'CFBundleIconFile': 'Music',
+    }))
+    Image.new('RGBA', (128, 128), 'red').save(resources / 'Music.icns')
+    real_glob = apps.Path.glob
+    monkeypatch.setattr(apps.Path, 'glob', lambda path, pattern: real_glob(directory, pattern))
+    catalog = apps.available_apps()
+    assert len(catalog) == 1
+    assert catalog[0]['name'] == '音乐'
+    assert catalog[0]['icon'].startswith('data:image/png;base64,')
+    assert catalog[0]['blocked'] is False
+    assert apps.app_icon(bundle, '../../../outside') is None

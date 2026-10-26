@@ -4839,7 +4839,7 @@ class RuntimeThreadManager:
         state = self._active.get(thread_id)
         if state is not None and state.active_turn is not None:
             for session in self._cua_sessions(state):
-                session.outside_change = "The user brought the app to the front."
+                session.invalidate_observation("The user brought the app to the front.")
         return self.cua_task_state(thread_id)
 
     async def control_cua(
@@ -4903,7 +4903,6 @@ class RuntimeThreadManager:
                         raise ValueError("The assistance request changed. Refresh and try again.")
                     return self.cua_task_state(thread_id)
                 session.release_human()
-                session.reset_reason = ""
                 state.handle.resume_context = HANDOFF_NOTICE
                 state.handle.pause.resume()
             elif owner == "stopped":

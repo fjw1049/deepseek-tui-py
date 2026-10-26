@@ -12,7 +12,7 @@ from deepseek_tui.config.models import Config, CuaConfig
 from deepseek_tui.cua import session as cua_session
 from deepseek_tui.cua.approval import approval_question, approval_response, auto_allow_response
 from deepseek_tui.cua.session import CuaSession, DesktopLease
-from deepseek_tui.cua.tools import CuaTool
+from deepseek_tui.cua.tools import CuaObserveTool, CuaTool
 from deepseek_tui.tools.registry import ToolContext, ToolError, ToolResult
 
 VISION = {"model": "deepseek::deepseek-v4-flash-vision-exp"}
@@ -196,12 +196,12 @@ async def test_idle_takeover_releases_lease_and_blocks_stale_code(session, tmp_p
         assert session.process is None
         assert session.lease.fd is None
         pause.clear()
-        with pytest.raises(ToolError, match="entry point"):
+        with pytest.raises(ToolError, match="cua_observe"):
             await tool.execute({"code": "oldApp.click()"}, context)
         entries = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
         assert len([entry for entry in entries if "args" in entry]) == 1
         assert any(entry.get("end", {}).get("event") == "Interrupt" for entry in entries)
-        result = await tool.execute({"code": "fresh observation"}, context)
+        result = await CuaObserveTool(session, [pause]).execute({"app": "dev.fixture"}, context)
         assert result.success
     finally:
         await session.close()
@@ -238,7 +238,7 @@ async def test_handoff_only_resets_a_session_holding_the_desktop(session, tmp_pa
         assert session.process is None
         assert session.lease.fd is None
         assert session.reset_reason
-        await session.call("js", {"code": "fresh observe"}, "t", "next")
+        await session.call("observe", {"app": "dev.fixture"}, "t", "next")
         entries = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
         calls = [e for e in entries if "args" in e]
         assert calls[0]["hostTurn"] == calls[1]["hostTurn"] == "t"
@@ -596,14 +596,15 @@ async def test_engine_recovers_after_idle_bridge_exit(installation, tmp_path, us
         await engine._prepare_cua()
         assert engine.tool_registry.contains("cua_js")
         if used:
-            # Code that already ran lost its bindings; say so once, without executing.
+            # Old bindings remain unusable until a fresh observation.
             with pytest.raises(ToolError, match="between calls"):
                 await tool.execute({"code": "oldApp.click()"}, context)
+            await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
         result = await tool.execute({"code": "fresh"}, context)
         assert result.success
-        assert [call["args"]["code"] for call in _calls(tmp_path)] == (
-            ["observe", "fresh"] if used else ["fresh"]
-        )
+        codes = [call["args"]["code"] for call in _calls(tmp_path)]
+        assert codes[-1] == "fresh" and "oldApp.click()" not in codes
+        assert len(codes) == (4 if used else 1)
     finally:
         await engine._close_cua()
 
@@ -1104,6 +1105,7 @@ async def test_missing_api_error_points_back_to_the_documentation(session, tmp_p
         assert not result.success
         assert result.content.startswith("app.screenshot is not a function")
         assert "rewriteDocumentation" in result.content
+        await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
         other = await tool.execute({"code": "throw:Accessibility error"}, context)
         assert "rewriteDocumentation" not in other.content
     finally:
@@ -1111,14 +1113,15 @@ async def test_missing_api_error_points_back_to_the_documentation(session, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_call_after_the_user_raised_the_app_is_refused_once(session, tmp_path):
+async def test_call_after_the_user_raised_the_app_needs_observation(session, tmp_path):
     await session.connect()
     tool = CuaTool(session, session.descriptors[0])
     context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
     try:
         session.outside_change = "The user brought the app to the front."
-        with pytest.raises(ToolError, match="Not executed.*front.*Observe"):
+        with pytest.raises(ToolError, match="Not executed.*front.*cua_observe"):
             await tool.execute({"code": "await app.click([1, 2]);"}, context)
+        await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
         assert (await tool.execute({"code": "ok"}, context)).content == "ok"
     finally:
         await session.close()
@@ -1223,18 +1226,23 @@ async def test_uncertain_cua_requires_new_evidence_even_after_reset(session, tmp
             assert not result.success
         except ToolError:
             assert failure == "crash"
-        with pytest.raises(ToolError, match="CUA.*verif"):
+        with pytest.raises(ToolError, match="observation"):
             await FinishTaskTool().execute(args, context)
         session.reset_reason = ""
         reset = CuaTool(session, session.descriptors[1])
         reset_result = await reset.execute({}, context)
         assert reset_result.metadata.get("task_evidence") is False
-        with pytest.raises(ToolError, match="CUA.*verif"):
+        with pytest.raises(ToolError, match="observation"):
             await FinishTaskTool().execute(args, context)
         delivery.evidence.add("tool:verified-file")
-        result = await FinishTaskTool().execute(
-            {**args, "evidence": ["tool:verified-file"]}, context
-        )
+        with pytest.raises(ToolError, match="observation"):
+            await FinishTaskTool().execute({**args, "evidence": ["tool:verified-file"]}, context)
+        if session.unresolved:
+            await session.acknowledge(session.unresolved["call_id"])
+        result = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
+        delivery.remember_evidence("tool:observed", result.metadata)
+        result = await FinishTaskTool().execute({**args, "evidence": ["tool:observed"],
+            "verification": [{"claim": "Saved", "evidence": ["tool:observed"], "limitations": []}]}, context)
         assert result.success
     finally:
         await session.close()
@@ -1274,7 +1282,7 @@ async def test_information_handoff_drops_repl_and_tells_model(installation, tmp_
     result = await task
     session.close.assert_awaited_once()
     assert "CUA session reset" in result.content
-    assert session.reset_reason == ""
+    assert session.reset_reason == "old"
 
 
 def test_subagent_cua_step_reports_its_app_to_the_parent_ui():

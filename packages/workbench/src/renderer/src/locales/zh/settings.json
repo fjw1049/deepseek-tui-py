@@ -767,5 +767,6 @@
   "networkBypass": "绕过代理的地址",
   "networkBypassHint": "每行一个域名或 IP，这些地址将直接连接。",
   "networkInvalidHost": "请输入有效的域名或 IP，不要包含协议、端口、路径或通配符（最多 100 个）。",
-  "networkScope": "保存后对新请求生效，不中断正在生成的回复。仅影响模型 API，无法绕过 VPN 的 TUN 或全局路由。"
+  "networkScope": "保存后对新请求生效，不中断正在生成的回复。仅影响模型 API，无法绕过 VPN 的 TUN 或全局路由。",
+  "cuaAutoAllowAppsRevokeHint": "当前已开启自动放行所有应用。撤销应用的长期授权后，它仍可能被自动放行；如需恢复逐个询问，请关闭自动放行，并停止任务、重启运行时以清除已有的会话授权。"
 }

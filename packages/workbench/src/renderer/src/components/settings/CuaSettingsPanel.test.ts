@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AppSettingsV1 } from '@shared/app-settings'
 import { CuaSettingsPanel } from './CuaSettingsPanel'
 
+vi.mock('../cua-preview/CuaApprovedApps', () => ({ CuaApprovedApps: () => null }))
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, string>) => options ? `${key}:${options.state}` : key

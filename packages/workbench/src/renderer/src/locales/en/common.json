@@ -2652,5 +2652,15 @@
   "cuaPreviewDismiss": "Close",
   "cuaPreviewCollapse": "Collapse viewer",
   "cuaPreviewDisabled": "Preview off",
-  "cuaPreviewAmbiguous": "Multiple windows; showing screenshots"
+  "cuaPreviewAmbiguous": "Multiple windows; showing screenshots",
+  "computerUseApprovedAppsHint": "Choose Always allow when first using an app to keep access across chats and restarts until revoked. Chrome website permissions are managed separately. These grants belong to the computer-use runtime; revoking also affects other clients sharing its approval store.",
+  "computerUseAddApp": "Add app",
+  "computerUseClosePicker": "Close",
+  "computerUseSearchApps": "Search installed apps",
+  "computerUseAllowHint": "Choose an app and verify with Touch ID or your login password to always allow it.",
+  "computerUseNoApps": "No matching unapproved apps. Make sure the app is installed.",
+  "computerUseAppBlocked": "Control unavailable",
+  "computerUseAlwaysAllow": "Always allow",
+  "computerUseOwnerAuth": "Complete Touch ID or password verification in the system prompt…",
+  "computerUsePermissionDetails": "About app permissions"
 }

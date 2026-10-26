@@ -1,9 +1,9 @@
 """Notice when a UI surface stops returning anything new.
 
-Compare consecutive observations, not all states visited in a task. A few repeats are
-only a warning: they cannot prove that an action failed. A long run of results with
-nothing changed at all pauses that surface until a person acts, so a dead loop ends in
-a handoff or an honest report instead of spending the whole round budget on screenshots.
+CUA compares host-captured observations against a short history to notice repeated
+navigation as well as unchanged screens. Other surfaces compare consecutive results.
+Missing expected text counts as unverified progress even when other content changes.
+Pausing CUA actions always leaves observation available for recovery.
 
 Screenshots are compared as grayscale thumbnails by their most-changed 8x8 block.
 Measured on real desktop captures: re-encodes of one unchanged screen 0-1, a focus ring
@@ -17,7 +17,10 @@ starts it over, because their change is not visible to this comparison's history
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+from collections import deque
 from dataclasses import dataclass, field
 
 from PIL import Image, ImageChops
@@ -68,6 +71,12 @@ _BLOCKED = (
     "the blocker and what remains (finish_task partial/blocked when available)."
 )
 
+_CUA_PAUSED = (
+    "Further CUA code is paused because observations repeat or the expected change remains "
+    "unverified. Use cua_observe to check for a real change; otherwise hand off or report "
+    "partial/blocked. Do not repeat the same action."
+)
+
 _Thumb = Image.Image  # grayscale, THUMB_WIDTH wide: captures of one window at two scales match
 
 
@@ -75,6 +84,15 @@ _Thumb = Image.Image  # grayscale, THUMB_WIDTH wide: captures of one window at t
 class _Observation:
     text: str
     images: tuple[_Thumb, ...]
+    canonical: bool = False
+
+
+def _canonical_text(text: str) -> str:
+    # IDs and focus move even when the fields and their values do not.
+    lines = (line for line in text.splitlines()
+             if not line.startswith("The focused UI element is"))
+    return "\n".join(re.sub(r"^\s*\d+\s+", "", line).strip()
+                     for line in lines if line.strip())
 
 
 def _similar(a: _Thumb, b: _Thumb) -> bool:
@@ -98,7 +116,14 @@ def observation_of(result: ToolResult) -> _Observation | None:
     if not result.success:
         return None
     browser = (result.metadata or {}).get("browser")
-    if isinstance(browser, dict):
+    cua = (result.metadata or {}).get("cua_observation")
+    if isinstance(cua, dict):
+        text = (json.dumps(cua.get("target"), sort_keys=True) + "\n"
+                + _canonical_text(cua.get("text", "")))
+        # Keep pixels too: canvas changes may never appear in accessibility text.
+    elif result.metadata.get("cua_runtime_content"):
+        return None  # Arbitrary JS can print anything, including stale or filtered state.
+    elif isinstance(browser, dict):
         # Receipts and ids change on every call; only the page's own content counts.
         observation = browser.get("observation")
         text = observation.get("text", "") if isinstance(observation, dict) else ""
@@ -111,7 +136,7 @@ def observation_of(result: ToolResult) -> _Observation | None:
         return None
     if not text and not images:
         return None
-    return _Observation(text, images)
+    return _Observation(text, images, canonical=isinstance(cua, dict))
 
 
 def _surface_key(tool_name: str) -> frozenset[str]:
@@ -121,20 +146,45 @@ def _surface_key(tool_name: str) -> frozenset[str]:
 
 @dataclass
 class UiProgress:
-    # Keep only the previous observation per kind, so normal A/B navigation is progress.
+    # Non-CUA surfaces keep their consecutive-observation behavior.
     _last: dict[tuple[frozenset[str], str], _Observation] = field(default_factory=dict)
     _streak: dict[frozenset[str], int] = field(default_factory=dict)
+    _history: dict[tuple[frozenset[str], str], deque] = field(default_factory=dict)
+    _unobserved: dict[frozenset[str], int] = field(default_factory=dict)
 
     def reset(self) -> None:
         self._last.clear()
         self._streak.clear()
+        self._history.clear()
+        self._unobserved.clear()
 
     def blocked_content(self, tool_name: str) -> str | None:
+        if tool_name in {"cua_observe", "cua_js_reset"}:
+            return None  # A stalled or externally changed interface must remain inspectable.
+        if self._unobserved.get(_surface_key(tool_name), 0) >= STALL_STREAK:
+            return ("Not executed: use cua_observe to check the expected result "
+                    "before more CUA code.")
         streak = self._streak.get(_surface_key(tool_name), 0)
+        if tool_name in {"cua_js", "cua_js_reset"} and streak >= STALL_STREAK:
+            return "Not executed: " + _CUA_PAUSED
         return _BLOCKED.format(streak=streak) if streak >= STALL_STREAK else None
 
     def record_result(self, tool_name: str, result: ToolResult) -> str:
-        return self.record(tool_name, observation_of(result))
+        observation = observation_of(result)
+        key = _surface_key(tool_name)
+        if result.metadata.get("cua_runtime_content") and observation is None:
+            self._unobserved[key] = self._unobserved.get(key, 0) + 1
+            return ("\nUse cua_observe to check whether the intended change happened; "
+                    "code returning successfully is not verified progress."
+                    if self._unobserved[key] >= REMIND_STREAK else "")
+        if observation is not None:
+            self._unobserved[key] = 0
+        checks = result.metadata.get("cua_observation", {}).get("expectations", [])
+        if observation is not None and any(not check["matched"] for check in checks):
+            streak = self._streak[key] = self._streak.get(key, 0) + 1
+            return ("\nThe expected change is not verified. "
+                    + (_CUA_PAUSED if streak >= STALL_STREAK else _STUCK.format(streak=streak)))
+        return self.record(tool_name, observation)
 
     def record(self, tool_name: str, observation: _Observation | None) -> str:
         if observation is None:
@@ -147,8 +197,18 @@ class UiProgress:
             previous is not None
             and previous.text == observation.text
             and len(previous.images) == len(observation.images)
-            and all(_similar(a, b) for a, b in zip(previous.images, observation.images))
+            and all(_similar(a, b)
+                    for a, b in zip(previous.images, observation.images, strict=True))
         )
+        if observation.canonical:
+            history = self._history.setdefault((key, kind), deque(maxlen=STALL_STREAK))
+            unchanged = any(
+                old.text == observation.text
+                and len(old.images) == len(observation.images)
+                and all(_similar(a, b) for a, b in zip(old.images, observation.images, strict=True))
+                for old in history
+            )
+            history.append(observation)
         if not unchanged:
             # Progress in either channel clears the surface's warning streak.
             self._streak[key] = 0
@@ -156,7 +216,7 @@ class UiProgress:
         streak = self._streak[key] = self._streak.get(key, 0) + 1
         logger.info("ui_observation_unchanged tool=%s kind=%s streak=%d", tool_name, kind, streak)
         if streak >= STALL_STREAK:
-            return _PAUSED.format(streak=streak)
+            return _CUA_PAUSED if observation.canonical else _PAUSED.format(streak=streak)
         if streak >= REMIND_STREAK:
             return _STUCK.format(streak=streak)
         return _UNCHANGED

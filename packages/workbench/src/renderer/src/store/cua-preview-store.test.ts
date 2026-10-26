@@ -30,6 +30,14 @@ function finished(meta: Record<string, unknown>, itemId = 'item-1'): ToolEventPa
 
 const shot = (assetId: string, kind = 'cua') => ({ asset_id: assetId, source: { kind } })
 
+it('shows observation targets and screenshots through the same preview', () => {
+  noteCuaCallStarted('thread', 'turn', { ...started(), toolName: 'cua_observe' })
+  noteCuaCallFinished('thread', finished({ tool_name: 'cua_observe',
+    cua_surface: { kind: 'app', app_id: 'fixture.app' }, images: [shot('observation')] }))
+  expect(session()).toMatchObject({ phase: 'armed', appId: 'fixture.app',
+    still: { assetId: 'observation' } })
+})
+
 it('arms on a live computer-use start only', () => {
   noteCuaCallStarted('thread', null, started())
   noteCuaCallStarted('thread', 'turn', { ...started(), toolName: 'browser_use' })

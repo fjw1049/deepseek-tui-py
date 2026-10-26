@@ -44,6 +44,7 @@ type State = {
 }
 
 export const CUA_TOOL = 'cua_js'
+const CUA_PREVIEW_TOOLS = new Set([CUA_TOOL, 'cua_observe'])
 
 export function phaseOnCallStart(
   phase: CuaPreviewPhase | undefined,
@@ -81,7 +82,7 @@ export function cuaCallResult(ev: ToolEventPayload): {
   label: string | null
 } | null {
   const meta = ev.meta
-  if (ev.status === 'running' || !meta || meta.tool_name !== CUA_TOOL) return null
+  if (ev.status === 'running' || !meta || !CUA_PREVIEW_TOOLS.has(String(meta.tool_name))) return null
   const kind = stringField(meta.cua_surface, 'kind')
   const surface = kind === 'app' || kind === 'browser' ? kind : null
   const images = Array.isArray(meta.images) ? meta.images : []
@@ -112,9 +113,9 @@ function withPhase(session: CuaPreviewSession | undefined, phase: CuaPreviewPhas
   return session && phase !== undefined && phase !== session.phase ? { ...session, phase } : session
 }
 
-/** Live tool start: only `cua_js` during a live turn arms the card. */
+/** Live computer-use operations and observations arm the card. */
 export function noteCuaCallStarted(threadId: string, turnId: string | null, ev: ToolEventPayload): void {
-  if (!turnId || (ev.turnId && ev.turnId !== turnId) || ev.status !== 'running' || ev.toolName !== CUA_TOOL) return
+  if (!turnId || (ev.turnId && ev.turnId !== turnId) || ev.status !== 'running' || !CUA_PREVIEW_TOOLS.has(ev.toolName ?? '')) return
   const label = stringField(ev.meta?.tool_input, 'title')
   update(threadId, (session) => {
     const newTurn = session?.turnId !== turnId
@@ -162,17 +163,18 @@ type MailboxMessage = SubagentMailboxPayload['message']
  * thread's card like the parent's own calls; its screenshots stay with the child.
  */
 export function cuaEventFromMailbox(message: MailboxMessage): ToolEventPayload | null {
-  if (message.tool_name !== CUA_TOOL) return null
+  const toolName = message.tool_name
+  if (!toolName || !CUA_PREVIEW_TOOLS.has(toolName)) return null
   const itemId = message.tool_call_id ?? `${message.agent_id}:${message.step ?? ''}`
   if (message.kind === 'tool_call_started') {
-    return { itemId, summary: CUA_TOOL, status: 'running', toolName: CUA_TOOL }
+    return { itemId, summary: toolName, status: 'running', toolName }
   }
   if (message.kind !== 'tool_call_completed') return null
   return {
     itemId,
-    summary: CUA_TOOL,
+    summary: toolName,
     status: message.ok === false ? 'error' : 'success',
-    meta: { tool_name: CUA_TOOL, cua_surface: message.cua_surface ?? undefined }
+    meta: { tool_name: message.tool_name, cua_surface: message.cua_surface ?? undefined }
   }
 }
 

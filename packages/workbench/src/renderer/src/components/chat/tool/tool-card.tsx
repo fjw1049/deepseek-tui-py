@@ -37,7 +37,7 @@ const SHELL_TOOL_NAMES = new Set([
 function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): LucideIcon {
   if (isCommand || SHELL_TOOL_NAMES.has(toolName)) return Terminal
   if (isFileChange) return FileCode2
-  if (toolName === 'cua_js' || toolName === 'cua_js_reset') return Monitor
+  if (toolName === 'cua_js' || toolName === 'cua_js_reset' || toolName === 'cua_observe') return Monitor
   if (
     toolName === 'grep' ||
     toolName === 'grep_files' ||

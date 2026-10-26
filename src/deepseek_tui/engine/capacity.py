@@ -851,7 +851,7 @@ def prune_old_tool_results(
 
         # Only a pruned CUA result can have dropped runtime documentation.
         if any(isinstance(block, ToolUseBlock) and block.id in pruned_ids
-               and block.name in {"cua_js", "cua_js_reset"}
+               and block.name in {"cua_js", "cua_js_reset", "cua_observe"}
                for message in messages for block in message.content):
             from deepseek_tui.cua.tools import add_documentation_reminder
 

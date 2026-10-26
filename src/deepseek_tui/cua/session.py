@@ -159,10 +159,15 @@ class CuaSession:
         self.reset_reason = ""
         # The user changed the bound app outside a takeover; the next call observes first.
         self.outside_change = ""
+        self.observation_generation = 0
         # True once model code has run in this connection's REPL.
         self._bound = False
         # Large text blocks the runtime returned, newest last; outlives reconnects.
         self.large_texts: list[str] = []
+
+    def invalidate_observation(self, reason: str) -> None:
+        self.outside_change = reason
+        self.observation_generation += 1
 
     def control_state(self) -> dict[str, Any]:
         return {
@@ -331,10 +336,9 @@ class CuaSession:
             async with self._close_lock:
                 await self._close()
             if bound:
-                self.reset_reason = ""
-                raise ToolError(
+                self.reset_reason = (
                     "The CUA connection ended between calls; its JavaScript bindings are gone. "
-                    "Start with a documented CUA entry point and observe again before acting."
+                    "Use cua_observe before acting."
                 )
         state = _RUNTIMES.setdefault(_runtime_key(self.config), {})
         wait = state.get("retry_after", 0) - time.monotonic()
@@ -415,7 +419,8 @@ class CuaSession:
                 approving = bool(self.approvals)
                 await asyncio.wait({future}, timeout=min(0.25, remaining))
                 # Human waits suspend action deadlines, never shutdown/interrupt deadlines.
-                if kind not in {"connect", "call"} or (not approving and not self.approvals):
+                if (kind not in {"connect", "call", "observe"}
+                        or (not approving and not self.approvals)):
                     remaining -= asyncio.get_running_loop().time() - start
                 if remaining <= 0 and not future.done():
                     raise ToolError(f"CUA {kind} timed out; action outcome may be unknown")
@@ -495,20 +500,27 @@ class CuaSession:
     async def call(
         self, name: str, arguments: dict[str, Any], turn_id: str, call_id: str
     ) -> dict[str, Any]:
-        if name not in {"js", "js_reset"} or not turn_id or not call_id:
+        if name not in {"js", "js_reset", "observe"} or not turn_id or not call_id:
             raise ToolError("CUA requires a public tool and real host turn/call identities")
         async with self.lock:
             self.last_activity = time.time()
             self.turn_used = True
             if self.human_reserved:
                 raise ToolError("The user controls the desktop. Wait for control to be returned.")
-            if self.unresolved and name != "js_reset":
+            if self.unresolved and name == "js":
                 raise ToolError("A previous computer-use call has an unknown outcome. "
-                                "Ask the user to check it in the operation panel; "
+                                "Use cua_observe to inspect it, then ask the user to review "
+                                "the uncertain operation in the operation panel; "
                                 "do not repeat the action.")
+            if name == "js" and (self.outside_change or self.reset_reason):
+                raise ToolError("Not executed: " + (self.outside_change or self.reset_reason)
+                                + " Use cua_observe to obtain a fresh observation before "
+                                "further code execution. Old targets may be invalid.")
             # A cached catalog may predate this connection; report any change.
             known_instructions = self.instructions
             await self.connect()
+            if name == "js" and self.reset_reason:
+                raise ToolError(self.reset_reason)
             if self.turn_id is not None and self.turn_id != turn_id:
                 raise ToolError("Previous CUA turn has not been cleaned up")
             self.waiting = self.lease.fd is None
@@ -523,6 +535,7 @@ class CuaSession:
                 # needs a fresh native segment, with the host identity preserved.
                 self.runtime_turn_id = f"{turn_id}:cua:{uuid.uuid4().hex}"
             self.turn_id = turn_id
+            observed_generation = self.observation_generation
             try:
                 # Write before dispatch so a host crash cannot turn an uncertain
                 # submission into an apparently safe retry. Store no code or pixels.
@@ -530,7 +543,7 @@ class CuaSession:
                     await self.record_outcome(turn_id, call_id, "in_progress")
                 self._bound = True
                 result = await self._request(
-                    "call",
+                    "observe" if name == "observe" else "call",
                     name=name,
                     arguments=arguments,
                     context={
@@ -543,6 +556,22 @@ class CuaSession:
                 )
                 if name == "js":
                     await self.record_outcome(turn_id, call_id, "returned")
+                if name == "observe" and not result.get("isError"):
+                    from deepseek_tui.cua.tools import cua_surface
+
+                    if self.observation_generation != observed_generation:
+                        result["isError"] = True
+                        result.setdefault("content", []).append({"type": "text", "text":
+                            "The app changed during observation. Use cua_observe again."})
+                        result.pop("observation", None)
+                    elif (not self.last_surface
+                          or cua_surface(result.get("_meta")) == self.last_surface):
+                        self.outside_change = ""
+                        self.reset_reason = ""
+                    elif self.outside_change or self.reset_reason:
+                        result.setdefault("content", []).append({"type": "text", "text":
+                            "The changed target still needs observation before further code: "
+                            + json.dumps(self.last_surface)})
                 self._catalog(result)
                 if self.instructions != known_instructions:
                     result.setdefault("content", []).append(

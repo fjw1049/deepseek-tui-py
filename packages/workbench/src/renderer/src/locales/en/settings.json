@@ -767,5 +767,6 @@
   "networkBypass": "Bypass proxy for these addresses",
   "networkBypassHint": "One domain or IP per line. These addresses connect directly.",
   "networkInvalidHost": "Enter valid domains or IPs without schemes, ports, paths or wildcards (up to 100).",
-  "networkScope": "Saved changes apply to new requests without interrupting replies. Affects model APIs only; cannot bypass VPN TUN or global routing."
+  "networkScope": "Saved changes apply to new requests without interrupting replies. Affects model APIs only; cannot bypass VPN TUN or global routing.",
+  "cuaAutoAllowAppsRevokeHint": "Automatic app access is on. Revoking a permanent grant may still allow automatic access. To ask for each app again, turn off automatic access, stop tasks and restart the runtime to clear existing session grants."
 }

@@ -117,7 +117,8 @@ def test_long_unchanged_run_pauses_only_that_surface_until_reset():
         assert progress.blocked_content("cua_js") is None
     assert "paused until the person acts" in progress.record("cua_js", shot(screen()))
     assert "Not executed" in progress.blocked_content("cua_js")
-    assert "Not executed" in progress.blocked_content("cua_js_reset")  # same connection
+    assert progress.blocked_content("cua_js_reset") is None  # recovery stays available
+    assert progress.blocked_content("cua_observe") is None
     assert progress.blocked_content("browser_use") is None  # another surface
     progress.reset()
     assert progress.blocked_content("cua_js") is None

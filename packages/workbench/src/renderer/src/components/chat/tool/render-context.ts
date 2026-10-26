@@ -123,6 +123,7 @@ const TOOL_NAME_LABELS: Record<string, string> = {
   checklist: '待办清单',
   cua_js: '电脑控制',
   cua_js_reset: '重置电脑控制',
+  cua_observe: '查看电脑界面',
   delegate_to_agent: '委派子代理',
   edit_file: '编辑文件',
   exec_shell: '执行命令',

@@ -31,7 +31,7 @@ COORDINATE_CLICK_NOTE = (
 )
 HANDOFF_NOTICE = (
     "[CUA session reset for desktop handoff. Old JavaScript variables and element references "
-    "are invalid. Start with a documented CUA entry point and observe again before acting.]"
+    "are invalid. Use cua_observe before rebuilding bindings and acting.]"
 )
 
 
@@ -127,7 +127,7 @@ def collapse_repeated_texts(messages, new: int, texts: list[str]) -> None:
         for block in message.content:
             call = calls.get(getattr(block, "tool_use_id", ""))
             if (isinstance(block, ToolResultBlock) and call is not None
-                    and call.name in {"cua_js", "cua_js_reset"}
+                    and call.name in CUA_TOOLS
                     and "rewriteDocumentation" not in str(call.input.get("code", ""))):
                 content = block.content
                 for text in texts:
@@ -188,6 +188,14 @@ class CuaTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         delivery = context.metadata.get("task_delivery")
+        context.metadata["cua_session"] = self.session
+        observing = self.descriptor["name"] == "observe"
+        if delivery is not None:
+            delivery.cua_used = True
+            delivery.cua_observation_evidence.clear()
+            if not observing:
+                if self.session.last_surface:
+                    delivery.cua_verification_target = self.session.last_surface
         try:
             result = await self._execute(input_data, context)
         except BaseException:
@@ -196,7 +204,9 @@ class CuaTool(ToolSpec):
             raise
         if not result.success and delivery is not None:
             delivery.cua_failed_evidence = set(delivery.evidence)
-        if self.descriptor["name"] == "js_reset":
+        if not result.success and self.descriptor["name"] == "js":
+            self.session.invalidate_observation("CUA code failed; inspect its actual effects.")
+        if not observing:
             result = replace(result, metadata={**result.metadata, "task_evidence": False})
         return result
 
@@ -205,19 +215,6 @@ class CuaTool(ToolSpec):
 
         turn = context.metadata.get("cua_turn_id") or current_turn()
         call_id = context.metadata.get("cua_call_id") or current_tool()
-        if self.session.outside_change:
-            note, self.session.outside_change = self.session.outside_change, ""
-            raise ToolError(
-                "Not executed: " + note + " Menus, popovers or hover panels may have closed "
-                "and a window may have opened. Observe the app again before acting; the app "
-                "binding is still valid."
-            )
-        if self.session.reset_reason:
-            reason, self.session.reset_reason = self.session.reset_reason, ""
-            raise ToolError(
-                reason + " Start with a documented CUA entry point and re-observe; "
-                "do not reuse old variables or replay an uncertain action."
-            )
         payload = await self.session.run(
             lambda: self.session.call(self.descriptor["name"], input_data, turn, call_id),
             self.cancel_events,
@@ -244,9 +241,26 @@ class CuaTool(ToolSpec):
             for image in result.images
         ]
         metadata = {**result.metadata, "cua_runtime_content": True}
+        if self.descriptor["name"] == "observe":
+            observation = payload.get("observation")
+            metadata["task_evidence"] = result.success and isinstance(observation, dict)
+            if isinstance(observation, dict):
+                metadata["cua_observation"] = observation
+                # Inspecting a different app cannot verify the app we just operated.
+                observed_surface = cua_surface(payload.get("_meta"))
+                delivery = context.metadata.get("task_delivery")
+                required = (delivery.cua_verification_target if delivery
+                            else self.session.last_surface)
+                metadata["cua_verifies_target"] = required is None or observed_surface == required
         if surface := cua_surface(payload.get("_meta")):
             metadata["cua_surface"] = surface
-            self.session.last_surface = surface
+            if self.descriptor["name"] != "observe" or not (
+                self.session.outside_change or self.session.reset_reason
+            ):
+                self.session.last_surface = surface
+            delivery = context.metadata.get("task_delivery")
+            if delivery is not None and self.descriptor["name"] == "js":
+                delivery.cua_verification_target = surface
         result = replace(result, images=images, metadata=metadata)
         if not result.success and "is not a function" in result.content:
             # JavaScript's own TypeError: the model guessed an API.
@@ -288,6 +302,54 @@ class CuaTool(ToolSpec):
         return result
 
 
+class CuaObserveTool(CuaTool):
+    """A bounded observation path, independent of model-written JavaScript."""
+
+    def __init__(self, session: CuaSession, cancel_events=None):
+        super().__init__(session, {"name": "observe"}, cancel_events)
+
+    def description(self) -> str:
+        return (
+            "Observe a native app or an existing browser tab without clicks or text input. "
+            "Supply app (name/bundle id), or browser and tab_id from the runtime inventory. "
+            "Returns full accessibility state and a screenshot through the same CUA runtime; "
+            "existing access permissions apply. Use after actions to verify the expected "
+            "change, when the user changes the interface, and before finish_task. "
+            "For text-verifiable changes, supply expect with exact visible text fragments "
+            "that would show success. A missing fragment means not yet verified, not absent. "
+            "Works after a reset; does not restore old JavaScript bindings. "
+            "An unknown submission remains unresolved even when inspection succeeds."
+        )
+
+    def input_schema(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {
+            "app": {"type": "string", "minLength": 1},
+            "browser": {"type": "string", "minLength": 1},
+            "tab_id": {"type": "string", "minLength": 1},
+            "expect": {"type": "array", "maxItems": 8,
+                       "items": {"type": "string", "minLength": 1}},
+        }, "additionalProperties": False,
+            "oneOf": [{"required": ["app"]}, {"required": ["browser", "tab_id"]}]}
+
+    async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+        target = {k: v for k, v in input_data.items() if k != "expect"}
+        expected = input_data.get("expect", [])
+        if (set(target) not in ({"app"}, {"browser", "tab_id"})
+                or any(not isinstance(v, str) or not v.strip() or len(v) > 2048
+                       for v in target.values())
+                or not isinstance(expected, list) or len(expected) > 8
+                or any(not isinstance(v, str) or not v.strip() or len(v) > 2048 for v in expected)):
+            raise ToolError("Supply app, or browser and tab_id; no code or other fields.")
+        result = await super().execute(input_data, context)
+        checks = result.metadata.get("cua_observation", {}).get("expectations", [])
+        if checks:
+            summary = "\n".join(
+                ("Observed: " if check["matched"] else "Not verified: ") + check["text"]
+                for check in checks)
+            result = replace(result, content=result.content + "\nExpected text checks:\n" + summary)
+        return result
+
+
 def register_tools(
     registry: Any, session: CuaSession, cancel_events: list[asyncio.Event] | None = None
 ) -> None:
@@ -302,3 +364,6 @@ def register_tools(
             ):
                 continue
         registry.register(CuaTool(session, descriptor, cancel_events))
+    existing = registry.get("cua_observe") if registry.contains("cua_observe") else None
+    if not isinstance(existing, CuaObserveTool) or existing.session is not session:
+        registry.register(CuaObserveTool(session, cancel_events))

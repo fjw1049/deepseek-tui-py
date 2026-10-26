@@ -27,7 +27,7 @@ class Surface:
     focus: bool = False
 
 
-CUA_TOOLS = frozenset({"cua_js", "cua_js_reset"})
+CUA_TOOLS = frozenset({"cua_js", "cua_js_reset", "cua_observe"})
 
 SURFACES: tuple[Surface, ...] = (
     Surface(

@@ -860,7 +860,32 @@ async def cua_apps(request: Request) -> dict[str, Any]:
     except (ValueError, KeyError, TypeError) as exc:
         raise api_error(502, "Unexpected lcu apps output", error="cua_apps_failed") from exc
     keys = ("name", "bundleId", "installed", "risk", "blocked")
-    return {"apps": [{k: app.get(k) for k in keys} for app in apps if isinstance(app, dict)]}
+    from deepseek_tui.cua.apps import approved_app_icons
+    entries = [{k: app.get(k) for k in keys} for app in apps if isinstance(app, dict)]
+    return {"apps": await asyncio.to_thread(approved_app_icons, entries)}
+
+
+@router_mcp.get("/cua/apps/available")
+async def cua_apps_available() -> dict[str, Any]:
+    from deepseek_tui.cua.apps import available_apps
+    if sys.platform != "darwin":
+        raise api_error(409, "App permissions require macOS")
+    return {"apps": await asyncio.to_thread(available_apps)}
+
+
+@router_mcp.post("/cua/apps/allow")
+async def cua_apps_allow(request: Request) -> dict[str, Any]:
+    from deepseek_tui.cua.apps import BLOCKED, installed_apps
+    app = (await body(request)).get("app")
+    installed = await asyncio.to_thread(installed_apps)
+    if not isinstance(app, str) or app not in installed:
+        raise api_error(400, "Unknown installed app", error="cua_app_unknown")
+    if app.lower() in BLOCKED:
+        raise api_error(403, "Computer Use cannot control this app", error="cua_app_blocked")
+    # The runtime asks the owner for Touch ID/password and writes its own grant.
+    # LCU treats identifiers ending in .app as paths (e.g. cn.apifox.app).
+    await _lcu(request, "apps", "allow", str(installed[app][1]), timeout=180)
+    return await cua_apps(request)
 
 
 @router_mcp.post("/cua/apps/revoke")

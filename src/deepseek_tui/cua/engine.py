@@ -139,10 +139,6 @@ class CuaEngineMixin:
                 await session.close()
         except Exception:
             logger.warning("CUA release failed; connection closed", exc_info=True)
-        finally:
-            if reset:
-                # The caller tells the model directly; do not also fail its next call.
-                session.reset_reason = ""
 
     async def _close_cua(self) -> None:
         session = getattr(self, "_cua_session", None)

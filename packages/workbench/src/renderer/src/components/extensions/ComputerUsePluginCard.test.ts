@@ -52,7 +52,7 @@ it('keeps the toggle locked until the runtime confirms the change', async () => 
   try {
     await act(async () => root.render(createElement(ComputerUsePluginCard)))
     const openMenu = () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click()
-    const findButton = (label: string) => [...host.querySelectorAll('button')].find(b => b.textContent === label)!
+    const findButton = (label: string) => [...host.querySelectorAll('button')].find(b => b.textContent === label || b.getAttribute('title') === label)!
     await act(async () => openMenu())
     const toggle = findButton('computerUseDisable')
     await act(async () => { toggle.click(); toggle.click() })
@@ -84,7 +84,7 @@ it('lists always-allowed apps and revokes only the chosen identity', async () =>
     await act(async () => root.render(createElement(ComputerUsePluginCard)))
     await act(async () => host.querySelector('button')!.click())
     expect(document.body.textContent).toContain('Notes')
-    const revoke = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'computerUseRevoke')!
+    const revoke = [...document.body.querySelectorAll('button')].find(b => b.getAttribute('title') === 'computerUseRevoke')!
     await act(async () => revoke.click())
     expect(runtimeRequest).toHaveBeenCalledWith('/v1/cua/apps/revoke', 'POST', JSON.stringify({ app: 'com.apple.Notes' }))
     expect(document.body.textContent).toContain('computerUseApprovedAppsEmpty')
@@ -124,7 +124,7 @@ it('reconciles permissions when the revoke response is lost', async () => {
   try {
     await act(async () => root.render(createElement(ComputerUsePluginCard)))
     await act(async () => host.querySelector('button')!.click())
-    await act(async () => [...document.body.querySelectorAll('button')].find(b => b.textContent === 'computerUseRevoke')!.click())
+    await act(async () => [...document.body.querySelectorAll('button')].find(b => b.getAttribute('title') === 'computerUseRevoke')!.click())
     expect(document.body.textContent).toContain('computerUseApprovedAppsEmpty')
     expect(document.body.textContent).not.toContain('computerUseAppsError')
   } finally { await act(async () => root.unmount()) }

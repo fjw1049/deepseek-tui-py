@@ -272,7 +272,7 @@ async def _execute_subagent_tool(
     if progress is not None and is_task_call(tool_name, tool_input) and (
             blocked := progress.blocked_content(tool_name)):
         return f"Error: {blocked}"
-    if tool_name in {"cua_js", "cua_js_reset"}:
+    if tool_name in {"cua_js", "cua_js_reset", "cua_observe"}:
         context.metadata["cua_call_id"] = tool_call_id
     delivery = context.metadata.get("task_delivery")
     if delivery is not None and is_task_call(tool_name, tool_input):
@@ -289,7 +289,6 @@ async def _execute_subagent_tool(
             from deepseek_tui.cua.tools import HANDOFF_NOTICE
 
             result = replace(result, content=result.content + "\n\n" + HANDOFF_NOTICE)
-            session.reset_reason = ""
             context.metadata["ui_progress"].reset()
         if hook_executor:
             from dataclasses import replace
@@ -315,7 +314,7 @@ async def _execute_subagent_tool(
             "finish_task", "request_user_input", "checklist",
         } and result.metadata.get("task_evidence", True):
             evidence_ref = "tool:" + tool_call_id
-            delivery.evidence.add(evidence_ref)
+            delivery.remember_evidence(evidence_ref, result.metadata)
             result = replace(result, content=result.content + "\nEvidence reference: " + evidence_ref,
                              metadata={**result.metadata, "evidence_ref": evidence_ref})
         result = replace(result, content=result.content + note)

@@ -33,14 +33,46 @@ async function handle(request) {
       await client.connect();
       return { instructions: client.instructions, tools: client.publicTools() };
     }
-    case 'call': {
+    case 'call':
+    case 'observe': {
       if (!client) throw new Error('Not connected');
       const controller = new AbortController();
       calls.set(request.id, controller);
       try {
-        const result = await client.call(request.name, request.arguments, {
-          ...request.context, signal: controller.signal,
-        });
+        const context = { ...request.context, signal: controller.signal };
+        let result;
+        if (request.type === 'observe') {
+          // Only host-written observation code runs here. Never classify arbitrary JS as read-only.
+          const { app, browser, tab_id } = request.arguments;
+          const entry = app
+            ? `cua.getApp(${JSON.stringify(app)})`
+            : `cua.getTab(${JSON.stringify(tab_id)}, {browser: ${JSON.stringify(browser)}})`;
+          const binding = `__deepseekObservation${request.id}`;
+          const first = await client.call('js', { code: `var ${binding} = await ${entry};` },
+            { ...context, toolCallId: `${context.toolCallId}:bind` });
+          if (first.isError) result = first;
+          else {
+            result = await client.call('js', {
+              code: `await ${binding}.getAXStateAndScreenshot({disableDiffing: true});`,
+            }, context);
+            const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+            const images = (result.content ?? []).filter(b => b.type === 'image');
+            // The observation is captured before joining documentation/entry-point output.
+            const ranges = [...text.matchAll(/\(showing \d+-(\d+) of (\d+) items\)/g)];
+            result.observation = { target: app ? {app} : {browser, tab_id}, text,
+              complete: !ranges.some(([, shown, total]) => Number(shown) < Number(total)),
+              expectations: (request.arguments.expect ?? []).map(expected => ({
+                text: expected, matched: text.includes(expected),
+              })) };
+            result.content = [...(first.content ?? []), ...(result.content ?? [])];
+            if (!text.trim() && !images.length) {
+              result.isError = true;
+              result.content.push({ type: 'text', text: 'No observation returned. Do not act on old state.' });
+            }
+          }
+        } else {
+          result = await client.call(request.name, request.arguments, context);
+        }
         return { ...result, instructions: client.instructions, tools: client.publicTools() };
       } finally { calls.delete(request.id); }
     }

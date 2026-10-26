@@ -1,3 +1,4 @@
+import { CuaApprovedApps } from '../cua-preview/CuaApprovedApps'
 import { CuaPreviewPermission } from './CuaPreviewPermission'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -108,7 +109,10 @@ export function CuaSettingsPanel({ form, onUpdate }: {
         </div>)}
       </div>
     </section>
-    <p className="text-[13px] leading-relaxed text-ds-muted">{t('cuaVisionHint')}</p>
     {window.dsGui?.platform === 'darwin' && enabled !== false ? <SystemPermissions showPreview={form.cuaWindowPreview !== false} /> : null}
+    {window.dsGui?.platform === 'darwin' && <>
+      <CuaApprovedApps />
+      {(form.cuaAutoAllowApps ?? inherited?.autoAllowApps) === true && <p className="text-[13px] leading-relaxed text-ds-muted">{t('cuaAutoAllowAppsRevokeHint')}</p>}
+    </>}
   </div>
 }

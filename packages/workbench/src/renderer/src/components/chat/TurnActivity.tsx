@@ -8,7 +8,8 @@ export type TurnActivityKind = 'Waiting' | 'Thinking' | 'Responding' | 'Browser'
 const SURFACE_ACTIVITY: ReadonlyArray<[string, TurnActivityKind]> = [
   ['browser_use', 'Browser'],
   // The agent is driving the user's real mouse and keyboard: say so plainly.
-  ['cua_js', 'Desktop']
+  ['cua_js', 'Desktop'],
+  ['cua_observe', 'Desktop']
 ]
 
 /** Inputs are projections of runtime events, independent of disclosure/content layout. */

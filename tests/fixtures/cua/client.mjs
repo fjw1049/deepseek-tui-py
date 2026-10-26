@@ -2,6 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 export function createCuaClient({ cwd, onElicitation }) {
   const record = event => appendFileSync(join(cwd, 'calls.jsonl'), JSON.stringify(event) + '\n');
+  const observations = new Map();
   return {
     instructions: 'Original fixture instructions. Keep all of this.',
     async connect() {},
@@ -10,6 +11,24 @@ export function createCuaClient({ cwd, onElicitation }) {
     async call(name, args, context) {
       record({ name, args, session: context.sessionId, turn: context.turnId, call: context.toolCallId,
         hostTurn: context.metadata?.['deepseek/host-turn-id'] });
+      const binding = args.code?.match(/^var (__deepseekObservation\d+) = await cua\.getApp\((.*)\);$/);
+      if (binding) {
+        observations.set(binding[1], JSON.parse(binding[2]));
+        return { content: [{type: 'text', text: 'Original observation documentation'}] };
+      }
+      const tab = args.code?.match(/^var (__deepseekObservation\d+) = await cua\.getTab\((.*), \{browser: (.*)\}\);$/);
+      if (tab) {
+        observations.set(tab[1], {tab_id: JSON.parse(tab[2]), browser: JSON.parse(tab[3])});
+        return { content: [{type: 'text', text: 'Original browser documentation'}] };
+      }
+      const capture = args.code?.match(/^await (__deepseekObservation\d+)\.getAXStateAndScreenshot/);
+      if (capture) {
+        const appId = observations.get(capture[1]);
+        const surface = typeof appId === 'object' ? {kind: 'browserUse'}
+          : {kind: 'computerUse', app: {appId}};
+        return { content: [{type: 'text', text: 'Window: Fixture\n0 button Save\n1 text Saved'}],
+          _meta: {'codex/toolSurface': surface} };
+      }
       if (args.code === 'approve') {
         const response = await onElicitation({ mode: 'form', message: 'Allow fixture?',
           requestedSchema: { type: 'object', properties: {} },
