@@ -206,3 +206,41 @@ async def test_http_error_preserves_the_same_unknown_receipt():
     with pytest.raises(HTTPException) as error:
         await action(request, "one", BrowserAction(action="reload", generation=1))
     assert error.value.detail == response
+
+
+async def test_target_wait_stops_when_control_changes(tmp_path, monkeypatch):
+    import asyncio
+
+    service, run, _, _ = browser(tmp_path)
+    calls = 0
+
+    async def resolve(run, action):
+        nonlocal calls
+        calls += 1
+        run.generation += 1
+        return {"bound": True, "x": 10, "y": 10, "width": 20, "height": 20}
+
+    monkeypatch.setattr("deepseek_tui.browser.service.target", resolve)
+    action = BrowserAction(action="click", ref="e0", observation_id="current", generation=run.generation)
+    action._deadline = asyncio.get_running_loop().time() + 5
+    assert await service._ready_target(run, action) == {"error": "control_changed"}
+    assert calls == 1
+    run.session.click.assert_not_called()
+
+
+async def test_target_wait_revalidates_moving_bounds_and_stops_on_identity_change(tmp_path, monkeypatch):
+    import asyncio
+
+    service, run, _, _ = browser(tmp_path)
+    action = BrowserAction(action="click", ref="e0", observation_id="current", generation=run.generation)
+    action._deadline = asyncio.get_running_loop().time() + 5
+    start = {"bound": True, "x": 10, "y": 10, "width": 20, "height": 20}
+    end = {**start, "x": 40}
+    resolver = AsyncMock(side_effect=[start, end, end])
+    monkeypatch.setattr("deepseek_tui.browser.service.target", resolver)
+    assert await service._ready_target(run, action) == end
+    assert resolver.await_count == 3
+    resolver.side_effect = [{"error": "target_disabled"}, {"error": "target_context_changed"}, end]
+    assert await service._ready_target(run, action) == {"error": "target_context_changed"}
+    assert resolver.await_count == 5
+    run.session.click.assert_not_called()

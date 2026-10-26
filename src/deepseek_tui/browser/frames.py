@@ -331,7 +331,7 @@ class FrameContext:
                     "returnByValue": True,
                     "arguments": [{"value": x}, {"value": y}],
                     "functionDeclaration": """function(x,y){
-                  this.scrollIntoView({block:'center',inline:'center'});
+                  this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
                   for(let p=this;p;p=p.parentElement || p.getRootNode()?.host){
                     const s=getComputedStyle(p);
                     if(s.transform!=='none' || s.perspective!=='none' || Number(s.zoom || 1)!==1 ||

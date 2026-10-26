@@ -117,6 +117,7 @@ COLLECT = (
     }
   };
   watch(document);
+  const scopeCache = new WeakMap(); // Shared only within this synchronous observation.
   const refs = new Map(), warnings = [], texts = [], scrolls=[], scrollAreas=[];
   const identities=window.__deepseekNodeIdentities || {nodes:new WeakMap(),prefix:id,next:0};
   window.__deepseekNodeIdentities=identities;
@@ -158,7 +159,7 @@ COLLECT = (
           (e.isContentEditable && !e.parentElement?.isContentEditable) ||
           /^(button|link|textbox|combobox|checkbox|radio|menuitem|option|switch|tab|searchbox)$/
           .test(role)) {
-        const index=elementCount++, ref='e'+index, scope=context(e);
+        const index=elementCount++, ref='e'+index, scope=context(e,scopeCache);
         if(!identities.nodes.has(e))identities.nodes.set(e,identities.prefix+':n'+identities.next++);
         const targetId=identities.nodes.get(e);
         snapshot.push({element:e,name:name(e),scope,options:tag==='select'?
@@ -600,7 +601,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
           return {error:'stale_option'};
         window.__deepseekSelectedOption=option.node;
       }
-      e.scrollIntoView({block:'center',inline:'center'});
+      e.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
       const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
       const hit=e.getRootNode().elementFromPoint?.(x,y) || e.ownerDocument.elementFromPoint(x,y);
       if (!hit || (hit!==e && !e.contains(hit))) return {error:'target_obscured'};
@@ -617,7 +618,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
              ['translate','rotate','scale'].some(k=>style[k] && style[k]!=='none'))
             return {error:'frame_coordinates_unavailable'};
         }
-        frame.scrollIntoView({block:'center',inline:'center'});
+        frame.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
         const b=frame.getBoundingClientRect();
         px+=b.x+frame.clientLeft; py+=b.y+frame.clientTop;
         const outer=frame.ownerDocument.elementFromPoint(px,py);
@@ -629,7 +630,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
         if (s.focused()!==e) return {error:'target_focus_failed'};
       }
       window.__deepseekTarget=e;
-      return {bound:true,target_id:entry.target_id,x:px,y:py};
+      return {bound:true,target_id:entry.target_id,x:px,y:py,width:r.width,height:r.height};
     })(""".replace("__VALUE_INPUTS__", VALUE_INPUTS)
         + args
         + ")",

@@ -115,6 +115,62 @@ async def act(service, observation, action, **kwargs):
     )
 
 
+async def test_form_scope_is_scanned_once_per_observation_and_revalidated(chrome):
+    from deepseek_tui.browser.observation import root_context
+
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, """document.body.innerHTML='<form><span id=record>Record A</span>'+
+      Array.from({length:100},(_,i)=>'<input aria-label="Field '+i+'">').join('')+
+      '<button type=button onclick="window.clicked=true">Save</button></form>';true""")
+    world = await root_context(run)
+    await evaluate(world, """window.scopeScans=0;const original=document.createTreeWalker;
+      document.createTreeWalker=function(root,...args){
+        if(root.tagName==='FORM')window.scopeScans++;
+        return original.call(this,root,...args)};true""")
+    first = await read(service)
+    assert await evaluate(world, "window.scopeScans") == 1
+    await evaluate(client, "document.querySelector('#record').textContent='Record B';true")
+    result = await act(service, first, "click", ref=ref(first, "Save"))
+    assert result["receipt"]["reason"] == "target_context_changed"
+    assert not await evaluate(client, "Boolean(window.clicked)")
+    second = await read(service)
+    assert next(e for e in second["elements"] if e["name"] == "Save")["scope"]["text"] == "Record B"
+    result = await act(service, second, "click", ref=ref(second, "Save"))
+    assert result["success"], result
+
+
+@pytest.mark.parametrize("transient", ["disabled", "overlay"])
+async def test_target_waits_for_a_transient_block_without_repeating_click(chrome, transient):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, """document.body.innerHTML=`
+      <button id=save onclick='window.clicks++'>Save</button>`;window.clicks=0;true""")
+    observation = await read(service)
+    if transient == "disabled":
+        script = "save.disabled=true;setTimeout(()=>save.disabled=false,300)"
+    else:
+        script = """const overlay=document.createElement('div');
+          overlay.style='position:fixed;inset:0;background:white;z-index:999';
+          document.body.append(overlay);setTimeout(()=>overlay.remove(),300)"""
+    await evaluate(client, script + ";true")
+    result = await act(service, observation, "click", ref=ref(observation, "Save"))
+    assert result["success"], result
+    assert await evaluate(client, "window.clicks") == 1
+
+
+async def test_smooth_scrolling_does_not_misdiagnose_an_offscreen_target(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, """document.documentElement.style.scrollBehavior='smooth';
+      document.body.innerHTML='<div style="height:2400px"></div>'+
+      '<button id=save onclick="window.clicks++">Save</button>';window.clicks=0;true""")
+    observation = await read(service)
+    result = await act(service, observation, "click", ref=ref(observation, "Save"))
+    assert result["success"], result
+    assert await evaluate(client, "window.clicks") == 1
+
+
 @pytest.mark.parametrize("tree", ["root", "shadow", "frame"])
 async def test_page_cannot_redirect_a_bound_ref_through_main_world_globals(chrome, tree):
     service, run = chrome

@@ -1688,7 +1688,7 @@ class BrowserService:
             if action.action in TARGET_ACTIONS and not action.chooser_id and (require_observation or action.observation_id):
                 run.target_binding_id = None
                 try:
-                    resolved = await asyncio.wait_for(target(run, action), timeout=min(
+                    resolved = await asyncio.wait_for(self._ready_target(run, action), timeout=min(
                         5, max(0.001, action._deadline - asyncio.get_running_loop().time())))
                 except Exception:  # validation failed before dispatch
                     resolved = {"error": "target_validation_unavailable"}
@@ -2469,6 +2469,30 @@ class BrowserService:
         # Tolerates a caret or JPEG noise; an overlay or moved control changes far more.
         changed = sum(diff.histogram()[49:])
         return changed <= 0.02 * diff.width * diff.height
+
+    async def _ready_target(self, run, action):
+        # Wait only before dispatch; never retry a click or submission that may have run.
+        loop = asyncio.get_running_loop()
+        deadline = min(loop.time() + 1, action._deadline)
+        previous = None
+        while True:
+            if run.transferring or run.generation != action.generation:
+                return {"error": "control_changed"}
+            resolved = await target(run, action)
+            if run.transferring or run.generation != action.generation:
+                return {"error": "control_changed"}
+            error = resolved.get("error")
+            if not (action.ref or action.selector):
+                return resolved
+            if error and error not in {"target_disabled", "target_not_visible", "target_obscured"}:
+                return resolved
+            box = tuple(resolved.get(k) for k in ("x", "y", "width", "height"))
+            if not error and (not resolved.get("bound") or box == previous):
+                return resolved
+            if loop.time() >= deadline:
+                return resolved if error else {"error": "target_unstable"}
+            previous = None if error else box
+            await asyncio.sleep(.05)
 
     async def _dispatch_guard(self, run, action):
         if run.transferring or run.generation != action.generation:
