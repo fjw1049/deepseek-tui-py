@@ -42,7 +42,7 @@ async def test_transfer_holds_desktop_until_explicit_return(desktop):
             await manager.control_cua('thread', 'assistant', 0, 'turn')
         await manager.control_cua('thread', 'assistant', result['revision'], 'turn')
         assert not state.handle.pause.paused
-        assert 'observe again' in state.handle.resume_context
+        assert 'Use cua_observe before' in state.handle.resume_context
         await other.acquire(timeout=0.1)
     finally:
         other.release()

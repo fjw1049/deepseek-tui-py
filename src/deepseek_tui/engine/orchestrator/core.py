@@ -3674,6 +3674,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                                task_outcome=delivery.outcome)
 
             tool_round_count += 1
+            if not delivery.stop_reminded:
+                # The model acted after its nudge: a later announce-only stop gets its own
+                # nudge. Models that announce a step and take it in the next round would
+                # otherwise reach finalization with that step undone.
+                delivery.continue_nudged = False
 
             messages.append(self._build_tool_use_message(result.tool_calls))
             from deepseek_tui.server.metrics import now_ms as latency_now_ms

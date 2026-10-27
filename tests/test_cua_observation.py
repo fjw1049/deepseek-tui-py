@@ -463,3 +463,47 @@ async def test_missing_completion_evidence_names_the_observation_after_computer_
         await FinishTaskTool().execute(
             dict(status="completed", answer="Done", evidence=[], remaining=[]), plain)
     assert "cua_observe" not in str(error.value)
+
+
+def test_observation_resolves_localized_app_names_but_never_retries_a_denial():
+    import json
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node required")
+    bridge = Path(__file__).parents[1] / "src/deepseek_tui/cua/bridge.mjs"
+    open_app = re.search(r"const OPEN_APP = `(.*?)`;", bridge.read_text(), re.S).group(1)
+    script = """
+const calls = [];
+globalThis.cua = {
+  async getApp(name) {
+    calls.push(name);
+    if (name === 'com.apple.TextEdit') return 'bound';
+    if (name === 'Denied') throw new Error('Computer Use was not approved to use Denied');
+    throw new Error('Invalid app: ' + name);
+  },
+  async listApps() {
+    return [{ id: 'com.apple.TextEdit', displayName: '文本编辑' },
+            { id: 'a.one', displayName: 'Twin' }, { id: 'a.two', displayName: 'twin' }];
+  },
+};
+const open = """ + open_app + """;
+const out = { localized: await open('文本编辑') };
+for (const name of ['Denied', 'Twin', 'Nope']) {
+  try { await open(name); } catch (error) { out[name] = error.message; }
+}
+out.calls = calls;
+console.log(JSON.stringify(out));
+"""
+    result = subprocess.run([node, "--input-type=module", "-e", script],
+                            capture_output=True, text=True, timeout=30, check=True)
+    out = json.loads(result.stdout)
+    assert out["localized"] == "bound"
+    # A refusal is not an unknown name: asking again would re-prompt the user.
+    assert "not approved" in out["Denied"] and out["calls"].count("Denied") == 1
+    # Two apps share the name: never guess between them.
+    assert out["Twin"] == "Invalid app: Twin" and out["Nope"] == "Invalid app: Nope"

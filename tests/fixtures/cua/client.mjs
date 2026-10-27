@@ -27,7 +27,7 @@ export function createCuaClient({ cwd, onElicitation }) {
       if (bind) {
         if (observations.has(bind[1])) return { content: [] };
         const entry = bind[2];
-        const app = entry.match(/cua\.getApp\(("(?:[^"\\]|\\.)*")\)/);
+        const app = entry.match(/\)\(("(?:[^"\\]|\\.)*")\) : Promise\.reject/);
         const window = entry.match(/cua\.getApp\(\{windowId: (\d+)\}\)/);
         const tab = entry.match(/cua\.getTab\(("(?:[^"\\]|\\.)*"), \{browser: ("(?:[^"\\]|\\.)*")\}\)/);
         const target = app ? JSON.parse(app[1]) : window ? `window-${window[1]}`

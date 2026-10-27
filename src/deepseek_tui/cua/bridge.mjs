@@ -49,6 +49,18 @@ const TRACE_READ = `nodeRepl.write(${JSON.stringify(TRACE_MARK)} + JSON.stringif
   ? { ready: Boolean(globalThis.__deepseekTraceReady), tabs: Boolean(globalThis.__deepseekTabs),
       actions: globalThis.__deepseekTrace.splice(0) } : null));`;
 const NATIVE_APP_HINT = 'On Linux and Windows, observe a window: pass window_id from cua.getState().';
+// A localized display name (文本编辑 for TextEdit) is not an app id. Resolve it from the runtime's
+// own inventory, and only when the runtime rejected the name itself: a denial is never retried.
+const OPEN_APP = `async name => {
+  try { return await cua.getApp(name); } catch (error) {
+    if (!/^Invalid app:/.test(String(error?.message))) throw error;
+    const wanted = name.toLowerCase();
+    const found = (await cua.listApps({ emit: false })).filter(app =>
+      app.id.toLowerCase() === wanted || app.displayName?.toLowerCase() === wanted);
+    if (found.length !== 1) throw error;
+    return await cua.getApp(found[0].id);
+  }
+}`;
 
 // Host calls that print nothing still return an empty text block; never pass those on.
 const printed = result => (result.content ?? []).filter(b => b.type !== 'text' || b.text.trim());
@@ -101,7 +113,7 @@ async function handle(request) {
           const target = app ? { app } : windowId !== undefined ? { window_id: windowId } : { browser, tab_id };
           // Native apps take a name on macOS but an open window elsewhere.
           const entry = app
-            ? `(cua.computer?.target ?? "mac") === "mac" ? cua.getApp(${JSON.stringify(app)})`
+            ? `(cua.computer?.target ?? "mac") === "mac" ? (${OPEN_APP})(${JSON.stringify(app)})`
               + ` : Promise.reject(new Error(${JSON.stringify(NATIVE_APP_HINT)}))`
             : windowId !== undefined ? `cua.getApp({windowId: ${Number(windowId)}})`
             : `cua.getTab(${JSON.stringify(tab_id)}, {browser: ${JSON.stringify(browser)}})`;
