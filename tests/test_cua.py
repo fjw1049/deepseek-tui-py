@@ -1137,11 +1137,87 @@ async def test_results_flag_truncated_trees_and_unverified_coordinate_clicks(ses
         result = await tool.execute({"code": code}, context)
         assert result.content.startswith(code)
         assert "truncated" in result.content and "not evidence" in result.content
-        assert "coordinate click" in result.content
+        # The runtime recorded no click, so code text alone is not a coordinate click.
+        assert "coordinate click" not in result.content
+        clicked = await tool.execute(
+            {"code": 'actions:[{"action":"click","coordinate":true,"ok":true}]'}, context)
+        assert "coordinate click" in clicked.content
+        indexed = await tool.execute(
+            {"code": 'actions:[{"action":"click","coordinate":false,"ok":true}]'}, context)
+        assert "coordinate click" not in indexed.content
         complete = "await app.click(75);\n2 HTML (showing 0-40 of 40 items)"
         assert (await tool.execute({"code": complete}, context)).content == complete
+        # Without a record from the runtime, the code is read instead.
+        await tool.execute({"code": "untraced"}, context)
+        fallback = await tool.execute({"code": "await app.click([114, 501]);"}, context)
+        assert "coordinate click" in fallback.content
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_failures_are_named_without_argument_hints(session, tmp_path):
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        missing = await tool.execute({"code": "throw:Invalid app: com.example.none"}, context)
+        assert not missing.success and missing.metadata["cua_error_kind"] == "unknown_app"
+        assert "cua.listApps()" in missing.content
+        assert "Do not guess parameter names" not in missing.content
+        # No input reached the UI, so the model may continue without a forced observation.
+        assert not session.outside_change
+        assert (await tool.execute({"code": "listApps"}, context)).success
+        stale = await tool.execute(
+            {"code": 'actions:[{"action":"click","coordinate":false,"ok":false}]'}, context)
+        assert stale.metadata["cua_error_kind"] == "stale_element"
+        # The runtime rejected the only input before sending it.
+        assert not session.outside_change
+        acted = await tool.execute({"code": 'actions:[{"action":"pressKey","ok":true},'
+                                            '{"action":"click","coordinate":false,"ok":false}]'},
+                                   context)
+        assert acted.metadata["cua_error_kind"] == "stale_element"
+        # An earlier input was dispatched: its effect is unknown until observed.
+        assert session.outside_change
+        with pytest.raises(ToolError, match="cua_observe"):
+            await tool.execute({"code": "listApps"}, context)
+        assert (await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)).success
+        stopped = await tool.execute({"code": "throw:Computer Use server error -10016: x"}, context)
+        assert stopped.metadata["cua_error_kind"] == "user_intervened"
+        assert "user operated the app" in session.outside_change
+        await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
+        await tool.execute({"code": "untraced"}, context)
+        unknown = await tool.execute({"code": "throw:boom"}, context)
+        assert "cua_error_kind" not in unknown.metadata
+        # Without a record, any failure still requires an observation.
+        assert session.outside_change
+    finally:
+        await session.close()
+
+
+def test_runtime_error_names_cover_observed_messages():
+    from deepseek_tui.cua.tools import runtime_error
+
+    key = runtime_error('Computer Use server error -10005: keyNotFound("down")')
+    assert key[0] == "invalid_key"
+    assert runtime_error("Computer Use server error -10005: 99999 is an invalid element ID")[0] \
+        == "stale_element"
+    assert runtime_error("Invalid app: 文本编辑")[0] == "unknown_app"
+    assert runtime_error("Typing into a specific element is only supported on Linux.")[0] \
+        == "unsupported_form"
+    assert runtime_error("Computer Use server error -10020: locked")[0] == "screen_locked"
+    assert runtime_error("TypeError: Cannot read properties of undefined") is None
+
+
+def test_expected_text_ignores_presentation_not_content():
+    from deepseek_tui.cua.tools import text_observed
+
+    page = "订单号：A-1024\nTotal  price: $42\nHe said “ship it”\n状态：已发货"
+    for fragment in ["订单号: A-1024", "total price: $42", 'He said "ship it"', "状态:已发货"]:
+        assert text_observed(page, fragment), fragment
+    for fragment in ["订单号：A-9999", "已取消", "Total price: $43", "He said “stop it”",
+                     "Totalprice"]:
+        assert not text_observed(page, fragment), fragment
 
 
 @pytest.mark.asyncio
@@ -1348,3 +1424,20 @@ async def test_receipt_write_failure_still_closes_native_session(session, monkey
         await session.call("js", {"code": "submit"}, "turn", "call")
     assert session.unresolved["call_id"] == "call"
     assert session.process is None and session.lease.fd is None
+
+
+def test_finalization_keeps_the_observation_completion_requires():
+    from deepseek_tui.tools.task_delivery import TaskDelivery
+
+    catalog = [{"name": n} for n in ("finish_task", "cua_observe", "cua_js", "read_file")]
+    plain = TaskDelivery(active=True, stop_reminded=True)
+    assert [t["name"] for t in plain.tools(catalog)] == ["finish_task"]
+    assert not plain.allows("cua_observe")
+    used = TaskDelivery(active=True, stop_reminded=True, cua_used=True)
+    assert [t["name"] for t in used.tools(catalog)] == ["finish_task", "cua_observe"]
+    assert used.allows("cua_observe") and not used.allows("cua_js")
+    # One round to observe, one to finish; without computer use a single round remains.
+    plain.finalization_rounds = used.finalization_rounds = 1
+    assert plain.finalization_exhausted() and not used.finalization_exhausted()
+    used.finalization_rounds = 2
+    assert used.finalization_exhausted()

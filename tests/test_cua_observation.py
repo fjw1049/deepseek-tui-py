@@ -412,3 +412,54 @@ def test_ax_completeness_never_reads_an_unknown_range_as_complete():
     assert ax_complete("2 HTML (showing 0-40 of 40 items)")
     assert not ax_complete("2 HTML (showing 0-100 of 350 items)")
     assert not ax_complete("2 HTML (Showing first 100 of 350)")
+
+
+@pytest.mark.asyncio
+async def test_observation_binds_once_per_repl(session, tmp_path):
+    await session.connect()
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    observe = CuaObserveTool(session)
+    try:
+        first = await observe.execute({"app": "dev.fixture"}, context)
+        assert "Original observation documentation" in first.content
+        # The binding already printed the tree; a repeat must not rebind and print it again.
+        again = await observe.execute({"app": "dev.fixture"}, context)
+        assert again.success and "documentation" not in again.content
+        assert again.content.count("0 button Save") == 1
+        await CuaTool(session, session.descriptors[1]).execute({}, context)  # js_reset
+        rebound = await observe.execute({"app": "dev.fixture"}, context)
+        assert "Original observation documentation" in rebound.content
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_observation_accepts_window_ids_for_linux_and_windows(session, tmp_path):
+    await session.connect()
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    observe = CuaObserveTool(session)
+    try:
+        result = await observe.execute({"window_id": 3}, context)
+        assert result.success
+        assert result.metadata["cua_observation"]["target"] == {"window_id": 3}
+        for bad in ({"window_id": True}, {"window_id": -1}, {"window_id": "3"},
+                    {"window_id": 3, "app": "dev.fixture"}):
+            with pytest.raises(ToolError, match="window_id"):
+                await observe.execute(bad, context)
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_completion_evidence_names_the_observation_after_computer_use(tmp_path):
+    state = TaskDelivery(active=True, cua_used=True)
+    context = ToolContext(tmp_path, metadata={"task_delivery": state})
+    for evidence in ([], ["tool:unknown"]):
+        with pytest.raises(ToolError, match="cua_observe result is the evidence"):
+            await FinishTaskTool().execute(
+                dict(status="completed", answer="Done", evidence=evidence, remaining=[]), context)
+    plain = ToolContext(tmp_path, metadata={"task_delivery": TaskDelivery(active=True)})
+    with pytest.raises(ToolError) as error:
+        await FinishTaskTool().execute(
+            dict(status="completed", answer="Done", evidence=[], remaining=[]), plain)
+    assert "cua_observe" not in str(error.value)

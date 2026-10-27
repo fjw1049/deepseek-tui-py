@@ -9,6 +9,60 @@ const approvals = new Map();
 const calls = new Map();
 const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 
+// Host code, idempotent per REPL: wraps targets the runtime returns so each UI input a call
+// dispatches is recorded. The host then knows what model code did without parsing it.
+const INPUTS = ['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'paste',
+  'pressKey', 'typeText', 'typeCharacters', 'goto', 'back', 'forward', 'reload', 'close'];
+const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
+  const trace = globalThis.__deepseekTrace = [];
+  const api = globalThis.cua;
+  const wrap = target => {
+    if (target === null || typeof target !== 'object' || Object.hasOwn(target, '__deepseekTraced')) return target;
+    for (const name of ${JSON.stringify(INPUTS)}) {
+      const original = target[name];
+      if (typeof original !== 'function') continue;
+      target[name] = function (...args) {
+        const entry = { action: name,
+          coordinate: ['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]) };
+        trace.push(entry);
+        return Promise.resolve().then(() => original.apply(this, args)).then(
+          value => { entry.ok = true; return value; }, error => { entry.ok = false; throw error; });
+      };
+    }
+    Object.defineProperty(target, '__deepseekTraced', { value: true });
+    return target;
+  };
+  for (const name of ['getApp', 'getTab', 'createBrowserTab']) {
+    const original = api?.[name];
+    if (typeof original !== 'function') continue;
+    api[name] = async function (...args) {
+      // DOM tabs also take Playwright input the wrapper cannot see.
+      if (name !== 'getApp') globalThis.__deepseekTabs = true;
+      return wrap(await original.apply(this, args));
+    };
+  }
+  globalThis.__deepseekTraceReady = typeof api?.getApp === 'function' || typeof api?.getTab === 'function';
+}
+globalThis.__deepseekTrace.length = 0;`;
+const TRACE_MARK = '__DEEPSEEK_TRACE__';
+const TRACE_READ = `nodeRepl.write(${JSON.stringify(TRACE_MARK)} + JSON.stringify(globalThis.__deepseekTrace
+  ? { ready: Boolean(globalThis.__deepseekTraceReady), tabs: Boolean(globalThis.__deepseekTabs),
+      actions: globalThis.__deepseekTrace.splice(0) } : null));`;
+const NATIVE_APP_HINT = 'On Linux and Windows, observe a window: pass window_id from cua.getState().';
+
+// Host calls that print nothing still return an empty text block; never pass those on.
+const printed = result => (result.content ?? []).filter(b => b.type !== 'text' || b.text.trim());
+
+function readTrace(result) {
+  if (result.isError) return null;
+  for (const block of result.content ?? []) {
+    const at = block.type === 'text' ? block.text.indexOf(TRACE_MARK) : -1;
+    if (at < 0) continue;
+    try { return JSON.parse(block.text.slice(at + TRACE_MARK.length).split('\n')[0]); } catch { return null; }
+  }
+  return null;
+}
+
 async function handle(request) {
   switch (request.type) {
     case 'connect': {
@@ -43,32 +97,53 @@ async function handle(request) {
         let result;
         if (request.type === 'observe') {
           // Only host-written observation code runs here. Never classify arbitrary JS as read-only.
-          const { app, browser, tab_id } = request.arguments;
+          const { app, window_id: windowId, browser, tab_id } = request.arguments;
+          const target = app ? { app } : windowId !== undefined ? { window_id: windowId } : { browser, tab_id };
+          // Native apps take a name on macOS but an open window elsewhere.
           const entry = app
-            ? `cua.getApp(${JSON.stringify(app)})`
+            ? `(cua.computer?.target ?? "mac") === "mac" ? cua.getApp(${JSON.stringify(app)})`
+              + ` : Promise.reject(new Error(${JSON.stringify(NATIVE_APP_HINT)}))`
+            : windowId !== undefined ? `cua.getApp({windowId: ${Number(windowId)}})`
             : `cua.getTab(${JSON.stringify(tab_id)}, {browser: ${JSON.stringify(browser)}})`;
-          const binding = `__deepseekObservation${request.id}`;
-          const first = await client.call('js', { code: `var ${binding} = await ${entry};` },
-            { ...context, toolCallId: `${context.toolCallId}:bind` });
+          // Bind once per REPL: binding already prints the full tree, so rebinding on every
+          // observation would send it twice. A reset REPL loses the cache with its bindings.
+          const slot = `globalThis.__deepseekObservations[${JSON.stringify(JSON.stringify(target))}]`;
+          const first = await client.call('js', {
+            code: `globalThis.__deepseekObservations ??= {};\nif (!${slot}) ${slot} = await (${entry});`,
+          }, { ...context, toolCallId: `${context.toolCallId}:bind` });
           if (first.isError) result = first;
           else {
             result = await client.call('js', {
-              code: `await ${binding}.getAXStateAndScreenshot({disableDiffing: true});`,
+              code: `await ${slot}.getAXStateAndScreenshot({disableDiffing: true});`,
             }, context);
+            if (result.isError) {
+              // A closed tab or window must not stay cached.
+              await client.call('js', { code: `delete ${slot};` },
+                { ...context, toolCallId: `${context.toolCallId}:unbind` }).catch(() => {});
+            }
             const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
             const images = (result.content ?? []).filter(b => b.type === 'image');
             // The observation is captured before joining documentation/entry-point output.
-            // The host judges completeness from this text (cua/tools.py).
-            result.observation = { target: app ? {app} : {browser, tab_id}, text,
-              expectations: (request.arguments.expect ?? []).map(expected => ({
-                text: expected, matched: text.includes(expected),
-              })) };
-            result.content = [...(first.content ?? []), ...(result.content ?? [])];
+            // The host judges completeness and expected text from it (cua/tools.py).
+            result.observation = { target, text };
+            result.content = [...printed(first), ...(result.content ?? [])];
             if (!text.trim() && !images.length) {
               result.isError = true;
               result.content.push({ type: 'text', text: 'No observation returned. Do not act on old state.' });
             }
           }
+        } else if (request.name === 'js') {
+          const install = await client.call('js', { code: TRACE_INSTALL },
+            { ...context, toolCallId: `${context.toolCallId}:trace` });
+          result = await client.call(request.name, request.arguments, context);
+          if (!controller.signal.aborted) {
+            const read = await client.call('js', { code: TRACE_READ },
+              { ...context, toolCallId: `${context.toolCallId}:trace` });
+            result.trace = readTrace(read);
+          }
+          // A fresh REPL prints its first-use documentation on its first call, which may be
+          // the install call; the model must still receive it.
+          if (!install.isError) result.content = [...printed(install), ...(result.content ?? [])];
         } else {
           result = await client.call(request.name, request.arguments, context);
         }

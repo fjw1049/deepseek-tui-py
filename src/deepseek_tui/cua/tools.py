@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import unicodedata
 from dataclasses import replace
 from typing import Any
 
@@ -34,6 +35,63 @@ HANDOFF_NOTICE = (
     "[CUA session reset for desktop handoff. Old JavaScript variables and element references "
     "are invalid. Use cua_observe before rebuilding bindings and acting.]"
 )
+# Runtime failures the host can name, from the runtime's numeric codes and its fixed messages.
+_RUNTIME_ERRORS = (
+    ("stale_element", (), r"is an invalid element ID|element ID is no longer valid|"
+     r"element was invalidated",
+     "Element indices come only from the latest accessibility state. Get fresh state and use a "
+     "current index."),
+    ("invalid_key", (), r"keyNotFound",
+     "Use xdotool-style key names, which are case-sensitive: \"Return\", \"Tab\", \"Down\", "
+     "\"super+Down\" (super is Command on macOS)."),
+    ("unsupported_form", (), r"only supported on Linux|accepts pages, not pixels|"
+     r"requires an app name, path, or bundle ID|is unavailable on (macOS|Linux|Windows)",
+     "This call form is not available on this platform. Use the form the documentation gives "
+     "for it (for example, on macOS select or focus first, then typeText(text))."),
+    ("unknown_app", ("-10007", "-10010", "-10018"), r"^Invalid app:|Unknown app|ambiguous app",
+     "Use an exact app id from cua.listApps() or cua.getState(); a display name can fail."),
+    ("permissions_pending", ("-10014",), r"permissions are still pending",
+     "The user is still granting system permissions. Call the same API again; do not end the "
+     "turn."),
+    ("screen_locked", ("-10020",), r"The Mac is locked",
+     "The screen is locked. Ask the person to unlock it (request_user_input with kind=\"action\", "
+     "surface=\"desktop\" when available); do not retry before that."),
+    ("user_stopped", ("-10012",), r"explicitly stopped by the user",
+     "The user stopped computer use for this turn. Stop desktop actions and report where the "
+     "task stands."),
+    ("user_intervened", ("-10016",), r"user intervened",
+     "The user operated the app during this call. Observe before deciding anything; do not "
+     "repeat the action blindly."),
+    ("app_denied", ("-10006",), r"not allowed to use the app|blocked from using the app|"
+     r"was not approved to use",
+     "Access to this app was refused. Do not retry it or reach it through another tool; tell "
+     "the user."),
+    ("version_mismatch", ("-10013",), r"version mismatch",
+     "The computer-use runtime needs the ChatGPT app to be relaunched or updated. Stop computer "
+     "use and tell the user."),
+)
+_SERVER_CODE = re.compile(r"Computer Use server error (-\d+)")
+_QUOTES = str.maketrans({"“": '"', "”": '"', "„": '"', "‟": '"', "‘": "'", "’": "'"})
+
+
+def runtime_error(text: str) -> tuple[str, str] | None:
+    """The kind and guidance of a failure the runtime reported, when the host can name it."""
+    code = _SERVER_CODE.search(text)
+    for kind, codes, pattern, guidance in _RUNTIME_ERRORS:
+        if code and code.group(1) in codes or re.search(pattern, text, re.MULTILINE):
+            return kind, guidance
+    return None
+
+
+def _comparable(text: str) -> str:
+    """Normalize width, quotes, case and incidental spacing, never the characters themselves."""
+    text = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).translate(_QUOTES)).casefold()
+    # Spaces carry no meaning next to punctuation or CJK text.
+    return re.sub(r" ?([^\w\s]|[\u3000-\u9fff]) ?", r"\1", text)
+
+
+def text_observed(text: str, expected: str) -> bool:
+    return _comparable(expected) in _comparable(text)
 
 
 _DESKTOP_ACTION_TEXT = {
@@ -170,6 +228,27 @@ def add_documentation_reminder(messages) -> None:
     messages.append(Message.user(text, origin=MessageOrigin.SYSTEM_REMINDER))
 
 
+def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) -> bool:
+    if trace is None:
+        # No record from this runtime: fall back to reading the code.
+        return bool(_COORDINATE_CLICK.search(str(input_data.get("code", ""))))
+    return any(action.get("coordinate") for action in trace.get("actions", []))
+
+
+# Rejected while validating the request, before any input is sent.
+_PRE_DISPATCH = frozenset({"stale_element", "invalid_key", "unsupported_form", "unknown_app"})
+
+
+def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:
+    """A failed call provably reached no UI: recorded, no DOM tab in reach, and either no
+    input or a single input the runtime rejected before sending it."""
+    if trace is None or trace.get("tabs"):
+        return False
+    actions = trace.get("actions", [])
+    return not actions or (
+        len(actions) == 1 and actions[0].get("ok") is False and kind in _PRE_DISPATCH)
+
+
 class CuaTool(ToolSpec):
     def __init__(
         self,
@@ -216,7 +295,12 @@ class CuaTool(ToolSpec):
         if not result.success and delivery is not None:
             delivery.cua_failed_evidence = set(delivery.evidence)
         if not result.success and self.descriptor["name"] == "js":
-            self.session.invalidate_observation("CUA code failed; inspect its actual effects.")
+            kind = result.metadata.get("cua_error_kind")
+            if kind == "user_intervened":
+                self.session.invalidate_observation(
+                    "The user operated the app during the last call; inspect its actual state.")
+            elif not _sent_no_input(result.metadata.get("cua_trace"), kind):
+                self.session.invalidate_observation("CUA code failed; inspect its actual effects.")
         if not observing:
             result = replace(result, metadata={**result.metadata, "task_evidence": False})
         return result
@@ -235,7 +319,9 @@ class CuaTool(ToolSpec):
             if isinstance(text, str) and len(text.encode("utf-8")) >= REPEATED_TEXT_MIN_BYTES:
                 texts = self.session.large_texts
                 texts[:] = [t for t in texts if t != text][-(MAX_REMEMBERED_TEXTS - 1):] + [text]
-        result = mcp_response_to_tool_result(self.name(), payload)
+        # Runtime failures are not argument errors: build without the generic MCP schema hint.
+        result = mcp_response_to_tool_result(self.name(), {**payload, "isError": False})
+        result = replace(result, success=not payload.get("isError"))
         images = [
             image.model_copy(
                 update={
@@ -256,7 +342,12 @@ class CuaTool(ToolSpec):
             observation = payload.get("observation")
             metadata["task_evidence"] = result.success and isinstance(observation, dict)
             if isinstance(observation, dict):
-                observation["complete"] = ax_complete(str(observation.get("text", "")))
+                text = str(observation.get("text", ""))
+                observation["complete"] = ax_complete(text)
+                observation["expectations"] = [
+                    {"text": expected, "matched": text_observed(text, expected)}
+                    for expected in input_data.get("expect", [])
+                ]
                 metadata["cua_observation"] = observation
                 # Inspecting a different app cannot verify the app we just operated.
                 observed_surface = cua_surface(payload.get("_meta"))
@@ -273,7 +364,14 @@ class CuaTool(ToolSpec):
             delivery = context.metadata.get("task_delivery")
             if delivery is not None and self.descriptor["name"] == "js":
                 delivery.cua_verification_target = surface
-        result = replace(result, images=images, metadata=metadata)
+        trace = payload.get("trace")
+        if isinstance(trace, dict) and trace.get("ready"):
+            metadata["cua_trace"] = trace
+        content = result.content
+        if not result.success and (named := runtime_error(content)):
+            metadata["cua_error_kind"] = named[0]
+            content += f"\n[Host: {named[0]}] {named[1]}"
+        result = replace(result, content=content, images=images, metadata=metadata)
         if not result.success and "is not a function" in result.content:
             # JavaScript's own TypeError: the model guessed an API.
             result = replace(result, content=result.content + (
@@ -284,7 +382,7 @@ class CuaTool(ToolSpec):
             notes = []
             if not ax_complete(result.content):
                 notes.append(AX_TRUNCATED_NOTE)
-            if _COORDINATE_CLICK.search(str(input_data.get("code", ""))):
+            if _coordinate_input(metadata.get("cua_trace"), input_data):
                 notes.append(COORDINATE_CLICK_NOTE)
             if notes:
                 result = replace(result, content="\n".join([result.content, *notes]))
@@ -322,12 +420,15 @@ class CuaObserveTool(CuaTool):
     def description(self) -> str:
         return (
             "Observe a native app or an existing browser tab without clicks or text input. "
-            "Supply app (name/bundle id), or browser and tab_id from the runtime inventory. "
+            "Supply app (name/bundle id; macOS, where an app that is not running is launched in "
+            "the background), window_id (Linux and Windows, from the runtime inventory), or "
+            "browser and tab_id from the runtime inventory. "
             "Returns full accessibility state and a screenshot through the same CUA runtime; "
             "existing access permissions apply. Use after actions to verify the expected "
             "change, when the user changes the interface, and before finish_task. "
             "For text-verifiable changes, supply expect with exact visible text fragments "
-            "that would show success. A missing fragment means not yet verified, not absent. "
+            "that would show success; width, quote style, case and spacing are ignored. "
+            "A missing fragment means not yet verified, not absent. "
             "Works after a reset; does not restore old JavaScript bindings. "
             "An unknown submission remains unresolved even when inspection succeeds."
         )
@@ -335,22 +436,28 @@ class CuaObserveTool(CuaTool):
     def input_schema(self) -> dict[str, Any]:
         return {"type": "object", "properties": {
             "app": {"type": "string", "minLength": 1},
+            "window_id": {"type": "integer", "minimum": 0},
             "browser": {"type": "string", "minLength": 1},
             "tab_id": {"type": "string", "minLength": 1},
             "expect": {"type": "array", "maxItems": 8,
                        "items": {"type": "string", "minLength": 1}},
         }, "additionalProperties": False,
-            "oneOf": [{"required": ["app"]}, {"required": ["browser", "tab_id"]}]}
+            "oneOf": [{"required": ["app"]}, {"required": ["window_id"]},
+                      {"required": ["browser", "tab_id"]}]}
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         target = {k: v for k, v in input_data.items() if k != "expect"}
         expected = input_data.get("expect", [])
-        if (set(target) not in ({"app"}, {"browser", "tab_id"})
+        window = target.get("window_id")
+        if (set(target) not in ({"app"}, {"window_id"}, {"browser", "tab_id"})
+                or (set(target) == {"window_id"}
+                    and (type(window) is not int or window < 0))
                 or any(not isinstance(v, str) or not v.strip() or len(v) > 2048
-                       for v in target.values())
+                       for k, v in target.items() if k != "window_id")
                 or not isinstance(expected, list) or len(expected) > 8
                 or any(not isinstance(v, str) or not v.strip() or len(v) > 2048 for v in expected)):
-            raise ToolError("Supply app, or browser and tab_id; no code or other fields.")
+            raise ToolError(
+                "Supply app, window_id, or browser and tab_id; no code or other fields.")
         result = await super().execute(input_data, context)
         checks = result.metadata.get("cua_observation", {}).get("expectations", [])
         if checks:

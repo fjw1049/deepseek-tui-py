@@ -3163,7 +3163,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             self.last_real_input_estimate = 0
         self._context_measurement_model = model
         from deepseek_tui.tools.task_delivery import (
-            FINALIZATION_MAX_TOKENS, FINALIZATION_TIMEOUT_SECONDS, TaskDelivery,
+            CUA_FINALIZATION_TIMEOUT_SECONDS, FINALIZATION_MAX_TOKENS, FINALIZATION_TIMEOUT_SECONDS,
+            TaskDelivery,
         )
 
         # Per turn, never from the polled context estimate: it may start the runtime.
@@ -3243,7 +3244,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             await self.handle.pause.wait(self.handle.cancel_event)
             if self.handle.resume_context is not None:
                 delivery.outcome = None
-                delivery.stop_reminded = delivery.finalization_attempted = delivery.continue_nudged = False
+                delivery.stop_reminded = delivery.continue_nudged = False
+                delivery.finalization_rounds = 0
                 delivery.draft_answer = ""
                 self._ui_progress.reset()  # the person changed what the screen shows
                 from deepseek_tui.engine import reminders
@@ -3271,7 +3273,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 steer_text = steer_text.strip()
                 if not steer_text:
                     continue
-                delivery.stop_reminded = delivery.finalization_attempted = delivery.continue_nudged = False
+                delivery.stop_reminded = delivery.continue_nudged = False
+                delivery.finalization_rounds = 0
                 delivery.draft_answer = ""
                 self._ui_progress.reset()  # the person may have changed what the screen shows
                 # Honor @plugin: mount/unmount in steers (same as primary send).
@@ -3318,7 +3321,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 tools=tools,
                 model_config=getattr(self, "_app_config", None),
             )
-            if delivery.stop_reminded and delivery.finalization_attempted and delivery.outcome is None:
+            if (delivery.stop_reminded and delivery.finalization_exhausted()
+                    and delivery.outcome is None):
                 return await incomplete_delivery("Structured finalization was not supplied or accepted.")
             if should_trigger and not delivery.stop_reminded:
                 from deepseek_tui.config.providers import max_output_tokens_for_model
@@ -3433,9 +3437,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                         self.handle.cancel_event,
                     )
                     if delivery.stop_reminded:
-                        delivery.finalization_attempted = True
+                        delivery.finalization_rounds += 1
                         try:
-                            result = await asyncio.wait_for(sample, FINALIZATION_TIMEOUT_SECONDS)
+                            result = await asyncio.wait_for(sample, (
+                                CUA_FINALIZATION_TIMEOUT_SECONDS if delivery.cua_used
+                                else FINALIZATION_TIMEOUT_SECONDS))
                         except TimeoutError:
                             await self.handle.emit(ModelRequestInterruptedEvent())
                             return await incomplete_delivery("Result finalization timed out.")
@@ -3579,6 +3585,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                             "Do not perform more work or request additional tools. If the goal is not "
                             "verified, use partial or blocked and state the remaining work. "
                             "Do not invent results or treat opening a page/login as task completion."
+                            + (" cua_observe stays available only for the fresh observation "
+                               "finish_task requires after computer use."
+                               if delivery.cua_used else "")
                         ))
                         logger.info("task_delivery_stop_deferred")
                         continue

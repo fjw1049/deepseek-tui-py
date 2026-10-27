@@ -10,6 +10,9 @@ from deepseek_tui.surfaces import surface_tools
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
 
 FINALIZATION_TIMEOUT_SECONDS = 60
+# A round after computer use carries screenshots, which take the vision helper longer.
+CUA_FINALIZATION_TIMEOUT_SECONDS = 180
+CUA_EVIDENCE_HINT = " After computer use, a cua_observe result is the evidence to cite."
 FINALIZATION_MAX_TOKENS = 4096
 
 CONTROL_TOOLS = {"finish_task", "request_task_tools"}
@@ -44,7 +47,7 @@ class TaskDelivery:
     # A stop without a tool call first gets one round, with all tools, to take its next step.
     continue_nudged: bool = False
     stop_reminded: bool = False
-    finalization_attempted: bool = False
+    finalization_rounds: int = 0
     draft_answer: str = ""
     catalog: set[str] = field(default_factory=set)
 
@@ -54,16 +57,26 @@ class TaskDelivery:
         if isinstance(observation, dict) and metadata.get("cua_verifies_target", False):
             self.cua_observation_evidence[reference] = observation
 
+    def finalizing(self) -> frozenset[str]:
+        # finish_task requires a fresh observation after computer use; keep the read-only
+        # observation tool, or that completion could never be supplied.
+        return frozenset({"finish_task", "cua_observe"} if self.cua_used else {"finish_task"})
+
+    def finalization_exhausted(self) -> bool:
+        # After computer use, finalization may need one observation round before finish_task.
+        return self.finalization_rounds >= (2 if self.cua_used else 1)
+
     def allows(self, name: str) -> bool:
         if self.active and self.stop_reminded:
-            return name == "finish_task"
+            return name in self.finalizing()
         return not self.focused or name in FOCUS_TOOLS | self.extra_tools
 
     def tools(self, catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Focus is enforced at execution (allows); keeping the advertised list
         # stable preserves the provider prefix cache across focus changes.
         if self.active and self.stop_reminded:
-            return [t for t in catalog if (t.get("function") or t)["name"] == "finish_task"]
+            allowed = self.finalizing()
+            return [t for t in catalog if (t.get("function") or t)["name"] in allowed]
         names = {(t.get("function") or t)["name"] for t in catalog}
         # Where a UI surface is offered, the controls stay listed: adding them at the first UI
         # call changed the tool list mid-task and voided the prefix cache twice per task.
@@ -227,6 +240,7 @@ class FinishTaskTool(ToolSpec):
                 "Available references: " + json.dumps(sorted(state.evidence)) +
                 ". Choose only results supporting the answer; "
                 "use partial/blocked for unverified work."
+                + (CUA_EVIDENCE_HINT if state.cua_used else "")
             )
         browser = context.metadata.get("browser_service") if state.browser_used else None
         thread_id = str(context.metadata.get("runtime_thread_id"))
@@ -250,7 +264,8 @@ class FinishTaskTool(ToolSpec):
                 raise ToolError(
                     "Resolve the pending browser interaction before claiming completion")
             if not evidence or remaining:
-                raise ToolError("Completed requires evidence and no remaining work")
+                raise ToolError("Completed requires evidence and no remaining work."
+                                + (CUA_EVIDENCE_HINT if state.cua_used and not evidence else ""))
             if state.cua_used:
                 observations = set(evidence) & state.cua_observation_evidence.keys()
                 if not observations:
