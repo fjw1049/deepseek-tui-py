@@ -23,7 +23,7 @@ type VideoWithFrames = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: () => void) => number
 }
 
-/** A just-launched app may not show its window yet: look once more after this long. */
+/** Recheck missing windows while the preview is active, including slow app launches. */
 export const NO_WINDOW_RECHECK_MS = 1_500
 
 /**
@@ -49,14 +49,14 @@ class WindowStream {
     private readonly report: (patch: Partial<CuaWindowStreamState>) => void
   ) {}
 
-  async target(appId: string, recheckIfMissing = true): Promise<void> {
+  async target(appId: string): Promise<void> {
     this.clearRecheck()
     const generation = ++this.generation
     let result: CuaPreviewWindowResult
     try {
       result = await window.dsGui.resolveCuaPreviewWindow(appId)
     } catch {
-      result = { status: 'unsupported' }
+      result = { status: 'lookup-failed' }
     }
     if (generation !== this.generation) return
     this.report({ appName: result.appName ?? null, icon: result.icon ?? null })
@@ -69,8 +69,8 @@ class WindowStream {
         canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
       }
       this.report({ status: result.status === 'ok' ? 'no-window' : result.status, hasFrame: false })
-      if (recheckIfMissing && result.status === 'no-window') {
-        this.recheck = window.setTimeout(() => void this.target(appId, false), NO_WINDOW_RECHECK_MS)
+      if (result.status === 'no-window') {
+        this.recheck = window.setTimeout(() => void this.target(appId), NO_WINDOW_RECHECK_MS)
       }
       return
     }
@@ -112,10 +112,12 @@ class WindowStream {
     this.report({ status: 'ok', hasFrame: false })
     stream.getVideoTracks()[0]?.addEventListener('ended', () => {
       if (this.stream !== stream) return
-      // The window closed: remember it and wait for the next call to find another.
+      // The window closed: remember it and look for a replacement while active.
       this.dead.add(sourceId)
       this.stopCapture()
       this.report({ status: 'no-window', hasFrame: false })
+      this.clearRecheck()
+      this.recheck = window.setTimeout(() => void this.target(appId), NO_WINDOW_RECHECK_MS)
     })
     this.draw(stream)
   }
@@ -235,7 +237,11 @@ export function useCuaWindowStream(input: {
   useEffect(() => {
     const retry = (): void => { if (active && appId) controller.current?.retry(appId) }
     window.addEventListener('cua-permission-recheck', retry)
-    return () => window.removeEventListener('cua-permission-recheck', retry)
+    window.addEventListener('cua-preview-recheck', retry)
+    return () => {
+      window.removeEventListener('cua-permission-recheck', retry)
+      window.removeEventListener('cua-preview-recheck', retry)
+    }
   }, [active, appId])
 
   return state

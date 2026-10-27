@@ -28,7 +28,7 @@ export function CuaPreviewRailSlot(): ReactElement {
   const ref = useCallback((element: HTMLDivElement | null) => {
     useRailSlot.setState({ slot: element })
   }, [])
-  return <div ref={ref} className="ds-cua-preview-slot mt-3 flex justify-center empty:mt-0" />
+  return <div ref={ref} className="ds-cua-preview-slot mt-4 flex w-full justify-center empty:mt-0" />
 }
 
 function useSlotWidth(slot: HTMLElement | null): number {
@@ -146,7 +146,7 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
   if (!threadId || !session) return null
   const card = <section ref={cardRef} hidden={compactRail && !peeking} aria-label={t('cuaPreviewRegion')} data-cua-preview={threadId}
     style={{ height, ...(compactRail ? anchor : {}) }}
-    className={`overflow-hidden ${animate ? 'transition-[height] duration-200' : ''} ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none rounded-xl border border-ds-border bg-white dark:bg-ds-card text-ds-ink shadow-panel ${
+    className={`ds-cua-preview-card overflow-hidden ${animate ? 'transition-[height] duration-200' : ''} ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none rounded-[18px] border text-ds-ink ${
       compactRail ? 'fixed z-50' : slotUsable ? 'relative w-full' : 'relative w-full max-w-80'
     }`}>
     <div ref={contentRef} className="max-h-[calc(100vh-7rem)] overflow-y-auto">
@@ -194,7 +194,9 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
       // Raising the app can close menus or open a window: the assistant observes again first.
       await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/cua/raised`, 'POST')
         .catch(() => undefined)
-      setOpenAppFailed(!await window.dsGui.openCuaApp(session.appId))
+      const opened = await window.dsGui.openCuaApp(session.appId)
+      setOpenAppFailed(!opened)
+      if (opened) window.dispatchEvent(new Event('cua-preview-recheck'))
     } catch {
       setOpenAppFailed(true)
     } finally {
@@ -250,7 +252,7 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
   const frameSize = useStill && still.status === 'ready' ? still.frameSize : live.frameSize ?? still.frameSize
 
   // Capture problems are explained only inside the viewer.
-  const problem = live.status === 'permission' || live.status === 'failed' || live.status === 'no-window' || live.status === 'ambiguous' ? live.status : null
+  const problem = live.status === 'permission' || live.status === 'failed' || live.status === 'no-window' || live.status === 'ambiguous' || live.status === 'lookup-failed' ? live.status : null
   useEffect(() => {
     if (!expanded || !shown || session.surface !== 'app' || phase === 'ended' || window.dsGui.platform !== 'darwin' || typeof window.dsGui.getCuaScreenPermission !== 'function') return
     let cancelled = false
@@ -314,10 +316,15 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
         <p>{allowed === false ? t('cuaPreviewDisabled')
           : problem === 'permission' ? t('cuaPreviewPermission')
             : problem === 'ambiguous' ? t('cuaPreviewAmbiguous')
+            : problem === 'lookup-failed' ? t('cuaPreviewLookupFailed')
             : problem === 'no-window' ? t('cuaPreviewNoWindow')
               : problem === 'failed' || still.status === 'error' ? t('cuaPreviewFailed')
                 : phase === 'ended' ? t('cuaPreviewNoRecordedFrame')
                   : live.status === 'unsupported' ? t('cuaPreviewUnsupported') : t('cuaPreviewWaitingFrame')}</p>
+        {problem && shown && hasFrame && <p>{t('cuaPreviewStillFallback')}</p>}
+        {problem && problem !== 'permission' && shown && streaming && <button type="button"
+          onClick={() => window.dispatchEvent(new Event('cua-preview-recheck'))}
+          className="rounded-md border border-ds-border px-2.5 py-1 text-ds-ink hover:bg-ds-hover">{t('cuaPreviewRetry')}</button>}
         {problem === 'permission' && shown && <button type="button" onClick={onOpenPermissions}
           className="rounded-md border border-ds-border px-2.5 py-1 text-ds-ink hover:bg-ds-hover">{t('cuaPreviewOpenSettings')}</button>}
       </div>}

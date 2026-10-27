@@ -70,10 +70,14 @@ function listAppWindows(bundleId: string): Promise<AppWindows | null> {
       ['-l', 'JavaScript', '-e', LIST_APP_WINDOWS, bundleId],
       { timeout: 5_000 },
       (error, stdout) => {
-        if (error) return resolve(null)
+        if (error) {
+          console.warn('CUA window lookup failed:', error)
+          return resolve(null)
+        }
         try {
           resolve(JSON.parse(stdout) as AppWindows)
-        } catch {
+        } catch (error) {
+          console.warn('CUA window lookup returned invalid data:', error)
           resolve(null)
         }
       }
@@ -99,7 +103,8 @@ export async function resolveCuaPreviewWindow(bundleId: string): Promise<CuaPrev
   const found = await listAppWindows(bundleId)
   const identity = { appName: found?.name || undefined, icon: found ? await appIcon(found.path) : null }
   if (access === 'denied' || access === 'restricted') return { status: 'permission', ...identity }
-  const windowId = found ? pickPreviewWindow(found.windows) : null
+  if (!found) return { status: 'lookup-failed', ...identity }
+  const windowId = pickPreviewWindow(found.windows)
   if (windowId === null) return { status: found?.windows.some(w => w.layer === 0 && w.alpha > 0 && w.width >= MIN_WINDOW_SIDE && w.height >= MIN_WINDOW_SIDE) ? 'ambiguous' : 'no-window', ...identity }
   // Every call re-checks the window; only a different window needs the capturer's list.
   if (listed?.windowId === windowId) return { status: 'ok', sourceId: listed.sourceId, windowId, ...identity }
@@ -107,7 +112,11 @@ export async function resolveCuaPreviewWindow(bundleId: string): Promise<CuaPrev
   // system's first-use Screen Recording prompt.
   const sources = await desktopCapturer
     .getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } })
-    .catch(() => [])
+    .catch((error) => {
+      console.warn('CUA capture source lookup failed:', error)
+      return null
+    })
+  if (!sources) return { status: 'lookup-failed', ...identity }
   const source = sources.find((s) => s.id.startsWith(`window:${windowId}:`))
   if (!source) return { status: access === 'granted' ? 'no-window' : 'permission', ...identity }
   listed = { windowId, sourceId: source.id }

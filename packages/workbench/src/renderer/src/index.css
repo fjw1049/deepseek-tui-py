@@ -3944,7 +3944,7 @@ samp {
   display: flex;
   align-items: center;
   gap: 1px;
-  min-height: 28px;
+  min-height: 36px;
   min-width: 0;
 }
 
@@ -3965,12 +3965,12 @@ samp {
 .ds-dev-browser__tab {
   display: flex;
   max-width: 148px;
-  height: 22px;
+  height: 30px;
   flex-shrink: 0;
   align-items: center;
-  gap: 1px;
-  padding: 0 3px 0 7px;
-  border-radius: 7px;
+  gap: 4px;
+  padding: 0 4px 0 10px;
+  border-radius: 8px;
   color: var(--ds-text-muted, var(--ds-text-faint));
   transition:
     background-color 140ms ease,
@@ -3983,32 +3983,24 @@ samp {
   color: var(--ds-text);
 }
 
-.ds-dev-browser__tab--active {
-  background: color-mix(in srgb, var(--ds-card-strong) 92%, transparent);
+.ds-dev-browser__tab--active,
+.ds-dev-browser__tab--active:hover {
+  background: var(--ds-surface-hover);
   color: var(--ds-text);
-  box-shadow:
-    0 0 0 0.5px color-mix(in srgb, var(--ds-text) 8%, transparent),
-    0 1px 2px color-mix(in srgb, var(--ds-text) 6%, transparent);
-}
-
-[data-theme='dark'] .ds-dev-browser__tab--active {
-  background: color-mix(in srgb, #fff 9%, transparent);
-  box-shadow:
-    0 0 0 0.5px color-mix(in srgb, #fff 10%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.28);
 }
 
 .ds-dev-browser__tab-main {
   display: flex;
   min-width: 0;
   flex: 1;
+  height: 30px;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
 }
 
 .ds-dev-browser__tab-icon {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
   opacity: 0.72;
 }
@@ -4022,20 +4014,20 @@ samp {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  line-height: 1.2;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 18px;
 }
 
 .ds-dev-browser__tab-close {
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 4px;
   color: var(--ds-text-faint);
   opacity: 0;
   transition:
@@ -4144,7 +4136,6 @@ samp {
   background: color-mix(in srgb, var(--ds-text) 6%, transparent);
 }
 
-[data-theme='light'] .ds-dev-browser__tab--active,
 [data-theme='light'] .ds-dev-browser__omnibox,
 [data-theme='light'] .ds-dev-browser__omnibox:focus,
 [data-theme='light'] .ds-dev-browser__omnibox:focus-visible {
@@ -7569,7 +7560,8 @@ select:focus-visible,
 }
 
 /* One quiet surface; structure comes from the controls inside, not nested cards. */
-.ds-operation-dock.ds-hero-panel.ds-glass {
+.ds-operation-dock.ds-hero-panel.ds-glass,
+.ds-cua-preview-card {
   background: var(--ds-card-strong);
   border-width: 1.5px;
   border-color: rgba(0, 0, 0, 0.16);
@@ -7578,7 +7570,8 @@ select:focus-visible,
     0 8px 24px rgba(0, 0, 0, 0.07);
 }
 
-[data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
+[data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass,
+[data-theme='dark'] .ds-cua-preview-card {
   background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
   border-width: 1.5px;
   border-color: rgba(255, 255, 255, 0.2);
@@ -8154,7 +8147,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   line-height: 1.55;
 }
 
-.ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
+.ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover,
+.ds-cua-preview-card:hover {
   transform: none;
   border-color: rgba(0, 0, 0, 0.16);
   box-shadow:
@@ -8162,7 +8156,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
     0 6px 18px rgba(0, 0, 0, 0.08);
 }
 
-[data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover {
+[data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-content-card--interactive:hover,
+[data-theme='dark'] .ds-cua-preview-card:hover {
   border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.32),

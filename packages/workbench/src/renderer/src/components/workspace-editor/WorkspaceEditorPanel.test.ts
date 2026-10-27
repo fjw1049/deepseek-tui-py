@@ -60,14 +60,16 @@ it('lets a left-side tree drag shut and hands the collapse to its owner', async 
   document.body.append(host)
   const root = createRoot(host)
   const onTreeCollapse = vi.fn()
+  let lastX = 300
   const dragTo = async (target: number, startWidth: number) => {
-    await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 300 + target - startWidth })))
+    lastX = 300 + target - startWidth
+    await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: lastX })))
   }
   const press = async () => {
     await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))
   }
   const release = async () => {
-    await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { clientX: lastX })))
   }
   try {
     await act(async () => root.render(createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [], onTreeCollapse })))
@@ -142,7 +144,7 @@ it('shows a persistent right tree with no files open, supports selection, toggli
     await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))
     expect(host.querySelector('.fixed.cursor-col-resize')).toBeTruthy()
     await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 280 })))
-    await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { clientX: 280 })))
     expect(host.querySelector('.fixed.cursor-col-resize')).toBeNull()
     expect(parseFloat(tree.parentElement!.style.width)).toBe(width + 20)
     await click('.ds-workspace-file-tree__row')
@@ -174,12 +176,12 @@ it('shows a persistent right tree with no files open, supports selection, toggli
     await moveToWidth(12)
     // Reversing before release cancels collapse and keeps the chosen narrow width.
     await moveToWidth(100)
-    await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { clientX: 300 + parseFloat(restoredWidth) - 100 })))
     expect(host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width).toBe('100px')
     await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))
     await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 1000 })))
     expect(host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width).toBe('0px')
-    await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { clientX: 1000 })))
     expect(host.querySelector('.ds-workspace-file-tree')).toBeNull()
     expect(host.querySelector('.fixed.cursor-col-resize')).toBeNull()
     await click('[aria-label="workspaceEditorBrowseFiles"]')
@@ -227,7 +229,10 @@ it('keeps the code surface mounted while reading another code file', async () =>
 })
 
 
-it.each(['pointerup', 'pointercancel', 'blur'])('coalesces tree previews without rendering content and flushes on %s', async ending => {
+it.each([1, 0.88].flatMap(scale => ['pointerup', 'pointercancel', 'blur'].map(ending => ({ scale, ending }))))('coalesces tree previews at $scale scale and flushes on $ending', async ({ scale, ending }) => {
+  window.localStorage.removeItem('deepseekgui.layout.workspaceEditorTreeWidth')
+  const previousScale = document.documentElement.style.getPropertyValue('--ds-ui-scale')
+  document.documentElement.style.setProperty('--ds-ui-scale', String(scale))
   const previousGui = window.dsGui
   const frames = new Map<number, FrameRequestCallback>()
   let frameId = 0
@@ -248,6 +253,7 @@ it.each(['pointerup', 'pointercancel', 'blur'])('coalesces tree previews without
       createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [] }))))
     const rail = host.querySelector('.ds-editor-tree-rail') as HTMLElement
     const initialWidth = parseFloat(rail.style.width)
+    vi.spyOn(rail, 'getBoundingClientRect').mockReturnValue({ width: initialWidth * scale } as DOMRect)
     await pointer('pointerdown', 300)
     render.mockClear()
     await pointer('pointermove', 310)
@@ -255,18 +261,19 @@ it.each(['pointerup', 'pointercancel', 'blur'])('coalesces tree previews without
     expect(parseFloat(rail.style.width)).toBe(initialWidth)
     expect(frames.size).toBe(1)
     await act(async () => { for (const callback of [...frames.values()]) callback(0) })
-    expect(parseFloat(rail.style.width)).toBe(initialWidth + 20)
+    expect(parseFloat(rail.style.width)).toBeCloseTo(initialWidth + 20 / scale)
     expect(render).not.toHaveBeenCalled()
     await pointer('pointermove', 330)
     if (ending === 'blur') await act(async () => window.dispatchEvent(new Event('blur')))
     else await pointer(ending, 330)
-    expect(parseFloat(rail.style.width)).toBe(initialWidth + 30)
+    expect(parseFloat(rail.style.width)).toBeCloseTo(initialWidth + 30 / scale)
     expect(frames.size).toBe(0)
     expect(host.querySelector('.fixed.cursor-col-resize')).toBeNull()
   } finally {
     await act(async () => root.unmount())
     host.remove()
     window.dsGui = previousGui
+    document.documentElement.style.setProperty('--ds-ui-scale', previousScale)
     vi.unstubAllGlobals()
   }
 })

@@ -287,7 +287,7 @@ export type { UsageQueryResult, UsageRange } from './usage-ledger'
 
 /** The window a computer-use preview may capture for one app (macOS). */
 export type CuaPreviewWindowResult = {
-  status: 'ok' | 'permission' | 'no-window' | 'ambiguous' | 'unsupported'
+  status: 'ok' | 'permission' | 'no-window' | 'ambiguous' | 'lookup-failed' | 'unsupported'
   /** Capturer source id of exactly that window; only with status `ok`. */
   sourceId?: string
   windowId?: number

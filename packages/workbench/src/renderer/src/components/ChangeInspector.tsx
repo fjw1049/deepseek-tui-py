@@ -1,3 +1,4 @@
+import { createPanelWidthDrag } from '../lib/panel-width-drag'
 import { createFrameQueue } from '../lib/frame-queue'
 import { GlobalErrorNotice } from './GlobalFeedback'
 import {
@@ -1109,7 +1110,7 @@ export function ChangeInspector({
   const resizeQueueRef = useRef<ReturnType<typeof createFrameQueue> | null>(null)
   resizeQueueRef.current ??= createFrameQueue()
   const { queue: queueResize, flush: flushResize } = resizeQueueRef.current
-  const sideListDrag = useRef<{ pointerId: number; start: number; width: number; previousWidth: number; pendingWidth: number; chromeWidth: number } | null>(null)
+  const sideListDrag = useRef<{ pointerId: number; moveWidth: (clientX: number) => number; previousWidth: number; pendingWidth: number; chromeWidth: number } | null>(null)
   const sideListCollapsed = sideListWidth === FILE_LIST_COLLAPSED
 
   const resizeSideList = (width: number): number =>
@@ -1131,7 +1132,7 @@ export function ChangeInspector({
     flushResize()
     sideListDrag.current = null
     const width = event.type === 'pointercancel' ? drag.previousWidth
-      : event.type === 'pointerup' ? resizeSideList(drag.width + drag.start - event.clientX)
+      : event.type === 'pointerup' ? drag.moveWidth(event.clientX)
         : drag.pendingWidth
     previewSideList(width, event.currentTarget)
     setSideListWidth(width)
@@ -1874,8 +1875,8 @@ export function ChangeInspector({
                   event.currentTarget.setPointerCapture(event.pointerId)
                   sideListDrag.current = {
                     pointerId: event.pointerId,
-                    start: event.clientX,
-                    width: sideListPaneRef.current?.getBoundingClientRect().width ?? sideListWidth,
+                    moveWidth: createPanelWidthDrag(sideListPaneRef.current!, event.clientX, sideListWidth,
+                      FILE_LIST_COLLAPSED, FILE_LIST_MAX, -1, 0.6),
                     previousWidth: sideListWidth,
                     pendingWidth: sideListWidth,
                     chromeWidth: sideListWidth
@@ -1888,7 +1889,7 @@ export function ChangeInspector({
                     finishSideListResize(event)
                     return
                   }
-                  const width = resizeSideList(drag.width + drag.start - event.clientX)
+                  const width = drag.moveWidth(event.clientX)
                   drag.pendingWidth = width
                   const handle = event.currentTarget
                   queueResize(() => {

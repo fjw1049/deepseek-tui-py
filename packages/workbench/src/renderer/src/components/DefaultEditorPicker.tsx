@@ -53,6 +53,7 @@ export function DefaultEditorPicker({ onOpen, targetLabel }: {
   const picker = (
     <SettingsSelect
       className={onOpen ? 'h-7 w-32 shrink-0' : ''}
+      wrapperClassName="!bg-transparent [&:not(:has(:focus-visible))]:border-transparent [&:not(:has(:focus-visible))]:shadow-none [&>button]:text-left [&>button>span:first-child]:mr-1"
       value={selectedEditorId}
       disabled={editors.length === 0}
       aria-label={t('editorPickerTitle')}
@@ -65,11 +66,11 @@ export function DefaultEditorPicker({ onOpen, targetLabel }: {
             alt=""
             aria-hidden
             draggable={false}
-            className="h-4 w-4 shrink-0 object-contain"
+            className="h-5 w-5 shrink-0 object-contain"
             onError={() => setFailedIconIds((previous) => new Set(previous).add(editor.id))}
           />
         ) : (
-          <Icon className="h-4 w-4 shrink-0 text-ds-muted" aria-hidden />
+          <Icon className="h-5 w-5 shrink-0 text-ds-muted" aria-hidden />
         )
       }}
       onChange={(event) => {

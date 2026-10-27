@@ -13,7 +13,7 @@ vi.mock('node:os', () => ({ release: () => '25.0.0' }))
 const execute = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ execFile: execute }))
 
-const { pickPreviewWindow, registerCuaWindowPreviewIpc } = await import('./cua-window-preview')
+const { pickPreviewWindow, registerCuaWindowPreviewIpc, resolveCuaPreviewWindow } = await import('./cua-window-preview')
 
 const window = (id: number, width = 1200, height = 800, layer = 0, alpha = 1) => ({ id, width, height, layer, alpha })
 
@@ -124,4 +124,27 @@ it.skipIf(process.platform !== 'darwin')('opens the recovery pane when denied ca
   electron.desktopCapturer.getSources.mockRejectedValueOnce(new Error('Failed to get sources.'))
   await handler()({})
   expect(electron.shell.openExternal).toHaveBeenCalledWith('x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture')
+})
+
+it.skipIf(process.platform !== 'darwin').each(['error', 'invalid'])('reports lookup failure for %s instead of a missing window', async mode => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  electron.systemPreferences.getMediaAccessStatus.mockReturnValue('granted')
+  execute.mockImplementation((_file, _args, _options, callback) =>
+    callback(mode === 'error' ? new Error('lookup timed out') : null, 'invalid json'))
+  expect(await resolveCuaPreviewWindow('com.soda.music')).toMatchObject({ status: 'lookup-failed' })
+  vi.mocked(console.warn).mockRestore()
+})
+
+it.skipIf(process.platform !== 'darwin')('distinguishes an empty window list from a capture enumeration error', async () => {
+  electron.systemPreferences.getMediaAccessStatus.mockReturnValue('granted')
+  execute.mockImplementation((_file, _args, _options, callback) =>
+    callback(null, JSON.stringify({ name: 'Music', path: '', windows: [] })))
+  expect(await resolveCuaPreviewWindow('com.soda.music')).toMatchObject({ status: 'no-window' })
+  execute.mockImplementation((_file, _args, _options, callback) =>
+    callback(null, JSON.stringify({ name: 'Music', path: '', windows: [window(99)] })))
+  electron.desktopCapturer.getSources.mockRejectedValueOnce(new Error('enumeration failed'))
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  expect(await resolveCuaPreviewWindow('com.soda.music')).toMatchObject({ status: 'lookup-failed' })
+  expect(warning).toHaveBeenCalled()
+  warning.mockRestore()
 })

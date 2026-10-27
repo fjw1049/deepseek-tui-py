@@ -110,7 +110,8 @@ it('keeps file, change and chat contents when switching activities and toggling 
 })
 
 
-it.each(['ideChatRailResize', 'inspectorResizeSplit'])('previews %s without rendering the editor and commits the final width', async label => {
+it.each([{ label: 'ideChatRailResize', scale: 1 }, { label: 'inspectorResizeSplit', scale: 1 }, { label: 'inspectorResizeSplit', scale: 0.88 }])('previews $label at $scale scale without rendering the editor', async ({ label, scale }) => {
+  document.documentElement.style.setProperty('--ds-ui-scale', String(scale))
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const storage = new Map<string, string>()
   vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) })
@@ -131,10 +132,11 @@ it.each(['ideChatRailResize', 'inspectorResizeSplit'])('previews %s without rend
     const handle = host.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
     const rail = handle.parentElement!
     const start = parseFloat(rail.style.width)
+    vi.spyOn(rail, 'getBoundingClientRect').mockReturnValue({ width: start * scale } as DOMRect)
     const direction = label === 'ideChatRailResize' ? -1 : 1
     const pointer = async (type: string, delta: number) => {
       await act(async () => (type === 'pointerdown' ? handle : window).dispatchEvent(new PointerEvent(type, {
-        bubbles: true, pointerId: 3, button: 0, clientX: 500 + direction * delta
+        bubbles: true, pointerId: 3, button: 0, clientX: 500 + direction * delta * scale
       })))
     }
     await pointer('pointerdown', 0)
@@ -143,11 +145,11 @@ it.each(['ideChatRailResize', 'inspectorResizeSplit'])('previews %s without rend
     await pointer('pointermove', 20)
     expect(frames.size).toBe(1)
     await act(async () => { for (const callback of [...frames.values()]) callback(0) })
-    expect(parseFloat(rail.style.width)).toBe(start + 20)
+    expect(parseFloat(rail.style.width)).toBeCloseTo(start + 20)
     expect(render).not.toHaveBeenCalled()
     await pointer('pointermove', 30)
     await pointer('pointerup', 30)
-    expect(parseFloat(rail.style.width)).toBe(start + 30)
+    expect(parseFloat(rail.style.width)).toBeCloseTo(start + 30)
     expect(frames.size).toBe(0)
     if (label === 'ideChatRailResize') {
       expect(rail.querySelector<HTMLElement>('.ds-ide-chat-rail__surface')!.style.width).toBe(`${start + 30}px`)
@@ -156,6 +158,7 @@ it.each(['ideChatRailResize', 'inspectorResizeSplit'])('previews %s without rend
   } finally {
     await act(async () => root.unmount())
     host.remove()
+    document.documentElement.style.removeProperty('--ds-ui-scale')
     vi.unstubAllGlobals()
   }
 })

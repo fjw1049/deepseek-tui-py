@@ -1,3 +1,4 @@
+import { createPanelWidthDrag } from '../../lib/panel-width-drag'
 import {
   lazy,
   Suspense,
@@ -215,7 +216,7 @@ export function IdeWorkspaceLayout({
   } | null>(null)
   const changesListResizeRef = useRef<{
     pointerId: number
-    startX: number
+    moveWidth: (clientX: number) => number
     startWidth: number
     pendingWidth: number
   } | null>(null)
@@ -342,7 +343,7 @@ export function IdeWorkspaceLayout({
     const rail = event.currentTarget.parentElement!
     changesListResizeRef.current = {
       pointerId: event.pointerId,
-      startX: event.clientX,
+      moveWidth: createPanelWidthDrag(rail, event.clientX, changesListWidth, 0, CHANGES_LIST_MAX, 1),
       startWidth: changesListWidth,
       pendingWidth: changesListWidth
     }
@@ -350,13 +351,14 @@ export function IdeWorkspaceLayout({
       const state = changesListResizeRef.current
       if (!state || moveEvent.pointerId !== state.pointerId) return
       // Follow the pointer past CHANGES_LIST_MIN so the list can be dragged shut.
-      const next = clampChangesListWidth(state.startWidth + moveEvent.clientX - state.startX, 0)
+      const next = state.moveWidth(moveEvent.clientX)
       state.pendingWidth = next
       queueResize(() => { rail.style.width = `${next}px` })
     }
     const onEnd = (endEvent?: Event): void => {
       const state = changesListResizeRef.current
       if (!state || (endEvent instanceof PointerEvent && endEvent.pointerId !== state.pointerId)) return
+      if (endEvent instanceof PointerEvent && endEvent.type === 'pointerup') onMove(endEvent)
       const collapsed = state.pendingWidth < CHANGES_LIST_COLLAPSE_THRESHOLD
       flushResize()
       changesListResizeRef.current = null

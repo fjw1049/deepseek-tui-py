@@ -1,3 +1,4 @@
+import { createPanelWidthDrag } from '../../lib/panel-width-drag'
 import { createFrameQueue } from '../../lib/frame-queue'
 import { copyText } from '../../lib/copy-text'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
@@ -837,9 +838,9 @@ export function WorkspaceEditorPanel({
 
     const pointerId = event.pointerId
     const rail = event.currentTarget.parentElement!
-    const startX = event.clientX
-    const startWidth = rail.getBoundingClientRect().width || treeWidth
-    let pendingWidth = startWidth
+    const moveWidth = createPanelWidthDrag(rail, event.clientX, treeWidth,
+      treeCollapsible ? 0 : TREE_MIN, TREE_MAX, collapsibleTree ? -1 : 1, collapsibleTree ? 0.5 : 1)
+    let pendingWidth = moveWidth(event.clientX)
     let collapseOnRelease = false
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
@@ -849,10 +850,10 @@ export function WorkspaceEditorPanel({
 
     const onMove = (moveEvent: PointerEvent): void => {
       if (moveEvent.pointerId !== pointerId) return
-      const width = startWidth + (moveEvent.clientX - startX) * (collapsibleTree ? -1 : 1)
+      const width = moveWidth(moveEvent.clientX)
       collapseOnRelease = treeCollapsible && width < TREE_COLLAPSE_THRESHOLD
       // Follow the pointer all the way to the edge instead of stalling at TREE_MIN.
-      pendingWidth = clampTreeWidth(width, treeCollapsible ? 0 : TREE_MIN)
+      pendingWidth = width
       queueResize(() => { rail.style.width = `${pendingWidth}px` })
     }
 
@@ -870,6 +871,7 @@ export function WorkspaceEditorPanel({
 
     const onUp = (endEvent: Event): void => {
       if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
+      if (endEvent instanceof PointerEvent && endEvent.type === 'pointerup') onMove(endEvent)
       endDrag()
       if (collapseOnRelease) {
         if (collapsibleTree) setTreeOpen(false)

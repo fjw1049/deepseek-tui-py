@@ -6,13 +6,13 @@ import { CuaPreview, CuaPreviewRailSlot } from './CuaPreview'
 import { noteCuaTurnEnded, useCuaPreviewStore, type CuaPreviewSession } from '../../store/cua-preview-store'
 
 const t = (key: string) => key
-const capture = vi.hoisted(() => ({ enabled: false, hasFrame: false }))
+const capture = vi.hoisted(() => ({ enabled: false, hasFrame: false, status: 'permission', stillReady: false }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t }) }))
 vi.mock('./use-cua-window-stream', () => ({ useCuaWindowStream: (input: { enabled: boolean }) => {
   capture.enabled = input.enabled
-  return { status: capture.hasFrame ? 'ok' : 'permission', hasFrame: capture.hasFrame, frameSize: null, appName: null, icon: null }
+  return { status: capture.hasFrame ? 'ok' : capture.status, hasFrame: capture.hasFrame, frameSize: null, appName: null, icon: null }
 } }))
-vi.mock('./use-cua-still-frame', () => ({ useCuaStillFrame: () => ({ status: 'idle', frameSize: null }) }))
+vi.mock('./use-cua-still-frame', () => ({ useCuaStillFrame: () => ({ status: capture.stillReady ? 'ready' : 'idle', frameSize: null }) }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let root: ReturnType<typeof createRoot>
 let host: HTMLDivElement
@@ -25,6 +25,8 @@ const collapse = () => act(async () => { (document.querySelector('[aria-label="c
 beforeEach(async () => {
   vi.useFakeTimers()
   capture.hasFrame = false
+  capture.status = 'permission'
+  capture.stillReady = false
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   session = { phase: 'live', turnId: 'turn', appId: 'A', surface: 'app', label: 'Fill shipping address', still: null, revision: 0 }
   useCuaPreviewStore.setState({ sessions: { thread: session } })
@@ -65,6 +67,8 @@ it('waits for a frame while capturing and keeps controls after a manual collapse
 })
 
 it('opens the bound app without transferring desktop control and reports launch failures', async () => {
+  const recheck = vi.fn()
+  window.addEventListener('cua-preview-recheck', recheck)
   const openApp = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
   window.dsGui.openCuaApp = openApp
   await expand()
@@ -73,10 +77,13 @@ it('opens the bound app without transferring desktop control and reports launch 
   expect(button.disabled).toBe(false)
   await act(async () => button.click())
   expect(openApp).toHaveBeenCalledWith('A')
+  expect(recheck).toHaveBeenCalledOnce()
   const posts = request.mock.calls.filter(call => call[1] === 'POST').map(call => call[0])
   expect(posts).toEqual(['/v1/threads/thread/cua/raised'])
   await act(async () => button.click())
   const notice = document.querySelector('[role="status"][title="cuaPreviewOpenAppFailed"]')!
+  expect(recheck).toHaveBeenCalledOnce()
+  window.removeEventListener('cua-preview-recheck', recheck)
   expect(notice.textContent).toBe('cuaPreviewOpenAppFailedShort')
   expect(notice.parentElement?.parentElement).toBe(button.parentElement)
   expect(document.querySelector('[role="alert"]')).toBeNull()
@@ -324,4 +331,19 @@ it('auto-opens the compact preview on the first frame and respects manual dismis
   } finally {
     Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent')
   }
+})
+
+it('explains the fallback screenshot and offers a preview-only retry', async () => {
+  capture.status = 'lookup-failed'
+  capture.stillReady = true
+  await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, revision: 1 } } }))
+  expect(document.body.textContent).toContain('cuaPreviewLookupFailed')
+  expect(document.body.textContent).toContain('cuaPreviewStillFallback')
+  expect(document.body.textContent).not.toContain('cuaPreviewNoWindow')
+  const recheck = vi.fn()
+  window.addEventListener('cua-preview-recheck', recheck)
+  await act(async () => find('cuaPreviewRetry').click())
+  expect(recheck).toHaveBeenCalledOnce()
+  expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0)
+  window.removeEventListener('cua-preview-recheck', recheck)
 })

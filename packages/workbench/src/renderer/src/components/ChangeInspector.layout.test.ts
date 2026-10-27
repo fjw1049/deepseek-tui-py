@@ -550,3 +550,30 @@ it('keeps the file-list toggle in the header while the list and separator start 
   expect(pane.classList.contains('mt-9')).toBe(false)
   expect(container.querySelector('[data-expand-file-list]')).toBeNull()
 })
+
+
+it('tracks the expanded list at UI scale and reverses immediately at the CSS width limit', () => {
+  document.documentElement.style.setProperty('--ds-ui-scale', '0.88')
+  try {
+    act(() => button('inspectorExpandDiff').click())
+    const pane = listPane()
+    const handle = container.querySelector<HTMLDivElement>('[aria-label="inspectorResizeFileList"]')!
+    handle.setPointerCapture = vi.fn()
+    vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue({ width: 280 * 0.88 } as DOMRect)
+    vi.spyOn(pane.parentElement!, 'clientWidth', 'get').mockReturnValue(600)
+    const drag = (type: string, clientX: number): void => {
+      act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })); flushFrames() })
+    }
+    drag('pointerdown', 500)
+    drag('pointermove', 491.2)
+    expect(parseFloat(pane.style.width)).toBeCloseTo(290)
+    drag('pointermove', 100)
+    expect(parseFloat(pane.style.width)).toBe(360)
+    drag('pointermove', 108.8)
+    expect(parseFloat(pane.style.width)).toBeCloseTo(350)
+    drag('pointerup', 117.6)
+    expect(parseFloat(pane.style.width)).toBeCloseTo(340)
+  } finally {
+    document.documentElement.style.removeProperty('--ds-ui-scale')
+  }
+})
