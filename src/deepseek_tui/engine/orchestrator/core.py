@@ -3589,7 +3589,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     fired=checklist_gate_fires,
                     last_open=checklist_gate_last_open,
                 )
-                if gate_summary is not None:
+                if gate_summary is not None and delivery.outcome is None:
                     delivery.outcome = None
                     checklist_gate_fires += 1
                     checklist_gate_last_open = gate_summary
@@ -3634,6 +3634,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     stop_decision = aggregate_hook_decision(stop_results)
                     if stop_decision.blocked:
                         delivery.outcome = None
+                        delivery.stop_reminded = delivery.continue_nudged = False
+                        delivery.finalization_rounds = 0
                         stop_hook_active = True
                         stop_hook_fires += 1
                         reason = stop_decision.reason or "A Stop hook blocked ending the turn."

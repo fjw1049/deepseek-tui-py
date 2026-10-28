@@ -124,9 +124,30 @@ def test_surface_registry_decides_task_and_focus():
 
 @pytest.mark.parametrize("focused,allowed", [(False, True), (True, False)])
 def test_focus_is_separate_from_the_delivery_contract(focused, allowed):
-    state = TaskDelivery(active=True, focused=focused, catalog={"exec_shell"})
-    assert state.allows("exec_shell") is allowed
+    state = TaskDelivery(active=True, focused=focused, catalog={"write_file"})
+    assert state.allows("write_file") is allowed
     assert state.allows("cua_js")
+
+
+async def test_accepted_partial_delivery_survives_open_checklist(tmp_path):
+    engine, client = await desktop_engine(tmp_path, [
+        look(),
+        ToolCall(id="finish", name="finish_task", arguments={
+            "status": "partial", "answer": "Saved draft; heading needs manual correction.",
+            "evidence": ["tool:look"], "remaining": ["Correct heading"],
+        }),
+    ])
+    from unittest.mock import Mock
+    engine._next_checklist_gate_summary = Mock(return_value="#1 pending")
+    try:
+        result = await engine._run_conversation(
+            [Message.user("Edit document")], "test", "sys", None)
+        assert result.task_outcome['status'] == 'partial'
+        assert result.assistant_message.text_content() == (
+            'Saved draft; heading needs manual correction.')
+        assert len(client.requests) == 2
+    finally:
+        await engine.shutdown_session()
 
 
 async def test_reconnect_guide_reaches_the_model_once(tmp_path):

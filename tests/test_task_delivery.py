@@ -69,7 +69,7 @@ async def test_unknown_mutation_requires_partial_delivery(context):
 
 async def test_focus_extension_is_named_and_bounded_by_catalog(context):
     state = context.metadata["task_delivery"]
-    assert not state.allows("read_file")
+    assert state.allows("read_file")
     with pytest.raises(ToolError, match="unavailable"):
         await RequestTaskToolsTool().execute(
             {"names": ["read_file", "exec_shell"], "reason": "analyze"}, context
@@ -78,14 +78,15 @@ async def test_focus_extension_is_named_and_bounded_by_catalog(context):
     await RequestTaskToolsTool().execute(
         {"names": ["read_file"], "reason": "Read downloaded invoice"}, context
     )
-    assert state.allows("read_file") and not state.allows("exec_shell")
+    assert state.allows("read_file") and state.allows("exec_shell")
 
 
 def test_browser_phase_keeps_computer_use_available(context):
     # A web-to-desktop task must not have to request its own desktop surface.
     state = context.metadata["task_delivery"]
     assert state.allows("cua_js") and state.allows("cua_js_reset")
-    assert not state.allows("exec_shell")
+    assert state.allows("exec_shell")
+    assert not state.allows("write_file")
 
 
 def test_free_text_question_and_invalid_single_choice():

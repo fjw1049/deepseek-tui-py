@@ -20,6 +20,10 @@ CONTROL_TOOLS = {"finish_task", "request_task_tools"}
 FOCUS_TOOLS = CONTROL_TOOLS | surface_tools() | {
     "request_user_input",
     "checklist",
+    "read_file",
+    "file_search",
+    "grep_files",
+    "exec_shell",
     "CreateGoal",
     "GetGoal",
     "UpdateGoal",
@@ -71,11 +75,12 @@ class TaskDelivery:
         return not self.focused or name in FOCUS_TOOLS | self.extra_tools
 
     def tools(self, catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        # Focus is enforced at execution (allows); keeping the advertised list
-        # stable preserves the provider prefix cache across focus changes.
+        # Advertise the same capabilities that execution permits.
         if self.active and self.stop_reminded:
             allowed = self.finalizing()
             return [t for t in catalog if (t.get("function") or t)["name"] in allowed]
+        if self.focused:
+            return [t for t in catalog if self.allows((t.get("function") or t)["name"])]
         names = {(t.get("function") or t)["name"] for t in catalog}
         # Where a UI surface is offered, the controls stay listed: adding them at the first UI
         # call changed the tool list mid-task and voided the prefix cache twice per task.
