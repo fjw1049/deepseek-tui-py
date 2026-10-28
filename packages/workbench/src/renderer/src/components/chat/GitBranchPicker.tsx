@@ -314,8 +314,6 @@ export function GitBranchPicker({
       </div>
 
       <div className="ds-project-context-menu__list max-h-[320px]">
-        <div className="ds-project-context-menu__group-label">{t('gitBranches')}</div>
-
         {loading && !result ? (
           <div className="ds-project-context-menu__empty flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />

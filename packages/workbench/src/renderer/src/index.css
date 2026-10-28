@@ -1864,6 +1864,19 @@ samp {
   padding: 6px;
 }
 
+.ds-project-context-menu__footer--compact {
+  padding: 4px 6px;
+}
+
+.ds-project-context-menu__footer--compact .ds-project-context-menu__row {
+  padding-block: 5px;
+}
+
+.ds-project-context-menu__footer--compact .ds-project-context-menu__icon {
+  width: 24px;
+  height: 24px;
+}
+
 [data-theme='dark'] .ds-project-context-menu__footer {
   border-top-color: rgba(255, 255, 255, 0.08);
 }
