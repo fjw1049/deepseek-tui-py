@@ -174,6 +174,7 @@ class BrowserAction(BaseModel):
         default_factory=list, max_length=16
     )
     level: Literal["interactive", "full"] = "interactive"
+    include_editable: bool = False
     text_offset: int = Field(default=0, ge=0)
     element_offset: int = Field(default=0, ge=0)
     option_offset: int = Field(default=0, ge=0)
@@ -209,6 +210,11 @@ class BrowserAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_action(self) -> BrowserAction:
+        if self.include_editable and (
+            self.action != "observe" or not (self.selector or self.scope_ref)
+        ):
+            raise ValueError(
+                "include_editable requires observe with a document selector or scope_ref")
         if self.action == "upload" and not (self.ref or self.selector or self.chooser_id):
             raise ValueError("Upload requires an observed file input or the current chooser_id")
         if self.action == "handle_dialog" and not (self.dialog_id and self.accept is not None):
@@ -1863,6 +1869,7 @@ class BrowserService:
                 await asyncio.gather(task, return_exceptions=True)
 
     async def _action(self, run: BrowserRun, a: BrowserAction) -> dict[str, Any]:
+        scroll_movement = None
         run.revision += 1
         s = run.session
         input_client = run.observation_context if a.frame_id else s._internal.client
@@ -1927,7 +1934,9 @@ class BrowserService:
                 if previous["control_generation"] != run.generation:
                     raise ValueError("Scope control changed; start a fresh observation")
                 a = a.model_copy(update={"selector": previous.get("scope_selector"),
+                    "level": previous.get("level", a.level),
                     "shadow_path": previous.get("scope_shadow_path", []),
+                    "include_editable": previous.get("include_editable", False),
                     "frame_id": previous.get("frame_id", "")})
                 frame_id = a.frame_id
             if a.frame_selector:
@@ -1943,7 +1952,8 @@ class BrowserService:
                                         text_offset=a.text_offset, element_offset=a.element_offset,
                                         option_offset=a.option_offset,
                                         frame_id=frame_id, frame_offset=a.frame_offset,
-                                        shadow_path=a.shadow_path, continuation_id=a.scope_ref)
+                                        shadow_path=a.shadow_path, continuation_id=a.scope_ref,
+                                        include_editable=a.include_editable)
             if a.frame_selector:
                 observation["scope_frame_selector"] = a.frame_selector
             if a.frame_path:
@@ -2107,10 +2117,12 @@ class BrowserService:
                 await evaluate(scroll_context, """(() => {
                   const entries=window.__deepseekObservation?.scrolls;
                   window.__deepseekScrollProbe=entries?.map(v=>({...v,
+                    target:__TARGETED__ && (v.node===window.__deepseekTarget ||
+                      (v.window && window.__deepseekTarget===document.scrollingElement)),
                     x:v.window?v.node.scrollX:v.node.scrollLeft,
                     y:v.window?v.node.scrollY:v.node.scrollTop}));
                   return true;
-                })()""")
+                })()""".replace("__TARGETED__", json.dumps(bool(a.ref or a.selector))))
             except Exception:
                 pass  # Dispatch remains valid when effect verification is unavailable.
             # Wheel deltas are device-independent pixels; at 150% page zoom 300 would move
@@ -2282,13 +2294,28 @@ class BrowserService:
                 settle_warning = "Page readiness unavailable: " + (str(exc) or type(exc).__name__)
             if a.action == "scroll":
                 try:
-                    changed = await evaluate(scroll_context, """(() => {
+                    scroll_movement = await evaluate(scroll_context, """(() => {
                       const entries=window.__deepseekScrollProbe;
                       delete window.__deepseekScrollProbe;
                       if(!entries?.length) return null;
-                      return entries.some(v=>v.x!==(v.window?v.node.scrollX:v.node.scrollLeft)
-                        || v.y!==(v.window?v.node.scrollY:v.node.scrollTop));
+                      const movements=entries.map(v=>{
+                        const x=v.window?v.node.scrollX:v.node.scrollLeft,
+                          y=v.window?v.node.scrollY:v.node.scrollTop;
+                        const node=v.window?v.node.document.scrollingElement:v.node;
+                        return {target:v.target,before:{x:v.x,y:v.y},after:{x,y},
+                          delta:{x:x-v.x,y:y-v.y},
+                          at_top:y<=0,at_bottom:y+node.clientHeight>=node.scrollHeight-1};
+                      });
+                      const targets=movements.filter(v=>v.target),
+                        moved=v=>v.delta.x!==0 || v.delta.y!==0;
+                      return {changed:movements.some(moved),
+                        target_changed:targets.length?targets.some(moved):null,
+                        movements:movements.filter(v=>v.target || moved(v)).slice(0,10)};
                     })()""")
+                    changed = (scroll_movement.get("target_changed")
+                               if scroll_movement
+                               and scroll_movement.get("target_changed") is not None
+                               else scroll_movement.get("changed") if scroll_movement else None)
                     if isinstance(changed, bool):
                         effect = "confirmed" if changed else "not_confirmed"
                         content = (
@@ -2323,7 +2350,8 @@ class BrowserService:
                 "observation_id": (observation or {}).get("observation_id"),
                 "frame_id": a.frame_id, "selector": a.selector}
         if a.action == "scroll":
-            receipt["verification"] = {"kind": "observed_scroll_position", "x": a.x, "y": a.y}
+            receipt["verification"] = {"kind": "observed_scroll_position", "x": a.x, "y": a.y,
+                                       "movement": scroll_movement}
         entry: dict[str, Any] = {"action": a.action, "success": success, **receipt}
         if a.action == "check_text":
             entry["expected"] = a.text

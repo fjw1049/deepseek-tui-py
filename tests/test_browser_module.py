@@ -541,7 +541,7 @@ async def test_navigation_wait_and_tabs_use_owned_session(browser):
         if method == "Page.createIsolatedWorld":
             return {"executionContextId": 2}
         if method == "Runtime.evaluate":
-            if "const nodes=" in params["expression"]:
+            if "const nodes=a.selector?" in params["expression"]:
                 return {"result": {"value": True}}
             return {"result": {"value": {"text": "ready", "elements": [], "url": "https://example.test"}}}
         return {"frameTree": {"frame": {"id": "popup", "loaderId": "doc"}}}

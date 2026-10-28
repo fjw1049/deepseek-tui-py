@@ -19,7 +19,19 @@ VISIBLE = r"""e => {
     return !!e.getClientRects().length;
   }"""
 
-READ_TEXT = r"""root => {
+IN_VIEWPORT = r"""e => {
+  let r=e.getBoundingClientRect(),v=e.ownerDocument.defaultView;
+  let left=Math.max(0,r.left),right=Math.min(v.innerWidth,r.right),
+    top=Math.max(0,r.top),bottom=Math.min(v.innerHeight,r.bottom);
+  for(let p=e.parentElement || e.getRootNode()?.host;p;p=p.parentElement || p.getRootNode()?.host){
+    const s=v.getComputedStyle(p),b=p.getBoundingClientRect();
+    if(/auto|scroll|hidden|clip/.test(s.overflowX)){left=Math.max(left,b.left);right=Math.min(right,b.right)}
+    if(/auto|scroll|hidden|clip/.test(s.overflowY)){top=Math.max(top,b.top);bottom=Math.min(bottom,b.bottom)}
+  }
+  return right>left && bottom>top;
+}"""
+
+READ_TEXT = r"""(root, viewportOnly=false, includeEditable=false) => {
   if (!root) return '';
   const texts=[], visible=__VISIBLE__;
   const walker=(root.ownerDocument || document).createTreeWalker(root,NodeFilter.SHOW_TEXT);
@@ -30,10 +42,17 @@ READ_TEXT = r"""root => {
     for (let e=p; e; e=e.parentElement || e.getRootNode()?.host) {
       if (e.isContentEditable) { editable=true; break; }
     }
-    if (!editable && n.textContent.trim()) texts.push(n.textContent.trim());
+    if (viewportOnly) {
+      if(!(__IN_VIEWPORT__)(p))continue;
+      const range=n.ownerDocument.createRange();range.selectNodeContents(n);
+      const view=n.ownerDocument.defaultView;
+      if(!Array.from(range.getClientRects()).some(r=>
+        r.bottom>0 && r.right>0 && r.top<view.innerHeight && r.left<view.innerWidth))continue;
+    }
+    if ((!editable || includeEditable) && n.textContent.trim()) texts.push(n.textContent.trim());
   }
   return texts.join('\n').trim();
-}""".replace("__VISIBLE__", VISIBLE)
+}""".replace("__VISIBLE__", VISIBLE).replace("__IN_VIEWPORT__", IN_VIEWPORT)
 
 LABEL_TEXT = r"""root => {
   if(!root)return '';
@@ -56,7 +75,7 @@ ACCESSIBLE_NAME = r"""e => {
     .map(k=>label(e.getRootNode().getElementById?.(k))).join(' ').trim();
   const buttonValue=e.tagName==='INPUT' && /^(button|submit|reset)$/.test(e.type)?e.value:'';
   return (references || e.getAttribute('aria-label') ||
-    Array.from(e.labels || []).map(read).join(' ') || read(e) ||
+    Array.from(e.labels || []).map(label=>read(label)).join(' ') || read(e) ||
     e.getAttribute('alt') || buttonValue || e.getAttribute('title') ||
     e.getAttribute('placeholder') || '').trim();
 }""".replace("__READ_TEXT__", READ_TEXT).replace("__LABEL_TEXT__", LABEL_TEXT)
@@ -100,7 +119,7 @@ VALUE_INPUTS = "date|time|datetime-local|month|week|color|range"
 
 COLLECT = (
     r"""({id, selector, limit, textOffset=0, elementOffset=0, optionOffset=0,
-               shadowPath=[],continuation=null}) => {
+               shadowPath=[],continuation=null,includeEditable=false}) => {
   const previous=window.__deepseekObservation;
   const revision=window.__deepseekPageRevision || {value:0};
   revision.observer?.disconnect();
@@ -118,7 +137,7 @@ COLLECT = (
   };
   watch(document);
   const scopeCache = new WeakMap(); // Shared only within this synchronous observation.
-  const refs = new Map(), warnings = [], texts = [], scrolls=[], scrollAreas=[];
+  const refs = new Map(), warnings = [], texts = [], viewportTexts=[], scrolls=[], scrollAreas=[];
   const identities=window.__deepseekNodeIdentities || {nodes:new WeakMap(),prefix:id,next:0};
   window.__deepseekNodeIdentities=identities;
   const visible = __VISIBLE__;
@@ -145,18 +164,30 @@ COLLECT = (
     : [scopeRoot===document?document.body:scopeRoot];
   if (selector && roots.length!==1)
     throw Error('Observation selector must match exactly one element');
+  if(includeEditable && (!selector || !roots[0]?.isContentEditable))
+    throw Error('include_editable requires a selector matching one contenteditable document');
+  const viewportCache=new WeakMap(),viewTest=__IN_VIEWPORT__;
+  const inViewport=e=>{
+    if(!viewportCache.has(e))viewportCache.set(e,viewTest(e));
+    return viewportCache.get(e);
+  };
   const walk = root => {
     if (!root) return;
     watch(root.getRootNode());
-    texts.push(readText(root));
+    texts.push(readText(root,false,includeEditable));
+    viewportTexts.push(readText(root,true,includeEditable));
     const view=(root.ownerDocument || document).defaultView;
     scrolls.push({node:view, x:view.scrollX, y:view.scrollY, window:true});
-    for (const e of [...(root.nodeType===1?[root]:[]),...root.querySelectorAll('*')]) {
+    const nodes=[...(root.nodeType===1?[root]:[]),...root.querySelectorAll('*')];
+    // Full reads retain document order; interactive reads prioritize the current screen.
+    if(limit===120)nodes.sort((a,b)=>Number(inViewport(b))-Number(inViewport(a)));
+    for (const e of nodes) {
       if (!visible(e)) continue;
       scrolls.push({node:e, x:e.scrollLeft, y:e.scrollTop});
       const tag=e.tagName.toLowerCase(), role=canonicalRole(e);
       if (e.matches('button,input:not([type=hidden]),select,textarea,a[href],summary') ||
           (e.isContentEditable && !e.parentElement?.isContentEditable) ||
+          (!e.isContentEditable || !e.parentElement?.isContentEditable) &&
           /^(button|link|textbox|combobox|checkbox|radio|menuitem|option|switch|tab|searchbox)$/
           .test(role)) {
         const index=elementCount++, ref='e'+index, scope=context(e,scopeCache);
@@ -172,7 +203,8 @@ COLLECT = (
           refs.set(ref, {element:e, target_id:targetId, name:name(e), role, options, parent:e.parentElement, scope,
             href:e.tagName==='A'?e.href:null,formAction:e.form?.action || null,
             box:[r.x,r.y,r.width,r.height]});
-          elements.push({ref, target_id:targetId, role, tag, name:Array.from(name(e)).slice(0,300).join(''),
+          elements.push({ref, target_id:targetId, role, tag, in_viewport:inViewport(e),
+            name:Array.from(name(e)).slice(0,300).join(''),
             name_truncated:Array.from(name(e)).length>300,
             scope:scope?{tag:scope.tag,id:scope.id.length<=300?scope.id:undefined,
               keys:scope.keys.filter(([k,v])=>v!==null && v.length<=300),
@@ -263,7 +295,32 @@ COLLECT = (
     width:innerWidth,height:innerHeight,
     revision:window.__deepseekPageRevision.value};
   window.__deepseekObservation=state;
-  return {url:location.href,title:document.title,
+  let editor;
+  if(includeEditable){
+    const root=roots[0],selection=root.ownerDocument.getSelection();
+    editor={tag:root.tagName.toLowerCase(),selection:null};
+    const blocks=Array.from(root.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li,pre,blockquote'))
+      .filter(e=>visible(e) && inViewport(e));
+    editor.visible_blocks=blocks.slice(0,20).map(e=>({tag:e.tagName.toLowerCase(),
+      text:readText(e,false,true).slice(0,300)}));
+    editor.total_visible_blocks=blocks.length;
+    if(selection?.rangeCount && root.contains(selection.anchorNode)
+       && root.contains(selection.focusNode)){
+      const offset=(node,end)=>{const r=root.ownerDocument.createRange();
+        r.selectNodeContents(root);r.setEnd(node,end);return r.toString().length};
+      editor.selection={anchor:offset(selection.anchorNode,selection.anchorOffset),
+        focus:offset(selection.focusNode,selection.focusOffset),unit:'utf16',
+        text:selection.toString().slice(0,1000),collapsed:selection.isCollapsed};
+      editor.selection.text_truncated=selection.toString().length>1000;
+      const p=selection.anchorNode.nodeType===1
+        ?selection.anchorNode:selection.anchorNode.parentElement;
+      const block=p?.closest('p,h1,h2,h3,h4,h5,h6,li,pre,blockquote');
+      if(block && root.contains(block))editor.current_block={tag:block.tagName.toLowerCase(),
+        text:readText(block,false,true).slice(0,1000)};
+    }
+  }
+  return {url:location.href,title:document.title,level:limit===120?'interactive':'full',
+    viewport_text:viewportTexts.join('\n').slice(0,4000),editor,
     text:text.slice(textOffset,textOffset+16000).join(''),elements,
     text_offset:textOffset, element_offset:elementOffset,
     next_text_offset:text.length>textOffset+16000?textOffset+16000:null,
@@ -277,6 +334,7 @@ COLLECT = (
     truncated:text.length>textOffset+16000 || elementCount>elementOffset+elements.length,
     warnings:[...new Set(warnings)]};
 }""".replace("__VISIBLE__", VISIBLE)
+    .replace("__IN_VIEWPORT__", IN_VIEWPORT)
     .replace("__READ_TEXT__", READ_TEXT)
     .replace("__SCOPE_CONTEXT__", SCOPE_CONTEXT)
     .replace("__NAME__", ACCESSIBLE_NAME)
@@ -313,7 +371,9 @@ async def evaluate(client: Any, expression: str) -> Any:
         },
     )
     if result.get("exceptionDetails"):
-        raise RuntimeError("Page evaluation failed: " + str(result["exceptionDetails"].get("text")))
+        details = result["exceptionDetails"]
+        description = (details.get("exception") or {}).get("description") or details.get("text")
+        raise RuntimeError("Page evaluation failed: " + str(description)[:1000])
     value = result.get("result", {}).get("value")
     if value is None:
         raise RuntimeError("Page observation unavailable")
@@ -386,6 +446,7 @@ async def observe(
     frame_offset: int = 0,
     shadow_path: list[str] | None = None,
     continuation_id: str | None = None,
+    include_editable: bool = False,
 ) -> dict[str, Any]:
     from deepseek_tui.browser.frames import FrameContext, discover_frames
 
@@ -419,6 +480,7 @@ async def observe(
                 "optionOffset": option_offset,
                 "shadowPath": shadow_path or [],
                 "continuation": continuation_id,
+                "includeEditable": include_editable,
             }
         )
         page = await evaluate(client, f"({COLLECT})({args})")
@@ -440,6 +502,7 @@ async def observe(
             "control_generation": run.generation,
             "scope_selector": selector,
             "scope_shadow_path": shadow_path or [],
+            "include_editable": include_editable,
         }
         run.latest_observation = observation
         if not frame_id:
@@ -601,8 +664,13 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
           return {error:'stale_option'};
         window.__deepseekSelectedOption=option.node;
       }
-      e.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
-      const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
+      let r=e.getBoundingClientRect();
+      const intersects=r.right>0 && r.bottom>0 && r.left<innerWidth && r.top<innerHeight;
+      if(a.action!=='scroll' || !intersects)
+        e.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+      r=e.getBoundingClientRect();
+      const x=(Math.max(0,r.left)+Math.min(innerWidth,r.right))/2,
+        y=(Math.max(0,r.top)+Math.min(innerHeight,r.bottom))/2;
       const hit=e.getRootNode().elementFromPoint?.(x,y) || e.ownerDocument.elementFromPoint(x,y);
       if (!hit || (hit!==e && !e.contains(hit))) return {error:'target_obscured'};
       // Frame-local hit testing cannot detect a parent overlay. Verify the

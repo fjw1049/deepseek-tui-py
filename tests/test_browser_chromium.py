@@ -75,6 +75,73 @@ async def read(service):
     return (await service.action("t", BrowserAction(action="observe", level="full")))["observation"]
 
 
+async def test_editor_descendants_do_not_flood_observation(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client,
+        "document.body.innerHTML='<div contenteditable>'+"
+        "Array.from({length:300},(_,i)=>'<p>Paragraph '+i+'</p>').join('')+'</div>';true")
+    observation = await read(service)
+    assert observation['total_elements'] == 1
+    assert len(observation['elements']) == 1
+
+
+async def test_interactive_prioritizes_viewport_but_full_retains_document_order(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client, """document.body.innerHTML=
+      Array.from({length:180},(_,i)=>
+        '<button style="display:block;height:30px">Row '+i+'</button>').join('');
+      window.scrollTo(0,document.body.scrollHeight);true""")
+    current = (await service.action('t', BrowserAction(action='observe')))['observation']
+    assert current['elements'][0]['in_viewport']
+    assert any(e['name'] == 'Row 179' for e in current['elements'])
+    assert 'Row 179' in current['viewport_text']
+    full = await read(service)
+    assert full['elements'][0]['name'] == 'Row 0'
+    continued = (await service.action('t', BrowserAction(
+        action='observe', scope_ref=full['observation_id'], element_offset=150)))['observation']
+    assert continued['level'] == 'full'
+    assert continued['elements'][0]['name'] == 'Row 150'
+
+
+async def test_scoped_editor_read_exposes_structure_and_selection_only_on_request(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client, """document.body.innerHTML=
+      '<input type=password value=SECRET><div contenteditable id=editor>'+
+      '<h2>Previous week</h2><p id=p>Keep this paragraph</p></div>';
+      const r=document.createRange();r.setStart(p.firstChild,5);r.setEnd(p.firstChild,9);
+      getSelection().removeAllRanges();getSelection().addRange(r);true""")
+    normal = await read(service)
+    assert 'Keep this paragraph' not in normal['text']
+    assert not normal.get('editor')
+    doc = (await service.action('t', BrowserAction(
+        action='observe', selector='#editor', include_editable=True)))['observation']
+    assert 'Keep this paragraph' in doc['text']
+    assert doc['editor']['selection']['text'] == 'this'
+    assert doc['editor']['current_block']['tag'] == 'p'
+    assert doc['editor']['visible_blocks'][0]['tag'] == 'h2'
+    assert 'SECRET' not in str(doc)
+    continued = (await service.action('t', BrowserAction(
+        action='observe', scope_ref=doc['observation_id'], text_offset=5)))['observation']
+    assert continued['include_editable']
+    assert continued['editor']['selection']['text'] == 'this'
+
+
+async def test_scrolling_visible_panel_preserves_outer_scroll(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, """document.body.innerHTML='<div style=height:1200px></div>'+
+      '<div id=list style="height:300px;overflow:auto"><div style=height:3000px>List</div></div>'+
+      '<div style=height:2000px></div>';window.scrollTo(0,900);true""")
+    observation = await read(service)
+    panel = next(e for e in observation['scroll_containers'] if e['tag'] == 'div')
+    before = await evaluate(client, 'window.scrollY')
+    result = await act(
+        service, observation, 'scroll', ref=panel['ref'], direction='down', amount=100)
+    assert result['success']
+    assert await evaluate(client, 'window.scrollY') == before
+    assert await evaluate(client, 'document.querySelector("#list").scrollTop') > 0
+
+
 async def test_private_session_isolated_with_workbench_available(chrome, monkeypatch):
     from unittest.mock import AsyncMock
 

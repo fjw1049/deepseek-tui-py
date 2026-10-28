@@ -1,0 +1,36 @@
+{"version": "before", "case": "shopping", "repeat": 1, "exit": 0, "pass": true, "seconds": 23.5, "error": null}
+{"version": "after", "case": "shopping", "repeat": 1, "exit": 0, "pass": true, "seconds": 29.5, "error": null}
+{"version": "before", "case": "crm", "repeat": 1, "exit": 0, "pass": true, "seconds": 45.6, "error": null}
+{"version": "after", "case": "crm", "repeat": 1, "exit": 0, "pass": true, "seconds": 54.4, "error": null}
+{"version": "before", "case": "weekly", "repeat": 1, "exit": 0, "pass": false, "seconds": 147.0, "error": null}
+{"version": "after", "case": "weekly", "repeat": 1, "exit": 0, "pass": false, "seconds": 149.4, "error": null}
+{"version": "before", "case": "orders", "repeat": 1, "exit": 0, "pass": true, "seconds": 27.1, "error": null}
+{"version": "after", "case": "orders", "repeat": 1, "exit": 0, "pass": true, "seconds": 23.2, "error": null}
+{"version": "after", "case": "shopping", "repeat": 2, "exit": 0, "pass": true, "seconds": 25.6, "error": null}
+{"version": "before", "case": "shopping", "repeat": 2, "exit": 0, "pass": true, "seconds": 31.5, "error": null}
+{"version": "after", "case": "crm", "repeat": 2, "exit": 0, "pass": true, "seconds": 54.8, "error": null}
+{"version": "before", "case": "crm", "repeat": 2, "exit": 0, "pass": true, "seconds": 50.4, "error": null}
+{"version": "after", "case": "weekly", "repeat": 2, "exit": 0, "pass": false, "seconds": 160.5, "error": null}
+{"version": "before", "case": "weekly", "repeat": 2, "exit": 0, "pass": false, "seconds": 256.6, "error": null}
+{"version": "after", "case": "orders", "repeat": 2, "exit": 0, "pass": true, "seconds": 22.8, "error": null}
+{"version": "before", "case": "orders", "repeat": 2, "exit": 0, "pass": true, "seconds": 18.9, "error": null}
+{"version": "before", "case": "shopping", "repeat": 3, "exit": 0, "pass": true, "seconds": 33.0, "error": null}
+{"version": "after", "case": "shopping", "repeat": 3, "exit": 0, "pass": true, "seconds": 26.0, "error": null}
+Traceback (most recent call last):
+  File "/Users/user/Desktop/deepseek-tui-py-main/scratch/browser-eval-2026-10-28/business/run_matrix.py", line 38, in <module>
+    result = subprocess.run([str(PYTHON),str(HERE/'run_case.py'),
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 2141, in _communicate
+    self.wait(timeout=self._remaining_time(endtime))
+  File "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 1264, in wait
+    return self._wait(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/subprocess.py", line 2047, in _wait
+    time.sleep(delay)
+KeyboardInterrupt

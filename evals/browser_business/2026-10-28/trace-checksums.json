@@ -1,0 +1,97 @@
+{
+  "after-crm-1.json": {
+    "sha256": "6f406daa012b520d251c75648a0b55c9b700556d81bb386ac16ee8de90fca182",
+    "bytes": 2196281,
+    "gzip_bytes": 182944
+  },
+  "after-crm-2.json": {
+    "sha256": "aed160da162eb635eae9672568936138ac520b3dbe0bb91eb9730235b0032550",
+    "bytes": 1907582,
+    "gzip_bytes": 160336
+  },
+  "after-orders-1.json": {
+    "sha256": "3be59e21042b83792c3126076d74cbe7cfa52486ca57b39086599dc1ee1a6bd8",
+    "bytes": 85120,
+    "gzip_bytes": 13379
+  },
+  "after-orders-2.json": {
+    "sha256": "17091fa3f7fb3146e827b17628993a410d1019bfac77586ecf77adeba045af83",
+    "bytes": 84841,
+    "gzip_bytes": 13548
+  },
+  "after-shopping-1.json": {
+    "sha256": "8386f7df7c9f3d3d4d3f2ea1d734776587f7d6be0bb122ba079701d3c62163b9",
+    "bytes": 483366,
+    "gzip_bytes": 47731
+  },
+  "after-shopping-2.json": {
+    "sha256": "be5a7e3f4c3918e4f1daa5982ca8c08407eaf8fb66e258617259c7e87700df9f",
+    "bytes": 438871,
+    "gzip_bytes": 42997
+  },
+  "after-shopping-3.json": {
+    "sha256": "69366b9e878c2f0a40a769355692b15ca265e9696744a209b376bbe8cba443d1",
+    "bytes": 437879,
+    "gzip_bytes": 42317
+  },
+  "after-weekly-1.json": {
+    "sha256": "e0837ce587f4c5ebe0c9b25b4e848a4a9ded938a797f7e77d492cb2ab5aa565b",
+    "bytes": 1363466,
+    "gzip_bytes": 103071
+  },
+  "after-weekly-2.json": {
+    "sha256": "77bab90c58e51847d81a5111a0971a4e96f4eef5e16ff86166056f380ff04d0e",
+    "bytes": 1481480,
+    "gzip_bytes": 115150
+  },
+  "before-crm-1.json": {
+    "sha256": "5b0c513872393bb30f1f14d0130131c96b10feb2c918882677078f7cbee82a3b",
+    "bytes": 1348804,
+    "gzip_bytes": 117369
+  },
+  "before-crm-2.json": {
+    "sha256": "087b2906ad7a93aa0df652f2c73bcb99fb632410829cf37c68ab170c8d469d1a",
+    "bytes": 1747820,
+    "gzip_bytes": 153867
+  },
+  "before-crm-3.json": {
+    "sha256": "d49e650316059188acab11d03a173a84179bbaba1b9b5f635a33c220c98b2250",
+    "bytes": 1531576,
+    "gzip_bytes": 129720
+  },
+  "before-orders-1.json": {
+    "sha256": "e6e6638d0b24d0dd83ef13eb75210020c6d7ae61b54d0ab63f314fbe09a70abe",
+    "bytes": 85895,
+    "gzip_bytes": 13163
+  },
+  "before-orders-2.json": {
+    "sha256": "761e8bbbc50505d86805b74ed4d5591a287a324d9ccfcf491dca849744aed9f8",
+    "bytes": 60182,
+    "gzip_bytes": 10278
+  },
+  "before-shopping-1.json": {
+    "sha256": "0869762c00067245b5b43d7a00aace9b70849a6d5f88500a7b87c763d6cec088",
+    "bytes": 256909,
+    "gzip_bytes": 28003
+  },
+  "before-shopping-2.json": {
+    "sha256": "044d43dfa9effe648f36adc576224a35668ddeb37c6eaea31cf2abc4c974a679",
+    "bytes": 419372,
+    "gzip_bytes": 42192
+  },
+  "before-shopping-3.json": {
+    "sha256": "8fe58a331401dd4e5a0ca2de39ca07e5d3e3cfc23f2e96eac5400b0df0a05e65",
+    "bytes": 511948,
+    "gzip_bytes": 52807
+  },
+  "before-weekly-1.json": {
+    "sha256": "cb5c9b9719326e86a1a576f2971f0bec0be186ba7b045a736ad6b605e065defb",
+    "bytes": 6584357,
+    "gzip_bytes": 397906
+  },
+  "before-weekly-2.json": {
+    "sha256": "ee9735f8230458e55abbd9343253088a9b0ae523102e6b240e87652996fccfa7",
+    "bytes": 8872762,
+    "gzip_bytes": 531851
+  }
+}

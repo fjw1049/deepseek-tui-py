@@ -1,0 +1,93 @@
+[
+  {
+    "editable_check": {
+      "text_present_in_authorized_observation": true,
+      "check_text_success": false,
+      "check_text_content": "FAIL: 2026年第22周"
+    }
+  },
+  {
+    "key": "Meta+End",
+    "before": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    },
+    "after": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    }
+  },
+  {
+    "key": "Meta+ArrowDown",
+    "before": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    },
+    "after": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    }
+  },
+  {
+    "key": "Ctrl+End",
+    "before": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    },
+    "after": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    }
+  },
+  {
+    "key": "Meta+Shift+ArrowLeft",
+    "before": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    },
+    "after": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    }
+  },
+  {
+    "key": "Shift+ArrowLeft",
+    "before": {
+      "anchor": 5,
+      "focus": 5,
+      "selected": "",
+      "length": 1008
+    },
+    "after": {
+      "anchor": 5,
+      "focus": 4,
+      "selected": "年",
+      "length": 1008
+    }
+  },
+  {
+    "explicit_command": "moveToEndOfDocument",
+    "after": {
+      "anchor": 1008,
+      "focus": 1008,
+      "selected": "",
+      "length": 1008
+    }
+  }
+]

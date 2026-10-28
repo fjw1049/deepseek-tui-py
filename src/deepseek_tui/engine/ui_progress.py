@@ -85,6 +85,7 @@ class _Observation:
     text: str
     images: tuple[_Thumb, ...]
     canonical: bool = False
+    browser: bool = False
 
 
 def _canonical_text(text: str) -> str:
@@ -126,7 +127,23 @@ def observation_of(result: ToolResult) -> _Observation | None:
     elif isinstance(browser, dict):
         # Receipts and ids change on every call; only the page's own content counts.
         observation = browser.get("observation")
-        text = observation.get("text", "") if isinstance(observation, dict) else ""
+        if isinstance(observation, dict):
+            text = re.sub(r"(?m)^已保存\s*(?:\n)?\d{1,2}:\d{2}(?::\d{2})?\s*$",
+                          "已保存", observation.get("text", ""))
+            text = json.dumps({
+                "text": text, "url": observation.get("url"),
+                "frame": observation.get("frame_id"),
+                "text_offset": observation.get("text_offset"),
+                "element_offset": observation.get("element_offset"),
+                "viewport": observation.get("viewport"),
+                "editor": observation.get("editor"),
+                "controls": [{k: e.get(k) for k in (
+                    "role", "name", "checked", "selected_text", "expanded", "disabled"
+                )} for e in observation.get("elements", [])],
+                "scroll": [e.get("viewport") for e in observation.get("scroll_containers", [])],
+            }, ensure_ascii=False, sort_keys=True)
+        else:
+            text = ""
     else:
         text = result.content or ""
     try:
@@ -136,7 +153,8 @@ def observation_of(result: ToolResult) -> _Observation | None:
         return None
     if not text and not images:
         return None
-    return _Observation(text, images, canonical=isinstance(cua, dict))
+    return _Observation(text, images, canonical=isinstance(cua, dict),
+                        browser=isinstance(browser, dict))
 
 
 def _surface_key(tool_name: str) -> frozenset[str]:
@@ -151,14 +169,24 @@ class UiProgress:
     _streak: dict[frozenset[str], int] = field(default_factory=dict)
     _history: dict[tuple[frozenset[str], str], deque] = field(default_factory=dict)
     _unobserved: dict[frozenset[str], int] = field(default_factory=dict)
+    _browser_failures: int = 0
 
     def reset(self) -> None:
         self._last.clear()
         self._streak.clear()
         self._history.clear()
         self._unobserved.clear()
+        self._browser_failures = 0
 
-    def blocked_content(self, tool_name: str) -> str | None:
+    def blocked_content(self, tool_name: str, arguments: dict | None = None) -> str | None:
+        if tool_name == "browser_use" and arguments and arguments.get("action") in {
+            "status", "operation_status", "observe", "describe", "screenshot", "wait",
+            "check_text", "tabs", "downloads", "recover", "request_assistance",
+        }:
+            return None
+        if tool_name == "browser_use" and self._browser_failures >= STALL_STREAK:
+            return ("Not executed: repeated browser failures. "
+                    "Observe the blocker or request assistance.")
         if tool_name in {"cua_observe", "cua_js_reset"}:
             return None  # A stalled or externally changed interface must remain inspectable.
         if self._unobserved.get(_surface_key(tool_name), 0) >= STALL_STREAK:
@@ -171,6 +199,14 @@ class UiProgress:
 
     def record_result(self, tool_name: str, result: ToolResult) -> str:
         observation = observation_of(result)
+        if tool_name == "browser_use":
+            receipt = result.metadata.get("browser", {}).get("receipt", {})
+            if not result.success or receipt.get("effect") == "not_confirmed":
+                self._browser_failures += 1
+                if self._browser_failures >= REMIND_STREAK:
+                    return _STUCK.format(streak=self._browser_failures)
+            elif receipt.get("effect") == "confirmed":
+                self._browser_failures = 0
         key = _surface_key(tool_name)
         if result.metadata.get("cua_runtime_content") and observation is None:
             self._unobserved[key] = self._unobserved.get(key, 0) + 1
@@ -200,7 +236,7 @@ class UiProgress:
             and all(_similar(a, b)
                     for a, b in zip(previous.images, observation.images, strict=True))
         )
-        if observation.canonical:
+        if observation.canonical or observation.browser:
             history = self._history.setdefault((key, kind), deque(maxlen=STALL_STREAK))
             unchanged = any(
                 old.text == observation.text
@@ -212,6 +248,8 @@ class UiProgress:
         if not unchanged:
             # Progress in either channel clears the surface's warning streak.
             self._streak[key] = 0
+            if observation.browser:
+                self._browser_failures = 0
             return ""
         streak = self._streak[key] = self._streak.get(key, 0) + 1
         logger.info("ui_observation_unchanged tool=%s kind=%s streak=%d", tool_name, kind, streak)

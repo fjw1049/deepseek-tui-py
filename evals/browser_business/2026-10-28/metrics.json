@@ -1,0 +1,969 @@
+[
+  {
+    "file": "after-crm-1.json.gz",
+    "version": "after",
+    "case": "crm",
+    "repeat": 1,
+    "complete": true,
+    "passed": true,
+    "seconds": 53.91,
+    "requests": 24,
+    "tool_calls": 24,
+    "failed_calls": 0,
+    "actions": {
+      "status": 1,
+      "open": 2,
+      "select": 8,
+      "click": 7,
+      "fill": 2,
+      "reload": 2,
+      "finish_task": 2
+    },
+    "max_message_chars": 225951,
+    "input_tokens": 285861,
+    "cache_read_tokens": 1084160,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  },
+  {
+    "file": "after-crm-2.json.gz",
+    "version": "after",
+    "case": "crm",
+    "repeat": 2,
+    "complete": true,
+    "passed": true,
+    "seconds": 54.33,
+    "requests": 24,
+    "tool_calls": 23,
+    "failed_calls": 0,
+    "actions": {
+      "status": 2,
+      "open": 2,
+      "select": 6,
+      "click": 6,
+      "fill": 2,
+      "reload": 2,
+      "finish_task": 2,
+      "observe": 1
+    },
+    "max_message_chars": 190068,
+    "input_tokens": 238420,
+    "cache_read_tokens": 1095680,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  },
+  {
+    "file": "after-orders-1.json.gz",
+    "version": "after",
+    "case": "orders",
+    "repeat": 1,
+    "complete": true,
+    "passed": true,
+    "seconds": 22.69,
+    "requests": 8,
+    "tool_calls": 8,
+    "failed_calls": 1,
+    "actions": {
+      "exec_shell": 3,
+      "status": 1,
+      "open": 1,
+      "click": 1,
+      "finish_task": 2
+    },
+    "max_message_chars": 19749,
+    "input_tokens": 28777,
+    "cache_read_tokens": 170368,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "finish_task",
+        "content": "No UI task is open in this turn. Answer the user directly in text, without finish_task or request_task_tools."
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "after-orders-2.json.gz",
+    "version": "after",
+    "case": "orders",
+    "repeat": 2,
+    "complete": true,
+    "passed": true,
+    "seconds": 22.28,
+    "requests": 8,
+    "tool_calls": 8,
+    "failed_calls": 1,
+    "actions": {
+      "status": 1,
+      "exec_shell": 3,
+      "open": 1,
+      "click": 1,
+      "finish_task": 2
+    },
+    "max_message_chars": 19648,
+    "input_tokens": 31228,
+    "cache_read_tokens": 168576,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "finish_task",
+        "content": "No UI task is open in this turn. Answer the user directly in text, without finish_task or request_task_tools."
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "after-shopping-1.json.gz",
+    "version": "after",
+    "case": "shopping",
+    "repeat": 1,
+    "complete": true,
+    "passed": true,
+    "seconds": 29.04,
+    "requests": 7,
+    "tool_calls": 7,
+    "failed_calls": 0,
+    "actions": {
+      "open": 5,
+      "finish_task": 2
+    },
+    "max_message_chars": 101455,
+    "input_tokens": 65440,
+    "cache_read_tokens": 180352,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true,
+          "explicit_zero_results": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  },
+  {
+    "file": "after-shopping-2.json.gz",
+    "version": "after",
+    "case": "shopping",
+    "repeat": 2,
+    "complete": true,
+    "passed": true,
+    "seconds": 25.03,
+    "requests": 7,
+    "tool_calls": 7,
+    "failed_calls": 0,
+    "actions": {
+      "status": 1,
+      "open": 4,
+      "finish_task": 2
+    },
+    "max_message_chars": 91949,
+    "input_tokens": 60426,
+    "cache_read_tokens": 165376,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true,
+          "explicit_zero_results": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  },
+  {
+    "file": "after-shopping-3.json.gz",
+    "version": "after",
+    "case": "shopping",
+    "repeat": 3,
+    "complete": true,
+    "passed": true,
+    "seconds": 25.52,
+    "requests": 7,
+    "tool_calls": 7,
+    "failed_calls": 1,
+    "actions": {
+      "open": 4,
+      "finish_task": 2,
+      "observe": 1
+    },
+    "max_message_chars": 90624,
+    "input_tokens": 59696,
+    "cache_read_tokens": 178944,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true,
+          "explicit_zero_results": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"artifact\": null, \"content\": \"Page evaluation failed: Error: Observation selector must match exactly one element\\n    at <anonymous>:200:11\\n    at <anonymous>:380:3; read failed. Inspect status/recover before acting.\", \"receipt\": {\"action_id\": \"baf04a7538e845faa1a042fc9fe311d8\", \"action\": \"observe\", \"execution\": \"failed\", \"effect\": \"unchecked\", \"before_observation_id\": null, \"phase\": \"dispatch_or_verification\", \"target_id\": null, \"page_url\": \"https://books.toscrape.com/catalo"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "after-weekly-1.json.gz",
+    "version": "after",
+    "case": "weekly",
+    "repeat": 1,
+    "complete": true,
+    "passed": false,
+    "seconds": 148.78,
+    "requests": 72,
+    "tool_calls": 72,
+    "failed_calls": 5,
+    "actions": {
+      "open": 1,
+      "observe": 25,
+      "click": 3,
+      "press": 34,
+      "type": 3,
+      "check_text": 1,
+      "status": 1,
+      "request_assistance": 1,
+      "request_task_tools": 2,
+      "load_skill": 1
+    },
+    "max_message_chars": 325982,
+    "input_tokens": 260591,
+    "cache_read_tokens": 4864000,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": false,
+        "checks": {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        "error": null
+      },
+      {
+        "passed": false,
+        "checks": {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"artifact\": null, \"content\": \"Pagination requires scope_ref from the latest observation; read failed. Inspect status/recover before acting.\", \"receipt\": {\"action_id\": \"8150cd82ec0d4aafa2f6f0f4cda46661\", \"action\": \"observe\", \"execution\": \"failed\", \"effect\": \"unchecked\", \"before_observation_id\": null, \"phase\": \"dispatch_or_verification\", \"target_id\": null, \"target_name\": \"周报正文\", \"target_role\": \"textbox\", \"page_url\": \"http://127.0.0.1:57513/weekly\", \"observation\": \"unavailable\", "
+      },
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"content\": \"FAIL: 2026年第43周\", \"artifact\": {\"id\": \"4fc7aec5c0674e87b51fd334acad4f44.jpg\", \"path\": \"/var/folders/p2/sqz4sl7124j3zgtl3n_dgg4h0000gn/T/browser-business-mxwj4oai/artifacts/eval/4fc7aec5c0674e87b51fd334acad4f44.jpg\", \"label\": \"失败现场\"}, \"page\": {\"active\": true, \"url\": \"http://127.0.0.1:57513/weekly\", \"owner\": \"agent\", \"viewport\": {\"width\": 1200, \"height\": 760}}, \"receipt\": {\"action_id\": \"ae941cbb689f423ea5be92fbec9f0c72\", \"action\": \"check_text\", \"execution\": \"failed\", "
+      },
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"artifact\": null, \"content\": \"Pagination requires scope_ref from the latest observation; read failed. Inspect status/recover before acting.\", \"receipt\": {\"action_id\": \"c5a0c25b26134b1098e90792b1fcf416\", \"action\": \"observe\", \"execution\": \"failed\", \"effect\": \"unchecked\", \"before_observation_id\": null, \"phase\": \"dispatch_or_verification\", \"target_id\": null, \"target_name\": \"周报正文\", \"target_role\": \"textbox\", \"page_url\": \"http://127.0.0.1:57513/weekly\", \"observation\": \"unavailable\", "
+      },
+      {
+        "tool": "browser_use",
+        "content": "Browser assistance is unavailable in this runtime."
+      },
+      {
+        "tool": "load_skill",
+        "content": "skill `rich-text-editor` not found. Available: agent-reach, apple-design, convert-documents-to-markdown, open-knowledge-discovery, open-knowledge-write-skill, panerelay-browser, humanizer-zh, algorithmic-art, archify, brand-guidelines, canvas-design, doc-coauthoring, docx, excalidraw-diagram, frontend-design, internal-comms, json-canvas, kimi-webbridge, mcp-builder, mermaid-visualizer, obsidian-bases, obsidian-markdown, pdf, planning-with-files, pptx, prompt-master, large-scale-refactoring, skil"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "after-weekly-2.json.gz",
+    "version": "after",
+    "case": "weekly",
+    "repeat": 2,
+    "complete": true,
+    "passed": false,
+    "seconds": 159.95,
+    "requests": 72,
+    "tool_calls": 72,
+    "failed_calls": 1,
+    "actions": {
+      "open": 1,
+      "observe": 26,
+      "click": 8,
+      "press": 27,
+      "type": 3,
+      "screenshot": 3,
+      "scroll": 3,
+      "status": 1
+    },
+    "max_message_chars": 329468,
+    "input_tokens": 327252,
+    "cache_read_tokens": 4878208,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": false,
+        "checks": {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        "error": null
+      },
+      {
+        "passed": false,
+        "checks": {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"artifact\": null, \"content\": \"Pagination requires scope_ref from the latest observation; read failed. Inspect status/recover before acting.\", \"receipt\": {\"action_id\": \"9f482557662042efb211f0b10346f6ff\", \"action\": \"observe\", \"execution\": \"failed\", \"effect\": \"unchecked\", \"before_observation_id\": \"obs_630f6a27d29648399039539087e73a98\", \"phase\": \"dispatch_or_verification\", \"target_id\": null, \"target_name\": \"周报正文\", \"target_role\": \"textbox\", \"page_url\": \"http://127.0.0.1:59185/weekl"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "before-crm-1.json.gz",
+    "version": "before",
+    "case": "crm",
+    "repeat": 1,
+    "complete": true,
+    "passed": true,
+    "seconds": 45.07,
+    "requests": 17,
+    "tool_calls": 17,
+    "failed_calls": 2,
+    "actions": {
+      "open": 1,
+      "select": 4,
+      "click": 5,
+      "fill": 2,
+      "finish_task": 3,
+      "reload": 1,
+      "check_text": 1
+    },
+    "max_message_chars": 233687,
+    "input_tokens": 171238,
+    "cache_read_tokens": 880384,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"content\": \"FAIL: C037\\n王敏\\n华东\\n方建文\\n高\\n周五下午回访，核实续保意向\", \"artifact\": {\"id\": \"782221c3be614dd6b1de2ce0e59c21e2.jpg\", \"path\": \"/var/folders/p2/sqz4sl7124j3zgtl3n_dgg4h0000gn/T/browser-business-w5kgx5k7/artifacts/eval/782221c3be614dd6b1de2ce0e59c21e2.jpg\", \"label\": \"失败现场\"}, \"page\": {\"active\": true, \"url\": \"http://127.0.0.1:56372/crm\", \"owner\": \"agent\", \"viewport\": {\"width\": 1200, \"height\": 760}}, \"receipt\": {\"action_id\": \"6ab415ea50ab4e5e83e67eb5fcec34d3\", \"action\": \"check_text\", "
+      },
+      {
+        "tool": "finish_task",
+        "content": "Unknown evidence reference; copy evidence_ref, not action_id or observation_id. Available references: [\"tool:call_00_0dq2qh4i32b7nc6qgyrfhv5u\", \"tool:call_00_1awul8qi8ht2bchyabg01dr2\", \"tool:call_00_1yl901n5ik15cmpa3pjuleqo\", \"tool:call_00_8pldrp4qw16k3iig5yw0jh1d\", \"tool:call_00_y0jwlsiqhf72ddsvvudwclik\"]. Choose only results supporting the answer; use partial/blocked for unverified work."
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "before-crm-2.json.gz",
+    "version": "before",
+    "case": "crm",
+    "repeat": 2,
+    "complete": true,
+    "passed": true,
+    "seconds": 49.94,
+    "requests": 21,
+    "tool_calls": 21,
+    "failed_calls": 1,
+    "actions": {
+      "open": 1,
+      "select": 6,
+      "click": 7,
+      "fill": 2,
+      "check_text": 1,
+      "finish_task": 2,
+      "reload": 1,
+      "screenshot": 1
+    },
+    "max_message_chars": 306543,
+    "input_tokens": 116365,
+    "cache_read_tokens": 1404416,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"content\": \"FAIL: 周五下午回访，核实续保意向\", \"artifact\": {\"id\": \"fbf25a5ff9c0450d8130a010bcdc3966.jpg\", \"path\": \"/var/folders/p2/sqz4sl7124j3zgtl3n_dgg4h0000gn/T/browser-business-dywnle5v/artifacts/eval/fbf25a5ff9c0450d8130a010bcdc3966.jpg\", \"label\": \"失败现场\"}, \"page\": {\"active\": true, \"url\": \"http://127.0.0.1:58941/crm\", \"owner\": \"agent\", \"viewport\": {\"width\": 1200, \"height\": 760}}, \"receipt\": {\"action_id\": \"c4fa8565f8eb4463a0b6b5822fca8ed8\", \"action\": \"check_text\", \"execution\": \"failed\","
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "before-crm-3.json.gz",
+    "version": "before",
+    "case": "crm",
+    "repeat": 3,
+    "complete": false,
+    "passed": null,
+    "seconds": 38.57,
+    "requests": 18,
+    "tool_calls": 17,
+    "failed_calls": 0,
+    "actions": {
+      "status": 1,
+      "open": 1,
+      "select": 6,
+      "click": 5,
+      "fill": 1,
+      "reload": 1,
+      "finish_task": 1,
+      "observe": 1
+    },
+    "max_message_chars": 268906,
+    "input_tokens": 99143,
+    "cache_read_tokens": 965376,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "saved_records_exact": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  },
+  {
+    "file": "before-orders-1.json.gz",
+    "version": "before",
+    "case": "orders",
+    "repeat": 1,
+    "complete": true,
+    "passed": true,
+    "seconds": 26.59,
+    "requests": 10,
+    "tool_calls": 10,
+    "failed_calls": 2,
+    "actions": {
+      "exec_shell": 3,
+      "open": 1,
+      "click": 1,
+      "write_file": 2,
+      "request_task_tools": 1,
+      "finish_task": 2
+    },
+    "max_message_chars": 18955,
+    "input_tokens": 22241,
+    "cache_read_tokens": 228224,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "write_file",
+        "content": "Tool is outside this task's browser phase; request_task_tools with the task dependency first"
+      },
+      {
+        "tool": "finish_task",
+        "content": "No UI task is open in this turn. Answer the user directly in text, without finish_task or request_task_tools."
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "before-orders-2.json.gz",
+    "version": "before",
+    "case": "orders",
+    "repeat": 2,
+    "complete": true,
+    "passed": true,
+    "seconds": 18.44,
+    "requests": 8,
+    "tool_calls": 8,
+    "failed_calls": 1,
+    "actions": {
+      "open": 1,
+      "read_file": 2,
+      "click": 1,
+      "request_task_tools": 1,
+      "write_file": 2,
+      "finish_task": 1
+    },
+    "max_message_chars": 13264,
+    "input_tokens": 20094,
+    "cache_read_tokens": 171648,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "exact_csv": true,
+          "answer_totals": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "read_file",
+        "content": "Tool is outside this task's browser phase; request_task_tools with the task dependency first"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "before-shopping-1.json.gz",
+    "version": "before",
+    "case": "shopping",
+    "repeat": 1,
+    "complete": true,
+    "passed": true,
+    "seconds": 23.01,
+    "requests": 5,
+    "tool_calls": 4,
+    "failed_calls": 0,
+    "actions": {
+      "open": 3,
+      "finish_task": 1
+    },
+    "max_message_chars": 52078,
+    "input_tokens": 29709,
+    "cache_read_tokens": 122624,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true,
+          "explicit_zero_results": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  },
+  {
+    "file": "before-shopping-2.json.gz",
+    "version": "before",
+    "case": "shopping",
+    "repeat": 2,
+    "complete": true,
+    "passed": true,
+    "seconds": 31.0,
+    "requests": 8,
+    "tool_calls": 8,
+    "failed_calls": 2,
+    "actions": {
+      "open": 3,
+      "click": 1,
+      "finish_task": 4
+    },
+    "max_message_chars": 82090,
+    "input_tokens": 59485,
+    "cache_read_tokens": 198144,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true,
+          "explicit_zero_results": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "finish_task",
+        "content": "Unknown evidence reference; copy evidence_ref, not action_id or observation_id. Available references: [\"tool:call_00_a8jou7h1qi8xli67l7p8i58f\", \"tool:call_00_jsg21dn7brg8g4n3438dqs95\", \"tool:call_00_ozk9y7iyv8ivfw3kss932f5i\"]. Choose only results supporting the answer; use partial/blocked for unverified work."
+      },
+      {
+        "tool": "finish_task",
+        "content": "Unknown evidence reference; copy evidence_ref, not action_id or observation_id. Available references: [\"tool:call_00_e05exa8ehg6uc9r5az997ove\"]. Choose only results supporting the answer; use partial/blocked for unverified work."
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "before-shopping-3.json.gz",
+    "version": "before",
+    "case": "shopping",
+    "repeat": 3,
+    "complete": true,
+    "passed": true,
+    "seconds": 32.56,
+    "requests": 8,
+    "tool_calls": 8,
+    "failed_calls": 0,
+    "actions": {
+      "open": 6,
+      "finish_task": 2
+    },
+    "max_message_chars": 100717,
+    "input_tokens": 41767,
+    "cache_read_tokens": 248320,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "expected_titles": true,
+          "expected_prices": true,
+          "price_order": true,
+          "product_links": true,
+          "explicit_zero_results": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  },
+  {
+    "file": "before-weekly-1.json.gz",
+    "version": "before",
+    "case": "weekly",
+    "repeat": 1,
+    "complete": true,
+    "passed": false,
+    "seconds": 146.36,
+    "requests": 56,
+    "tool_calls": 56,
+    "failed_calls": 2,
+    "actions": {
+      "status": 2,
+      "open": 1,
+      "observe": 2,
+      "scroll": 7,
+      "screenshot": 16,
+      "click": 9,
+      "press": 14,
+      "type": 4,
+      "finish_task": 1
+    },
+    "max_message_chars": 740101,
+    "input_tokens": 246308,
+    "cache_read_tokens": 6578688,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": false,
+        "checks": {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        "error": null
+      },
+      {
+        "passed": true,
+        "checks": {
+          "history_unchanged": true,
+          "single_h2_title": true,
+          "formatted_items": true,
+          "one_append_only": true
+        },
+        "error": null
+      }
+    ],
+    "errors": [
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"content\": \"missing_observation_id: Copy observation_id from the returned observation before retrying; the action was not executed.\", \"artifact\": null, \"observation\": {\"url\": \"http://127.0.0.1:56922/weekly\", \"title\": \"团队周报\", \"text\": \"方建文的周报\\n二级标题\\n项目符号\\n保存周报\\n查看已保存版本\\n尚未修改\\n正文可编辑。标题和列表请用工具栏设置；保存后可查看已保存版本核对。\", \"elements\": [{\"ref\": \"e0\", \"target_id\": \"obs_9e8f2583a374420687edd57c3dccb8ef:n0\", \"role\": \"button\", \"tag\": \"button\", \"name\": \"二级标题\", \"name_truncated\": false, \"editable\":"
+      },
+      {
+        "tool": "browser_use",
+        "content": "{\"success\": false, \"content\": \"screenshot_required: action was not executed. Call screenshot, then use its observation_id for coordinate clicks. A diagnostic failure image is not an actionable screenshot.\", \"artifact\": null, \"observation\": {\"url\": \"http://127.0.0.1:56922/weekly\", \"title\": \"团队周报\", \"text\": \"方建文的周报\\n二级标题\\n项目符号\\n保存周报\\n查看已保存版本\\n尚未修改\\n正文可编辑。标题和列表请用工具栏设置；保存后可查看已保存版本核对。\", \"elements\": [{\"ref\": \"e0\", \"target_id\": \"obs_9e8f2583a374420687edd57c3dccb8ef:n0\", \"role\": \"button\", \"tag\": \"button\""
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "before-weekly-2.json.gz",
+    "version": "before",
+    "case": "weekly",
+    "repeat": 2,
+    "complete": true,
+    "passed": false,
+    "seconds": 256.04,
+    "requests": 72,
+    "tool_calls": 71,
+    "failed_calls": 0,
+    "actions": {
+      "open": 1,
+      "observe": 1,
+      "screenshot": 23,
+      "click": 17,
+      "press": 17,
+      "type": 3,
+      "scroll": 8,
+      "describe": 1
+    },
+    "max_message_chars": 982545,
+    "input_tokens": 306088,
+    "cache_read_tokens": 11245952,
+    "human_requests": 0,
+    "false_completed": 0,
+    "turns": [
+      {
+        "passed": false,
+        "checks": {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        "error": null
+      },
+      {
+        "passed": false,
+        "checks": {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        "error": null
+      }
+    ],
+    "errors": [],
+    "error": null
+  }
+]

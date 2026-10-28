@@ -1,0 +1,52 @@
+{
+  "baseline_commit": "92da286b9f8433d1e4eb970ed1ec9d20afaf8aac",
+  "before_sha256": "78444d3d77e7f724a6afb0ff79d0e89bf1b85d3b563cc860d1fdcdf8a4e4b1c8",
+  "after_sha256": "456ae5cd5a0b7bba2d305fb5d7ecff6588e09f31baa3149eeab5e45b65889a0b",
+  "patch_sha256": "14d9626f5a68ffe8a79dc65c905aef9000b8603448e63f8b20cf9028e7353a6b",
+  "model": "deepseek-v4-1-flash",
+  "repeats": 3,
+  "versions": [
+    "before",
+    "after"
+  ],
+  "cases": [
+    "shopping",
+    "crm",
+    "weekly",
+    "orders"
+  ],
+  "user_turns_per_case": 2,
+  "limit_per_turn": {
+    "tool_rounds": 35,
+    "seconds": 480
+  },
+  "public_site": "books.toscrape.com; read only",
+  "mutations": "localhost simulated business sites; fresh private profile per run",
+  "harness": "actual Engine conversation loop; no Workbench server/UI; no plugins/MCP/subagents",
+  "harness_sha256": {
+    "run_case.py": "1209133596aaed1753dffa10f63ccee0bc63a7ffcccc5c632b2f15db57c671fd",
+    "fixtures.py": "43891ddc6fa5d6c5d01b1b3b1d1cc9704235b05314654a3121eeeca4c9a70585",
+    "run_matrix.py": "23a036e55d61e4e2cc303e5cf727beedd8c2562970916b7bbb469b063a4bcb81"
+  },
+  "date": "2026-10-28",
+  "regression": {
+    "passed_initial": 588,
+    "failed_initial": 1,
+    "failure": "test_navigation_wait_and_tabs_use_owned_session: mock incorrectly matched new observation code",
+    "targeted_rerun_passed": 1,
+    "production_source_changed_after_regression": false
+  },
+  "human_input_policy": "Record request as blocked; cancel waiting tool and continue next user turn. Do not relax task requirements.",
+  "preflight_excluded": "preflight/* includes incomplete trial batch with human-input wait; excluded entirely",
+  "completion_status": "handoff_requested_by_user",
+  "completed_tasks": 18,
+  "interrupted_tasks": 1,
+  "not_started_tasks": 5,
+  "handoff_note": "产品实现保持冻结；测试输入要求人工时不降低标准。用户要求交接后停止批次。",
+  "archived_runner_sha256": {
+    "run_case.py": "1209133596aaed1753dffa10f63ccee0bc63a7ffcccc5c632b2f15db57c671fd",
+    "fixtures.py": "43891ddc6fa5d6c5d01b1b3b1d1cc9704235b05314654a3121eeeca4c9a70585",
+    "run_matrix.py": "269b58cd4932c42c95389000a981668dc2814a92d1fe41f878187e6279561c59"
+  },
+  "archive_changes": "run_case/fixtures unchanged from formal protocol; run_matrix additionally refuses overwriting compressed traces. summarize/report support gzip."
+}

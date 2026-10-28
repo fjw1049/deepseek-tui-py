@@ -265,21 +265,22 @@ async def test_focus_blocks_hidden_tool_then_enables_only_requested_tool(tmp_pat
     (tmp_path / "report.txt").write_text("42")
     engine, client = await delivery_engine(tmp_path, [
         ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        ToolCall(id="hidden", name="read_file", arguments={"path": "report.txt"}),
-        ToolCall(id="extend", name="request_task_tools", arguments={"names": ["read_file"], "reason": "Analyze downloaded report"}),
-        ToolCall(id="file", name="read_file", arguments={"path": "report.txt"}),
+        ToolCall(id="hidden", name="write_file", arguments={"path": "report.txt", "content": "43"}),
+        ToolCall(id="extend", name="request_task_tools", arguments={
+            "names": ["write_file"], "reason": "Save analyzed report"}),
+        ToolCall(id="file", name="write_file", arguments={"path": "report.txt", "content": "43"}),
         finish(),
     ])
     try:
         result = await engine._run_conversation([Message.user("Read report")], "test", "sys", None)
         names = lambda req: {(t.get("function") or t)["name"] for t in req.tools}
-        # The advertised list stays stable for prefix caching; focus is enforced on execution.
-        assert names(client.requests[1]) == names(client.requests[3])
+        # Only basic tools are exposed until a capability is explicitly requested.
+        assert "write_file" not in names(client.requests[1])
+        assert "write_file" in names(client.requests[3])
         assert "read_file" in names(client.requests[1])
         tool_results = {b.tool_use_id: b for m in client.requests[-1].messages
                         for b in m.content if b.type == "tool_result"}
         assert tool_results["hidden"].is_error
-        assert "request_task_tools" in str(tool_results["hidden"].content)
         assert not tool_results["file"].is_error
         assert result.task_outcome["status"] == "completed"
         # Focus and evidence belong to one task, not the next conversation turn.

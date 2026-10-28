@@ -28,8 +28,9 @@ class BrowserUseTool(ToolSpec):
             "request_user_input(kind=action, surface=browser, reason=...) as the only call. "
             "request_assistance remains a compatible alias for manual browser help. "
             "After help verify fresh evidence and continue within the user's authorization. "
-            "Browser use activates task focus: request_task_tools exposes named capabilities for "
-            "later stages. Deliver the whole task with finish_task, not just a browser step. "
+            "Browser use keeps basic read_file, file_search, grep_files and exec_shell tools; "
+            "request_task_tools exposes other capabilities for later stages. "
+            "Deliver the whole task with finish_task, not just a browser step. "
             "Do not ask the user before ordinary navigation: the app asks them to approve each "
             "new site itself and they may trust it for the session. "
             "open keeps the user's own page: from a tab the user was using it opens a new tab. "
@@ -85,12 +86,18 @@ class BrowserUseTool(ToolSpec):
             ),
             "shadow_path": (
                 "For observe, ordered CSS selectors of unique open shadow hosts in the selected "
-                "document/frame. Keep scope_shadow_path when continuing; act using returned refs."
+                "document/frame. Keep shadow_path when continuing; act using returned refs."
             ),
-            "level": "interactive returns up to 120 elements; full returns up to 250.",
-            "text_offset": "Continue at next_text_offset, keeping scope_selector and frame_id.",
+            "level": ("interactive prioritizes up to 120 on-screen elements; full reads up to 250 "
+                      "in document order. viewport_text describes currently visible text."),
+            "include_editable": (
+                "For an authorized document editing task only: observe a unique contenteditable "
+                "selector to read its text, selection offsets and current block. "
+                "Excludes ordinary form/password values. Default false; "
+                "scope_ref preserves this mode for pagination."),
+            "text_offset": "Continue at next_text_offset, keeping selector and frame_id.",
             "element_offset": (
-                "Continue at next_element_offset with the same scope_selector/frame_id; "
+                "Continue at next_element_offset with the same selector/frame_id; "
                 "creates a new observation."
             ),
             "option_offset": (

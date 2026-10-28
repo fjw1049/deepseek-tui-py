@@ -3684,6 +3684,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 if any(getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error"))
             )
             messages.extend(tool_results)
+            from deepseek_tui.engine.context import prune_superseded_browser_observations
+
+            pruned = prune_superseded_browser_observations(messages)
+            if pruned:
+                logger.info("browser_observations_pruned messages=%d", pruned)
             cua_session = getattr(self, "_cua_session", None)
             if cua_session is not None and cua_session.large_texts:
                 from deepseek_tui.cua.tools import collapse_repeated_texts

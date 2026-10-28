@@ -70,6 +70,69 @@ def summarize_text_head_tail(text: str, limit: int) -> str:
 
 # --- Tool result compaction -----------------------------------------------
 
+
+def prune_superseded_browser_observations(messages: list[Message]) -> int:
+    """Batch away stale target lists; preserve receipts, unique text and paging results."""
+    from deepseek_tui.protocol.messages import ToolResultBlock, ToolUseBlock
+
+    decoder = json.JSONDecoder()
+    browser_ids = {b.id for message in messages for b in message.content
+                   if isinstance(b, ToolUseBlock) and b.name == "browser_use"}
+    recent: dict[tuple, list[tuple[str, str]]] = {}
+    changes = []
+    reclaimed = 0
+    for i in range(len(messages) - 1, -1, -1):
+        blocks = list(messages[i].content)
+        changed = False
+        for j, block in enumerate(blocks):
+            if (not isinstance(block, ToolResultBlock) or block.is_error
+                    or block.tool_use_id not in browser_ids):
+                continue
+            try:
+                data, end = decoder.raw_decode(block.content)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(data, dict) or not data.get("success"):
+                continue
+            observation = data.get("observation")
+            if not isinstance(observation, dict) or not observation.get("document_id"):
+                continue
+            if observation.get("targets_archived"):
+                continue
+            key = tuple(observation.get(k) for k in (
+                "tab_id", "document_id", "url", "frame_id", "scope_selector",
+                "text_offset", "element_offset", "include_editable",
+            )) + (tuple(observation.get("scope_shadow_path") or []),)
+            history = recent.setdefault(key, [])
+            text = observation.get("text", "")
+            if len(history) < 3:
+                history.append((text, observation.get("observation_id", "")))
+                continue
+            old_size = len(block.content)
+            observation = dict(observation)
+            for name in ("elements", "scopes", "scroll_containers", "frames"):
+                observation.pop(name, None)
+            observation["targets_archived"] = True
+            observation["target_notice"] = "Historical result: observe again before acting."
+            match = next((oid for body, oid in history if body == text), None)
+            if match and text:
+                observation["text"] = "Repeated text retained in observation " + match
+            data["observation"] = observation
+            content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            content += block.content[end:]
+            if len(content) < old_size:
+                blocks[j] = block.model_copy(update={"content": content})
+                reclaimed += old_size - len(content)
+                changed = True
+        if changed:
+            changes.append((i, blocks))
+    # Rewriting the prefix every round costs cache reuse; reclaim a useful batch.
+    if reclaimed < 24_000:
+        return 0
+    for i, blocks in changes:
+        messages[i] = messages[i].model_copy(update={"content": blocks})
+    return len(changes)
+
 _NOISY_TOOLS = frozenset(
     {
         "exec_shell",

@@ -1,0 +1,47 @@
+{
+  "status": "按用户要求结束并交接；18个任务完成、1个中断、5个未开始。未验证为整体提效。",
+  "findings": [
+    {
+      "priority": "P1",
+      "issue": "富文本定位与选区操作失效后继续修改",
+      "evidence": "after-weekly-1.json: Meta+End 后新标题与第25周标题拼在一起；Meta+Shift+ArrowLeft 后观察仍显示 collapsed=true，随后反复 Backspace。",
+      "impact": "新内容插错位置，错误恢复持续消耗调用；两次重复共四轮均未完成保存。",
+      "cause_status": "独立真实 Chromium 探针已确认：Meta+End、Meta+ArrowDown、Ctrl+End、Meta+Shift+ArrowLeft 后选区仍是 5/5；显式 moveToEndOfDocument 移到 1008/1008。当前输入层缺少相应编辑命令映射。"
+    },
+    {
+      "priority": "P1",
+      "issue": "编辑器读取与文本核验使用不同可见性规则",
+      "evidence": "after-weekly-1.json: include_editable 观察包含第43周文本，随后 selector=#editor 的 check_text 同文本失败。conditions.py 的 textFrom 调用 READ_TEXT 默认排除 contenteditable。",
+      "impact": "实际存在的内容可能被误判不存在，引发重复操作。",
+      "cause_status": "独立探针已确认：授权观察包含2026年第22周，check_text(#editor, 同文本)返回false。"
+    },
+    {
+      "priority": "P2",
+      "issue": "多轮交付阶段与可见工具不一致",
+      "evidence": "before-orders-1.json / after-orders-1.json: 第二轮只需基于已有页面证据重新计算，finish_task 返回 No UI task is open in this turn。",
+      "impact": "结果正确仍多一次无效调用。",
+      "cause_status": "已复现；每轮重建 TaskDelivery，未启动本轮 browser_use 时 finish_task 仍在目录但不可用。"
+    },
+    {
+      "priority": "P2",
+      "issue": "页面变化并不意味着向任务目标推进",
+      "evidence": "after-weekly-1.json: 文本逐字变化、观察和按键循环持续至上限。",
+      "impact": "重复检测能识别相同页面，但拦不住在错误位置持续编辑。",
+      "cause_status": "观察到的行为；需要以目标位置/选区及编辑前置条件约束恢复。"
+    }
+  ],
+  "coverage_limits": [
+    "公开站点为 Books to Scrape 演示商店；三类写操作使用 localhost 业务模拟页。",
+    "调用实际 Engine 与 Chromium，未覆盖 Workbench IPC、用户真实登录态和人工接管 UI。",
+    "未验证真实语雀/飞书复杂编辑器、验证码、上传下载和更多站点兼容性。",
+    "每种任务只有三个重复；不能据此推断普遍效率提升。"
+  ],
+  "completed_tasks": 18,
+  "unfinished": [
+    "before-crm-3：第一轮通过，第二轮中断；不计入完整任务成绩",
+    "after-crm-3：未开始",
+    "before-weekly-3、after-weekly-3：未开始",
+    "before-orders-3、after-orders-3：未开始"
+  ],
+  "summary": "已完成的前后版本各9个任务，各通过7个；商品3/3、客户2/2、对账2/2、周报0/2。未完成项排除，不补算通过。"
+}

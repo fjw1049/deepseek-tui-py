@@ -1,0 +1,729 @@
+<!doctype html><meta charset="utf-8"><title>浏览器业务验收 · 2026-10-28</title><style>
+body{font:16px/1.65 system-ui,-apple-system,sans-serif;color:#24313d;max-width:1200px;margin:36px auto;padding:0 24px;background:#f7f8fa}h1,h2{line-height:1.25}section,details{background:white;border:1px solid #dde2e7;border-radius:10px;padding:18px;margin:18px 0}table{border-collapse:collapse;width:100%;font-size:14px}td,th{border-bottom:1px solid #e2e6eb;padding:10px;text-align:left;vertical-align:top}th{background:#eff3f6}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui;background:#f4f6f8;padding:14px;border-radius:6px}a{color:#145eb0}.pass{color:#176e44}.fail{color:#b03527}.muted{color:#647383}summary{cursor:pointer;font-weight:600}code{overflow-wrap:anywhere}</style>
+<h1>浏览器业务验收</h1><p>2026-10-28 · deepseek-v4-1-flash · 优化前后各 3 次独立重复 · 每次 2 轮用户需求</p>
+<section><h2>方法与边界</h2><p>以真实需求和独立结果判定验收，而非仅验证修复代码。每次创建新浏览器配置和工作目录，两轮对话共享同一会话。使用项目实际 Engine 工具循环、工具目录、任务交付与上下文逻辑；未覆盖 Workbench 服务/UI 集成。</p>
+<p>商品场景使用公开 books.toscrape.com 测试商店，仅浏览；其余使用本机可重置的业务模拟页面，通过真实 Chromium 点击、输入、滚动和保存。它们不等同于真实语雀、CRM 服务端或登录流程。</p>
+<p>每轮配置 max_tool_round_trips=35、480 秒（引擎可追加收尾轮）；先后版本交替顺序。产品源码冻结，正式批次不边测边修。试运行不纳入成绩。三次重复只用于发现稳定性问题，不足以证明普遍提升或统计显著性。</p>
+<p>浏览器及相关引擎回归初次 588 通过、1 个测试替身失败；精确修正替身匹配后，该用例单独通过。未再次运行整套回归。</p></section>
+<section><h2>需求与判定</h2><table><tr><th>场景</th><th>第一轮</th><th>后续修改</th><th>独立判定</th></tr>
+<tr><td>商品 · 中等</td><td>Travel 分类有货、£30 内最便宜三本，不足则列实际数量</td><td>预算降到 £20，重新确认最多两本</td><td>对照独立读取的价格、完整书名、数量、顺序和链接；人工检查超预算推荐及证据</td></tr>
+<tr><td>客户 · 中等</td><td>区域与负责人筛选，修改 C037 优先级、备注并保存</td><td>保留 C037，修改 C073，重新打开核对</td><td>已保存的 80 条记录与期望逐字段对比，确保其他记录不变</td></tr>
+<tr><td>周报 · 困难</td><td>21 周历史文档后追加第43周二级标题和两条列表</td><td>只修改本周第二条，避免重复追加</td><td>检查已保存 HTML 的历史前缀、h2/li 结构、内容及数量</td></tr>
+<tr><td>对账 · 困难</td><td>读取两页订单，与本地退款表关联，筛华东已付款并导出 CSV</td><td>改华南，覆盖文件，避免混入上一轮数据</td><td>逐行核对 CSV 编号/金额/退款/净额及排序，核对回答合计</td></tr></table></section>
+<section><h2>结果（已完成 18/24）</h2><p>通过表示两轮均通过自动业务断言；人工复核中的表达、证据或合规问题另列，不由模型自报完成决定。</p><table><tr><th>场景</th><th>版本</th><th>通过/完成</th><th>工具调用中位数</th><th>失败调用合计</th><th>耗时中位数</th></tr>
+<tr><td>商品筛选与预算变更（中等）</td><td>优化前</td><td>3/3</td><td>8</td><td>2</td><td>31.0s</td></tr>
+<tr><td>商品筛选与预算变更（中等）</td><td>优化后</td><td>3/3</td><td>7</td><td>1</td><td>25.5s</td></tr>
+<tr><td>客户维护与持久化核对（中等）</td><td>优化前</td><td>2/2</td><td>19</td><td>3</td><td>47.5s</td></tr>
+<tr><td>客户维护与持久化核对（中等）</td><td>优化后</td><td>2/2</td><td>23.5</td><td>0</td><td>54.1s</td></tr>
+<tr><td>长周报续写、格式与二次修改（困难）</td><td>优化前</td><td>0/2</td><td>63.5</td><td>2</td><td>201.2s</td></tr>
+<tr><td>长周报续写、格式与二次修改（困难）</td><td>优化后</td><td>0/2</td><td>72</td><td>6</td><td>154.4s</td></tr>
+<tr><td>分页订单与本地退款表核对（困难）</td><td>优化前</td><td>2/2</td><td>9</td><td>3</td><td>22.5s</td></tr>
+<tr><td>分页订单与本地退款表核对（困难）</td><td>优化后</td><td>2/2</td><td>8</td><td>2</td><td>22.5s</td></tr>
+</table><p class="muted">耗时统计包括失败任务，不能将未完成任务更快退出解释为效率提高。模型请求、工具调用与用户轮次是不同指标。</p></section>
+<section><h2>人工证据复核</h2><pre>{
+  &quot;status&quot;: &quot;按用户要求结束并交接；18个任务完成、1个中断、5个未开始。未验证为整体提效。&quot;,
+  &quot;findings&quot;: [
+    {
+      &quot;priority&quot;: &quot;P1&quot;,
+      &quot;issue&quot;: &quot;富文本定位与选区操作失效后继续修改&quot;,
+      &quot;evidence&quot;: &quot;after-weekly-1.json: Meta+End 后新标题与第25周标题拼在一起；Meta+Shift+ArrowLeft 后观察仍显示 collapsed=true，随后反复 Backspace。&quot;,
+      &quot;impact&quot;: &quot;新内容插错位置，错误恢复持续消耗调用；两次重复共四轮均未完成保存。&quot;,
+      &quot;cause_status&quot;: &quot;独立真实 Chromium 探针已确认：Meta+End、Meta+ArrowDown、Ctrl+End、Meta+Shift+ArrowLeft 后选区仍是 5/5；显式 moveToEndOfDocument 移到 1008/1008。当前输入层缺少相应编辑命令映射。&quot;
+    },
+    {
+      &quot;priority&quot;: &quot;P1&quot;,
+      &quot;issue&quot;: &quot;编辑器读取与文本核验使用不同可见性规则&quot;,
+      &quot;evidence&quot;: &quot;after-weekly-1.json: include_editable 观察包含第43周文本，随后 selector=#editor 的 check_text 同文本失败。conditions.py 的 textFrom 调用 READ_TEXT 默认排除 contenteditable。&quot;,
+      &quot;impact&quot;: &quot;实际存在的内容可能被误判不存在，引发重复操作。&quot;,
+      &quot;cause_status&quot;: &quot;独立探针已确认：授权观察包含2026年第22周，check_text(#editor, 同文本)返回false。&quot;
+    },
+    {
+      &quot;priority&quot;: &quot;P2&quot;,
+      &quot;issue&quot;: &quot;多轮交付阶段与可见工具不一致&quot;,
+      &quot;evidence&quot;: &quot;before-orders-1.json / after-orders-1.json: 第二轮只需基于已有页面证据重新计算，finish_task 返回 No UI task is open in this turn。&quot;,
+      &quot;impact&quot;: &quot;结果正确仍多一次无效调用。&quot;,
+      &quot;cause_status&quot;: &quot;已复现；每轮重建 TaskDelivery，未启动本轮 browser_use 时 finish_task 仍在目录但不可用。&quot;
+    },
+    {
+      &quot;priority&quot;: &quot;P2&quot;,
+      &quot;issue&quot;: &quot;页面变化并不意味着向任务目标推进&quot;,
+      &quot;evidence&quot;: &quot;after-weekly-1.json: 文本逐字变化、观察和按键循环持续至上限。&quot;,
+      &quot;impact&quot;: &quot;重复检测能识别相同页面，但拦不住在错误位置持续编辑。&quot;,
+      &quot;cause_status&quot;: &quot;观察到的行为；需要以目标位置/选区及编辑前置条件约束恢复。&quot;
+    }
+  ],
+  &quot;coverage_limits&quot;: [
+    &quot;公开站点为 Books to Scrape 演示商店；三类写操作使用 localhost 业务模拟页。&quot;,
+    &quot;调用实际 Engine 与 Chromium，未覆盖 Workbench IPC、用户真实登录态和人工接管 UI。&quot;,
+    &quot;未验证真实语雀/飞书复杂编辑器、验证码、上传下载和更多站点兼容性。&quot;,
+    &quot;每种任务只有三个重复；不能据此推断普遍效率提升。&quot;
+  ],
+  &quot;completed_tasks&quot;: 18,
+  &quot;unfinished&quot;: [
+    &quot;before-crm-3：第一轮通过，第二轮中断；不计入完整任务成绩&quot;,
+    &quot;after-crm-3：未开始&quot;,
+    &quot;before-weekly-3、after-weekly-3：未开始&quot;,
+    &quot;before-orders-3、after-orders-3：未开始&quot;
+  ],
+  &quot;summary&quot;: &quot;已完成的前后版本各9个任务，各通过7个；商品3/3、客户2/2、对账2/2、周报0/2。未完成项排除，不补算通过。&quot;
+}</pre></section>
+<details><summary>客户维护与持久化核对（中等） · after · 第 1 次：通过</summary><p>模型请求 24 · 工具调用 24 · 失败调用 0 · 53.91 秒 · <a href="after-crm-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>打开 http://127.0.0.1:56605/crm 客户工作台，筛选华东区域、负责人方建文。把 C037 王敏的优先级设为高，跟进备注改为“周五下午回访，核实续保意向”，保存并确认。不要改其他客户。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>已在 CRM 客户工作台完成修改：筛选华东区域、负责人方建文后，将 C037 王敏的优先级设为“高”，跟进备注改为“周五下午回访，核实续保意向”，并保存。
+
+保存后页面提示“已保存 C037 高 周五下午回访，核实续保意向”。为排除临时状态，我刷新页面并重新按华东+方建文筛选（共 27 条），C037 王敏一行仍显示“高”和该备注；其余客户保持“普通、待联系”，未做任何改动。</pre>
+<h3>第 2 轮需求</h3><pre>刚才王敏的记录保留。再把同一筛选结果里的 C073 陈晨设为低优先级，备注改为“客户出差，下周三联系”。保存后重新打开页面，核对这两条都保留下来了，汇总最终状态。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>已在同一筛选结果（华东 + 方建文）中把 C073 陈晨的优先级设为「低」，跟进备注改为「客户出差，下周三联系」，并保存成功（页面提示「已保存 C073 低 客户出差，下周三联系」）。
+
+按要求重新加载页面并再次筛选华东、方建文（共 27 条），核对结果如下，两条记录均已保留：
+
+| 客户编号 | 姓名 | 区域 | 负责人 | 优先级 | 跟进备注 |
+|---|---|---|---|---|---|
+| C037 | 王敏 | 华东 | 方建文 | 高 | 周五下午回访，核实续保意向 |
+| C073 | 陈晨 | 华东 | 方建文 | 低 | 客户出差，下周三联系 |
+
+筛选结果中其余 25 条客户仍为「普通 / 待联系」，未受影响。</pre>
+</details>
+<details><summary>客户维护与持久化核对（中等） · after · 第 2 次：通过</summary><p>模型请求 24 · 工具调用 23 · 失败调用 0 · 54.33 秒 · <a href="after-crm-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>打开 http://127.0.0.1:58678/crm 客户工作台，筛选华东区域、负责人方建文。把 C037 王敏的优先级设为高，跟进备注改为“周五下午回访，核实续保意向”，保存并确认。不要改其他客户。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>已在客户工作台完成 C037 王敏的修改并确认保存。
+
+筛选条件为华东区域、负责人方建文，共 27 条记录。打开 C037 王敏的编辑面板后，把优先级从“普通”改为“高”，跟进备注填入“周五下午回访，核实续保意向”，点击“保存客户”。页面回执为“已保存 C037 高 周五下午回访，核实续保意向”。
+
+刷新页面并重新应用筛选后，C037 王敏仍显示优先级“高”和新的备注，说明改动已持久化到服务端，不仅停留在页面状态。
+
+其他客户未受影响：限定范围内其余 26 条记录仍为“普通 / 待联系”；全量 80 条中只有 C037 一行发生上述变化。页面当前停留在华东、方建文的筛选结果上，便于核对。</pre>
+<h3>第 2 轮需求</h3><pre>刚才王敏的记录保留。再把同一筛选结果里的 C073 陈晨设为低优先级，备注改为“客户出差，下周三联系”。保存后重新打开页面，核对这两条都保留下来了，汇总最终状态。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>两条记录都已保存，并在重新加载页面后确认保留。
+
+**本次操作**：在华东区域、负责人方建文的筛选结果里打开 C073 陈晨，优先级从“普通”改为“低”，跟进备注填“客户出差，下周三联系”，保存回执为“已保存 C073 低 客户出差，下周三联系”。之后重新打开页面并强制刷新（页面回到默认的 80 条全量视图），重新确认结果。
+
+**重新加载后的最终状态**（全量 80 条中仅这两行与初始值不同）：
+
+| 编号 | 姓名 | 区域 | 负责人 | 优先级 | 跟进备注 |
+|---|---|---|---|---|---|
+| C037 | 王敏 | 华东 | 方建文 | 高 | 周五下午回访，核实续保意向 |
+| C073 | 陈晨 | 华东 | 方建文 | 低 | 客户出差，下周三联系 |
+
+王敏的记录在本轮中未被触碰，刷新后仍保持上一轮的“高 / 周五下午回访，核实续保意向”。其余 78 条客户均为初始的“普通 / 待联系”，没有其他改动。
+
+页面现在停留在未筛选的全量视图，筛选框已重置为“全部”，需要时可重新按华东、方建文筛选查看。</pre>
+</details>
+<details><summary>分页订单与本地退款表核对（困难） · after · 第 1 次：通过</summary><p>模型请求 8 · 工具调用 8 · 失败调用 1 · 22.69 秒 · <a href="after-orders-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>用浏览器阅读 http://127.0.0.1:58335/orders 的10月订单报表（注意分页），结合当前工作目录 refunds.csv 的退款记录，计算华东区域已付款订单的成交总额、对应退款总额和净额，取消订单不计入。按订单编号关联，仅扣这些订单的退款。把明细写到当前目录 reconciliation.csv，列名 order_id,gross,refund,net，按订单编号排序；回答三个合计。网页数据必须通过浏览器读取。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>明细已写入 `reconciliation.csv`（11 行，按订单编号排序）。
+
+三个合计：**成交总额 2220 元，退款总额 173 元，净额 2047 元。**
+
+口径说明：
+- 报表共 2 页 20 条订单，全部通过浏览器读取。华东区域且状态为「已付款」的订单有 11 条：O001、O002、O004、O007、O008、O011、O013、O014、O016、O017、O019。
+- 取消订单 O005、O010、O020 按要求不计入，华南区域的订单也不计入。
+- 本地 refunds.csv 中的退款按订单编号关联，只有 O002(22)、O004(24)、O007(27)、O011(31)、O013(33)、O016(36) 落在上述订单范围内，其余退款记录（O005、O009、O018、O020 等）对应的并非华东已付款订单，因此没有扣除。
+
+| 项目 | 金额（元） |
+|---|---|
+| 成交总额 gross | 2220 |
+| 退款总额 refund | 173 |
+| 净额 net | 2047 |</pre>
+<h3>第 2 轮需求</h3><pre>口径改为华南区域已付款订单。沿用相同算法，覆盖 reconciliation.csv，只保留华南符合条件的订单，再给出三个合计，别把上轮华东数据混进去。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>`reconciliation.csv` 已按华南口径重写，只保留 5 条符合条件的订单，华东数据已全部清除。
+
+三个合计：**成交总额 980 元，退款总额 67 元，净额 913 元。**
+
+| order_id | gross | refund | net |
+|---|---|---|---|
+| O003 | 130 | 0 | 130 |
+| O006 | 160 | 0 | 160 |
+| O009 | 190 | 29 | 161 |
+| O012 | 220 | 0 | 220 |
+| O018 | 280 | 38 | 242 |
+
+退款只扣 O009 的 29 元和 O018 的 38 元，这两条是华南已付款订单在退款表中的全部命中。O003、O006、O012 在退款表中没有记录，退款记 0；华南的取消订单 O015 不计入。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;finish_task&quot;,
+    &quot;content&quot;: &quot;No UI task is open in this turn. Answer the user directly in text, without finish_task or request_task_tools.&quot;
+  }
+]</pre>
+</details>
+<details><summary>分页订单与本地退款表核对（困难） · after · 第 2 次：通过</summary><p>模型请求 8 · 工具调用 8 · 失败调用 1 · 22.28 秒 · <a href="after-orders-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>用浏览器阅读 http://127.0.0.1:60622/orders 的10月订单报表（注意分页），结合当前工作目录 refunds.csv 的退款记录，计算华东区域已付款订单的成交总额、对应退款总额和净额，取消订单不计入。按订单编号关联，仅扣这些订单的退款。把明细写到当前目录 reconciliation.csv，列名 order_id,gross,refund,net，按订单编号排序；回答三个合计。网页数据必须通过浏览器读取。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>已读取订单报表两页全部 20 条记录（第 1 页 O001–O010，第 2 页 O011–O020），筛选出华东区域且状态为&quot;已付款&quot;的 11 个订单，与 refunds.csv 按订单编号关联。
+
+三个合计：
+- 成交总额（gross）：2220
+- 对应退款总额（refund）：173
+- 净额（net）：2047
+
+明细已写入 `reconciliation.csv`（按订单编号排序）：
+
+| order_id | gross | refund | net |
+|---|---|---|---|
+| O001 | 110 | 0 | 110 |
+| O002 | 120 | 22 | 98 |
+| O004 | 140 | 24 | 116 |
+| O007 | 170 | 27 | 143 |
+| O008 | 180 | 0 | 180 |
+| O011 | 210 | 31 | 179 |
+| O013 | 230 | 33 | 197 |
+| O014 | 240 | 0 | 240 |
+| O016 | 260 | 36 | 224 |
+| O017 | 270 | 0 | 270 |
+| O019 | 290 | 0 | 290 |
+
+排除说明：华东区域的 O005、O010、O020 状态为已付款以外的&quot;取消&quot;（金额 150、200、300），未计入成交；华南订单（O003、O006、O009、O012、O018）及其退款全部剔除。退款表中 O009 属华南，未扣；O005 已取消，虽在退款表中有 25，也未计入。O001、O008、O014、O017、O019 无退款记录，按 0 处理。</pre>
+<h3>第 2 轮需求</h3><pre>口径改为华南区域已付款订单。沿用相同算法，覆盖 reconciliation.csv，只保留华南符合条件的订单，再给出三个合计，别把上轮华东数据混进去。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>口径已改为华南区域已付款订单，`reconciliation.csv` 已被覆盖，现在只保留符合条件的那 5 个订单。
+
+三个合计：
+
+- 成交总额（gross）：980
+- 对应退款总额（refund）：67
+- 净额（net）：913
+
+| order_id | gross | refund | net |
+|---|---|---|---|
+| O003 | 130 | 0 | 130 |
+| O006 | 160 | 0 | 160 |
+| O009 | 190 | 29 | 161 |
+| O012 | 220 | 0 | 220 |
+| O018 | 280 | 38 | 242 |
+
+华南区域中 O015 的状态为“取消”（金额 250），未计入成交；因为退款表没有它的记录，所以也不涉及退款。华东订单全部剔除，上一轮的 2220 / 173 / 2047 未混入；退款表中属华东的 O002、O004、O007、O011、O013、O016 本轮未扣，O003、O006、O012 无退款记录，按 0 处理。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;finish_task&quot;,
+    &quot;content&quot;: &quot;No UI task is open in this turn. Answer the user directly in text, without finish_task or request_task_tools.&quot;
+  }
+]</pre>
+</details>
+<details><summary>商品筛选与预算变更（中等） · after · 第 1 次：通过</summary><p>模型请求 7 · 工具调用 7 · 失败调用 0 · 29.04 秒 · <a href="after-shopping-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请用浏览器查看 https://books.toscrape.com/catalogue/category/books/travel_2/index.html 的 Travel 分类，为读书会选书。只选有货且标价不超过 £30 的书，按价格从低到高列出最便宜的三本（不足三本就列实际数量），给出完整书名、价格和商品链接，不买书。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True}</p>
+<h3>模型回答</h3><pre>Travel 分类共 11 本书，全部有货。符合「有货且标价不超过 £30」的只有 **2 本**，因此按实际数量列出如下：
+
+| # | 完整书名 | 价格 | 库存 | 商品链接 |
+|---|---|---|---|---|
+| 1 | The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) | £23.21 | 有货（3 本） | https://books.toscrape.com/catalogue/the-road-to-little-dribbling-adventures-of-an-american-in-britain-notes-from-a-small-island-2_277/index.html |
+| 2 | 1,000 Places to See Before You Die | £26.08 | 有货（1 本） | https://books.toscrape.com/catalogue/1000-places-to-see-before-you-die_1/index.html |
+
+第三便宜的是 The Great Railway Bazaar（£30.54，有货 6 本），但已超过 £30 上限，故未列入。其余 8 本价格在 £36.94 到 £56.88 之间，均超预算。
+
+补充：该站点所有价格标注为随机生成，仅供演示。全程仅浏览，未加入购物车，也未下单。</pre>
+<h3>第 2 轮需求</h3><pre>预算改成每本不超过 £20，只保留最便宜的两本。请基于刚才那个分类重新确认，明确说明最终有几本符合条件，不要推荐超预算的。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True, &#x27;explicit_zero_results&#x27;: True}</p>
+<h3>模型回答</h3><pre>按新的每本 £20 上限重新核对了 Travel 分类全部 11 本书。
+
+**最终符合条件的有 0 本。**
+
+该分类 11 本全部有货，但没有一本标价 ≤ £20。价格最低的仍是 £23.21，已在预算之上；我上一轮推荐的两本（The Road to Little Dribbling £23.21、1,000 Places to See Before You Die £26.08）现在都超预算，按你的要求不再推荐。
+
+预算内的候选为空，因此没有可列的书单。若要继续在 £20 内选书，需要换一个分类，或把上限放宽到至少 £23.21。
+
+价格最低的几本供参考（均超预算）：£23.21、£26.08、£30.54、£36.94、£37.33，其余在 £38.95 到 £56.88 之间。全程仅浏览，未加入购物车也未下单。</pre>
+</details>
+<details><summary>商品筛选与预算变更（中等） · after · 第 2 次：通过</summary><p>模型请求 7 · 工具调用 7 · 失败调用 0 · 25.03 秒 · <a href="after-shopping-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请用浏览器查看 https://books.toscrape.com/catalogue/category/books/travel_2/index.html 的 Travel 分类，为读书会选书。只选有货且标价不超过 £30 的书，按价格从低到高列出最便宜的三本（不足三本就列实际数量），给出完整书名、价格和商品链接，不买书。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True}</p>
+<h3>模型回答</h3><pre>Travel 分类共 11 本书，全部显示「In stock」。按「有货且标价 ≤ £30」筛选后只有 2 本符合，未满三本，以下是实际的两本（价格由低到高）：
+
+| 排名 | 完整书名 | 价格 | 库存 | 商品链接 |
+|---|---|---|---|---|
+| 1 | The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) | £23.21 | 有货（3 册） | https://books.toscrape.com/catalogue/the-road-to-little-dribbling-adventures-of-an-american-in-britain-notes-from-a-small-island-2_277/index.html |
+| 2 | 1,000 Places to See Before You Die | £26.08 | 有货（1 册） | https://books.toscrape.com/catalogue/1000-places-to-see-before-you-die_1/index.html |
+
+补充说明：第三便宜的是 The Great Railway Bazaar，售价 £30.54，超出 £30 上限 £0.54，因此未列入。其余书价为 £36.94 至 £56.88，均超预算。
+
+未进行任何购买或加入购物车的操作，页面停留在书籍详情页。</pre>
+<h3>第 2 轮需求</h3><pre>预算改成每本不超过 £20，只保留最便宜的两本。请基于刚才那个分类重新确认，明确说明最终有几本符合条件，不要推荐超预算的。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True, &#x27;explicit_zero_results&#x27;: True}</p>
+<h3>模型回答</h3><pre>按每本不超过 £20 的新预算重新核对了 Travel 分类页（共 11 本书，全部有货），结果：**符合条件的书有 0 本**，无法给出两本推荐。
+
+该分类全部 11 本书的价格区间为 £23.21 至 £56.88，最便宜的一本就已超出 £20 预算 £3.21，因此没有任何一本能进入筛选范围。为避免误导，这里不列出超预算的书目：
+
+| 全分类最低价 | 预算 | 结论 |
+|---|---|---|
+| £23.21 | £20.00 | 无一本符合 |
+
+说明：上一轮基于 £30 预算得出的两本（£23.21 与 £26.08）现均已超出 £20 上限，不再作为推荐。如需在这个分类里选书，预算至少要放宽到 £23.21；若要严格控制在 £20 内，需要改看其他分类或站点。
+
+未进行任何购买或加购操作。</pre>
+</details>
+<details><summary>商品筛选与预算变更（中等） · after · 第 3 次：通过</summary><p>模型请求 7 · 工具调用 7 · 失败调用 1 · 25.52 秒 · <a href="after-shopping-3.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请用浏览器查看 https://books.toscrape.com/catalogue/category/books/travel_2/index.html 的 Travel 分类，为读书会选书。只选有货且标价不超过 £30 的书，按价格从低到高列出最便宜的三本（不足三本就列实际数量），给出完整书名、价格和商品链接，不买书。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True}</p>
+<h3>模型回答</h3><pre>Travel 分类共 11 本书，全部显示有货；但标价不超过 £30 的只有 2 本，所以按实际数量列出两本（价格从低到高）：
+
+| # | 完整书名 | 价格 | 库存 | 商品链接 |
+|---|---|---|---|---|
+| 1 | The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) | £23.21 | 有货（3 本） | [详情页](https://books.toscrape.com/catalogue/the-road-to-little-dribbling-adventures-of-an-american-in-britain-notes-from-a-small-island-2_277/index.html) |
+| 2 | 1,000 Places to See Before You Die | £26.08 | 有货（1 本） | [详情页](https://books.toscrape.com/catalogue/1000-places-to-see-before-you-die_1/index.html) |
+
+筛选说明：
+
+- 未进入名单的 9 本均因超过 £30 被排除，其中最接近门槛的是 The Great Railway Bazaar（£30.54）、Vagabonding（£36.94）和 Under the Tuscan Sun（£37.33），其余都超过 £40。
+- 名单中两本的完整书名、单价和库存数量，都是我在各自商品详情页上核对过的；分类页面上的书名是被截断的，因此我已改为完整的书名。
+- 我没有下单或点击加入购物车，只查看页面。</pre>
+<h3>第 2 轮需求</h3><pre>预算改成每本不超过 £20，只保留最便宜的两本。请基于刚才那个分类重新确认，明确说明最终有几本符合条件，不要推荐超预算的。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True, &#x27;explicit_zero_results&#x27;: True}</p>
+<h3>模型回答</h3><pre>**符合“每本不超过 £20”条件的书：0 本。** 因此没有可列出的两本推荐。
+
+重新核对了同一个 Travel 分类页（共 11 本，全部有货），按价格从低到高排列如下：
+
+| 价格 | 书名 |
+|---|---|
+| £23.21 | The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) |
+| £26.08 | 1,000 Places to See Before You Die |
+| £30.54 | The Great Railway Bazaar |
+| £36.94 | Vagabonding: An Uncommon Guide to the Art of Long-Term World Travel |
+| £37.33 | Under the Tuscan Sun |
+| £38.95 | Neither Here nor There: Travels in Europe |
+| £44.34 | A Summer In Europe |
+| £45.17 | It&#x27;s Only the Himalayas |
+| £48.87 | See America: A Celebration of Our National Parks &amp; Treasured Sites |
+| £49.43 | Full Moon over Noah&#x27;s Ark: An Odyssey to Mount Ararat and Beyond |
+| £56.88 | A Year in Provence (Provence #1) |
+
+说明：整个分类里最低价就是 £23.21，已经超过 £20，所以不存在符合预算的书。上一轮推荐的两本（£23.21、£26.08）现在都超出预算，不再推荐。若要在 Travel 分类内选书，只能把上限放宽到至少 £23.21（可选 1 本）或 £26.08（可选 2 本）；否则需要换一个分类。全程未下单。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;artifact\&quot;: null, \&quot;content\&quot;: \&quot;Page evaluation failed: Error: Observation selector must match exactly one element\\n    at &lt;anonymous&gt;:200:11\\n    at &lt;anonymous&gt;:380:3; read failed. Inspect status/recover before acting.\&quot;, \&quot;receipt\&quot;: {\&quot;action_id\&quot;: \&quot;baf04a7538e845faa1a042fc9fe311d8\&quot;, \&quot;action\&quot;: \&quot;observe\&quot;, \&quot;execution\&quot;: \&quot;failed\&quot;, \&quot;effect\&quot;: \&quot;unchecked\&quot;, \&quot;before_observation_id\&quot;: null, \&quot;phase\&quot;: \&quot;dispatch_or_verification\&quot;, \&quot;target_id\&quot;: null, \&quot;page_url\&quot;: \&quot;https://books.toscrape.com/catalo&quot;
+  }
+]</pre>
+</details>
+<details><summary>长周报续写、格式与二次修改（困难） · after · 第 1 次：未通过</summary><p>模型请求 72 · 工具调用 72 · 失败调用 5 · 148.78 秒 · <a href="after-weekly-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请打开 http://127.0.0.1:57513/weekly 方建文的周报，阅读已有格式，在全文末尾续写第43周。标题是“2026年第43周”，沿用二级标题和项目符号列表，写两条：“业务进展：客户资料自动校验上线，减少重复录入和漏填。”“下周计划：跟踪使用反馈，完善异常提醒。”保留之前所有周报原文，不要用 Markdown 符号冒充格式。保存并核对。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: False, &#x27;single_h2_title&#x27;: False, &#x27;formatted_items&#x27;: False, &#x27;one_append_only&#x27;: False}</p>
+<h3>模型回答</h3><pre>任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。</pre>
+<h3>第 2 轮需求</h3><pre>把刚追加的第43周第二条改成“下周计划：先走访两位一线同事，再完善异常提醒。”第一条和历史周报不要改；不要重复添加第43周标题。保存后核验内容和格式。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: False, &#x27;single_h2_title&#x27;: False, &#x27;formatted_items&#x27;: False, &#x27;one_append_only&#x27;: False}</p>
+<h3>模型回答</h3><pre>任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;artifact\&quot;: null, \&quot;content\&quot;: \&quot;Pagination requires scope_ref from the latest observation; read failed. Inspect status/recover before acting.\&quot;, \&quot;receipt\&quot;: {\&quot;action_id\&quot;: \&quot;8150cd82ec0d4aafa2f6f0f4cda46661\&quot;, \&quot;action\&quot;: \&quot;observe\&quot;, \&quot;execution\&quot;: \&quot;failed\&quot;, \&quot;effect\&quot;: \&quot;unchecked\&quot;, \&quot;before_observation_id\&quot;: null, \&quot;phase\&quot;: \&quot;dispatch_or_verification\&quot;, \&quot;target_id\&quot;: null, \&quot;target_name\&quot;: \&quot;周报正文\&quot;, \&quot;target_role\&quot;: \&quot;textbox\&quot;, \&quot;page_url\&quot;: \&quot;http://127.0.0.1:57513/weekly\&quot;, \&quot;observation\&quot;: \&quot;unavailable\&quot;, &quot;
+  },
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;content\&quot;: \&quot;FAIL: 2026年第43周\&quot;, \&quot;artifact\&quot;: {\&quot;id\&quot;: \&quot;4fc7aec5c0674e87b51fd334acad4f44.jpg\&quot;, \&quot;path\&quot;: \&quot;/var/folders/p2/sqz4sl7124j3zgtl3n_dgg4h0000gn/T/browser-business-mxwj4oai/artifacts/eval/4fc7aec5c0674e87b51fd334acad4f44.jpg\&quot;, \&quot;label\&quot;: \&quot;失败现场\&quot;}, \&quot;page\&quot;: {\&quot;active\&quot;: true, \&quot;url\&quot;: \&quot;http://127.0.0.1:57513/weekly\&quot;, \&quot;owner\&quot;: \&quot;agent\&quot;, \&quot;viewport\&quot;: {\&quot;width\&quot;: 1200, \&quot;height\&quot;: 760}}, \&quot;receipt\&quot;: {\&quot;action_id\&quot;: \&quot;ae941cbb689f423ea5be92fbec9f0c72\&quot;, \&quot;action\&quot;: \&quot;check_text\&quot;, \&quot;execution\&quot;: \&quot;failed\&quot;, &quot;
+  },
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;artifact\&quot;: null, \&quot;content\&quot;: \&quot;Pagination requires scope_ref from the latest observation; read failed. Inspect status/recover before acting.\&quot;, \&quot;receipt\&quot;: {\&quot;action_id\&quot;: \&quot;c5a0c25b26134b1098e90792b1fcf416\&quot;, \&quot;action\&quot;: \&quot;observe\&quot;, \&quot;execution\&quot;: \&quot;failed\&quot;, \&quot;effect\&quot;: \&quot;unchecked\&quot;, \&quot;before_observation_id\&quot;: null, \&quot;phase\&quot;: \&quot;dispatch_or_verification\&quot;, \&quot;target_id\&quot;: null, \&quot;target_name\&quot;: \&quot;周报正文\&quot;, \&quot;target_role\&quot;: \&quot;textbox\&quot;, \&quot;page_url\&quot;: \&quot;http://127.0.0.1:57513/weekly\&quot;, \&quot;observation\&quot;: \&quot;unavailable\&quot;, &quot;
+  },
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;Browser assistance is unavailable in this runtime.&quot;
+  },
+  {
+    &quot;tool&quot;: &quot;load_skill&quot;,
+    &quot;content&quot;: &quot;skill `rich-text-editor` not found. Available: agent-reach, apple-design, convert-documents-to-markdown, open-knowledge-discovery, open-knowledge-write-skill, panerelay-browser, humanizer-zh, algorithmic-art, archify, brand-guidelines, canvas-design, doc-coauthoring, docx, excalidraw-diagram, frontend-design, internal-comms, json-canvas, kimi-webbridge, mcp-builder, mermaid-visualizer, obsidian-bases, obsidian-markdown, pdf, planning-with-files, pptx, prompt-master, large-scale-refactoring, skil&quot;
+  }
+]</pre>
+</details>
+<details><summary>长周报续写、格式与二次修改（困难） · after · 第 2 次：未通过</summary><p>模型请求 72 · 工具调用 72 · 失败调用 1 · 159.95 秒 · <a href="after-weekly-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请打开 http://127.0.0.1:59185/weekly 方建文的周报，阅读已有格式，在全文末尾续写第43周。标题是“2026年第43周”，沿用二级标题和项目符号列表，写两条：“业务进展：客户资料自动校验上线，减少重复录入和漏填。”“下周计划：跟踪使用反馈，完善异常提醒。”保留之前所有周报原文，不要用 Markdown 符号冒充格式。保存并核对。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: False, &#x27;single_h2_title&#x27;: False, &#x27;formatted_items&#x27;: False, &#x27;one_append_only&#x27;: False}</p>
+<h3>模型回答</h3><pre>任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。</pre>
+<h3>第 2 轮需求</h3><pre>把刚追加的第43周第二条改成“下周计划：先走访两位一线同事，再完善异常提醒。”第一条和历史周报不要改；不要重复添加第43周标题。保存后核验内容和格式。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: False, &#x27;single_h2_title&#x27;: False, &#x27;formatted_items&#x27;: False, &#x27;one_append_only&#x27;: False}</p>
+<h3>模型回答</h3><pre>任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;artifact\&quot;: null, \&quot;content\&quot;: \&quot;Pagination requires scope_ref from the latest observation; read failed. Inspect status/recover before acting.\&quot;, \&quot;receipt\&quot;: {\&quot;action_id\&quot;: \&quot;9f482557662042efb211f0b10346f6ff\&quot;, \&quot;action\&quot;: \&quot;observe\&quot;, \&quot;execution\&quot;: \&quot;failed\&quot;, \&quot;effect\&quot;: \&quot;unchecked\&quot;, \&quot;before_observation_id\&quot;: \&quot;obs_630f6a27d29648399039539087e73a98\&quot;, \&quot;phase\&quot;: \&quot;dispatch_or_verification\&quot;, \&quot;target_id\&quot;: null, \&quot;target_name\&quot;: \&quot;周报正文\&quot;, \&quot;target_role\&quot;: \&quot;textbox\&quot;, \&quot;page_url\&quot;: \&quot;http://127.0.0.1:59185/weekl&quot;
+  }
+]</pre>
+</details>
+<details><summary>客户维护与持久化核对（中等） · before · 第 1 次：通过</summary><p>模型请求 17 · 工具调用 17 · 失败调用 2 · 45.07 秒 · <a href="before-crm-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>打开 http://127.0.0.1:56372/crm 客户工作台，筛选华东区域、负责人方建文。把 C037 王敏的优先级设为高，跟进备注改为“周五下午回访，核实续保意向”，保存并确认。不要改其他客户。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>已在客户工作台完成修改并保存。筛选条件为华东区域、负责人方建文，共 27 条记录；其中 C037 王敏的优先级原为「普通」、备注为「待联系」，现已改为优先级「高」、跟进备注「周五下午回访，核实续保意向」。
+
+保存后页面提示「已保存 C037 高 周五下午回访，核实续保意向」，列表行也同步显示为「C037 王敏 华东 方建文 高 周五下午回访，核实续保意向」。同列表中其余 26 位客户仍为「普通 / 待联系」，未做任何改动。</pre>
+<h3>第 2 轮需求</h3><pre>刚才王敏的记录保留。再把同一筛选结果里的 C073 陈晨设为低优先级，备注改为“客户出差，下周三联系”。保存后重新打开页面，核对这两条都保留下来了，汇总最终状态。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>两条修改都已完成，并在重新加载页面后核对保留无误。
+
+| 客户编号 | 姓名 | 区域 | 负责人 | 优先级 | 跟进备注 |
+| --- | --- | --- | --- | --- | --- |
+| C037 | 王敏 | 华东 | 方建文 | 高 | 周五下午回访，核实续保意向 |
+| C073 | 陈晨 | 华东 | 方建文 | 低 | 客户出差，下周三联系 |
+
+操作过程：C073 原为「普通 / 待联系」，改为「低 / 客户出差，下周三联系」后保存，页面提示「已保存 C073 低 客户出差，下周三联系」。随后重新加载页面，筛选条件重置为「全部」、共 80 条，全量列表中 C037 仍为「高 / 周五下午回访，核实续保意向」，C073 为「低 / 客户出差，下周三联系」，说明两项改动均已持久化。其余 78 条客户仍为「普通 / 待联系」，未受影响。
+
+补充说明：中途对 C037 做文本校验时，我把选择器误指向了下拉框而非表格行，该次校验失败与数据无关；上述结论以重新加载后的完整列表页面快照为准。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;content\&quot;: \&quot;FAIL: C037\\n王敏\\n华东\\n方建文\\n高\\n周五下午回访，核实续保意向\&quot;, \&quot;artifact\&quot;: {\&quot;id\&quot;: \&quot;782221c3be614dd6b1de2ce0e59c21e2.jpg\&quot;, \&quot;path\&quot;: \&quot;/var/folders/p2/sqz4sl7124j3zgtl3n_dgg4h0000gn/T/browser-business-w5kgx5k7/artifacts/eval/782221c3be614dd6b1de2ce0e59c21e2.jpg\&quot;, \&quot;label\&quot;: \&quot;失败现场\&quot;}, \&quot;page\&quot;: {\&quot;active\&quot;: true, \&quot;url\&quot;: \&quot;http://127.0.0.1:56372/crm\&quot;, \&quot;owner\&quot;: \&quot;agent\&quot;, \&quot;viewport\&quot;: {\&quot;width\&quot;: 1200, \&quot;height\&quot;: 760}}, \&quot;receipt\&quot;: {\&quot;action_id\&quot;: \&quot;6ab415ea50ab4e5e83e67eb5fcec34d3\&quot;, \&quot;action\&quot;: \&quot;check_text\&quot;, &quot;
+  },
+  {
+    &quot;tool&quot;: &quot;finish_task&quot;,
+    &quot;content&quot;: &quot;Unknown evidence reference; copy evidence_ref, not action_id or observation_id. Available references: [\&quot;tool:call_00_0dq2qh4i32b7nc6qgyrfhv5u\&quot;, \&quot;tool:call_00_1awul8qi8ht2bchyabg01dr2\&quot;, \&quot;tool:call_00_1yl901n5ik15cmpa3pjuleqo\&quot;, \&quot;tool:call_00_8pldrp4qw16k3iig5yw0jh1d\&quot;, \&quot;tool:call_00_y0jwlsiqhf72ddsvvudwclik\&quot;]. Choose only results supporting the answer; use partial/blocked for unverified work.&quot;
+  }
+]</pre>
+</details>
+<details><summary>客户维护与持久化核对（中等） · before · 第 2 次：通过</summary><p>模型请求 21 · 工具调用 21 · 失败调用 1 · 49.94 秒 · <a href="before-crm-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>打开 http://127.0.0.1:58941/crm 客户工作台，筛选华东区域、负责人方建文。把 C037 王敏的优先级设为高，跟进备注改为“周五下午回访，核实续保意向”，保存并确认。不要改其他客户。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>已按要求更新 C037 王敏，其他客户未改动。
+
+筛选条件「区域=华东、负责人=方建文」后共 27 条记录，C037 王敏在此列表中。我把优先级设为「高」，跟进备注改为「周五下午回访，核实续保意向」，点击保存后页面提示「已保存 C037 高 周五下午回访，核实续保意向」。随后重新打开该客户并截图核对：列表中该行显示「高 / 周五下午回访，核实续保意向」，编辑面板中优先级为「高」、备注框内容为「周五下午回访，核实续保意向」。
+
+其余客户（如 C001、C005、C035、C041、C043 等）仍为「普通 / 待联系」，未受影响。</pre>
+<h3>第 2 轮需求</h3><pre>刚才王敏的记录保留。再把同一筛选结果里的 C073 陈晨设为低优先级，备注改为“客户出差，下周三联系”。保存后重新打开页面，核对这两条都保留下来了，汇总最终状态。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>两条记录都已保留，刷新页面后核对通过。
+
+**最终状态（区域=华东、负责人=方建文，共 27 条）**
+
+| 客户 | 优先级 | 跟进备注 |
+|---|---|---|
+| C037 王敏 | 高 | 周五下午回访，核实续保意向 |
+| C073 陈晨 | 低 | 客户出差，下周三联系 |
+| 其余 25 条 | 普通 | 待联系 |
+
+C073 陈晨保存时页面提示「已保存 C073 低 客户出差，下周三联系」。随后我重新加载页面（加载后筛选条件被重置为「全部」，我重新设为华东 + 方建文并点击筛选），完整列表文本中两条记录的值均与保存时一致，说明已写入后台而非仅停留在页面状态。王敏的记录未被覆盖。
+
+需说明一点：截图只拍到列表顶部几行，C037 和 C073 位于滚动区域下方，因此这两行没有出现在截图里，核对依据是刷新后获取的完整页面文本。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;content\&quot;: \&quot;FAIL: 周五下午回访，核实续保意向\&quot;, \&quot;artifact\&quot;: {\&quot;id\&quot;: \&quot;fbf25a5ff9c0450d8130a010bcdc3966.jpg\&quot;, \&quot;path\&quot;: \&quot;/var/folders/p2/sqz4sl7124j3zgtl3n_dgg4h0000gn/T/browser-business-dywnle5v/artifacts/eval/fbf25a5ff9c0450d8130a010bcdc3966.jpg\&quot;, \&quot;label\&quot;: \&quot;失败现场\&quot;}, \&quot;page\&quot;: {\&quot;active\&quot;: true, \&quot;url\&quot;: \&quot;http://127.0.0.1:58941/crm\&quot;, \&quot;owner\&quot;: \&quot;agent\&quot;, \&quot;viewport\&quot;: {\&quot;width\&quot;: 1200, \&quot;height\&quot;: 760}}, \&quot;receipt\&quot;: {\&quot;action_id\&quot;: \&quot;c4fa8565f8eb4463a0b6b5822fca8ed8\&quot;, \&quot;action\&quot;: \&quot;check_text\&quot;, \&quot;execution\&quot;: \&quot;failed\&quot;,&quot;
+  }
+]</pre>
+</details>
+<details><summary>客户维护与持久化核对（中等） · before · 第 3 次：中断，未计入成绩</summary><p>模型请求 18 · 工具调用 17 · 失败调用 0 · 38.57 秒 · <a href="before-crm-3.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>打开 http://127.0.0.1:60982/crm 客户工作台，筛选华东区域、负责人方建文。把 C037 王敏的优先级设为高，跟进备注改为“周五下午回访，核实续保意向”，保存并确认。不要改其他客户。</pre>
+<p>判定：{&#x27;saved_records_exact&#x27;: True}</p>
+<h3>模型回答</h3><pre>已在客户工作台完成 C037 王敏的更新。
+
+- 筛选：区域「华东」、负责人「方建文」→ 共 27 条记录。
+- 编辑 C037 王敏：优先级由「普通」改为「高」，跟进备注改为「周五下午回访，核实续保意向」，点击「保存客户」后页面提示「已保存 C037 高 周五下午回访，核实续保意向」。
+- 确认：刷新页面（筛选条件重置、列表恢复为全部 80 条）后重新读取，C037 王敏行仍显示「华东 / 方建文 / 高 / 周五下午回访，核实续保意向」，改动已持久化。
+- 其他客户未动：刷新后的完整 80 条列表中，除 C037 外其余客户均为「普通 / 待联系」原值。</pre>
+</details>
+<details><summary>分页订单与本地退款表核对（困难） · before · 第 1 次：通过</summary><p>模型请求 10 · 工具调用 10 · 失败调用 2 · 26.59 秒 · <a href="before-orders-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>用浏览器阅读 http://127.0.0.1:58194/orders 的10月订单报表（注意分页），结合当前工作目录 refunds.csv 的退款记录，计算华东区域已付款订单的成交总额、对应退款总额和净额，取消订单不计入。按订单编号关联，仅扣这些订单的退款。把明细写到当前目录 reconciliation.csv，列名 order_id,gross,refund,net，按订单编号排序；回答三个合计。网页数据必须通过浏览器读取。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>已通过浏览器读完两页订单报表（共 20 条），并按订单编号关联本地退款记录，结果写入 `reconciliation.csv`。
+
+**三项合计（华东、已付款、排除取消订单）**
+- 成交总额：2220
+- 退款总额：173
+- 净额：2047
+
+参与计算的是 11 笔订单：O001、O002、O004、O007、O008、O011、O013、O014、O016、O017、O019。华东的 O005、O010、O020 状态为取消，已排除；华南订单一律不计。退款表里 O004 等记录按编号精确匹配，未匹配到的订单退款记为 0（O004 匹配到 24，O002 匹配到 22 等），因此退款只扣在对应订单上。
+
+`reconciliation.csv` 内容按订单编号升序：
+
+```
+order_id,gross,refund,net
+O001,110,0,110
+O002,120,22,98
+O004,140,24,116
+O007,170,27,143
+O008,180,0,180
+O011,210,31,179
+O013,230,33,197
+O014,240,0,240
+O016,260,36,224
+O017,270,0,270
+O019,290,0,290
+```</pre>
+<h3>第 2 轮需求</h3><pre>口径改为华南区域已付款订单。沿用相同算法，覆盖 reconciliation.csv，只保留华南符合条件的订单，再给出三个合计，别把上轮华东数据混进去。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>已按华南区域重新结算，`reconciliation.csv` 已整体覆盖，不含上轮的华东数据。
+
+**三项合计（华南、已付款、排除取消订单）**
+- 成交总额：980
+- 退款总额：67
+- 净额：913
+
+参与计算的是 5 笔订单：O003、O006、O009、O012、O018。华南的 O015 状态为取消，已排除；退款按订单编号精确匹配，O009 对应 29、O018 对应 38，其余三笔在退款表中没有记录，退款记为 0。
+
+覆盖后的 `reconciliation.csv`：
+
+```
+order_id,gross,refund,net
+O003,130,0,130
+O006,160,0,160
+O009,190,29,161
+O012,220,0,220
+O018,280,38,242
+```</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;write_file&quot;,
+    &quot;content&quot;: &quot;Tool is outside this task&#x27;s browser phase; request_task_tools with the task dependency first&quot;
+  },
+  {
+    &quot;tool&quot;: &quot;finish_task&quot;,
+    &quot;content&quot;: &quot;No UI task is open in this turn. Answer the user directly in text, without finish_task or request_task_tools.&quot;
+  }
+]</pre>
+</details>
+<details><summary>分页订单与本地退款表核对（困难） · before · 第 2 次：通过</summary><p>模型请求 8 · 工具调用 8 · 失败调用 1 · 18.44 秒 · <a href="before-orders-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>用浏览器阅读 http://127.0.0.1:60689/orders 的10月订单报表（注意分页），结合当前工作目录 refunds.csv 的退款记录，计算华东区域已付款订单的成交总额、对应退款总额和净额，取消订单不计入。按订单编号关联，仅扣这些订单的退款。把明细写到当前目录 reconciliation.csv，列名 order_id,gross,refund,net，按订单编号排序；回答三个合计。网页数据必须通过浏览器读取。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>## 合计（华东区域，已付款订单）
+
+| 项目 | 金额 |
+| --- | --- |
+| 成交总额 | 2220 元 |
+| 对应退款总额 | 173 元 |
+| 净额 | 2047 元 |
+
+## 明细
+
+纳入的订单共 11 笔：O001、O002、O004、O007、O008（第 1 页）与 O011、O013、O014、O016、O017、O019（第 2 页）。华东的取消订单 O005、O010、O020 不计入成交，因此也不计入它们各自的退款（25、40）。
+
+| 订单 | 成交 | 退款 | 净额 |
+| --- | --- | --- | --- |
+| O001 | 110 | 0 | 110 |
+| O002 | 120 | 22 | 98 |
+| O004 | 140 | 24 | 116 |
+| O007 | 170 | 27 | 143 |
+| O008 | 180 | 0 | 180 |
+| O011 | 210 | 31 | 179 |
+| O013 | 230 | 33 | 197 |
+| O014 | 240 | 0 | 240 |
+| O016 | 260 | 36 | 224 |
+| O017 | 270 | 0 | 270 |
+| O019 | 290 | 0 | 290 |
+
+退款表里属于华南的 O009（29）、O018（38）没有扣减。明细已按订单编号升序写入 `reconciliation.csv`，列为 `order_id,gross,refund,net`。</pre>
+<h3>第 2 轮需求</h3><pre>口径改为华南区域已付款订单。沿用相同算法，覆盖 reconciliation.csv，只保留华南符合条件的订单，再给出三个合计，别把上轮华东数据混进去。</pre>
+<p>判定：{&#x27;exact_csv&#x27;: True, &#x27;answer_totals&#x27;: True}</p>
+<h3>模型回答</h3><pre>口径已换成华南区域已付款订单，`reconciliation.csv` 已覆盖重写。
+
+## 合计（华南区域，已付款订单）
+
+| 项目 | 金额 |
+| --- | --- |
+| 成交总额 | 980 元 |
+| 对应退款总额 | 67 元 |
+| 净额 | 913 元 |
+
+## 明细
+
+符合条件的是 5 笔：第 1 页的 O003（130）、O006（160）、O009（190），第 2 页的 O012（220）、O018（280）。成交合计 980。
+
+退款表按订单编号匹配，华南命中两笔：O009 的 29、O018 的 38，合计 67。O003、O006、O012 在退款表中无记录，按零处理。
+
+华南的取消订单 O015（250）不计入成交；退款表中属于华东的 O002、O004、O007、O011、O013、O016 以及华东取消单 O005、O020 全部未扣减。
+
+文件内容：
+
+```
+order_id,gross,refund,net
+O003,130,0,130
+O006,160,0,160
+O009,190,29,161
+O012,220,0,220
+O018,280,38,242
+```
+
+核对：980 − 67 = 913，与明细净额之和（130+160+161+220+242）一致。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;read_file&quot;,
+    &quot;content&quot;: &quot;Tool is outside this task&#x27;s browser phase; request_task_tools with the task dependency first&quot;
+  }
+]</pre>
+</details>
+<details><summary>商品筛选与预算变更（中等） · before · 第 1 次：通过</summary><p>模型请求 5 · 工具调用 4 · 失败调用 0 · 23.01 秒 · <a href="before-shopping-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请用浏览器查看 https://books.toscrape.com/catalogue/category/books/travel_2/index.html 的 Travel 分类，为读书会选书。只选有货且标价不超过 £30 的书，按价格从低到高列出最便宜的三本（不足三本就列实际数量），给出完整书名、价格和商品链接，不买书。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True}</p>
+<h3>模型回答</h3><pre>Travel 分类共 11 本书，全部有货。按&quot;有货且标价 ≤ £30&quot;筛选后只有 2 本符合，故只列实际数量：
+
+1. The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) — £23.21，In stock (3 available)
+   https://books.toscrape.com/catalogue/the-road-to-little-dribbling-adventures-of-an-american-in-britain-notes-from-a-small-island-2_277/index.html
+
+2. 1,000 Places to See Before You Die — £26.08，In stock (1 available)
+   https://books.toscrape.com/catalogue/1000-places-to-see-before-you-die_1/index.html
+
+其余 9 本均超过 £30（最接近的是 The Great Railway Bazaar £30.54）。价格在列表页与详情页一致，均为含税价。未进行任何加购或购买操作。注：站点声明价格与评分为随机分配的演示数据。</pre>
+<h3>第 2 轮需求</h3><pre>预算改成每本不超过 £20，只保留最便宜的两本。请基于刚才那个分类重新确认，明确说明最终有几本符合条件，不要推荐超预算的。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True, &#x27;explicit_zero_results&#x27;: True}</p>
+<h3>模型回答</h3><pre>按 £20 上限重新对照刚才读到的 11 本书价格：最低的是 £23.21，已经超出预算，所以没有一本书符合条件。
+
+Travel 分类全部 11 本按价格排序如下：£23.21、£26.08、£30.54、£36.94、£37.33、£38.95、£44.34、£45.17、£48.87、£49.43、£56.88。全部有货，但最便宜的 The Road to Little Dribbling 也已达到 £23.21，比 £20 上限高 £3.21。
+
+**最终符合条件：0 本。**
+
+因此没有可列出的推荐书目，也不推荐任何超出 £20 的选项。若读书会需要保留选书，只能二选一：把每本预算提高到至少 £23.21，或者换到其他分类去找。</pre>
+</details>
+<details><summary>商品筛选与预算变更（中等） · before · 第 2 次：通过</summary><p>模型请求 8 · 工具调用 8 · 失败调用 2 · 31.0 秒 · <a href="before-shopping-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请用浏览器查看 https://books.toscrape.com/catalogue/category/books/travel_2/index.html 的 Travel 分类，为读书会选书。只选有货且标价不超过 £30 的书，按价格从低到高列出最便宜的三本（不足三本就列实际数量），给出完整书名、价格和商品链接，不买书。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True}</p>
+<h3>模型回答</h3><pre>Travel 分类共 11 本书，全部显示有货。按“有货且标价不超过 £30”筛选，符合条件的有 **2 本**，不足三本，按价格从低到高列出如下：
+
+| 排名 | 完整书名 | 价格 | 库存 | 商品链接 |
+|---|---|---|---|---|
+| 1 | The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) | £23.21 | In stock (3 available) | https://books.toscrape.com/catalogue/the-road-to-little-dribbling-adventures-of-an-american-in-britain-notes-from-a-small-island-2_277/index.html |
+| 2 | 1,000 Places to See Before You Die | £26.08 | In stock (1 available) | https://books.toscrape.com/catalogue/1000-places-to-see-before-you-die_1/index.html |
+
+其余 9 本都超过 £30，包括最接近门槛的 The Great Railway Bazaar（£30.54），因此未入选。没有下任何订单，也未操作购物车。
+
+需要说明一点：该站页面自带声明，价格与评分为随机生成的演示数据，这份结果只适合做分类筛选演示，不宜当作真实采购依据。</pre>
+<h3>第 2 轮需求</h3><pre>预算改成每本不超过 £20，只保留最便宜的两本。请基于刚才那个分类重新确认，明确说明最终有几本符合条件，不要推荐超预算的。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True, &#x27;explicit_zero_results&#x27;: True}</p>
+<h3>模型回答</h3><pre>按 £20 每本的上限重新核对 Travel 分类（11 本，全部有货），**符合条件的只有 0 本，也就是一本都没有**。
+
+我逐条比对了页面上的 11 个价格，最低的两本分别是 £23.21 和 £26.08，都已超过 £20。所以“保留最便宜的两本”在新预算下不成立——不存在任何符合条件且不超预算的书，因此没有可推荐的名单。
+
+| 书名 | 价格 | 是否在 £20 内 |
+|---|---|---|
+| The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) | £23.21 | 否，超 £3.21 |
+| 1,000 Places to See Before You Die | £26.08 | 否，超 £6.08 |
+| The Great Railway Bazaar | £30.54 | 否 |
+| Vagabonding: An Uncommon Guide ... | £36.94 | 否 |
+| Under the Tuscan Sun | £37.33 | 否 |
+| Neither Here nor There: ... | £38.95 | 否 |
+| A Summer In Europe | £44.34 | 否 |
+| It&#x27;s Only the Himalayas | £45.17 | 否 |
+| See America: A Celebration ... | £48.87 | 否 |
+| Full Moon over Noah&#x27;s ... | £49.43 | 否 |
+| A Year in Provence ... | £56.88 | 否 |
+
+前两条的完整书名来自此前打开的详情页确认；£30.54 以下其余条目此处仅按列表页显示的书名记录，未逐页核实全称，但都不影响“无书符合 £20”这一结论。
+
+如需凑出两颗书，预算至少要放到 £26.08 才能覆盖两本，放到 £23.21 只能覆盖一本。全程未加购、未下单。另外提醒：该站自述价格和评分均为随机演示数据，不能作为真实采购依据。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;finish_task&quot;,
+    &quot;content&quot;: &quot;Unknown evidence reference; copy evidence_ref, not action_id or observation_id. Available references: [\&quot;tool:call_00_a8jou7h1qi8xli67l7p8i58f\&quot;, \&quot;tool:call_00_jsg21dn7brg8g4n3438dqs95\&quot;, \&quot;tool:call_00_ozk9y7iyv8ivfw3kss932f5i\&quot;]. Choose only results supporting the answer; use partial/blocked for unverified work.&quot;
+  },
+  {
+    &quot;tool&quot;: &quot;finish_task&quot;,
+    &quot;content&quot;: &quot;Unknown evidence reference; copy evidence_ref, not action_id or observation_id. Available references: [\&quot;tool:call_00_e05exa8ehg6uc9r5az997ove\&quot;]. Choose only results supporting the answer; use partial/blocked for unverified work.&quot;
+  }
+]</pre>
+</details>
+<details><summary>商品筛选与预算变更（中等） · before · 第 3 次：通过</summary><p>模型请求 8 · 工具调用 8 · 失败调用 0 · 32.56 秒 · <a href="before-shopping-3.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请用浏览器查看 https://books.toscrape.com/catalogue/category/books/travel_2/index.html 的 Travel 分类，为读书会选书。只选有货且标价不超过 £30 的书，按价格从低到高列出最便宜的三本（不足三本就列实际数量），给出完整书名、价格和商品链接，不买书。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True}</p>
+<h3>模型回答</h3><pre>Travel 分类共 11 本书，**全部显示有货**，但只有 **2 本**标价不超过 £30，所以只能给出两本，不足三本。
+
+| 排名 | 完整书名 | 价格 | 库存 | 商品链接 |
+|---|---|---|---|---|
+| 1 | The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) | £23.21 | 有货（3 本） | https://books.toscrape.com/catalogue/the-road-to-little-dribbling-adventures-of-an-american-in-britain-notes-from-a-small-island-2_277/index.html |
+| 2 | 1,000 Places to See Before You Die | £26.08 | 有货（1 本） | https://books.toscrape.com/catalogue/1000-places-to-see-before-you-die_1/index.html |
+
+距离 £30 上限最近但被排除的是 The Great Railway Bazaar（£30.54，超过预算 54 便士）；其余在售书价格在 £36.94–£56.88 之间。
+
+几点说明：列表页上的书名被截断，上面两本是从商品详情页确认的完整标题和含税价格，两页的标价与列表一致。其中《1,000 Places to See Before You Die》只剩 1 本，若读书会要用多册需留意。全程仅浏览查询，未加入购物车、未下单。</pre>
+<h3>第 2 轮需求</h3><pre>预算改成每本不超过 £20，只保留最便宜的两本。请基于刚才那个分类重新确认，明确说明最终有几本符合条件，不要推荐超预算的。</pre>
+<p>判定：{&#x27;expected_titles&#x27;: True, &#x27;expected_prices&#x27;: True, &#x27;price_order&#x27;: True, &#x27;product_links&#x27;: True, &#x27;explicit_zero_results&#x27;: True}</p>
+<h3>模型回答</h3><pre>重新核对后，以 £20 为每本上限，Travel 分类 **符合条件的有 0 本**。
+
+该分类共 11 本书，全部显示有货，但标价最低的是 £23.21，已经超出 £20 上限 £3.21；其余 10 本价格在 £26.08–£56.88 之间，同样超预算。因此没有任何一本书可以纳入，也就没有“最便宜的两本”可推荐。
+
+为方便你对比，以下是价格最接近预算的两本；它们**都超出 £20，不属于推荐**：
+
+| 书名 | 价格 | 超出 £20 | 库存 | 商品链接 |
+|---|---|---|---|---|
+| The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2) | £23.21 | +£3.21 | 有货（3 本） | https://books.toscrape.com/catalogue/the-road-to-little-dribbling-adventures-of-an-american-in-britain-notes-from-a-small-island-2_277/index.html |
+| 1,000 Places to See Before You Die | £26.08 | +£6.08 | 有货（1 本） | https://books.toscrape.com/catalogue/1000-places-to-see-before-you-die_1/index.html |
+
+本次复核时列表页价格与上一轮完全一致，详情页的含税价格和库存也一致（分别为 3 本和 1 本）。若 £20 是硬性上限，这个分类无法满足选书需求；把上限提到 £24 以上，才能纳入第一本。全程只浏览查询，未加入购物车、未下单。</pre>
+</details>
+<details><summary>长周报续写、格式与二次修改（困难） · before · 第 1 次：未通过</summary><p>模型请求 56 · 工具调用 56 · 失败调用 2 · 146.36 秒 · <a href="before-weekly-1.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请打开 http://127.0.0.1:56922/weekly 方建文的周报，阅读已有格式，在全文末尾续写第43周。标题是“2026年第43周”，沿用二级标题和项目符号列表，写两条：“业务进展：客户资料自动校验上线，减少重复录入和漏填。”“下周计划：跟踪使用反馈，完善异常提醒。”保留之前所有周报原文，不要用 Markdown 符号冒充格式。保存并核对。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: False, &#x27;single_h2_title&#x27;: False, &#x27;formatted_items&#x27;: False, &#x27;one_append_only&#x27;: False}</p>
+<h3>模型回答</h3><pre>任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。</pre>
+<h3>第 2 轮需求</h3><pre>把刚追加的第43周第二条改成“下周计划：先走访两位一线同事，再完善异常提醒。”第一条和历史周报不要改；不要重复添加第43周标题。保存后核验内容和格式。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: True, &#x27;single_h2_title&#x27;: True, &#x27;formatted_items&#x27;: True, &#x27;one_append_only&#x27;: True}</p>
+<h3>模型回答</h3><pre>第43周第二条已改好并保存。已保存版本末尾显示：
+
+**2026年第43周**
+- 业务进展：客户资料自动校验上线，减少重复录入和漏填。
+- 下周计划：先走访两位一线同事，再完善异常提醒。
+
+核对结果：
+- 第二条文案已替换为新内容，旧的“跟踪使用反馈”表述不再存在。
+- 第一条保持原样，第22周至第42周的历史周报逐周核对无改动，仍为“业务进展：完成客户资料核对N批……”与“下周计划：继续跟进待处理事项。”的原有内容。
+- 全文只有一处“2026年第43周”标题，没有重复添加；标题为二级标题样式，下面接两条项目符号列表，与其他各周排版一致。
+- 页面提示“已保存 19:12:38”，保存后的版本视图与编辑区内容一致。</pre>
+<h3>失败工具调用</h3><pre>[
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;content\&quot;: \&quot;missing_observation_id: Copy observation_id from the returned observation before retrying; the action was not executed.\&quot;, \&quot;artifact\&quot;: null, \&quot;observation\&quot;: {\&quot;url\&quot;: \&quot;http://127.0.0.1:56922/weekly\&quot;, \&quot;title\&quot;: \&quot;团队周报\&quot;, \&quot;text\&quot;: \&quot;方建文的周报\\n二级标题\\n项目符号\\n保存周报\\n查看已保存版本\\n尚未修改\\n正文可编辑。标题和列表请用工具栏设置；保存后可查看已保存版本核对。\&quot;, \&quot;elements\&quot;: [{\&quot;ref\&quot;: \&quot;e0\&quot;, \&quot;target_id\&quot;: \&quot;obs_9e8f2583a374420687edd57c3dccb8ef:n0\&quot;, \&quot;role\&quot;: \&quot;button\&quot;, \&quot;tag\&quot;: \&quot;button\&quot;, \&quot;name\&quot;: \&quot;二级标题\&quot;, \&quot;name_truncated\&quot;: false, \&quot;editable\&quot;:&quot;
+  },
+  {
+    &quot;tool&quot;: &quot;browser_use&quot;,
+    &quot;content&quot;: &quot;{\&quot;success\&quot;: false, \&quot;content\&quot;: \&quot;screenshot_required: action was not executed. Call screenshot, then use its observation_id for coordinate clicks. A diagnostic failure image is not an actionable screenshot.\&quot;, \&quot;artifact\&quot;: null, \&quot;observation\&quot;: {\&quot;url\&quot;: \&quot;http://127.0.0.1:56922/weekly\&quot;, \&quot;title\&quot;: \&quot;团队周报\&quot;, \&quot;text\&quot;: \&quot;方建文的周报\\n二级标题\\n项目符号\\n保存周报\\n查看已保存版本\\n尚未修改\\n正文可编辑。标题和列表请用工具栏设置；保存后可查看已保存版本核对。\&quot;, \&quot;elements\&quot;: [{\&quot;ref\&quot;: \&quot;e0\&quot;, \&quot;target_id\&quot;: \&quot;obs_9e8f2583a374420687edd57c3dccb8ef:n0\&quot;, \&quot;role\&quot;: \&quot;button\&quot;, \&quot;tag\&quot;: \&quot;button\&quot;&quot;
+  }
+]</pre>
+</details>
+<details><summary>长周报续写、格式与二次修改（困难） · before · 第 2 次：未通过</summary><p>模型请求 72 · 工具调用 71 · 失败调用 0 · 256.04 秒 · <a href="before-weekly-2.json.gz">完整原始日志</a></p>
+<h3>第 1 轮需求</h3><pre>请打开 http://127.0.0.1:59713/weekly 方建文的周报，阅读已有格式，在全文末尾续写第43周。标题是“2026年第43周”，沿用二级标题和项目符号列表，写两条：“业务进展：客户资料自动校验上线，减少重复录入和漏填。”“下周计划：跟踪使用反馈，完善异常提醒。”保留之前所有周报原文，不要用 Markdown 符号冒充格式。保存并核对。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: False, &#x27;single_h2_title&#x27;: False, &#x27;formatted_items&#x27;: False, &#x27;one_append_only&#x27;: False}</p>
+<h3>模型回答</h3><pre>任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。</pre>
+<h3>第 2 轮需求</h3><pre>把刚追加的第43周第二条改成“下周计划：先走访两位一线同事，再完善异常提醒。”第一条和历史周报不要改；不要重复添加第43周标题。保存后核验内容和格式。</pre>
+<p>判定：{&#x27;history_unchanged&#x27;: False, &#x27;single_h2_title&#x27;: False, &#x27;formatted_items&#x27;: False, &#x27;one_append_only&#x27;: False}</p>
+<h3>模型回答</h3><pre>任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。</pre>
+</details>
+<section><h2>复现记录</h2><p><a href="manifest.json">版本与参数</a> · <a href="metrics.json">结构化指标</a> · <a href="run_case.py">单任务程序</a> · <a href="run_matrix.py">批次程序</a> · <a href="fixtures.py">业务页面</a> · <a href="implementation.patch.gz">优化补丁</a></p><pre>{
+  &quot;baseline_commit&quot;: &quot;92da286b9f8433d1e4eb970ed1ec9d20afaf8aac&quot;,
+  &quot;before_sha256&quot;: &quot;78444d3d77e7f724a6afb0ff79d0e89bf1b85d3b563cc860d1fdcdf8a4e4b1c8&quot;,
+  &quot;after_sha256&quot;: &quot;456ae5cd5a0b7bba2d305fb5d7ecff6588e09f31baa3149eeab5e45b65889a0b&quot;,
+  &quot;patch_sha256&quot;: &quot;14d9626f5a68ffe8a79dc65c905aef9000b8603448e63f8b20cf9028e7353a6b&quot;,
+  &quot;model&quot;: &quot;deepseek-v4-1-flash&quot;,
+  &quot;repeats&quot;: 3,
+  &quot;versions&quot;: [
+    &quot;before&quot;,
+    &quot;after&quot;
+  ],
+  &quot;cases&quot;: [
+    &quot;shopping&quot;,
+    &quot;crm&quot;,
+    &quot;weekly&quot;,
+    &quot;orders&quot;
+  ],
+  &quot;user_turns_per_case&quot;: 2,
+  &quot;limit_per_turn&quot;: {
+    &quot;tool_rounds&quot;: 35,
+    &quot;seconds&quot;: 480
+  },
+  &quot;public_site&quot;: &quot;books.toscrape.com; read only&quot;,
+  &quot;mutations&quot;: &quot;localhost simulated business sites; fresh private profile per run&quot;,
+  &quot;harness&quot;: &quot;actual Engine conversation loop; no Workbench server/UI; no plugins/MCP/subagents&quot;,
+  &quot;harness_sha256&quot;: {
+    &quot;run_case.py&quot;: &quot;1209133596aaed1753dffa10f63ccee0bc63a7ffcccc5c632b2f15db57c671fd&quot;,
+    &quot;fixtures.py&quot;: &quot;43891ddc6fa5d6c5d01b1b3b1d1cc9704235b05314654a3121eeeca4c9a70585&quot;,
+    &quot;run_matrix.py&quot;: &quot;23a036e55d61e4e2cc303e5cf727beedd8c2562970916b7bbb469b063a4bcb81&quot;
+  },
+  &quot;date&quot;: &quot;2026-10-28&quot;,
+  &quot;regression&quot;: {
+    &quot;passed_initial&quot;: 588,
+    &quot;failed_initial&quot;: 1,
+    &quot;failure&quot;: &quot;test_navigation_wait_and_tabs_use_owned_session: mock incorrectly matched new observation code&quot;,
+    &quot;targeted_rerun_passed&quot;: 1,
+    &quot;production_source_changed_after_regression&quot;: false
+  },
+  &quot;human_input_policy&quot;: &quot;Record request as blocked; cancel waiting tool and continue next user turn. Do not relax task requirements.&quot;,
+  &quot;preflight_excluded&quot;: &quot;preflight/* includes incomplete trial batch with human-input wait; excluded entirely&quot;,
+  &quot;completion_status&quot;: &quot;handoff_requested_by_user&quot;,
+  &quot;completed_tasks&quot;: 18,
+  &quot;interrupted_tasks&quot;: 1,
+  &quot;not_started_tasks&quot;: 5,
+  &quot;handoff_note&quot;: &quot;产品实现保持冻结；测试输入要求人工时不降低标准。用户要求交接后停止批次。&quot;,
+  &quot;archived_runner_sha256&quot;: {
+    &quot;run_case.py&quot;: &quot;1209133596aaed1753dffa10f63ccee0bc63a7ffcccc5c632b2f15db57c671fd&quot;,
+    &quot;fixtures.py&quot;: &quot;43891ddc6fa5d6c5d01b1b3b1d1cc9704235b05314654a3121eeeca4c9a70585&quot;,
+    &quot;run_matrix.py&quot;: &quot;269b58cd4932c42c95389000a981668dc2814a92d1fe41f878187e6279561c59&quot;
+  },
+  &quot;archive_changes&quot;: &quot;run_case/fixtures unchanged from formal protocol; run_matrix additionally refuses overwriting compressed traces. summarize/report support gzip.&quot;
+}</pre></section>

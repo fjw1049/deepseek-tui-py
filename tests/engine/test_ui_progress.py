@@ -142,6 +142,36 @@ def test_browser_receipts_do_not_hide_an_unchanged_page():
     assert "nothing new" in progress.record("browser_use", page("a2"))
 
 
+def test_browser_detects_short_cycles_but_keeps_observation_available():
+    progress = UiProgress()
+    for i in range(STALL_STREAK + 3):
+        browser = {'observation': {'url': 'https://example.test', 'text': f'Panel {i % 2}'}}
+        progress.record_result('browser_use', ToolResult(True, '', metadata={'browser': browser}))
+    assert progress.blocked_content('browser_use', {'action': 'click'})
+    assert progress.blocked_content('browser_use', {'action': 'observe'}) is None
+    assert progress.blocked_content('browser_use', {'action': 'recover'}) is None
+
+
+def test_browser_scroll_and_control_changes_count_as_observed_progress():
+    progress = UiProgress()
+    for i in range(STALL_STREAK + 3):
+        browser = {'observation': {'text': 'List', 'viewport': {'scroll_y': i * 100},
+                   'elements': [{'name': 'Selected', 'checked': bool(i % 2)}]}}
+        progress.record_result('browser_use', ToolResult(True, '', metadata={'browser': browser}))
+    assert progress.blocked_content('browser_use', {'action': 'click'}) is None
+
+
+def test_browser_failures_pause_actions_until_a_fresh_state_is_observed():
+    progress = UiProgress()
+    for _ in range(STALL_STREAK):
+        progress.record_result('browser_use', ToolResult(False, 'Target obscured'))
+    assert progress.blocked_content('browser_use', {'action': 'click'})
+    assert progress.blocked_content('browser_use', {'action': 'screenshot'}) is None
+    browser = {'observation': {'text': 'Overlay dismissed'}}
+    progress.record_result('browser_use', ToolResult(True, '', metadata={'browser': browser}))
+    assert progress.blocked_content('browser_use', {'action': 'click'}) is None
+
+
 def test_failures_and_empty_results_are_not_observations():
     assert observation_of(ToolResult(False, "Accessibility error")) is None
     assert observation_of(ToolResult(True, "")) is None
