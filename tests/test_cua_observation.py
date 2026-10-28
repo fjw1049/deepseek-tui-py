@@ -512,3 +512,48 @@ console.log(JSON.stringify(out));
     assert "not approved" in out["Denied"] and out["calls"].count("Denied") == 1
     # Two apps share the name: never guess between them.
     assert out["Twin"] == "Invalid app: Twin" and out["Nope"] == "Invalid app: Nope"
+
+
+def test_trace_records_inputs_and_state_reads_without_double_wrapping():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node required")
+    bridge = Path(__file__).parents[1] / "src/deepseek_tui/cua/bridge.mjs"
+    script = """
+const fs = await import('node:fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const install = (0, eval)(src.slice(src.indexOf('const INPUTS'), src.indexOf('const TRACE_MARK'))
+  + '\\nTRACE_INSTALL');
+const run = code => new (Object.getPrototypeOf(async () => {}).constructor)(code)();
+globalThis.cua = { async getApp() { return {
+  async click() {}, async getAXState() { return 'tree'; },
+  async pressKey() { throw new Error('keyNotFound'); } }; } };
+await run(install);
+const app = await cua.getApp('x');
+await app.click([1, 2]);
+await app.getAXState();
+const first = globalThis.__deepseekTrace.splice(0);
+await run(install);  // the next call installs again: same wrappers, cleared trace
+const again = await cua.getApp('x');
+await again.click(3);
+try { await again.pressKey('down'); } catch {}
+console.log(JSON.stringify({ first, second: globalThis.__deepseekTrace }));
+"""
+    out = json.loads(subprocess.run([node, "--input-type=module", "-e", script, str(bridge)],
+                                    capture_output=True, text=True, timeout=30,
+                                    check=True).stdout)
+    assert out["first"] == [
+        {"action": "getApp", "observe": True, "ok": True},
+        {"action": "click", "coordinate": True, "ok": True},
+        {"action": "getAXState", "observe": True, "ok": True},
+    ]
+    assert out["second"] == [
+        {"action": "getApp", "observe": True, "ok": True},
+        {"action": "click", "coordinate": False, "ok": True},
+        {"action": "pressKey", "coordinate": False, "ok": False},
+    ]

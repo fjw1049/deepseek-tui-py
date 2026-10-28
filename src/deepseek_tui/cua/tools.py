@@ -31,6 +31,11 @@ COORDINATE_CLICK_NOTE = (
     "confirm the intended target took effect; if not, look for the target's element index in "
     "a fresh accessibility tree before trying coordinates again.]"
 )
+WINDOWS_NOTE = (
+    "[Host note: {app} has {count} windows open on screen, but its accessibility state shows "
+    "only the front one. To work in another window, choose it from the app's Window menu or "
+    "press super+grave to cycle windows, then get fresh state.]"
+)
 HANDOFF_NOTICE = (
     "[CUA session reset for desktop handoff. Old JavaScript variables and element references "
     "are invalid. Use cua_observe before rebuilding bindings and acting.]"
@@ -41,6 +46,9 @@ _RUNTIME_ERRORS = (
      r"element was invalidated",
      "Element indices come only from the latest accessibility state. Get fresh state and use a "
      "current index."),
+    ("text_not_found", (), r"Could not find the requested text to select",
+     "selectText matches the element's exact current text. Read its value from fresh state, add "
+     "prefix or suffix to tell repeats apart, or take another route."),
     ("invalid_key", (), r"keyNotFound",
      "Use xdotool-style key names, which are case-sensitive: \"Return\", \"Tab\", \"Down\", "
      "\"super+Down\" (super is Command on macOS)."),
@@ -56,6 +64,17 @@ _RUNTIME_ERRORS = (
     ("screen_locked", ("-10020",), r"The Mac is locked",
      "The screen is locked. Ask the person to unlock it (request_user_input with kind=\"action\", "
      "surface=\"desktop\" when available); do not retry before that."),
+    ("state_changed", (), r"The user changed '.*'\. Re-query the latest state",
+     "The app changed since your last state read; this also follows your own window or menu "
+     "change. Call getAXState() on the bound app (get_app_state in the message is the runtime's "
+     "internal name) and act on fresh indices."),
+    ("screenshot_unavailable", (), r"Screenshot unavailable for",
+     "This app has no screenshot in its current state, for example while a menu is open or its "
+     "window is hidden or minimized. Use getAXState(), or close the menu or show the window "
+     "first."),
+    ("unbound_name", (), r"^[A-Za-z_$][\w$]* is not defined$",
+     "A name used here was never assigned in this REPL. Bindings persist across calls only when "
+     "assigned (const app = await cua.getApp(...)); a reset or reconnect clears them."),
     ("user_stopped", ("-10012",), r"explicitly stopped by the user",
      "The user stopped computer use for this turn. Stop desktop actions and report where the "
      "task stands."),
@@ -228,15 +247,26 @@ def add_documentation_reminder(messages) -> None:
     messages.append(Message.user(text, origin=MessageOrigin.SYSTEM_REMINDER))
 
 
+def _inputs(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    return [action for action in trace.get("actions", []) if not action.get("observe")]
+
+
+def _ends_observed(trace: dict[str, Any] | None) -> bool:
+    """The call's last recorded step read the UI successfully, after any input it sent."""
+    actions = (trace or {}).get("actions") or []
+    return bool(actions) and bool(actions[-1].get("observe")) and actions[-1].get("ok") is True
+
+
 def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) -> bool:
     if trace is None:
         # No record from this runtime: fall back to reading the code.
         return bool(_COORDINATE_CLICK.search(str(input_data.get("code", ""))))
-    return any(action.get("coordinate") for action in trace.get("actions", []))
+    return any(action.get("coordinate") for action in _inputs(trace))
 
 
 # Rejected while validating the request, before any input is sent.
-_PRE_DISPATCH = frozenset({"stale_element", "invalid_key", "unsupported_form", "unknown_app"})
+_PRE_DISPATCH = frozenset({"stale_element", "text_not_found", "invalid_key", "unsupported_form",
+                           "unknown_app", "state_changed"})
 
 
 def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:
@@ -244,7 +274,7 @@ def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:
     input or a single input the runtime rejected before sending it."""
     if trace is None or trace.get("tabs"):
         return False
-    actions = trace.get("actions", [])
+    actions = _inputs(trace)
     return not actions or (
         len(actions) == 1 and actions[0].get("ok") is False and kind in _PRE_DISPATCH)
 
@@ -367,6 +397,9 @@ class CuaTool(ToolSpec):
         trace = payload.get("trace")
         if isinstance(trace, dict) and trace.get("ready"):
             metadata["cua_trace"] = trace
+            # Code that ends by reading fresh UI state is not acting blind (engine/ui_progress.py),
+            # though its printed text is still no completion evidence.
+            metadata["cua_observed"] = _ends_observed(trace)
         content = result.content
         if not result.success and (named := runtime_error(content)):
             metadata["cua_error_kind"] = named[0]
@@ -384,6 +417,9 @@ class CuaTool(ToolSpec):
                 notes.append(AX_TRUNCATED_NOTE)
             if _coordinate_input(metadata.get("cua_trace"), input_data):
                 notes.append(COORDINATE_CLICK_NOTE)
+            if surface and surface.get("kind") == "app" and (
+                    windows := await self._windows_note(surface["app_id"])):
+                notes.append(windows)
             if notes:
                 result = replace(result, content="\n".join([result.content, *notes]))
         if len(result.content.encode("utf-8")) > MAX_CUA_TEXT_BYTES:
@@ -409,6 +445,17 @@ class CuaTool(ToolSpec):
                 ),
             )
         return result
+
+
+    async def _windows_note(self, app_id: str) -> str:
+        """macOS state covers one window; say so once each time an app's window count changes."""
+        from deepseek_tui.cua.apps import open_window_count
+
+        count = await asyncio.to_thread(open_window_count, app_id)
+        if count is None or self.session.window_counts.get(app_id) == count:
+            return ""
+        self.session.window_counts[app_id] = count
+        return WINDOWS_NOTE.format(app=app_id, count=count) if count > 1 else ""
 
 
 class CuaObserveTool(CuaTool):

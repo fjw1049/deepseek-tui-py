@@ -164,6 +164,8 @@ class CuaSession:
         self._bound = False
         # Large text blocks the runtime returned, newest last; outlives reconnects.
         self.large_texts: list[str] = []
+        # Window counts already reported per app, so a multi-window note is not repeated.
+        self.window_counts: dict[str, int] = {}
 
     def invalidate_observation(self, reason: str) -> None:
         self.outside_change = reason

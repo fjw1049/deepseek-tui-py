@@ -173,6 +173,9 @@ class UiProgress:
         observation = observation_of(result)
         key = _surface_key(tool_name)
         if result.metadata.get("cua_runtime_content") and observation is None:
+            if result.metadata.get("cua_observed"):
+                self._unobserved[key] = 0
+                return ""
             self._unobserved[key] = self._unobserved.get(key, 0) + 1
             return ("\nUse cua_observe to check whether the intended change happened; "
                     "code returning successfully is not verified progress."

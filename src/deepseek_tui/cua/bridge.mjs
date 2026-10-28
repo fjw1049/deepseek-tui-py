@@ -10,23 +10,29 @@ const calls = new Map();
 const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 
 // Host code, idempotent per REPL: wraps targets the runtime returns so each UI input a call
-// dispatches is recorded. The host then knows what model code did without parsing it.
+// dispatches, and each UI state it reads, is recorded. The host then knows what model code
+// did without parsing it.
 const INPUTS = ['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'paste',
   'pressKey', 'typeText', 'typeCharacters', 'goto', 'back', 'forward', 'reload', 'close'];
+const OBSERVATIONS = ['getAXState', 'getScreenshot', 'getAXStateAndScreenshot'];
 const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
   const trace = globalThis.__deepseekTrace = [];
   const api = globalThis.cua;
+  const record = (entry, run) => {
+    trace.push(entry);
+    return Promise.resolve().then(run).then(
+      value => { entry.ok = true; return value; }, error => { entry.ok = false; throw error; });
+  };
   const wrap = target => {
     if (target === null || typeof target !== 'object' || Object.hasOwn(target, '__deepseekTraced')) return target;
-    for (const name of ${JSON.stringify(INPUTS)}) {
+    for (const name of [...${JSON.stringify(INPUTS)}, ...${JSON.stringify(OBSERVATIONS)}]) {
       const original = target[name];
       if (typeof original !== 'function') continue;
+      const observe = ${JSON.stringify(OBSERVATIONS)}.includes(name);
       target[name] = function (...args) {
-        const entry = { action: name,
-          coordinate: ['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]) };
-        trace.push(entry);
-        return Promise.resolve().then(() => original.apply(this, args)).then(
-          value => { entry.ok = true; return value; }, error => { entry.ok = false; throw error; });
+        return record(observe ? { action: name, observe } : { action: name,
+          coordinate: ['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]) },
+        () => original.apply(this, args));
       };
     }
     Object.defineProperty(target, '__deepseekTraced', { value: true });
@@ -38,7 +44,8 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
     api[name] = async function (...args) {
       // DOM tabs also take Playwright input the wrapper cannot see.
       if (name !== 'getApp') globalThis.__deepseekTabs = true;
-      return wrap(await original.apply(this, args));
+      // Binding prints the target's current state, so it is an observation too.
+      return wrap(await record({ action: name, observe: true }, () => original.apply(this, args)));
     };
   }
   globalThis.__deepseekTraceReady = typeof api?.getApp === 'function' || typeof api?.getTab === 'function';

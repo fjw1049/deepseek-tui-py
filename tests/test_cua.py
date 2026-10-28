@@ -23,6 +23,9 @@ def fresh_runtime_cache(tmp_path, monkeypatch):
     # Never contend with a real desktop session's lock.
     monkeypatch.setattr(cua_session, "LOCK_DIR", tmp_path)
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    # Never read the real desktop's windows; tests that need a count set one.
+    from deepseek_tui.cua import apps
+    monkeypatch.setattr(apps, "open_window_count", lambda app_id: None)
     cua_session.reset_runtime_cache()
     yield
     cua_session.reset_runtime_cache()
@@ -1207,6 +1210,15 @@ def test_runtime_error_names_cover_observed_messages():
         == "unsupported_form"
     assert runtime_error("Computer Use server error -10020: locked")[0] == "screen_locked"
     assert runtime_error("TypeError: Cannot read properties of undefined") is None
+    assert runtime_error("The user changed '/System/Applications/TextEdit.app'. Re-query the "
+                         "latest state with `get_app_state` before sending more actions.")[0] \
+        == "state_changed"
+    assert runtime_error("Screenshot unavailable for /System/Applications/TextEdit.app.")[0] \
+        == "screenshot_unavailable"
+    assert runtime_error("app is not defined")[0] == "unbound_name"
+    assert runtime_error("Computer Use server error -10005: Could not find the requested text to "
+                         "select in the element")[0] == "text_not_found"
+    assert runtime_error("Computer Use server error -10016: x")[0] == "user_intervened"
 
 
 def test_expected_text_ignores_presentation_not_content():
@@ -1443,3 +1455,49 @@ def test_finalization_keeps_the_observation_completion_requires():
     assert not used.finalization_exhausted()
     used.finalization_rounds = 3
     assert used.finalization_exhausted()
+
+
+@pytest.mark.asyncio
+async def test_code_that_ends_by_reading_state_is_not_acting_blind(session, tmp_path):
+    from deepseek_tui.engine.ui_progress import STALL_STREAK, UiProgress
+
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    progress = UiProgress()
+    try:
+        looked = await tool.execute({"code": 'actions:[{"action":"click","ok":true},'
+                                             '{"action":"getAXState","observe":true,"ok":true}]'},
+                                    context)
+        assert looked.metadata["cua_observed"] is True
+        blind = await tool.execute({"code": 'actions:[{"action":"getAXState","observe":true,'
+                                            '"ok":true},{"action":"click","ok":true}]'}, context)
+        assert blind.metadata["cua_observed"] is False
+        for _ in range(STALL_STREAK):
+            progress.record_result("cua_js", looked)
+        assert progress.blocked_content("cua_js") is None
+        for _ in range(STALL_STREAK):
+            progress.record_result("cua_js", blind)
+        assert "cua_observe" in progress.blocked_content("cua_js")
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_multi_window_note_repeats_only_when_the_count_changes(session, tmp_path,
+                                                                      monkeypatch):
+    from deepseek_tui.cua import apps
+
+    counts = iter([2, 2, 1, 2])
+    monkeypatch.setattr(apps, "open_window_count", lambda app_id: next(counts))
+    await session.connect()
+    tool = CuaTool(session, session.descriptors[0])
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        notes = []
+        for _ in range(4):
+            result = await tool.execute({"code": "surface:com.apple.TextEdit"}, context)
+            notes.append("2 windows open on screen" in result.content)
+        assert notes == [True, False, False, True]
+    finally:
+        await session.close()
