@@ -53,7 +53,8 @@ _RUNTIME_ERRORS = (
      "Use xdotool-style key names, which are case-sensitive: \"Return\", \"Tab\", \"Down\", "
      "\"super+Down\" (super is Command on macOS)."),
     ("unsupported_form", (), r"only supported on Linux|accepts pages, not pixels|"
-     r"requires an app name, path, or bundle ID|is unavailable on (macOS|Linux|Windows)",
+     r"requires an app name, path, or bundle ID|is unavailable on (macOS|Linux|Windows)|"
+     r"Capability is not available",
      "This call form is not available on this platform. Use the form the documentation gives "
      "for it (for example, on macOS select or focus first, then typeText(text))."),
     ("unknown_app", ("-10007", "-10010", "-10018"), r"^Invalid app:|Unknown app|ambiguous app",
@@ -264,6 +265,14 @@ def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) 
     return any(action.get("coordinate") for action in _inputs(trace))
 
 
+def _kept_ui(trace: dict[str, Any] | None) -> bool:
+    """The call changed nothing an earlier observation verified: it sent no recorded input
+    (tab methods and Playwright use are both recorded), or it only closed browser tabs, which
+    a task does after verifying and which leaves nothing to observe."""
+    return trace is not None and all(
+        action.get("action") == "close" and action.get("ok") is True for action in _inputs(trace))
+
+
 # Rejected while validating the request, before any input is sent.
 _PRE_DISPATCH = frozenset({"stale_element", "text_not_found", "invalid_key", "unsupported_form",
                            "unknown_app", "state_changed"})
@@ -309,9 +318,11 @@ class CuaTool(ToolSpec):
         delivery = context.metadata.get("task_delivery")
         context.metadata["cua_session"] = self.session
         observing = self.descriptor["name"] == "observe"
+        verified = {}
         if delivery is not None:
             delivery.cua_used = True
             delivery.cua_acted |= self.descriptor["name"] == "js"
+            verified = dict(delivery.cua_observation_evidence)
             delivery.cua_observation_evidence.clear()
             if not observing:
                 if self.session.last_surface:
@@ -324,6 +335,10 @@ class CuaTool(ToolSpec):
             raise
         if not result.success and delivery is not None:
             delivery.cua_failed_evidence = set(delivery.evidence)
+        if (delivery is not None and not observing and result.success
+                and _kept_ui(result.metadata.get("cua_trace"))):
+            # Reading state or closing the verified tab keeps the earlier evidence valid.
+            delivery.cua_observation_evidence.update(verified)
         if not result.success and self.descriptor["name"] == "js":
             kind = result.metadata.get("cua_error_kind")
             if kind == "user_intervened":

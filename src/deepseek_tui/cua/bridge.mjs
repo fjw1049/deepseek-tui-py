@@ -35,6 +35,12 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
         () => original.apply(this, args));
       };
     }
+    // DOM tabs also take input through Playwright locators: record each use as possible input.
+    if ('playwright' in target) {
+      const playwright = target.playwright;
+      Object.defineProperty(target, 'playwright', { configurable: true,
+        get() { trace.push({ action: 'playwright' }); return playwright; } });
+    }
     Object.defineProperty(target, '__deepseekTraced', { value: true });
     return target;
   };
@@ -42,10 +48,11 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
     const original = api?.[name];
     if (typeof original !== 'function') continue;
     api[name] = async function (...args) {
-      // DOM tabs also take Playwright input the wrapper cannot see.
-      if (name !== 'getApp') globalThis.__deepseekTabs = true;
       // Binding prints the target's current state, so it is an observation too.
-      return wrap(await record({ action: name, observe: true }, () => original.apply(this, args)));
+      const target = await record({ action: name, observe: true }, () => original.apply(this, args));
+      // Only a tab that exists can take Playwright input outside the wrappers.
+      if (name !== 'getApp') globalThis.__deepseekTabs = true;
+      return wrap(target);
     };
   }
   globalThis.__deepseekTraceReady = typeof api?.getApp === 'function' || typeof api?.getTab === 'function';

@@ -542,7 +542,19 @@ await run(install);  // the next call installs again: same wrappers, cleared tra
 const again = await cua.getApp('x');
 await again.click(3);
 try { await again.pressKey('down'); } catch {}
-console.log(JSON.stringify({ first, second: globalThis.__deepseekTrace }));
+const second = globalThis.__deepseekTrace.splice(0);
+cua.createBrowserTab = async () => ({ playwright: { locator() { return 'locator'; } } });
+await run(install);  // a fresh REPL would wrap the new entry point as well
+delete globalThis.__deepseekTrace;
+await run(install);
+const tab = await cua.createBrowserTab('chrome', 'http://127.0.0.1/');
+tab.playwright.locator('#name');
+const third = globalThis.__deepseekTrace.splice(0);
+delete globalThis.__deepseekTrace; delete globalThis.__deepseekTabs;
+cua.createBrowserTab = async () => { throw new Error('Capability is not available: visibility'); };
+await run(install);
+try { await cua.createBrowserTab('chrome', 'http://127.0.0.1/', { visible: true }); } catch {}
+console.log(JSON.stringify({ first, second, third, tabs: Boolean(globalThis.__deepseekTabs) }));
 """
     out = json.loads(subprocess.run([node, "--input-type=module", "-e", script, str(bridge)],
                                     capture_output=True, text=True, timeout=30,
@@ -557,3 +569,32 @@ console.log(JSON.stringify({ first, second: globalThis.__deepseekTrace }));
         {"action": "click", "coordinate": False, "ok": True},
         {"action": "pressKey", "coordinate": False, "ok": False},
     ]
+    # Playwright locators can send input the method wrappers cannot see: record each use.
+    assert out["third"] == [
+        {"action": "createBrowserTab", "observe": True, "ok": True},
+        {"action": "playwright"},
+    ]
+    # A tab that failed to open cannot take Playwright input.
+    assert out["tabs"] is False
+
+
+@pytest.mark.asyncio
+async def test_reading_state_or_closing_the_tab_keeps_verified_evidence(session, tmp_path):
+    await session.connect()
+    state = TaskDelivery(active=True)
+    context = ToolContext(
+        tmp_path, metadata={"task_delivery": state, "cua_turn_id": "t", "cua_call_id": "c"})
+    tool = CuaTool(session, session.descriptors[0])
+    try:
+        observed = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
+        state.remember_evidence("tool:observed", observed.metadata)
+        for code in ('actions:[{"action":"getAXState","observe":true,"ok":true}]',
+                     'actions:[{"action":"close","ok":true}]'):
+            await tool.execute({"code": code}, context)
+            assert "tool:observed" in state.cua_observation_evidence, code
+        for code in ('actions:[{"action":"playwright"}]', 'actions:[{"action":"click","ok":true}]'):
+            state.remember_evidence("tool:observed", observed.metadata)
+            await tool.execute({"code": code}, context)
+            assert not state.cua_observation_evidence, code
+    finally:
+        await session.close()

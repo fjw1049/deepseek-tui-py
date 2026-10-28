@@ -1216,6 +1216,7 @@ def test_runtime_error_names_cover_observed_messages():
     assert runtime_error("Screenshot unavailable for /System/Applications/TextEdit.app.")[0] \
         == "screenshot_unavailable"
     assert runtime_error("app is not defined")[0] == "unbound_name"
+    assert runtime_error("Capability is not available: visibility")[0] == "unsupported_form"
     assert runtime_error("Computer Use server error -10005: Could not find the requested text to "
                          "select in the element")[0] == "text_not_found"
     assert runtime_error("Computer Use server error -10016: x")[0] == "user_intervened"
