@@ -3214,21 +3214,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         async def incomplete_delivery(reason: str) -> TurnResult:
             from deepseek_tui.engine.events import TextDeltaEvent
 
-            warning = (
-                "结果整理未能完成，任务尚未完成核验。以下仅为此前生成的未核验草稿："
+            answer = (
+                "操作后的最终核验未完成，暂时无法确认任务已完成。"
                 if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                "Result finalization did not complete; task completion was not verified. "
-                "Earlier unverified draft:"
+                "Final verification did not complete; task completion was not verified."
             )
-            if delivery.draft_answer:
-                answer = warning + "\n\n" + delivery.draft_answer
-            else:
-                answer = (
-                    "结果整理未能完成，尚无通过核验的答案。请重试或补充信息。"
-                    if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                    "Result finalization did not complete; task completion was not verified. "
-                    "No submitted answer is available."
-                )
             delivery.outcome = {"status": "partial", "answer": answer,
                                 "evidence": sorted(delivery.evidence), "remaining": [reason]}
             message = Message.assistant(answer)
@@ -3246,7 +3236,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 delivery.outcome = None
                 delivery.stop_reminded = delivery.continue_nudged = False
                 delivery.finalization_rounds = 0
-                delivery.draft_answer = ""
                 self._ui_progress.reset()  # the person changed what the screen shows
                 from deepseek_tui.engine import reminders
 
@@ -3275,7 +3264,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     continue
                 delivery.stop_reminded = delivery.continue_nudged = False
                 delivery.finalization_rounds = 0
-                delivery.draft_answer = ""
                 self._ui_progress.reset()  # the person may have changed what the screen shows
                 # Honor @plugin: mount/unmount in steers (same as primary send).
                 pre_mount_steer = steer_text

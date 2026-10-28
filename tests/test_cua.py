@@ -1436,8 +1436,10 @@ def test_finalization_keeps_the_observation_completion_requires():
     used = TaskDelivery(active=True, stop_reminded=True, cua_used=True)
     assert [t["name"] for t in used.tools(catalog)] == ["finish_task", "cua_observe"]
     assert used.allows("cua_observe") and not used.allows("cua_js")
-    # One round to observe, one to finish; without computer use a single round remains.
+    # One failed observation, one retry, then submission; non-CUA gets one round.
     plain.finalization_rounds = used.finalization_rounds = 1
     assert plain.finalization_exhausted() and not used.finalization_exhausted()
     used.finalization_rounds = 2
+    assert not used.finalization_exhausted()
+    used.finalization_rounds = 3
     assert used.finalization_exhausted()

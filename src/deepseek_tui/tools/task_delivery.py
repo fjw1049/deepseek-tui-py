@@ -48,7 +48,6 @@ class TaskDelivery:
     continue_nudged: bool = False
     stop_reminded: bool = False
     finalization_rounds: int = 0
-    draft_answer: str = ""
     catalog: set[str] = field(default_factory=set)
 
     def remember_evidence(self, reference: str, metadata: dict[str, Any]) -> None:
@@ -63,8 +62,8 @@ class TaskDelivery:
         return frozenset({"finish_task", "cua_observe"} if self.cua_used else {"finish_task"})
 
     def finalization_exhausted(self) -> bool:
-        # After computer use, finalization may need one observation round before finish_task.
-        return self.finalization_rounds >= (2 if self.cua_used else 1)
+        # Allow one failed observation, its retry, and the final submission.
+        return self.finalization_rounds >= (3 if self.cua_used else 1)
 
     def allows(self, name: str) -> bool:
         if self.active and self.stop_reminded:
@@ -228,7 +227,6 @@ class FinishTaskTool(ToolSpec):
             or not answer.strip()
         ):
             raise ToolError("Supply a final status and a non-empty actual answer")
-        state.draft_answer = answer
         if any(
             not isinstance(v, list) or any(not isinstance(x, str) or not x.strip() for x in v)
             for v in (evidence, remaining)

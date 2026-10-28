@@ -306,7 +306,8 @@ async def test_completion_discloses_incomplete_evidence(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_engine_delivers_only_after_observation(session, tmp_path):
+@pytest.mark.parametrize("retry_observation", [False, True])
+async def test_engine_delivers_only_after_observation(session, tmp_path, retry_observation):
     from unittest.mock import AsyncMock
 
     from deepseek_tui.config.models import Config, FeatureConfig
@@ -319,6 +320,10 @@ async def test_engine_delivers_only_after_observation(session, tmp_path):
     client = ScriptedClient(
         [
             ToolCall(id="act", name="cua_js", arguments={"code": "surface:dev.fixture"}),
+            *([
+                "Done", "Done",
+                ToolCall(id="bad-observe", name="cua_observe", arguments={}),
+            ] if retry_observation else []),
             ToolCall(
                 id="observe",
                 name="cua_observe",
