@@ -1,0 +1,110 @@
+{
+  "model": "deepseek-flash",
+  "baseline_commit": "4790556d",
+  "patch_sha256": "0537934761e5a364933954b5d7e699c7aef97c95d61802689657bf52058caf41",
+  "round_limit": 35,
+  "seconds_limit": 480,
+  "case": "weekly",
+  "repeats_per_version": 2,
+  "root_cause": "Observation hid outer heading/list formatting around current_block; empty block changes did not change text offsets.",
+  "limitations": [
+    "Two repeats only; not statistical proof",
+    "Same model and unchanged task/judge; no matched random seed",
+    "Historical first baseline run reused; subsequent runs sequential",
+    "Saved business state verdict does not guarantee graceful finalization within round limit"
+  ],
+  "runs": [
+    {
+      "version": "before",
+      "repeat": 1,
+      "passed": false,
+      "seconds": 316.56,
+      "rounds": 65,
+      "input_tokens": 6478157,
+      "output_tokens": 37118,
+      "turn_checks": [
+        {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        },
+        {
+          "history_unchanged": false,
+          "single_h2_title": false,
+          "formatted_items": false,
+          "one_append_only": false
+        }
+      ]
+    },
+    {
+      "version": "before",
+      "repeat": 2,
+      "passed": true,
+      "seconds": 131.31,
+      "rounds": 59,
+      "input_tokens": 4362042,
+      "output_tokens": 12289,
+      "turn_checks": [
+        {
+          "history_unchanged": true,
+          "single_h2_title": true,
+          "formatted_items": true,
+          "one_append_only": true
+        },
+        {
+          "history_unchanged": true,
+          "single_h2_title": true,
+          "formatted_items": true,
+          "one_append_only": true
+        }
+      ]
+    },
+    {
+      "version": "after",
+      "repeat": 1,
+      "passed": true,
+      "seconds": 122.18,
+      "rounds": 54,
+      "input_tokens": 3759964,
+      "output_tokens": 13872,
+      "turn_checks": [
+        {
+          "history_unchanged": true,
+          "single_h2_title": true,
+          "formatted_items": true,
+          "one_append_only": true
+        },
+        {
+          "history_unchanged": true,
+          "single_h2_title": true,
+          "formatted_items": true,
+          "one_append_only": true
+        }
+      ]
+    },
+    {
+      "version": "after",
+      "repeat": 2,
+      "passed": true,
+      "seconds": 115.48,
+      "rounds": 58,
+      "input_tokens": 4046784,
+      "output_tokens": 10571,
+      "turn_checks": [
+        {
+          "history_unchanged": true,
+          "single_h2_title": true,
+          "formatted_items": true,
+          "one_append_only": true
+        },
+        {
+          "history_unchanged": true,
+          "single_h2_title": true,
+          "formatted_items": true,
+          "one_append_only": true
+        }
+      ]
+    }
+  ]
+}

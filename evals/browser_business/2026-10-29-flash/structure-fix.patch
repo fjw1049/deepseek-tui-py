@@ -1,0 +1,58 @@
+diff --git a/src/deepseek_tui/browser/observation.py b/src/deepseek_tui/browser/observation.py
+index d3b84746..898bbde6 100644
+--- a/src/deepseek_tui/browser/observation.py
++++ b/src/deepseek_tui/browser/observation.py
+@@ -315,8 +315,13 @@ COLLECT = (
+       const p=selection.anchorNode.nodeType===1
+         ?selection.anchorNode:selection.anchorNode.parentElement;
+       const block=p?.closest('p,h1,h2,h3,h4,h5,h6,li,pre,blockquote');
+-      if(block && root.contains(block))editor.current_block={tag:block.tagName.toLowerCase(),
+-        text:readText(block,false,true).slice(0,1000)};
++      if(block && root.contains(block)){
++        const ancestors=[];
++        for(let e=block.parentElement;e && e!==root;e=e.parentElement)
++          ancestors.push(e.tagName.toLowerCase());
++        editor.current_block={tag:block.tagName.toLowerCase(),
++          ancestor_tags:ancestors,text:readText(block,false,true).slice(0,1000)};
++      }
+     }
+   }
+   return {url:location.href,title:document.title,level:limit===120?'interactive':'full',
+diff --git a/src/deepseek_tui/prompts/browser.md b/src/deepseek_tui/prompts/browser.md
+index 0c7a1e17..2ee721d2 100644
+--- a/src/deepseek_tui/prompts/browser.md
++++ b/src/deepseek_tui/prompts/browser.md
+@@ -220,6 +220,11 @@ types and current selection; ordinary field/password values remain excluded. Ver
+ document text with `check_text`/`wait` using the same selector and `include_editable=true`. Inspect
+ selection and the current block before typing or deleting. Verify both content and
+ heading/list structure after editing, and verify saved/published state separately.
++The current block's `ancestor_tags` exposes enclosing lists and headings: a `li`
++inside an `h2` is not a standalone heading. When appending a new section after a list,
++leave the list before applying heading formatting; Enter in an empty list item normally
++creates a paragraph outside it. Empty blocks and formatting changes may leave text offsets
++unchanged, so inspect block structure rather than repeating or undoing a successful action.
+ Do not infer task completion from input dispatch. Scroll receipts report actual
+ movement; reaching an edge or moving a different panel is not successful navigation.
+ 
+diff --git a/tests/test_browser_chromium.py b/tests/test_browser_chromium.py
+index bb256855..88ecfc40 100644
+--- a/tests/test_browser_chromium.py
++++ b/tests/test_browser_chromium.py
+@@ -2730,3 +2730,17 @@ async def test_recorded_new_tab_link_does_not_open_twice(chrome, monkeypatch):
+     fresh = [t for t in after if t["tab_id"] not in before]
+     assert len([t for t in fresh if t["url"].endswith("/child")]) == 1
+     assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == "replayed 1"
++
++
++async def test_editor_observation_exposes_nested_formatting(chrome):
++    service, run = chrome
++    await evaluate(run.session._internal.client, """(() => {
++      document.body.innerHTML='<article id=editor contenteditable><h2><ul><li>Title</li></ul></h2></article>';
++      editor.focus();const r=document.createRange();r.selectNodeContents(editor.querySelector('li'));
++      r.collapse(false);getSelection().removeAllRanges();getSelection().addRange(r);return true;
++    })()""")
++    observed = await service.action('t', BrowserAction(
++        action='observe', selector='#editor', include_editable=True))
++    block = observed['observation']['editor']['current_block']
++    assert block['tag'] == 'li'
++    assert block['ancestor_tags'] == ['ul', 'h2']

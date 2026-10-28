@@ -315,8 +315,13 @@ COLLECT = (
       const p=selection.anchorNode.nodeType===1
         ?selection.anchorNode:selection.anchorNode.parentElement;
       const block=p?.closest('p,h1,h2,h3,h4,h5,h6,li,pre,blockquote');
-      if(block && root.contains(block))editor.current_block={tag:block.tagName.toLowerCase(),
-        text:readText(block,false,true).slice(0,1000)};
+      if(block && root.contains(block)){
+        const ancestors=[];
+        for(let e=block.parentElement;e && e!==root;e=e.parentElement)
+          ancestors.push(e.tagName.toLowerCase());
+        editor.current_block={tag:block.tagName.toLowerCase(),
+          ancestor_tags:ancestors,text:readText(block,false,true).slice(0,1000)};
+      }
     }
   }
   return {url:location.href,title:document.title,level:limit===120?'interactive':'full',

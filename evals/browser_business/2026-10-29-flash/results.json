@@ -1,0 +1,300 @@
+{
+  "model": "deepseek-flash",
+  "commit": "4790556da952f8a35af64741ab5649326c5efa76",
+  "repeats": 1,
+  "comparison_note": "Independent follow-up; different model from original batch; not a matched efficiency comparison",
+  "cases": {
+    "weekly": {
+      "pass": false,
+      "seconds": 316.56,
+      "turns": [
+        {
+          "rounds": 35,
+          "seconds": 126.35,
+          "answer": "任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。",
+          "verdict": {
+            "pass": false,
+            "checks": {
+              "history_unchanged": false,
+              "single_h2_title": false,
+              "formatted_items": false,
+              "one_append_only": false
+            },
+            "state": {
+              "saved": "",
+              "headings": [],
+              "items": []
+            }
+          },
+          "error": null
+        },
+        {
+          "rounds": 30,
+          "seconds": 189.22,
+          "answer": "任务因工具调用轮数达到上限而停止，尚未完成核验。继续前请检查已收集的结果和未确认的操作。",
+          "verdict": {
+            "pass": false,
+            "checks": {
+              "history_unchanged": false,
+              "single_h2_title": false,
+              "formatted_items": false,
+              "one_append_only": false
+            },
+            "state": {
+              "saved": "",
+              "headings": [],
+              "items": []
+            }
+          },
+          "error": null
+        }
+      ]
+    },
+    "orders": {
+      "pass": true,
+      "seconds": 26.03,
+      "turns": [
+        {
+          "rounds": 5,
+          "seconds": 14.03,
+          "answer": "已完成核对，明细写入工作目录 `reconciliation.csv`（列 order_id,gross,refund,net，按订单编号排序，共 11 条）。\n\n**三个合计：**\n- 华东区域已付款订单成交总额：**2220**\n- 对应退款总额：**173**\n- 净额：**2047**\n\n**口径说明：**\n- 订单报表共 20 条，分两页（第 1 页 O001–O010，第 2 页 O011–O020），已全部读取。华东且已付款的有 11 单：O001、O002、O004、O007、O008、O011、O013、O014、O016、O017、O019。\n- 取消订单不计入：华东的 O005、O010、O020 已排除（其中 O005、O020 在退款表中有记录，未扣除）。\n- 退款表共 10 条，按订单编号关联后命中 6 条：O002 22、O004 24、O007 27、O011 31、O013 33、O016 36，合计 173。未匹配的 O005、O009、O018、O020 分别属于取消单或华南区域，未计入。\n\n```\norder_id,gross,refund,net\nO001,110,0,110\nO002,120,22,98\nO004,140,24,116\nO007,170,27,143\nO008,180,0,180\nO011,210,31,179\nO013,230,33,197\nO014,240,0,240\nO016,260,36,224\nO017,270,0,270\nO019,290,0,290\n```\n\n净额合计与逐行相加一致（2047）。",
+          "verdict": {
+            "pass": true,
+            "checks": {
+              "exact_csv": true,
+              "answer_totals": true
+            },
+            "state": {
+              "expected": [
+                {
+                  "order_id": "O001",
+                  "gross": 110,
+                  "refund": 0,
+                  "net": 110
+                },
+                {
+                  "order_id": "O002",
+                  "gross": 120,
+                  "refund": 22,
+                  "net": 98
+                },
+                {
+                  "order_id": "O004",
+                  "gross": 140,
+                  "refund": 24,
+                  "net": 116
+                },
+                {
+                  "order_id": "O007",
+                  "gross": 170,
+                  "refund": 27,
+                  "net": 143
+                },
+                {
+                  "order_id": "O008",
+                  "gross": 180,
+                  "refund": 0,
+                  "net": 180
+                },
+                {
+                  "order_id": "O011",
+                  "gross": 210,
+                  "refund": 31,
+                  "net": 179
+                },
+                {
+                  "order_id": "O013",
+                  "gross": 230,
+                  "refund": 33,
+                  "net": 197
+                },
+                {
+                  "order_id": "O014",
+                  "gross": 240,
+                  "refund": 0,
+                  "net": 240
+                },
+                {
+                  "order_id": "O016",
+                  "gross": 260,
+                  "refund": 36,
+                  "net": 224
+                },
+                {
+                  "order_id": "O017",
+                  "gross": 270,
+                  "refund": 0,
+                  "net": 270
+                },
+                {
+                  "order_id": "O019",
+                  "gross": 290,
+                  "refund": 0,
+                  "net": 290
+                }
+              ],
+              "actual": [
+                {
+                  "order_id": "O001",
+                  "gross": 110.0,
+                  "refund": 0.0,
+                  "net": 110.0
+                },
+                {
+                  "order_id": "O002",
+                  "gross": 120.0,
+                  "refund": 22.0,
+                  "net": 98.0
+                },
+                {
+                  "order_id": "O004",
+                  "gross": 140.0,
+                  "refund": 24.0,
+                  "net": 116.0
+                },
+                {
+                  "order_id": "O007",
+                  "gross": 170.0,
+                  "refund": 27.0,
+                  "net": 143.0
+                },
+                {
+                  "order_id": "O008",
+                  "gross": 180.0,
+                  "refund": 0.0,
+                  "net": 180.0
+                },
+                {
+                  "order_id": "O011",
+                  "gross": 210.0,
+                  "refund": 31.0,
+                  "net": 179.0
+                },
+                {
+                  "order_id": "O013",
+                  "gross": 230.0,
+                  "refund": 33.0,
+                  "net": 197.0
+                },
+                {
+                  "order_id": "O014",
+                  "gross": 240.0,
+                  "refund": 0.0,
+                  "net": 240.0
+                },
+                {
+                  "order_id": "O016",
+                  "gross": 260.0,
+                  "refund": 36.0,
+                  "net": 224.0
+                },
+                {
+                  "order_id": "O017",
+                  "gross": 270.0,
+                  "refund": 0.0,
+                  "net": 270.0
+                },
+                {
+                  "order_id": "O019",
+                  "gross": 290.0,
+                  "refund": 0.0,
+                  "net": 290.0
+                }
+              ],
+              "totals": {
+                "gross": 2220,
+                "refund": 173,
+                "net": 2047
+              }
+            }
+          },
+          "error": null
+        },
+        {
+          "rounds": 4,
+          "seconds": 11.35,
+          "answer": "已按华南区域已付款口径重算，`reconciliation.csv` 已覆盖，只保留 5 条华南已付款订单，无上一轮华东记录。\n\n**三个合计：**\n- 华南区域已付款订单成交总额：**980**\n- 对应退款总额：**67**\n- 净额：**913**\n\n**口径说明：**\n- 报表两页共 20 条已重新读取，数据与上轮一致。华南订单 6 条：O003、O006、O009、O012、O015、O018；其中 O015 为取消，已排除，实际计入 5 条。\n- 退款按订单编号关联，命中 2 条：O009 退 29、O018 退 38，合计 67；O003、O006、O012 在退款表中无记录，按 0 计。\n- 退款表中其余 8 条（O002、O004、O005、O007、O011、O013、O016、O020）均属华东或取消单，未扣除。\n\n```\norder_id,gross,refund,net\nO003,130,0,130\nO006,160,0,160\nO009,190,29,161\nO012,220,0,220\nO018,280,38,242\n```\n\n净额合计与逐行相加一致（913）。",
+          "verdict": {
+            "pass": true,
+            "checks": {
+              "exact_csv": true,
+              "answer_totals": true
+            },
+            "state": {
+              "expected": [
+                {
+                  "order_id": "O003",
+                  "gross": 130,
+                  "refund": 0,
+                  "net": 130
+                },
+                {
+                  "order_id": "O006",
+                  "gross": 160,
+                  "refund": 0,
+                  "net": 160
+                },
+                {
+                  "order_id": "O009",
+                  "gross": 190,
+                  "refund": 29,
+                  "net": 161
+                },
+                {
+                  "order_id": "O012",
+                  "gross": 220,
+                  "refund": 0,
+                  "net": 220
+                },
+                {
+                  "order_id": "O018",
+                  "gross": 280,
+                  "refund": 38,
+                  "net": 242
+                }
+              ],
+              "actual": [
+                {
+                  "order_id": "O003",
+                  "gross": 130.0,
+                  "refund": 0.0,
+                  "net": 130.0
+                },
+                {
+                  "order_id": "O006",
+                  "gross": 160.0,
+                  "refund": 0.0,
+                  "net": 160.0
+                },
+                {
+                  "order_id": "O009",
+                  "gross": 190.0,
+                  "refund": 29.0,
+                  "net": 161.0
+                },
+                {
+                  "order_id": "O012",
+                  "gross": 220.0,
+                  "refund": 0.0,
+                  "net": 220.0
+                },
+                {
+                  "order_id": "O018",
+                  "gross": 280.0,
+                  "refund": 38.0,
+                  "net": 242.0
+                }
+              ],
+              "totals": {
+                "gross": 980,
+                "refund": 67,
+                "net": 913
+              }
+            }
+          },
+          "error": null
+        }
+      ]
+    }
+  }
+}

@@ -220,6 +220,11 @@ types and current selection; ordinary field/password values remain excluded. Ver
 document text with `check_text`/`wait` using the same selector and `include_editable=true`. Inspect
 selection and the current block before typing or deleting. Verify both content and
 heading/list structure after editing, and verify saved/published state separately.
+The current block's `ancestor_tags` exposes enclosing lists and headings: a `li`
+inside an `h2` is not a standalone heading. When appending a new section after a list,
+leave the list before applying heading formatting; Enter in an empty list item normally
+creates a paragraph outside it. Empty blocks and formatting changes may leave text offsets
+unchanged, so inspect block structure rather than repeating or undoing a successful action.
 Do not infer task completion from input dispatch. Scroll receipts report actual
 movement; reaching an edge or moving a different panel is not successful navigation.
 

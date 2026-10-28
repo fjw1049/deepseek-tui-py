@@ -2730,3 +2730,17 @@ async def test_recorded_new_tab_link_does_not_open_twice(chrome, monkeypatch):
     fresh = [t for t in after if t["tab_id"] not in before]
     assert len([t for t in fresh if t["url"].endswith("/child")]) == 1
     assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == "replayed 1"
+
+
+async def test_editor_observation_exposes_nested_formatting(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client, """(() => {
+      document.body.innerHTML='<article id=editor contenteditable><h2><ul><li>Title</li></ul></h2></article>';
+      editor.focus();const r=document.createRange();r.selectNodeContents(editor.querySelector('li'));
+      r.collapse(false);getSelection().removeAllRanges();getSelection().addRange(r);return true;
+    })()""")
+    observed = await service.action('t', BrowserAction(
+        action='observe', selector='#editor', include_editable=True))
+    block = observed['observation']['editor']['current_block']
+    assert block['tag'] == 'li'
+    assert block['ancestor_tags'] == ['ul', 'h2']
