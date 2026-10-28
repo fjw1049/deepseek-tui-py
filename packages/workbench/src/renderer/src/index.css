@@ -29,7 +29,7 @@
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
   --ds-chat-font-size: 15px;
-  --ds-chat-column-width: 760px;
+  --ds-chat-column-width: 960px;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
   --surface-3: #ffffff;
@@ -1526,22 +1526,6 @@ samp {
 .ds-tree-branch[data-open] .ds-tree-branch__inner {
   visibility: visible;
   transition: visibility 0s;
-}
-
-/* Per-level indent guide, aligned just left of the child rows' chevron column. */
-.ds-tree-branch__inner::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--ds-tree-guide, 8px);
-  width: 1px;
-  background: color-mix(in srgb, var(--ds-text) 4%, transparent);
-}
-
-.ds-tree-branch__inner:hover::before,
-.ds-tree-branch__inner:focus-within::before {
-  background: color-mix(in srgb, var(--ds-text) 12%, transparent);
 }
 
 .ds-tree-folder { color: var(--ds-text-faint); }
@@ -7412,9 +7396,15 @@ select:focus-visible,
   background-position: left bottom;
 }
 
+/* Keep the conversation mounted for restoration without painting it behind
+   the maximized panel during layout transitions. */
+.ds-chat-column[aria-hidden='true'] {
+  visibility: hidden;
+}
+
 .ds-chat-column > section {
   width: var(--ds-chat-rest-width, 100%);
-  transition: width 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-right-panel {
@@ -7423,18 +7413,26 @@ select:focus-visible,
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  transition: width 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-right-panel .ds-right-panel-surface {
   opacity: 0;
   transform: translateX(12px);
-  transition: width 280ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 160ms ease-out, transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1), opacity 160ms ease-out, transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-right-panel[data-open] .ds-right-panel-surface {
   opacity: 1;
   transform: translateX(0);
+}
+
+/* The outer layout already animates. A second width transition on the
+   fill-width content would trail each ResizeObserver update. */
+.ds-workbench-right-panel[data-fill-width] .ds-right-panel-surface {
+  transition-property: opacity, transform;
+  transition-duration: 160ms, 300ms;
+  transition-timing-function: ease-out, cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Workbench browser tabs live beneath the panels. The shown tab sits under the right

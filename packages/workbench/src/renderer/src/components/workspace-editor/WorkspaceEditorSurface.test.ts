@@ -96,3 +96,54 @@ it('allows reading after a grammar load failure', async () => {
     expect(host.querySelector('[aria-busy]')?.getAttribute('aria-busy')).toBe('false')
   } finally { await act(async () => root.unmount()); host.remove() }
 })
+
+it('defers maximized editor layout only while the left rail animates and cancels pending work on unmount', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  let resize = () => {}
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: () => void) { resize = callback }
+    observe() {} disconnect() {}
+  })
+  const frames = new Map<number, FrameRequestCallback>()
+  let id = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++id, callback); return id })
+  vi.stubGlobal('cancelAnimationFrame', (key: number) => frames.delete(key))
+  const flush = () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0)) }
+  const shell = document.createElement('div')
+  shell.className = 'ds-workbench-shell'
+  shell.innerHTML = '<div class="ds-workbench-sidebar-wrap"></div><div class="ds-workbench-right-panel" data-fill-width><div></div></div>'
+  document.body.append(shell)
+  const rail = shell.firstElementChild!
+  let running = false
+  Object.defineProperty(rail, 'getAnimations', { value: () => running ? [{ transitionProperty: 'width', playState: 'running' }] : [] })
+  const panel = shell.lastElementChild!
+  const root = createRoot(panel.firstElementChild!)
+  const layout = vi.fn()
+  const editor = {
+    layout, updateOptions() {}, getModel: () => null,
+    onDidChangeCursorSelection: () => ({ dispose() {} }),
+    onDidScrollChange: () => ({ dispose() {} })
+  } as unknown as MonacoEditor.IStandaloneCodeEditor
+  try {
+    await act(async () => root.render(createElement(WorkspaceEditorSurface, { paneId: 'primary', tab: tab('a.txt'), readOnly: false, onChange() {} })))
+    await act(async () => state.mount!(editor))
+    flush(); layout.mockClear()
+    running = true
+    resize(); resize(); flush()
+    expect(layout).not.toHaveBeenCalled()
+    expect(frames.size).toBe(1)
+    running = false
+    flush()
+    expect(layout).toHaveBeenCalledTimes(1)
+    resize()
+    expect(layout).toHaveBeenCalledTimes(2)
+    running = true
+    panel.removeAttribute('data-fill-width')
+    resize()
+    expect(layout).toHaveBeenCalledTimes(3)
+    panel.setAttribute('data-fill-width', '')
+    resize()
+    expect(frames.size).toBe(1)
+  } finally { await act(async () => root.unmount()); shell.remove() }
+  expect(frames.size).toBe(0)
+})

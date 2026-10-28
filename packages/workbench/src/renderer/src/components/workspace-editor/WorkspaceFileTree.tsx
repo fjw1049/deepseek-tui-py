@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronsDownUp, ChevronsUpDown, ChevronRight, RefreshCw, Folder, FolderOpen, Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -457,7 +457,6 @@ export function WorkspaceFileTree({
                 key={`${entryKey}__branch`}
                 className="ds-tree-branch"
                 data-open={isExpanded ? '' : undefined}
-                style={{ '--ds-tree-guide': `${indentPx(depth + 1) - 4}px` } as CSSProperties}
               >
                 <div className="ds-tree-branch__inner">
                   {renderEntries(entry.path, depth + 1)}
