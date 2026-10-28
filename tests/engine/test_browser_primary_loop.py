@@ -287,6 +287,7 @@ async def test_focus_blocks_hidden_tool_then_enables_only_requested_tool(tmp_pat
         client.replies = iter(["Hello"])
         result = await engine._run_conversation([Message.user("Hello")], "test", "sys", None)
         assert result.task_outcome is None and "read_file" in names(client.requests[-1])
+        assert not {"finish_task", "request_task_tools"} & names(client.requests[-1])
     finally:
         await engine.shutdown_session()
 

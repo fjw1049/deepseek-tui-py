@@ -211,10 +211,12 @@ class BrowserAction(BaseModel):
     @model_validator(mode="after")
     def validate_action(self) -> BrowserAction:
         if self.include_editable and (
-            self.action != "observe" or not (self.selector or self.scope_ref)
+            self.action not in {"observe", "check_text", "wait"}
+            or not (self.selector or (self.action == "observe" and self.scope_ref))
         ):
             raise ValueError(
-                "include_editable requires observe with a document selector or scope_ref")
+                "include_editable requires observe/check_text/wait with a document selector "
+                "or observe with scope_ref")
         if self.action == "upload" and not (self.ref or self.selector or self.chooser_id):
             raise ValueError("Upload requires an observed file input or the current chooser_id")
         if self.action == "handle_dialog" and not (self.dialog_id and self.accept is not None):

@@ -81,10 +81,9 @@ class TaskDelivery:
             return [t for t in catalog if (t.get("function") or t)["name"] in allowed]
         if self.focused:
             return [t for t in catalog if self.allows((t.get("function") or t)["name"])]
-        names = {(t.get("function") or t)["name"] for t in catalog}
-        # Where a UI surface is offered, the controls stay listed: adding them at the first UI
-        # call changed the tool list mid-task and voided the prefix cache twice per task.
-        if self.active or names & surface_tools():
+        # Pure-computation follow-ups have no UI delivery state; do not advertise
+        # controls that _state would reject. The full catalog still activates UI work.
+        if self.active:
             return list(catalog)
         return [t for t in catalog if (t.get("function") or t)["name"] not in CONTROL_TOOLS]
 

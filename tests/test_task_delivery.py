@@ -89,6 +89,17 @@ def test_browser_phase_keeps_computer_use_available(context):
     assert not state.allows("write_file")
 
 
+def test_delivery_controls_only_appear_after_ui_task_starts():
+    catalog = [{'name': name} for name in (
+        'browser_use', 'read_file', 'finish_task', 'request_task_tools')]
+    state = TaskDelivery()
+    assert {t['name'] for t in state.tools(catalog)} == {'browser_use', 'read_file'}
+    state.active = state.focused = True
+    assert state.tools(catalog) == catalog
+    # A new user turn may reuse evidence for pure calculation, without a UI task.
+    assert {t['name'] for t in TaskDelivery().tools(catalog)} == {'browser_use', 'read_file'}
+
+
 def test_free_text_question_and_invalid_single_choice():
     question = {"header": "Order", "id": "order", "question": "What is the order number?"}
     assert validate_user_input_request({"questions": [question]})[0].options == []

@@ -142,6 +142,52 @@ async def test_scrolling_visible_panel_preserves_outer_scroll(chrome):
     assert await evaluate(client, 'document.querySelector("#list").scrollTop') > 0
 
 
+async def test_editor_navigation_shortcuts_move_and_select_actual_text(chrome):
+    from deepseek_tui.browser.input import press_key
+
+    _, run = chrome
+    client = run.session._internal.client
+    for key, anchor, focus in [
+        ('Meta+End', 22, 22), ('Ctrl+End', 22, 22),
+        ('Meta+ArrowDown', 22, 22), ('Meta+Home', 0, 0),
+        ('Ctrl+Home', 0, 0), ('Meta+ArrowUp', 0, 0),
+        ('Meta+Shift+ArrowLeft', 5, 0), ('Meta+Shift+ArrowRight', 5, 11),
+        ('Ctrl+Shift+End', 5, 22), ('Meta+Shift+ArrowDown', 5, 22),
+        ('Alt+Shift+ArrowLeft', 5, 0), ('Ctrl+Shift+ArrowRight', 5, 11),
+    ]:
+        await evaluate(client, """(() => {document.body.innerHTML=
+          '<div id=editor contenteditable><p>Hello world</p><p>Second line</p></div>';
+          editor.focus();const r=document.createRange();r.setStart(editor.firstChild.firstChild,5);
+          r.collapse(true);getSelection().removeAllRanges();getSelection().addRange(r);return true})()""")
+        await press_key(run, key)
+        state = await evaluate(client, """(() => {const s=getSelection();
+          const offset=(n,p)=>{const r=document.createRange();r.selectNodeContents(editor);
+            r.setEnd(n,p);return r.toString().length};
+          return [offset(s.anchorNode,s.anchorOffset),offset(s.focusNode,s.focusOffset)];})()""")
+        assert state == [anchor, focus], (key, state)
+
+
+async def test_editable_text_checks_require_explicit_scoped_read(chrome):
+    from deepseek_tui.browser.service import BrowserActionError
+
+    service, run = chrome
+    await evaluate(run.session._internal.client, """document.body.innerHTML=
+      '<div contenteditable id=editor><h2>Week 43</h2><p>Saved draft</p></div>'+
+      '<input type=password id=password value=SECRET><textarea id=field>PRIVATE</textarea>';true""")
+    for action in ('check_text', 'wait'):
+        default = await service.action('t', BrowserAction(
+            action=action, selector='#editor', text='Saved draft', timeout_ms=50))
+        assert not default['success']
+        checked = await service.action('t', BrowserAction(
+            action=action, selector='#editor', text='Saved draft',
+            include_editable=True, timeout_ms=50))
+        assert checked['success'], checked
+    for selector, text in (('#password', 'SECRET'), ('#field', 'PRIVATE')):
+        with pytest.raises(BrowserActionError, match='one contenteditable document'):
+            await service.action('t', BrowserAction(
+                action='check_text', selector=selector, text=text, include_editable=True))
+
+
 async def test_private_session_isolated_with_workbench_available(chrome, monkeypatch):
     from unittest.mock import AsyncMock
 

@@ -55,6 +55,7 @@ async def _check_condition(run, action, deadline):
             "state": action.wait_state,
             "shadow": action.shadow_path,
             "checked": action.checked,
+            "includeEditable": action.include_editable,
         }
     )
     expression = (
@@ -66,6 +67,8 @@ async def _check_condition(run, action, deadline):
         root=hosts[0].shadowRoot;
       }
       const nodes=a.selector?Array.from(root.querySelectorAll(a.selector)):[];
+      if(a.includeEditable && (nodes.length!==1 || !nodes[0].isContentEditable))
+        throw Error('include_editable requires one contenteditable document');
       const visible=__VISIBLE__, text=__VISIBLE_TEXT__;
       let passed;
       if(a.kind==='url_contains')passed=location.href.includes(a.url);
@@ -82,7 +85,7 @@ async def _check_condition(run, action, deadline):
           (!a.selector || nodes.some(visible)) && (!a.url || location.href.includes(a.url));
       }
       return (!a.url || location.href.includes(a.url)) && (a.state==='hidden'?!passed:passed);
-      function textFrom(e){return (__READ_TEXT__)(e)}
+      function textFrom(e){return (__READ_TEXT__)(e,false,a.includeEditable)}
     })("""
         + args
         + ")"

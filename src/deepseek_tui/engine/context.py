@@ -73,15 +73,27 @@ def summarize_text_head_tail(text: str, limit: int) -> str:
 
 def prune_superseded_browser_observations(messages: list[Message]) -> int:
     """Batch away stale target lists; preserve receipts, unique text and paging results."""
-    from deepseek_tui.protocol.messages import ToolResultBlock, ToolUseBlock
+    from deepseek_tui.protocol.messages import Role, TextBlock, ToolResultBlock, ToolUseBlock
+
+    def evidence(value):
+        if isinstance(value, dict):
+            return {k: evidence(v) for k, v in value.items()
+                    if k not in {"ref", "target_id", "option_ref", "box"}}
+        if isinstance(value, list):
+            return [evidence(v) for v in value]
+        return value
 
     decoder = json.JSONDecoder()
     browser_ids = {b.id for message in messages for b in message.content
                    if isinstance(b, ToolUseBlock) and b.name == "browser_use"}
-    recent: dict[tuple, list[tuple[str, str]]] = {}
+    recent: dict[tuple, list[tuple[str, str, str]]] = {}
     changes = []
     reclaimed = 0
     for i in range(len(messages) - 1, -1, -1):
+        if messages[i].role == Role.USER and any(
+            isinstance(b, TextBlock) for b in messages[i].content
+        ):
+            break
         blocks = list(messages[i].content)
         changed = False
         for j, block in enumerate(blocks):
@@ -105,8 +117,15 @@ def prune_superseded_browser_observations(messages: list[Message]) -> int:
             )) + (tuple(observation.get("scope_shadow_path") or []),)
             history = recent.setdefault(key, [])
             text = observation.get("text", "")
+            # A stale ref is disposable, but its link, option values and row context
+            # may be the only remaining evidence. Archive only redundant payloads.
+            targets = json.dumps(evidence({k: observation.get(k) for k in (
+                "elements", "scopes", "scroll_containers", "frames",
+            )}), ensure_ascii=False, sort_keys=True)
             if len(history) < 3:
-                history.append((text, observation.get("observation_id", "")))
+                history.append((text, observation.get("observation_id", ""), targets))
+                continue
+            if not any(saved == targets for _, _, saved in history):
                 continue
             old_size = len(block.content)
             observation = dict(observation)
@@ -114,7 +133,7 @@ def prune_superseded_browser_observations(messages: list[Message]) -> int:
                 observation.pop(name, None)
             observation["targets_archived"] = True
             observation["target_notice"] = "Historical result: observe again before acting."
-            match = next((oid for body, oid in history if body == text), None)
+            match = next((oid for body, oid, _ in history if body == text), None)
             if match and text:
                 observation["text"] = "Repeated text retained in observation " + match
             data["observation"] = observation

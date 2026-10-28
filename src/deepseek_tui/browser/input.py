@@ -162,6 +162,23 @@ async def dispatch_input(run, body: BrowserInput, *, client=None) -> dict:
                 command = "redo" if body.modifiers & 8 else "undo"
             if command:
                 params["commands"] = [command]
+        if body.event == "keyDown":
+            modifiers = body.modifiers & 7
+            movement = None
+            if modifiers in {2, 4} and body.key in {"Home", "End"}:
+                movement = ("moveToBeginningOfDocument" if body.key == "Home"
+                            else "moveToEndOfDocument")
+            elif modifiers == 4:
+                movement = {"ArrowUp": "moveToBeginningOfDocument",
+                            "ArrowDown": "moveToEndOfDocument",
+                            "ArrowLeft": "moveToBeginningOfLine",
+                            "ArrowRight": "moveToEndOfLine"}.get(body.key)
+            elif modifiers in {1, 2}:
+                movement = {"ArrowLeft": "moveWordLeft",
+                            "ArrowRight": "moveWordRight"}.get(body.key)
+            if movement:
+                params["commands"] = [movement + (
+                    "AndModifySelection" if body.modifiers & 8 else "")]
         await client.send(
             "Input.dispatchKeyEvent",
             params,

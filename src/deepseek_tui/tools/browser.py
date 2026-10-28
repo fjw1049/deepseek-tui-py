@@ -93,6 +93,7 @@ class BrowserUseTool(ToolSpec):
             "include_editable": (
                 "For an authorized document editing task only: observe a unique contenteditable "
                 "selector to read its text, selection offsets and current block. "
+                "Also set true on check_text/wait with that selector to verify document text. "
                 "Excludes ordinary form/password values. Default false; "
                 "scope_ref preserves this mode for pagination."),
             "text_offset": "Continue at next_text_offset, keeping selector and frame_id.",

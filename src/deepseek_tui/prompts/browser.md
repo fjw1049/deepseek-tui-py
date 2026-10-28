@@ -216,7 +216,8 @@ targets were archived are evidence only: obtain fresh refs before acting.
 
 For an authorized rich-document editing task, use `observe` with a unique editor
 `selector` and `include_editable=true`. This reads the document text, visible block
-types and current selection; ordinary field/password values remain excluded. Inspect
+types and current selection; ordinary field/password values remain excluded. Verify
+document text with `check_text`/`wait` using the same selector and `include_editable=true`. Inspect
 selection and the current block before typing or deleting. Verify both content and
 heading/list structure after editing, and verify saved/published state separately.
 Do not infer task completion from input dispatch. Scroll receipts report actual
