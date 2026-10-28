@@ -24,3 +24,23 @@ it('lists models without search and supports keyboard navigation and selection',
   rows[1].click()
   expect(changes).toContainEqual({ type: 'model', id: 'two' })
 })
+
+it('updates selected model effort without replacing rows or resetting scroll', () => {
+  const picker = document.createElement('reasoning-effort-selector') as HTMLElement & {
+    models: { id: string; label: string }[]
+  }
+  picker.setAttribute('model', 'one')
+  picker.setAttribute('value', '2')
+  document.body.append(picker)
+  picker.models = ['one', 'two', 'three', 'four', 'five', 'six'].map(id => ({ id, label: id }))
+  const root = picker.shadowRoot!
+  const list = root.querySelector<HTMLElement>('.model-list')!
+  const selected = root.querySelector('.model-item.is-active')!
+  list.scrollTop = 38
+  expect(selected.querySelector('.model-effort')?.textContent).toBe('High')
+  root.querySelector('.slider')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+  expect(selected.querySelector('.model-effort')?.textContent).toBe('Extra High')
+  expect(root.querySelector('.model-item.is-active')).toBe(selected)
+  expect(list.scrollTop).toBe(38)
+  expect(list.children).toHaveLength(6)
+})

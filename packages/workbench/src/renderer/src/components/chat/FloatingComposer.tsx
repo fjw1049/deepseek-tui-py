@@ -2197,7 +2197,7 @@ export function FloatingComposer({
                     onConfigureModels={() => openSettings('models')}
                     disabled={!canChangeModel}
                     compact={!footerPlan.showModelLabel}
-                    hideEffort={!footerPlan.showEffortTier}
+                    hideEffort
                     dense={compactChrome}
                   />
                 </div>

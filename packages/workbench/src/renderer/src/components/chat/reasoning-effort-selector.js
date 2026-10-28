@@ -303,17 +303,17 @@ class ChatGPTModelSelector extends HTMLElement {
       }
 
       .menu {
-        padding: 8px 10px 6px;
+        padding: 6px;
         display: flex;
         flex-direction: column;
         gap: 2px;
       }
 
       .intensity {
-        padding: 0 6px 4px;
+        padding: 2px 6px;
       }
       .intensity-top {
-        display: flex;
+        display: none;
         align-items: baseline;
         justify-content: space-between;
         gap: 10px;
@@ -380,7 +380,7 @@ class ChatGPTModelSelector extends HTMLElement {
         background: var(--row-hover);
       }
       .model-list {
-        max-height: calc(38px * 4 + 4px);
+        max-height: calc(38px * 5 + 4px);
         overflow-y: auto;
         overscroll-behavior: contain;
         padding: 2px 0;
@@ -981,8 +981,7 @@ class ChatGPTModelSelector extends HTMLElement {
     if (this.$modelName) this.$modelName.textContent = compactName;
     this.#syncCompact();
     if (this.$pill) {
-      const tier = this.#tiers[this.#index]?.key ?? '';
-      this.$pill.title = tier ? `${fullName} · ${tier}` : fullName;
+      this.$pill.title = fullName;
     }
     if (this.$pillIcon) {
       const icon = resolveProviderIcon({
