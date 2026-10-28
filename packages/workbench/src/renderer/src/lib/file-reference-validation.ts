@@ -81,11 +81,11 @@ export function useValidatedFileReference(
     () => cacheKey(path ? { path, line, column } : null, workspaceRoot),
     [column, line, path, workspaceRoot]
   )
-  const [state, setState] = useState<ValidationState>(() => {
-    if (!path) return { status: 'idle' }
+  const [state, setState] = useState<{ key: string; validation: ValidationState }>(() => {
+    if (!path) return { key, validation: { status: 'idle' } }
     const cached = validationCache.get(key)
-    if (!cached || cached instanceof Promise) return { status: 'pending' }
-    return cached
+    if (!cached || cached instanceof Promise) return { key, validation: { status: 'pending' } }
+    return { key, validation: cached }
   })
   const [retryToken, setRetryToken] = useState(0)
   const retry = useCallback(() => {
@@ -95,18 +95,19 @@ export function useValidatedFileReference(
 
   useEffect(() => {
     if (!path) {
-      setState((prev) => (prev.status === 'idle' ? prev : { status: 'idle' }))
+      setState((prev) => (prev.key === key && prev.validation.status === 'idle' ? prev : { key, validation: { status: 'idle' } }))
       return
     }
 
     const cached = validationCache.get(key)
     if (cached && !(cached instanceof Promise)) {
-      setState((prev) => (prev === cached ? prev : cached))
+      setState((prev) => (prev.key === key && prev.validation === cached ? prev : { key, validation: cached }))
       return
     }
 
     let cancelled = false
-    setState((prev) => (prev.status === 'pending' ? prev : { status: 'pending' }))
+    // Keep the same target visible while checking for filesystem changes.
+    setState((prev) => (prev.key === key ? prev : { key, validation: { status: 'pending' } }))
     void validateFileReference(
       {
         path,
@@ -115,7 +116,7 @@ export function useValidatedFileReference(
       },
       workspaceRoot
     ).then((next) => {
-      if (!cancelled) setState(next)
+      if (!cancelled) setState({ key, validation: next })
     })
 
     return () => {
@@ -123,5 +124,8 @@ export function useValidatedFileReference(
     }
   }, [column, key, line, path, retryToken, revision, workspaceRoot])
 
-  return { validation: state, retry }
+  const validation: ValidationState = state.key === key
+    ? state.validation
+    : { status: path ? 'pending' : 'idle' }
+  return { validation, retry }
 }

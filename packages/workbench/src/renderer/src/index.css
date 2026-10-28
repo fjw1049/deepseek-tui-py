@@ -8196,9 +8196,9 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
     padding-right 220ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Mount the expanded card at full width, never inside the icon strip. */
-.ds-operation-rail:has(.ds-operation-dock[data-compact='false']) {
-  transition: none;
+/* Keep content at its final width while the rail reveals it, avoiding text reflow. */
+.ds-operation-rail .ds-operation-dock[data-compact='false'] {
+  width: calc(var(--ds-operation-rail-width) - var(--ds-operation-rail-inset));
 }
 
 /* Compact dock: shrink the rail so chat reclaims the column. */
@@ -8414,10 +8414,6 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 .ds-chat-operation-band__dialogue .ds-composer-shell {
   padding-inline: 0;
-}
-
-.ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 {
-  width: min(52rem, 100%);
 }
 
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 > .flex.w-full.flex-col {
