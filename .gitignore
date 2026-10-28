@@ -51,3 +51,4 @@ docs/DeepSeek-TUI-main/.claude/
 .ai-tracks/
 docs/*
 !docs/CUA.md
+scratch/*
