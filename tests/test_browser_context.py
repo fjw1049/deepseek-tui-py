@@ -308,3 +308,19 @@ async def test_vision_helper_receives_current_operation_without_input_values(tmp
     prompt = seen[0].messages[0].text_content()
     assert "obs-current" in prompt and '"ref": "e4"' in prompt
     assert "PRIVATE_INPUT" not in prompt
+
+
+def test_truncated_baseline_does_not_hide_unchanged_controls_on_next_action():
+    from deepseek_tui.browser.context import observation_changes, project_result
+
+    before = {"observation_id": "before", "text": "Document " * 2000,
+              "elements": [{"ref": f"e{i}", "role": "button", "name": "Action " * 40}
+                           for i in range(100)]}
+    first = json.loads(project_result({"observation": before}, 6000))["observation"]
+    assert first["context_truncated"]
+    after = {**before, "observation_id": "after"}
+    after["changes"] = observation_changes(before, after)
+    second = json.loads(project_result({"observation": after}, 6000))["observation"]
+    assert second["elements"]
+    assert second["next_element_offset"] == len(second["elements"])
+    assert "changes_since" not in second

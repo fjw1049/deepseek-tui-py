@@ -123,14 +123,9 @@ def project_result(result: dict[str, Any], budget: int) -> str:
         return _bounded_result(data, budget)
     # Leads the observation so it frames every page-written string that follows.
     data["observation"] = observation = {"source": PAGE_CONTENT_NOTICE, **observation}
-    changes = observation.pop("changes", None)
-    if changes:
-        # Refs persist within a document: unlisted elements and text are unchanged.
-        observation.update(changes_since=changes["base"], elements=changes["elements"],
-                           unchanged_elements=changes["unchanged"],
-                           removed_refs=changes["removed"])
-        if "text" in changes:
-            observation.update(text="", text_changes=changes["text"])
+    # The previous model output may have been truncated independently of its snapshot.
+    # Keep full observations until differences can use the actual delivered baseline.
+    observation.pop("changes", None)
     # Older/persisted responses may encode the same observation twice.
     data["content"] = (
         data.get("content", "")

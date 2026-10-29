@@ -22,6 +22,8 @@ it.each([false, true])('reports component availability and saves opt-out: instal
     await act(async () => root.render(createElement(ComputerUsePluginCard)))
     expect(host.textContent).not.toContain('computerUseDisable')
     await act(async () => host.querySelector('button')!.click())
+    expect(document.body.textContent).not.toContain('cuaSetupTitle')
+    expect(document.body.textContent).not.toContain('computerUseApprovedApps')
     expect(document.body.textContent).toContain(installed ? 'computerUseReady' : 'computerUseMissing')
     expect(document.body.textContent).not.toContain('pluginManage')
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
@@ -83,7 +85,8 @@ it('lists always-allowed apps and revokes only the chosen identity', async () =>
   const root = createRoot(host)
   try {
     await act(async () => root.render(createElement(ComputerUsePluginCard)))
-    await act(async () => host.querySelector('button')!.click())
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
+    await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === 'computerUseApprovedApps')!.click())
     expect(document.body.textContent).toContain('Notes')
     const revoke = [...document.body.querySelectorAll('button')].find(b => b.getAttribute('title') === 'computerUseRevoke')!
     await act(async () => revoke.click())
@@ -124,9 +127,38 @@ it('reconciles permissions when the revoke response is lost', async () => {
   const root = createRoot(host)
   try {
     await act(async () => root.render(createElement(ComputerUsePluginCard)))
-    await act(async () => host.querySelector('button')!.click())
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
+    await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === 'computerUseApprovedApps')!.click())
     await act(async () => [...document.body.querySelectorAll('button')].find(b => b.getAttribute('title') === 'computerUseRevoke')!.click())
     expect(document.body.textContent).toContain('computerUseApprovedAppsEmpty')
     expect(document.body.textContent).not.toContain('computerUseAppsError')
   } finally { await act(async () => root.unmount()) }
+})
+
+it('aligns module icons and restores menu trigger focus after closing a module', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  Object.assign(window, { dsGui: { platform: 'darwin', runtimeRequest: vi.fn(async (path: string) => ({
+    ok: true, body: JSON.stringify(path.endsWith('/status')
+      ? { supported: true, installed: true, enabled: true } : { apps: [] })
+  })) } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(ComputerUsePluginCard)))
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!
+    await act(async () => trigger.click())
+    const items = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+    expect(items).toHaveLength(5)
+    for (const item of items) expect(item.querySelector('svg')).not.toBeNull()
+    expect(document.activeElement).toBe(items[0])
+    await act(async () => items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })))
+    expect(document.activeElement).toBe(items[4])
+    await act(async () => items[3].click())
+    expect(host.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  } finally { await act(async () => root.unmount()); host.remove() }
 })

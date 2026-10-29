@@ -23,6 +23,34 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
     return Promise.resolve().then(run).then(
       value => { entry.ok = true; return value; }, error => { entry.ok = false; throw error; });
   };
+  const playwrightObjects = new WeakSet();
+  const wrapPlaywright = target => {
+    if (!target || typeof target !== 'object' || Array.isArray(target) || playwrightObjects.has(target)) return target;
+    playwrightObjects.add(target);
+    const names = new Set();
+    for (let proto = target; proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+      for (const name of Object.getOwnPropertyNames(proto)) {
+        if (name !== 'constructor' && typeof Object.getOwnPropertyDescriptor(proto, name)?.value === 'function') names.add(name);
+      }
+    }
+    for (const name of names) {
+      const original = target[name];
+      target[name] = function (...args) {
+        const entry = { action: 'playwright', method: name };
+        trace.push(entry);
+        try {
+          const value = original.apply(this, args);
+          if (value && typeof value.then === 'function') {
+            return value.then(result => { entry.ok = true; return wrapPlaywright(result); },
+              error => { entry.ok = false; throw error; });
+          }
+          entry.ok = true;
+          return wrapPlaywright(value);
+        } catch (error) { entry.ok = false; throw error; }
+      };
+    }
+    return target;
+  };
   const wrap = target => {
     if (target === null || typeof target !== 'object' || Object.hasOwn(target, '__deepseekTraced')) return target;
     for (const name of [...${JSON.stringify(INPUTS)}, ...${JSON.stringify(OBSERVATIONS)}]) {
@@ -35,11 +63,10 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
         () => original.apply(this, args));
       };
     }
-    // DOM tabs also take input through Playwright locators: record each use as possible input.
+    // Wrap locator methods themselves so cached and chained locators remain traced.
     if ('playwright' in target) {
-      const playwright = target.playwright;
-      Object.defineProperty(target, 'playwright', { configurable: true,
-        get() { trace.push({ action: 'playwright' }); return playwright; } });
+      const playwright = wrapPlaywright(target.playwright);
+      Object.defineProperty(target, 'playwright', { configurable: true, get() { return playwright; } });
     }
     Object.defineProperty(target, '__deepseekTraced', { value: true });
     return target;
@@ -55,12 +82,14 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
       return wrap(target);
     };
   }
+  globalThis.__deepseekPlaywrightTraced = true;
   globalThis.__deepseekTraceReady = typeof api?.getApp === 'function' || typeof api?.getTab === 'function';
 }
 globalThis.__deepseekTrace.length = 0;`;
 const TRACE_MARK = '__DEEPSEEK_TRACE__';
 const TRACE_READ = `nodeRepl.write(${JSON.stringify(TRACE_MARK)} + JSON.stringify(globalThis.__deepseekTrace
   ? { ready: Boolean(globalThis.__deepseekTraceReady), tabs: Boolean(globalThis.__deepseekTabs),
+      playwright_traced: Boolean(globalThis.__deepseekPlaywrightTraced),
       actions: globalThis.__deepseekTrace.splice(0) } : null));`;
 const NATIVE_APP_HINT = 'On Linux and Windows, observe a window: pass window_id from cua.getState().';
 // A localized display name (文本编辑 for TextEdit) is not an app id. Resolve it from the runtime's

@@ -83,9 +83,9 @@ export function CuaApprovedApps(): React.JSX.Element {
     {apps === null && !error ? <p role="status" className="px-5 py-4 text-sm text-ds-muted">{t('computerUseChecking')}</p> : null}
     {apps?.length === 0 ? <p className="px-5 py-4 text-sm text-ds-muted">{t('computerUseApprovedAppsEmpty')}</p> : null}
     {apps?.length ? <ul className="max-h-[323px] divide-y divide-ds-border-muted overflow-y-auto px-5">
-      {apps.map(app => <li key={app.bundleId} className="flex min-h-[80px] items-center gap-5 py-4">
+      {apps.map(app => <li key={app.bundleId} className="flex min-h-16 items-center gap-3 py-3">
         <AppIcon app={app} />
-        <span className="min-w-0 flex-1 truncate text-[16px] font-medium text-ds-ink" title={app.name || app.bundleId}>{app.name || app.bundleId}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ds-ink" title={app.name || app.bundleId}>{app.name || app.bundleId}</span>
         <button type="button" disabled={pending !== null} onClick={() => void update(app.bundleId, 'revoke')}
           aria-label={`${t('computerUseRevoke')} ${app.name || app.bundleId}`} title={t('computerUseRevoke')}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 active:scale-95 disabled:opacity-40">
@@ -112,8 +112,8 @@ export function CuaApprovedApps(): React.JSX.Element {
         </li>)}
       </ul>
     </div>}
-    {pending && <p role="status" className="mt-3 text-xs text-ds-muted">{t('computerUseOwnerAuth')}</p>}
-    {error ? <div className="mt-3 flex items-center gap-3 px-5">
+    {pending && <p role="status" className="px-5 py-3 text-xs text-ds-muted">{t('computerUseOwnerAuth')}</p>}
+    {error ? <div className="flex items-center gap-3 px-5 py-3">
       <p role="alert" className="text-sm text-ds-danger">{t('computerUseAppsError')}</p>
       <button type="button" disabled={busy} title={t('computerUseRefresh')}
         onClick={() => setRevision(value => value + 1)} className="shrink-0 text-sm text-ds-muted underline disabled:opacity-40">

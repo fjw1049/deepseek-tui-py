@@ -569,10 +569,10 @@ console.log(JSON.stringify({ first, second, third, tabs: Boolean(globalThis.__de
         {"action": "click", "coordinate": False, "ok": True},
         {"action": "pressKey", "coordinate": False, "ok": False},
     ]
-    # Playwright locators can send input the method wrappers cannot see: record each use.
+    # Playwright method calls are recorded, including locator construction.
     assert out["third"] == [
         {"action": "createBrowserTab", "observe": True, "ok": True},
-        {"action": "playwright"},
+        {"action": "playwright", "method": "locator", "ok": True},
     ]
     # A tab that failed to open cannot take Playwright input.
     assert out["tabs"] is False
@@ -598,3 +598,87 @@ async def test_reading_state_or_closing_the_tab_keeps_verified_evidence(session,
             assert not state.cua_observation_evidence, code
     finally:
         await session.close()
+
+
+def test_cached_browser_locator_cannot_keep_old_verified_evidence():
+    from deepseek_tui.cua.tools import _kept_ui
+
+    # A locator cached in an earlier REPL call bypasses the playwright property getter.
+    assert not _kept_ui({"ready": True, "tabs": True, "actions": []})
+    assert not _kept_ui({"ready": True, "tabs": True, "actions": [
+        {"action": "getAXState", "observe": True, "ok": True}]})
+    assert _kept_ui({"ready": True, "actions": []})
+
+
+@pytest.mark.asyncio
+async def test_cached_locator_and_tab_close_completion(tmp_path):
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from deepseek_tui.cua.tools import _kept_ui
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node required")
+    script = """
+const fs = await import('node:fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const install = (0, eval)(src.slice(src.indexOf('const INPUTS'), src.indexOf('const TRACE_MARK')) + '\\nTRACE_INSTALL');
+const run = code => new (Object.getPrototypeOf(async () => {}).constructor)(code)();
+let clicks = 0;
+class Locator {
+  first() { return this; }
+  async click() { clicks++; }
+  async fill() { throw new Error('rejected'); }
+}
+const locator = new Locator();
+globalThis.cua = { async getTab() { return {
+  playwright: { locator() { return locator; } }, async close() {}, async getAXState() {}
+}; } };
+await run(install);
+const tab = await cua.getTab();
+const cached = tab.playwright.locator('#save').first();
+const cachedClick = cached.click.bind(cached);
+const snapshot = () => ({ready: true, tabs: true,
+  playwright_traced: Boolean(globalThis.__deepseekPlaywrightTraced),
+  actions: globalThis.__deepseekTrace.splice(0)});
+await run(install);
+await cachedClick(); await tab.close();
+const changed = snapshot();
+await run(install);
+try { await cached.fill('x'); } catch {}
+const failed = snapshot();
+await run(install);
+await tab.getAXState();
+const read = snapshot();
+await run(install);
+await tab.close();
+const closed = snapshot();
+console.log(JSON.stringify({clicks, changed, failed, read, closed}));
+"""
+    bridge = Path(__file__).parents[1] / "src/deepseek_tui/cua/bridge.mjs"
+    result = json.loads(subprocess.run(
+        [node, "--input-type=module", "-e", script, str(bridge)],
+        capture_output=True, text=True, check=True, timeout=30).stdout)
+    assert result["clicks"] == 1
+    assert result["changed"]["actions"][0] == {
+        "action": "playwright", "method": "click", "ok": True}
+    assert not _kept_ui(result["changed"])
+    assert not _kept_ui(result["failed"])
+    assert _kept_ui(result["read"])
+    assert _kept_ui(result["closed"])
+
+    state = TaskDelivery(active=True, cua_used=True, cua_acted=True)
+    state.remember_evidence("tool:verified", {
+        "cua_verifies_target": True, "cua_observation": {"complete": True}})
+    verified = dict(state.cua_observation_evidence)
+    state.cua_observation_evidence.clear()
+    if _kept_ui(result["closed"]):
+        state.cua_observation_evidence.update(verified)
+    outcome = await FinishTaskTool().execute({
+        "status": "completed", "answer": "Saved and closed the tab.",
+        "evidence": ["tool:verified"], "remaining": [],
+        "verification": [{"claim": "Saved", "evidence": ["tool:verified"], "limitations": []}],
+    }, ToolContext(tmp_path, metadata={"task_delivery": state}))
+    assert outcome.success

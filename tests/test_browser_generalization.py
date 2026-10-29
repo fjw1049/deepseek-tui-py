@@ -48,16 +48,16 @@ def test_mostly_changed_page_is_sent_whole():
     assert observation_changes(before, after) is None
 
 
-def test_projection_sends_changes_and_keeps_identity():
+def test_projection_keeps_full_snapshot_without_delivered_baseline():
     before = observation([EDIT, DELETE] * 3, text="A\nB")
     after = observation(before["elements"] + [{"ref": "e9", "role": "button", "name": "OK"}],
                         text="A\nB", observation_id="obs-2")
     after["changes"] = observation_changes(before, after)
     data = json.loads(project_result({"success": True, "observation": after}, 10**6))
     seen = data["observation"]
-    assert seen["observation_id"] == "obs-2" and seen["changes_since"] == "obs-1"
-    assert [e["ref"] for e in seen["elements"]] == ["e9"]
-    assert seen["text"] == "" and seen["text_changes"] == []
+    assert seen["observation_id"] == "obs-2" and "changes_since" not in seen
+    assert [e["ref"] for e in seen["elements"]] == [e["ref"] for e in after["elements"]]
+    assert seen["text"] == "A\nB" and "text_changes" not in seen
     assert "changes" not in seen
 
 
@@ -308,3 +308,29 @@ async def test_console_capture_starts_only_when_requested(tmp_path):
     await native.watch_console()
     await native.watch_console()
     assert enabled() == ["Runtime.enable", "Log.enable"]
+
+
+async def test_console_navigation_disables_capture_and_clears_old_messages(tmp_path):
+    from deepseek_tui.browser.native import NativeBrowserEvents
+
+    callbacks = {}
+    class Client:
+        send = AsyncMock(return_value={"frameTree": {"frame": {"id": "main", "loaderId": "doc"}}})
+        def on(self, event, callback):
+            callbacks[event] = callback
+    client = Client()
+    run = SimpleNamespace(thread_id="navigation", native=False, generation=0, observation_context=None,
+                          session=SimpleNamespace(_internal=SimpleNamespace(client=client)))
+    native = NativeBrowserEvents(run, BrowserService(tmp_path))
+    await native.install(client)
+    await native.watch_console()
+    native._log(client, "error", "old document", {})
+    callbacks["Page.frameNavigated"]({"frame": {"id": "main", "loaderId": "external", "url": "https://example.com"}})
+    await asyncio.gather(*native.console_resets)
+    assert client not in native.console_clients
+    assert native.console_entries() == []
+    commands = [call.args[0] for call in client.send.await_args_list]
+    assert commands[-2:] == ["Runtime.disable", "Log.disable"]
+    # Explicit console requests can enable it again on the new document.
+    await native.watch_console()
+    assert client in native.console_clients

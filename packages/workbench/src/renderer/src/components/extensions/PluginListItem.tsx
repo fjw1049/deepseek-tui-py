@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { MessageCircle, MoreHorizontal, Power, Trash2 } from 'lucide-react'
+import { MessageCircle, MoreHorizontal, Power, Trash2, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { PluginIcon } from './PluginIcon'
 
-export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemove, removeLabel, busy = false, useDisabled = false, removeDisabled = false }: {
+export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemove, removeLabel, busy = false, useDisabled = false, removeDisabled = false, actions = [] }: {
+  actions?: { label: string; icon: LucideIcon; onClick: () => void; disabled?: boolean }[]
   pluginId: string
   title: string
   summary: string
@@ -37,7 +38,7 @@ export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemo
     <div className="relative shrink-0">
       <button ref={trigger} type="button" aria-label={`${title} · ${t('pluginManage')}`} aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen(!open)} className="rounded-lg p-2 text-ds-muted hover:bg-ds-hover"><MoreHorizontal className="size-5" /></button>
-      {open ? <div ref={menu} role="menu" aria-label={title} className="ds-popover-surface absolute left-0 top-full mt-1 z-20 w-44 rounded-xl border border-ds-border p-1.5 shadow-lg"
+      {open ? <div ref={menu} role="menu" aria-label={title} className="ds-popover-surface absolute right-0 top-full mt-1 z-20 w-56 max-w-[calc(100vw-2.5rem)] rounded-xl border border-ds-border p-1.5 shadow-lg"
         onKeyDown={event => {
           if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(event.key)) return
           if (event.key === 'Tab') { setOpen(false); return }
@@ -47,10 +48,11 @@ export function PluginListItem({ pluginId, title, summary, onOpen, onUse, onRemo
           const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
           buttons[next]?.focus()
         }}>
-        <button role="menuitem" type="button" disabled={busy || useDisabled} onClick={() => { setOpen(false); onUse() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ds-ink hover:bg-ds-hover disabled:opacity-40"><MessageCircle className="size-4" />{t('pluginUseNow')}</button>
+        <button role="menuitem" type="button" disabled={busy || useDisabled} onClick={() => { close(); onUse() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ds-ink hover:bg-ds-hover disabled:opacity-40"><MessageCircle className="size-4 shrink-0" aria-hidden="true" />{t('pluginUseNow')}</button>
+        {actions.map(({ icon: Icon, ...action }) => <button key={action.label} role="menuitem" type="button" disabled={action.disabled} onClick={() => { close(); action.onClick() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ds-ink hover:bg-ds-hover disabled:opacity-40"><Icon className="size-4 shrink-0" aria-hidden="true" />{action.label}</button>)}
         {onRemove ? <>
           <div role="separator" className="my-1 border-t border-ds-border" />
-          <button role="menuitem" type="button" disabled={busy || removeDisabled} onClick={() => { close(); onRemove() }} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-ds-hover disabled:opacity-40 ${desktop ? 'text-ds-ink' : 'text-ds-danger'}`}><ActionIcon className="size-4" />{removeLabel ?? t('pluginUninstall')}</button>
+          <button role="menuitem" type="button" disabled={busy || removeDisabled} onClick={() => { close(); onRemove() }} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-ds-hover disabled:opacity-40 ${desktop ? 'text-ds-ink' : 'text-ds-danger'}`}><ActionIcon className="size-4 shrink-0" aria-hidden="true" />{removeLabel ?? t('pluginUninstall')}</button>
         </> : null}
       </div> : null}
     </div>

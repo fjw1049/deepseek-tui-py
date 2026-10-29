@@ -1,3 +1,4 @@
+import { AppWindow, Plug, ShieldCheck } from 'lucide-react'
 import { CuaApprovedApps } from '../cua-preview/CuaApprovedApps'
 import { CuaPermissionsDialog } from '../cua-preview/CuaPermissionsDialog'
 import { CuaSetupChecklist } from './CuaSetupChecklist'
@@ -27,6 +28,7 @@ export function ComputerUsePluginCard(): React.JSX.Element {
   const operationInFlight = useRef(false)
   const [permissionsOpen, setPermissionsOpen] = useState(false)
   const [open, setOpen] = useState(false)
+  const [module, setModule] = useState<'setup' | 'apps' | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
@@ -65,6 +67,13 @@ export function ComputerUsePluginCard(): React.JSX.Element {
     : !status.installed ? 'computerUseMissing' : !status.enabled ? 'computerUseDisabled' : status.readiness === 'busy' ? 'cuaControlWaiting' : status.readiness === 'unavailable' ? 'cuaControlUnavailable' : 'computerUseReady'
   return <>
     <PluginListItem pluginId="computer-use" title={t('computerUseTitle')}
+      actions={[
+        { label: t('cuaSetupTitle'), icon: Plug, onClick: () => setModule('setup'), disabled: !status?.supported },
+        ...(window.dsGui.platform === 'darwin' ? [
+          { label: t('cuaSetupPermissions'), icon: ShieldCheck, onClick: () => setPermissionsOpen(true), disabled: !status?.installed },
+          { label: t('computerUseApprovedApps'), icon: AppWindow, onClick: () => setModule('apps'), disabled: !status?.installed }
+        ] : [])
+      ]}
       summary={t('computerUseSummary')} onOpen={() => setOpen(true)} busy={busy || !status}
       useDisabled={!status?.supported || !status?.installed}
       removeDisabled={!status?.enabled && (!status?.supported || !status?.installed)}
@@ -74,16 +83,17 @@ export function ComputerUsePluginCard(): React.JSX.Element {
       })() }}
       onRemove={() => { void toggle().then(ok => { if (!ok) setOpen(true) }) }}
       removeLabel={t(status?.enabled ? 'computerUseDisable' : 'computerUseEnable')} />
+    {module ? createPortal(<PluginDialog pluginId="computer-use" title={t(module === 'setup' ? 'cuaSetupTitle' : 'computerUseApprovedApps')}
+      summary={t('computerUseSummary')} onClose={() => setModule(null)}>
+      {module === 'setup' ? <CuaSetupChecklist onChanged={() => void refresh()} /> : <div className="mt-5"><CuaApprovedApps /></div>}
+    </PluginDialog>, document.body) : null}
     {permissionsOpen && <CuaPermissionsDialog onClose={() => setPermissionsOpen(false)} />}
     {open ? createPortal(<PluginDialog pluginId="computer-use" title={t('computerUseTitle')}
       summary={t('computerUseSummary')} onClose={() => { setOpen(false) }}>
     <PluginDescription copyKey="computerUse" />
     <p role="status" className="mt-5 text-sm text-ds-muted">{t(state)}</p>
-    {status?.supported ? <CuaSetupChecklist onChanged={() => void refresh()}
-      onOpenPermissions={window.dsGui.platform === 'darwin' ? () => setPermissionsOpen(true) : undefined} /> : null}
     {applied ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseApplying')}</p> : null}
     {error ? <p role="alert" className="mt-2 text-sm text-ds-danger">{t('computerUseError')}</p> : null}
-    {status?.installed && window.dsGui.platform === 'darwin' ? <CuaApprovedApps /> : null}
     <div className="mt-6 flex items-center justify-between border-t border-ds-border pt-4">
       <span className="text-xs text-ds-muted">{t('computerUseBuiltin')}</span>
     </div>

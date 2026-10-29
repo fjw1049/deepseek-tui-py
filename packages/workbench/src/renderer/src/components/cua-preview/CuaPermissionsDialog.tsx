@@ -66,13 +66,13 @@ export function CuaPermissionsDialog({ onClose }: { onClose: () => void }): Reac
     } catch { if (alive.current) setError(true) }
     finally { if (alive.current) setOpening(null) }
   }
-  const button = 'shrink-0 rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 text-xs text-ds-ink hover:bg-ds-hover disabled:opacity-40'
+  const button = 'min-w-24 shrink-0 rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 text-xs text-ds-ink hover:bg-ds-hover disabled:opacity-40'
   return createPortal(<div className="ds-no-drag fixed inset-0 z-[100] flex items-center justify-center bg-black/30 p-5" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
     <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
-      className="relative max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-ds-border bg-ds-card p-4 text-ds-ink shadow-panel">
+      className="relative max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-ds-border bg-ds-card p-5 text-ds-ink shadow-panel">
       <button type="button" onClick={onClose} aria-label={t('pluginCloseDetail')} className="absolute right-3 top-3 rounded-lg p-2 text-ds-muted hover:bg-ds-hover"><X className="h-4 w-4" /></button>
       <h2 id={titleId} className="pr-8 text-lg font-semibold">{t('cuaPermissionTitle')}</h2>
-      <section className="mt-5 rounded-xl border border-ds-border p-3">
+      <section className="mt-5 rounded-xl border border-ds-border px-5 py-4">
         <h3 className="text-sm font-medium">{t('cuaPermissionPreview')}</h3>
         <p className="mt-1 text-sm leading-relaxed text-ds-muted">{t('cuaPermissionPreviewPurpose')}</p>
         <p className="mt-2 text-sm">{screen ? t('cuaPermissionApp', { app: screen.appName }) : t('computerUseChecking')}</p>
@@ -83,7 +83,7 @@ export function CuaPermissionsDialog({ onClose }: { onClose: () => void }): Reac
       </section>
       {entries.length > 0 && <section className="mt-4">
         <h3 className="text-sm font-medium">{t('cuaPermissionRuntime')}</h3>
-        {entries.map(entry => <div key={`${entry.id}:${entry.path}`} className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-ds-border p-3">
+        {entries.map(entry => <div key={`${entry.id}:${entry.path}`} className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-ds-border px-5 py-4">
           <div className="min-w-0"><p className="text-sm">{t(entry.id === 'screen' ? 'cuaPermissionScreen' : 'cuaPermissionAccessibility')}</p><p className="mt-1 text-xs leading-relaxed text-ds-muted">{t(entry.id === 'screen' ? 'cuaPermissionRuntimeScreenPurpose' : 'cuaPermissionAccessibilityPurpose')}</p><p className="mt-2 break-words text-xs">{t('cuaPermissionApp', { app: entry.name })}</p></div>
           <button type="button" className={button} disabled={opening !== null} onClick={() => void open(entry)}>{t('cuaPermissionView')}</button>
         </div>)}

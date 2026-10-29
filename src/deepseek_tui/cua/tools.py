@@ -266,11 +266,11 @@ def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) 
 
 
 def _kept_ui(trace: dict[str, Any] | None) -> bool:
-    """The call changed nothing an earlier observation verified: it sent no recorded input
-    (tab methods and Playwright use are both recorded), or it only closed browser tabs, which
-    a task does after verifying and which leaves nothing to observe."""
-    return trace is not None and all(
-        action.get("action") == "close" and action.get("ok") is True for action in _inputs(trace))
+    """Keep verified state across reads and closing tabs, only with complete input tracing."""
+    return (trace is not None
+            and (not trace.get("tabs") or trace.get("playwright_traced") is True)
+            and all(action.get("action") == "close" and action.get("ok") is True
+                    for action in _inputs(trace)))
 
 
 # Rejected while validating the request, before any input is sent.

@@ -10,13 +10,14 @@ Workbench 通过 LCU 官方共享客户端连接本机 CUA runtime，向模型�
 卡片使用现有 CUA 设置及授权流程，不通过第三方插件信任开关授予桌面权限。
 “已安装”指应用内置的适配器；组件是否完整单独显示，模型兼容性和应用授权在使用时检查。
 状态接口 `/v1/cua/status` 只检查本地文件，不连接运行时或触发桌面访问。
-macOS 上卡片详情列出“始终允许的应用”（`/v1/cua/apps`，读取 `lcu apps list --json`），
+macOS 上卡片「… → 始终允许的应用」列出“始终允许的应用”（`/v1/cua/apps`，读取 `lcu apps list --json`），
 可逐个撤销（`/v1/cua/apps/revoke`）。撤销只接受刚列出的 bundle id，由 LCU 要求
 Touch ID 或登录密码；不提供“始终允许”入口，长期授权仍只能在授权卡片上由用户选择。
 设置页“自动允许控制所有应用”（`[cua] auto_allow_apps = true`）开启后，原生应用请求由宿主
 按“本次会话”自动批准，不弹授权卡片，无人值守任务同样生效；不写入“始终允许”名单，
 关闭后重启即恢复询问。Workbench 与终端自身仍禁止控制，Chrome 站点授权仍逐个询问。
-卡片详情的“安装与连接”清单逐项显示 ChatGPT 桌面版、LCU、系统权限，以及可选的 Chrome 连接器与扩展连接，
+卡片「…」菜单按模块提供“安装与连接”“系统权限”和“始终允许的应用”；卡片详情保留功能介绍与状态。
+“安装与连接”清单逐项显示 ChatGPT 桌面版、LCU，以及可选的 Chrome 连接器与扩展连接，
 每项给出可点的操作：Apple Silicon Mac 上 LCU 可一键安装（`/v1/cua/setup/lcu`）。宿主只下载代码中固定的
 LCU 版本，按内置 SHA-256 校验、以安全过滤解压，再运行该版本自带的 `scripts/install.sh --runtime-only --yes`；
 校验不符或解压越界时不安装任何内容。其他平台给出安装指南链接。Chrome 一项可一键注册连接器
@@ -25,7 +26,7 @@ LCU 版本，按内置 SHA-256 校验、以安全过滤解压，再运行该版�
 
 ## 安装和开启
 
-1. Apple Silicon Mac：在“插件 → 电脑控制”详情中点击“一键安装”即可。手动安装或其他平台：
+1. Apple Silicon Mac：在“插件 → 电脑控制 → … → 安装与连接”中点击“一键安装”即可。手动安装或其他平台：
    从 [LCU releases](https://github.com/amontlabs/lcu/releases) 下载适合系统的发布包，
    校验发布的 SHA256，解压后运行 `./scripts/install.sh --runtime-only`。
    本次验证使用 v0.11.6。macOS 使用 Apple Silicon 和本机 ChatGPT runtime；

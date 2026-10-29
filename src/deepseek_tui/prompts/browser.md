@@ -46,11 +46,9 @@ proof of image delivery: a saved path or `image_warning` is not a viewed image.
 Pass the latest `observation_id` with every interaction. Send one state-changing
 browser action per tool round and consume its returned observation; older IDs
 are invalid. A ref names the same element for the life of the page: with the
-latest observation ID it stays usable while that element is listed. On the same
-page an action result lists only what changed since `changes_since` (new or
-changed `elements`, `removed_refs`, `text_changes`); everything else is
-unchanged. After navigation, or when earlier details are no longer in view,
-observe for a full read. Follow `next_text_offset`, `next_element_offset`, and
+latest observation ID it stays usable while that element is listed. Action results
+include a fresh observation, which may be truncated to fit the output budget.
+After navigation, or when earlier details are no longer in view, observe again. Follow `next_text_offset`, `next_element_offset`, and
 `next_frame_offset` with `observe` when coverage is incomplete.
 Pass `scope_ref` equal to the latest observation ID for continuation. If the
 snapshot changed, restart that scoped read. Use `describe` with the current ref

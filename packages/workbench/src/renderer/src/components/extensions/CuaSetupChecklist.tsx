@@ -27,16 +27,16 @@ function isSetupState(value: unknown): value is CuaSetupState {
     && v.links && typeof v.links.guide === 'string')
 }
 
-const buttonClass = 'shrink-0 rounded-lg border border-ds-border px-3 py-1.5 text-sm text-ds-ink hover:bg-ds-hover disabled:opacity-40'
+const buttonClass = 'min-w-24 shrink-0 rounded-lg border border-ds-border px-3 py-1.5 text-sm text-ds-ink hover:bg-ds-hover disabled:opacity-40'
 
 function Step({ done, title, detail, children }: { done: boolean | null; title: string; detail?: string; children?: React.ReactNode }): React.JSX.Element {
-  return <li className="flex items-start gap-3 py-2">
-    <span aria-hidden className={`mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-xs ${done ? 'bg-ds-accent text-white' : 'border border-ds-border text-ds-muted'}`}>{done ? '✓' : ''}</span>
+  return <li className="flex items-center gap-3 py-3">
+    <span aria-hidden className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full text-xs ${done ? 'bg-ds-subtle text-ds-ink' : 'border border-ds-border text-ds-muted'}`}>{done ? '✓' : ''}</span>
     <div className="min-w-0 flex-1">
       <p className="text-sm text-ds-ink">{title}</p>
       {detail ? <p className="mt-0.5 text-xs text-ds-muted">{detail}</p> : null}
     </div>
-    {children ? <div className="flex flex-wrap justify-end gap-2">{children}</div> : null}
+    {children ? <div className="flex w-32 shrink-0 flex-col items-stretch gap-2">{children}</div> : null}
   </li>
 }
 
@@ -94,12 +94,12 @@ export function CuaSetupChecklist({ onOpenPermissions, onChanged }: {
 
   const errorText = error ? error.text ?? t(error.key ?? 'cuaSetupFailed') : ''
   if (!setup) {
-    return <p role={error ? 'alert' : 'status'} className={`mt-4 text-sm ${error ? 'text-ds-danger' : 'text-ds-muted'}`}>{errorText || t('cuaSetupChecking')}</p>
+    return <div className="mt-4"><p role={error ? 'alert' : 'status'} className={`mt-4 text-sm ${error ? 'text-ds-danger' : 'text-ds-muted'}`}>{errorText || t('cuaSetupChecking')}</p>{error && <button type="button" className={`${buttonClass} mt-3`} onClick={() => { setError(null); void load() }}>{t('computerUseRefresh')}</button>}</div>
   }
   const lcuReady = setup.lcu.installed
   const oneClick = Boolean(setup.target) && setup.chatgpt
-  return <section aria-label={t('cuaSetupTitle')} className="mt-5 rounded-xl border border-ds-border px-4 py-2">
-    <h3 className="pt-2 text-sm font-medium text-ds-ink">{t('cuaSetupTitle')}</h3>
+  return <section aria-label={t('cuaSetupTitle')} className="mt-5 rounded-2xl border border-ds-border bg-ds-card px-5 py-3">
+    <h3 className="pb-2 text-[15px] font-medium text-ds-ink">{t('cuaSetupTitle')}</h3>
     <ol className="divide-y divide-ds-border">
       {mac ? <Step done={setup.chatgpt} title={t('cuaSetupChatgpt')}
         detail={t(setup.chatgpt ? 'cuaSetupChatgptReady' : 'cuaSetupChatgptMissing')}>
@@ -115,7 +115,7 @@ export function CuaSetupChecklist({ onOpenPermissions, onChanged }: {
       </Step> : null}
     </ol>
     {mac ? <>
-      <h3 className="pt-3 text-sm font-medium text-ds-ink">{t('cuaSetupChromeTitle')}</h3>
+      <h3 className="border-t border-ds-border pt-4 text-[15px] font-medium text-ds-ink">{t('cuaSetupChromeTitle')}</h3>
       <p className="text-xs text-ds-muted">{t('cuaSetupChromeIntro')}</p>
       <ol className="divide-y divide-ds-border">
         <Step done={setup.chromeConnector === 'installed'} title={t('cuaSetupChromeConnector')} detail={t('cuaSetupChromeConnectorDetail')}>

@@ -24,6 +24,8 @@ class NativeBrowserEvents:
         self.console = []  # Recent console messages and uncaught errors, page-written
         self.console_seq = 0
         self.console_clients = set()
+        self.console_lock = asyncio.Lock()
+        self.console_resets = set()
 
     async def install(self, client):
         if client in self.clients:
@@ -63,6 +65,9 @@ class NativeBrowserEvents:
                 state["frames"][frame["id"]] = frame.get("loaderId")
             if not frame.get("parentId"):
                 state["identity"] = (frame.get("id"), frame.get("loaderId"))
+                task = asyncio.create_task(self._reset_console(client))
+                self.console_resets.add(task)
+                task.add_done_callback(self.console_resets.discard)
             if self.chooser and self.chooser["client"] is client:
                 self.chooser = None
 
@@ -204,17 +209,31 @@ class NativeBrowserEvents:
     async def watch_console(self):
         """Capture the bound page's console. Off by default: sites detect an enabled
         Runtime domain, so it is used on local pages or when the console is asked for."""
-        page = getattr(getattr(self.run.session, "_internal", None), "client", None)
-        for client in (page, self.run.observation_context):
-            if client is None or client not in self.clients or client in self.console_clients:
-                continue
-            self.console_clients.add(client)
-            # Enabling replays messages logged before the agent attached.
-            for domain in ("Runtime", "Log"):
-                try:
-                    await client.send(domain + ".enable")
-                except Exception:  # noqa: BLE001 - console capture is diagnostic, never required
-                    pass
+        if self.console_resets:
+            await asyncio.gather(*self.console_resets)
+        async with self.console_lock:
+            page = getattr(getattr(self.run.session, "_internal", None), "client", None)
+            for client in (page, self.run.observation_context):
+                if client is None or client not in self.clients or client in self.console_clients:
+                    continue
+                self.console_clients.add(client)
+                # Enabling replays messages logged before the agent attached.
+                for domain in ("Runtime", "Log"):
+                    try:
+                        await client.send(domain + ".enable")
+                    except Exception:  # noqa: BLE001 - console capture is diagnostic, never required
+                        pass
+
+    async def _reset_console(self, client):
+        async with self.console_lock:
+            if client in self.console_clients:
+                for domain in ("Runtime", "Log"):
+                    try:
+                        await client.send(domain + ".disable")
+                    except Exception:
+                        pass  # A disconnected page no longer captures console events.
+                self.console_clients.discard(client)
+            self.console[:] = [entry for entry in self.console if entry["client"] is not client]
 
     def console_entries(self, *, after=0, errors_only=False, limit=30):
         """Messages from the bound page (and its frames) for the model; page-written data."""
