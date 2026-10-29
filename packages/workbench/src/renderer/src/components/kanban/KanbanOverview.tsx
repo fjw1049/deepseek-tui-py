@@ -1,4 +1,4 @@
-import type { ReactElement, MouseEvent } from 'react'
+import { memo, useLayoutEffect, useRef, useState, type ReactElement, type MouseEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, Plus } from 'lucide-react'
 import { KanbanCardView } from './KanbanCardView'
@@ -9,7 +9,8 @@ import {
   type KanbanProjectBoard
 } from './kanban.logic'
 
-function OverviewProjectColumn({
+// Memoized so mounting a column while scrolling does not re-render its neighbours.
+const OverviewProjectColumn = memo(function OverviewProjectColumn({
   projectBoard,
   onOpenProject,
   onOpenCard,
@@ -73,6 +74,54 @@ function OverviewProjectColumn({
       </ul>
     </section>
   )
+})
+
+// Columns are w-80 (20rem) with gap-5 (1.25rem) inside px-8 (2rem) padding.
+const COLUMN_STRIDE_REM = 21.25
+const EDGE_PADDING_REM = 2
+const OVERSCAN_COLUMNS = 3
+
+/** Columns intersecting the horizontal viewport (plus overscan); all of them without layout. */
+function useVisibleColumnRange(ref: RefObject<HTMLDivElement | null>, count: number): [number, number] {
+  const [range, setRange] = useState<[number, number]>(() => [0, Math.min(count, 12)])
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let frame: number | null = null
+    // Measured on resize only: reading styles per scroll frame forces a style recalc.
+    let rem = 16
+    let width = 0
+    const measure = (): void => {
+      rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+      width = el.clientWidth
+    }
+    const update = (): void => {
+      frame = null
+      let start = 0
+      let end = count
+      if (width > 0) {
+        const stride = COLUMN_STRIDE_REM * rem
+        const offset = el.scrollLeft - EDGE_PADDING_REM * rem
+        start = Math.max(0, Math.floor(offset / stride) - OVERSCAN_COLUMNS)
+        end = Math.min(count, Math.ceil((offset + width) / stride) + OVERSCAN_COLUMNS)
+      }
+      setRange((prev) => (prev[0] === start && prev[1] === end ? prev : [start, end]))
+    }
+    const schedule = (): void => {
+      if (frame === null) frame = requestAnimationFrame(update)
+    }
+    measure()
+    update()
+    el.addEventListener('scroll', schedule, { passive: true })
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { measure(); schedule() })
+    observer?.observe(el)
+    return () => {
+      el.removeEventListener('scroll', schedule)
+      observer?.disconnect()
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [ref, count])
+  return [Math.min(range[0], count), Math.min(range[1], count)]
 }
 
 export function KanbanOverview({
@@ -89,6 +138,9 @@ export function KanbanOverview({
   onNewTask: (project: KanbanProjectBoard) => void
 }): ReactElement {
   const { t } = useTranslation('common')
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  // Hundreds of projects made every horizontal scroll frame walk every column; mount only nearby ones.
+  const [start, end] = useVisibleColumnRange(scrollerRef, board.projects.length)
 
   if (board.projects.length === 0) {
     return (
@@ -102,8 +154,10 @@ export function KanbanOverview({
   }
 
   return (
-    <div className="flex h-full min-h-0 gap-5 overflow-x-auto px-8 pb-6">
-      {board.projects.map((projectBoard) => (
+    <div ref={scrollerRef} className="flex h-full min-h-0 gap-5 overflow-x-auto px-8 pb-6" style={{ overflowAnchor: 'none' }}>
+      {/* Spacers (not padding) stand in for unmounted columns: padding would widen the page. */}
+      {start > 0 ? <ColumnSpacer columns={start} /> : null}
+      {board.projects.slice(start, end).map((projectBoard) => (
         <OverviewProjectColumn
           key={projectBoard.projectId}
           projectBoard={projectBoard}
@@ -113,6 +167,12 @@ export function KanbanOverview({
           onNewTask={onNewTask}
         />
       ))}
+      {end < board.projects.length ? <ColumnSpacer columns={board.projects.length - end} /> : null}
     </div>
   )
+}
+
+/** Same width as `columns` columns; the container gap after it completes the last stride. */
+function ColumnSpacer({ columns }: { columns: number }): ReactElement {
+  return <div aria-hidden className="shrink-0" style={{ width: `calc(${columns} * ${COLUMN_STRIDE_REM}rem - 1.25rem)` }} />
 }
