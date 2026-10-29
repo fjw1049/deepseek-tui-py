@@ -7525,7 +7525,10 @@ class RuntimeThreadManager:
             if not lease.acquire_blocking(nonblocking=True):
                 continue
             try:
-                thread = self.store.load_thread(thread.id)
+                try:
+                    thread = self.store.load_thread(thread.id)
+                except (OSError, ValueError):
+                    continue  # Deleted or unreadable since listing; nothing to recover.
                 thread_changed = False
                 waiting_on = (thread.publish_waiting_on or "").strip()
                 if waiting_on:

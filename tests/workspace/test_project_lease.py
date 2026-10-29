@@ -334,3 +334,29 @@ async def test_recovery_scans_turns_once_for_many_threads(tmp_path, monkeypatch)
     assert len(reads) == 12
     assert manager.store.load_turn("turn_0").status == RuntimeTurnStatus.INTERRUPTED
     assert manager.store.load_turn("turn_1").status == RuntimeTurnStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_recovery_skips_thread_removed_after_listing(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    manager = RuntimeThreadManager(
+        config=Config(features=FeatureConfig(mcp=False, tasks=False, subagents=False, automations=False)),
+        workspace=tmp_path,
+        manager_cfg=RuntimeThreadManagerConfig.from_task_data_dir(tmp_path / "tasks"),
+        llm_client=object(),
+    )
+    gone = await manager.create_thread(CreateThreadRequest())
+    kept = await manager.create_thread(CreateThreadRequest())
+    for thread in (gone, kept):
+        manager.store.save_turn(TurnRecord(
+            id=f"turn_{thread.id}", thread_id=thread.id, status=RuntimeTurnStatus.IN_PROGRESS,
+            input_summary="test", created_at=datetime.now(timezone.utc),
+        ))
+    original = manager.store.load_thread
+    def load_thread(thread_id):
+        if thread_id == gone.id:
+            raise FileNotFoundError(thread_id)
+        return original(thread_id)
+    monkeypatch.setattr(manager.store, "load_thread", load_thread)
+    manager._recover_interrupted_state()
+    assert manager.store.load_turn(f"turn_{kept.id}").status == RuntimeTurnStatus.INTERRUPTED
