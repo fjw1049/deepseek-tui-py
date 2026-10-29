@@ -3214,11 +3214,21 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         async def incomplete_delivery(reason: str) -> TurnResult:
             from deepseek_tui.engine.events import TextDeltaEvent
 
-            answer = (
-                "操作后的最终核验未完成，暂时无法确认任务已完成。"
-                if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                "Final verification did not complete; task completion was not verified."
-            )
+            zh = str(getattr(self, "reply_locale", "")).startswith("zh")
+            attempted = (delivery.attempted_answer or "").strip()
+            if attempted:
+                # Deliver what the model wrote, marked unverified; replacing it
+                # would hide all the work behind a stock sentence.
+                answer = attempted + (
+                    "\n\n注：操作后的最终核验没有完成，以上结论未经确认。" if zh else
+                    "\n\nNote: final verification did not complete; "
+                    "the result above was not verified."
+                )
+            else:
+                answer = (
+                    "操作后的最终核验未完成，暂时无法确认任务已完成。" if zh else
+                    "Final verification did not complete; task completion was not verified."
+                )
             delivery.outcome = {"status": "partial", "answer": answer,
                                 "evidence": sorted(delivery.evidence), "remaining": [reason]}
             message = Message.assistant(answer)
@@ -3233,7 +3243,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             round_idx += 1
             await self.handle.pause.wait(self.handle.cancel_event)
             if self.handle.resume_context is not None:
-                delivery.outcome = None
+                delivery.outcome = delivery.attempted_answer = None
                 delivery.stop_reminded = delivery.continue_nudged = False
                 delivery.finalization_rounds = 0
                 self._ui_progress.reset()  # the person changed what the screen shows
@@ -3262,6 +3272,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 steer_text = steer_text.strip()
                 if not steer_text:
                     continue
+                # The user changed direction; an earlier answer may no longer fit.
+                delivery.attempted_answer = None
                 delivery.stop_reminded = delivery.continue_nudged = False
                 delivery.finalization_rounds = 0
                 self._ui_progress.reset()  # the person may have changed what the screen shows

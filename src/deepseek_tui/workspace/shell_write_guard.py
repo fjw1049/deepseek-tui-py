@@ -102,10 +102,6 @@ _PYTHON_WRITE = re.compile(
     r")",
     re.IGNORECASE,
 )
-_CP_MV_RM = re.compile(
-    r"(?:^|[;&|`]|\s)(cp|mv|rm|unlink)\b",
-    re.IGNORECASE,
-)
 _NESTED_SHELL = re.compile(
     r"(?:^|[;&|`]|\s)(?:ba)?sh\s+-c\s+([\"'])(.*?)\1",
     re.IGNORECASE | re.DOTALL,
@@ -139,7 +135,8 @@ def is_allowlisted_path(path: str, *, workspace: Path | None = None) -> bool:
             return True
         return False
     lower = rel.lower()
-    if any(lower.startswith(p) for p in _ALLOWLIST_PREFIXES):
+    # Trailing "/" so the allowlisted directory itself (`./scratch`) matches too.
+    if any(f"{lower}/".startswith(p) for p in _ALLOWLIST_PREFIXES):
         return True
     if any(lower.endswith(s) for s in _ALLOWLIST_SUFFIXES):
         return True
@@ -153,6 +150,9 @@ def looks_like_source_path(path: str, *, workspace: Path | None = None) -> bool:
     if is_allowlisted_path(raw, workspace=workspace):
         return False
     lower = raw.replace("\\", "/").lower()
+    # `./shop.db` names the same file as `shop.db`; the leading `./` is not a directory.
+    while lower.startswith("./"):
+        lower = lower[2:]
     if any(lower.endswith(s) for s in _SOURCE_SUFFIXES):
         return True
     if not lower.startswith("/") and "/" in lower and "$" not in lower:
@@ -179,6 +179,62 @@ def _extract_redirect_targets(command: str) -> list[str]:
     for match in _HEREDOC_REV.finditer(command):
         targets.append(match.group(1))
     return targets
+
+
+_FILE_TOOLS = {"cp", "mv", "rm", "unlink"}
+# Words that run the next word as the command (`sudo rm …`, `… | xargs rm …`).
+_FILE_TOOL_PREFIXES = {"command", "env", "sudo", "xargs", "nohup", "time"}
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+_REDIRECT_OPERATOR = re.compile(r"\d*(?:>>?|<|&>)")
+
+
+def _file_command_invocations(command: str) -> list[tuple[str, list[str]]]:
+    """Each cp/mv/rm/unlink call with its own operands, one shell segment at a time.
+
+    Operands stop at the next separator, so `rm -f a.db && python3 add.py`
+    does not make `add.py` an rm target, and redirections are not operands.
+    """
+    segments: list[list[str]] = [[]]
+    for token in _shell_tokens(command):
+        if token in _SHELL_SEPARATORS:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    invocations: list[tuple[str, list[str]]] = []
+    for segment in segments:
+        index = 0
+        while index < len(segment):
+            token = segment[index]
+            if token.lower() in _FILE_TOOL_PREFIXES or _ENV_ASSIGNMENT.fullmatch(token):
+                index += 1
+            elif index and token.startswith("-"):
+                index += 1  # option of a prefix, e.g. `xargs -0`
+            else:
+                break
+        if index >= len(segment):
+            continue
+        tool = Path(segment[index]).name.lower()
+        if tool not in _FILE_TOOLS:
+            continue
+        operands: list[str] = []
+        options_done = False
+        skip_next = False
+        for token in segment[index + 1 :]:
+            if skip_next:
+                skip_next = False
+                continue
+            if _REDIRECT_OPERATOR.match(token):
+                # A bare operator (`>`, `2>`) takes the next token as its target.
+                skip_next = bool(_REDIRECT_OPERATOR.fullmatch(token))
+                continue
+            if token == "--" and not options_done:
+                options_done = True
+                continue
+            if token.startswith("-") and not options_done:
+                continue
+            operands.append(token)
+        invocations.append((tool, operands))
+    return invocations
 
 
 def _quoted_path_tokens(command: str) -> list[str]:
@@ -509,24 +565,7 @@ def check_shell_write(
             "Use edit_file / write_file.",
         )
 
-    cp_mv = _CP_MV_RM.search(cmd)
-    if cp_mv:
-        tool = cp_mv.group(1).lower()
-        try:
-            tokens = shlex.split(cmd, posix=True)
-        except ValueError:
-            tokens = re.findall(r"[^\s;&|]+", cmd)
-        # Drop the tool name and flags; remaining are operands.
-        operands: list[str] = []
-        seen_tool = False
-        for tok in tokens:
-            low = tok.lower()
-            if not seen_tool and low in {"cp", "mv", "rm", "unlink"}:
-                seen_tool = True
-                continue
-            if tok.startswith("-"):
-                continue
-            operands.append(tok)
+    for tool, operands in _file_command_invocations(cmd):
         if tool in {"rm", "unlink"}:
             for op in operands:
                 if looks_like_source_path(op, workspace=workspace):

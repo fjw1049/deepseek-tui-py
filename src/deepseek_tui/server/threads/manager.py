@@ -86,6 +86,7 @@ if TYPE_CHECKING:
 
 from deepseek_tui.server.threads.broadcast import AsyncBroadcast
 from deepseek_tui.server.threads.items import (
+    MODEL_RESULT_METADATA_KEY,
     automation_result_items,
     automation_result_message,
     duration_ms,
@@ -6540,6 +6541,12 @@ class RuntimeThreadManager:
                             event.content or "",
                             event.metadata,
                         )
+                        # The diff is for the UI; keep what the model was shown so a
+                        # rebuilt history still carries "ok" or the refusal reason.
+                        item.metadata = {
+                            **(item.metadata if isinstance(item.metadata, dict) else {}),
+                            MODEL_RESULT_METADATA_KEY: event.content or "",
+                        }
                     elif event.tool_name == "browser_use" and isinstance(
                         (event.metadata or {}).get("browser"), dict
                     ):

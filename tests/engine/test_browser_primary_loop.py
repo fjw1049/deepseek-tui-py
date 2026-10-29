@@ -392,7 +392,7 @@ async def test_provider_failure_after_browser_returns_blocked_delivery(tmp_path)
 
 
 @pytest.mark.parametrize("recover", [True, False])
-async def test_rejected_delivery_has_one_correction_without_repeating_unverified_answer(tmp_path, recover):
+async def test_rejected_delivery_has_one_correction_then_marks_answer_unverified(tmp_path, recover):
     wrong = ToolCall(id="bad-finish", name="finish_task", arguments={
         "status": "completed", "answer": "The report says 42.",
         "evidence": ["tool:browser-action-id"], "remaining": [],
@@ -412,8 +412,10 @@ async def test_rejected_delivery_has_one_correction_without_repeating_unverified
         if recover:
             assert "The total is 42." in result.assistant_message.text_content()
         else:
-            assert "not verified" in result.assistant_message.text_content()
-            assert "The report says 42." not in result.assistant_message.text_content()
+            # The model's answer is still delivered, marked as unverified.
+            text = result.assistant_message.text_content()
+            assert text.startswith("The report says 42.")
+            assert "not verified" in text
     finally:
         await engine.shutdown_session()
 
@@ -448,7 +450,7 @@ async def test_malformed_finish_also_has_bounded_correction(tmp_path):
         await engine.shutdown_session()
 
 
-async def test_stalled_correction_times_out_without_unverified_answer(tmp_path, monkeypatch):
+async def test_stalled_correction_times_out_with_answer_marked_unverified(tmp_path, monkeypatch):
     import asyncio
 
     monkeypatch.setattr("deepseek_tui.tools.task_delivery.FINALIZATION_TIMEOUT_SECONDS", 0.01)
@@ -473,7 +475,9 @@ async def test_stalled_correction_times_out_without_unverified_answer(tmp_path, 
         result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
         assert len(client.requests) == 3
         assert result.task_outcome["status"] == "partial"
-        assert "The report says 42." not in result.assistant_message.text_content()
+        text = result.assistant_message.text_content()
+        assert text.startswith("The report says 42.")
+        assert "not verified" in text
         assert "timed out" in result.task_outcome["remaining"][0]
     finally:
         await engine.shutdown_session()

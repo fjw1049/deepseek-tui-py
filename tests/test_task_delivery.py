@@ -187,6 +187,16 @@ async def test_desktop_only_delivery_ignores_unrelated_browser_control(context):
     assert result.success
 
 
+async def test_agent_closing_its_browser_session_can_still_complete(context):
+    # close_session leaves owner "stopped"; nobody holds the browser, so the
+    # agent's evidence still stands. A user stop cancels the turn before this.
+    context.metadata["browser_service"].runs["t"].owner = "stopped"
+    result = await FinishTaskTool().execute(dict(
+        status="completed", answer="Reviewed the page", evidence=["tool:read"], remaining=[]
+    ), context)
+    assert result.success
+
+
 async def test_mixed_task_still_requires_browser_control(context):
     context.metadata["browser_service"].runs["t"].owner = "user"
     with pytest.raises(ToolError, match="user controls the browser"):

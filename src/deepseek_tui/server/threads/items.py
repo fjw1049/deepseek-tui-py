@@ -23,6 +23,13 @@ if TYPE_CHECKING:
     from deepseek_tui.server.threads.store import RuntimeThreadStore
 
 
+# Tool result exactly as the model received it, for items whose ``detail`` holds
+# something else (a file_change keeps the diff there for the UI).
+MODEL_RESULT_METADATA_KEY = "model_result"
+# Agent-message sources that only exist in the timeline, never in the model's turn.
+UI_ONLY_MESSAGE_SOURCES = frozenset({"narration_service", "runtime"})
+
+
 # --- helper functions --------------------------------------------------------
 
 
@@ -120,6 +127,12 @@ def reconstruct_messages_from_turn(
                 continue
             if not text:
                 continue
+            meta = item.metadata if isinstance(item.metadata, dict) else {}
+            intent = meta.get("process_intent")
+            if isinstance(intent, dict) and intent.get("source") in UI_ONLY_MESSAGE_SOURCES:
+                # Written for the timeline by the narration service or a runtime
+                # template; the model never said it.
+                continue
             messages.append(
                 Message(role=Role.ASSISTANT, content=[TextBlock(text=text)])
             )
@@ -146,11 +159,20 @@ def reconstruct_messages_from_turn(
                     + _compact_persisted_tool_detail("external_history", text)
                 ))
                 continue
-            tool_use_id = str(meta.get("tool_use_id") or item.id)
+            # Live items store tool_call_id / tool_input; imported sessions store
+            # tool_use_id / arguments.
+            tool_use_id = str(meta.get("tool_use_id") or meta.get("tool_call_id") or item.id)
             tool_name = str(meta.get("tool_name") or item.summary or "tool")
             arguments = meta.get("arguments")
             if not isinstance(arguments, dict):
+                arguments = meta.get("tool_input")
+            if not isinstance(arguments, dict):
                 arguments = {}
+            # A file_change detail is the diff for the UI; the model was shown
+            # the tool's own result ("ok" or the refusal reason).
+            model_result = meta.get(MODEL_RESULT_METADATA_KEY)
+            if isinstance(model_result, str) and model_result.strip():
+                text = model_result
             messages.append(
                 Message.assistant_with_tools(
                     [

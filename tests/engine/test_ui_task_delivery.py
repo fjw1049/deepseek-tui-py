@@ -76,6 +76,32 @@ async def test_desktop_stop_without_delivery_is_partial_not_completed(tmp_path):
         await engine.shutdown_session()
 
 
+def finish(answer, evidence=("tool:invented",)):
+    return ToolCall(id=f"finish-{len(answer)}", name="finish_task", arguments={
+        "status": "completed", "answer": answer, "evidence": list(evidence), "remaining": [],
+    })
+
+
+async def test_rejected_delivery_keeps_the_models_answer(tmp_path):
+    # When finalization runs out, the user still gets the answer the model wrote,
+    # marked unverified, instead of a stock sentence that hides all the work.
+    # A rejected finish opens the one-round finalization; the latest attempt wins.
+    engine, client = await desktop_engine(tmp_path, [
+        look(),
+        finish("Notes shows 42."),
+        finish("Notes shows 42; the sync date was not checked."),
+    ])
+    try:
+        result = await engine._run_conversation([Message.user("Check Notes")], "test", "sys", None)
+        text = result.assistant_message.text_content()
+        assert text.startswith("Notes shows 42; the sync date was not checked.")
+        assert "not verified" in text
+        assert result.task_outcome["status"] == "partial"
+        assert result.task_outcome["answer"] == text
+    finally:
+        await engine.shutdown_session()
+
+
 async def test_desktop_task_keeps_its_tools_and_delivers_with_evidence(tmp_path):
     (tmp_path / "notes.txt").write_text("42")
     engine, client = await desktop_engine(tmp_path, [

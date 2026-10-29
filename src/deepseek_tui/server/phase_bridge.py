@@ -53,6 +53,7 @@ PROCESS_INTENT_METADATA_KEY = "process_intent"
 ACTIVE_PLUGIN_METADATA_KEY = "active_plugin"
 
 MAX_PUBLISHED_PER_TURN = 12
+_SENTENCE_ENDS = ("。", "！", "？", "…", ".", "!", "?")
 GateDecision = Literal["skip", "compute"]
 
 IntentScope = Literal["pre_tool", "milestone"]
@@ -217,8 +218,13 @@ class NarrationPlan:
         parts = [p.strip() for p in (self.finding, self.next_goal) if p.strip()]
         if not parts:
             return None
-        separator = "，" if locale == "zh" else ", "
-        text = separator.join(parts)
+        text = parts[0]
+        for part in parts[1:]:
+            if text.endswith(_SENTENCE_ENDS):
+                # The finding is already a full sentence; start the next one.
+                text += part if locale == "zh" else f" {part}"
+            else:
+                text = text.rstrip("，,、；; ") + ("，" if locale == "zh" else ", ") + part
         return _truncate(text, 360)
 
 

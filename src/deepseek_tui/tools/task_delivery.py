@@ -48,6 +48,9 @@ class TaskDelivery:
     # Evidence predating an uncertain desktop action cannot verify its outcome.
     cua_failed_evidence: set[str] | None = None
     outcome: dict[str, Any] | None = None
+    # The answer of the latest finish_task call, kept even when that call is
+    # rejected, so an exhausted finalization still delivers the model's words.
+    attempted_answer: str | None = None
     # A stop without a tool call first gets one round, with all tools, to take its next step.
     continue_nudged: bool = False
     stop_reminded: bool = False
@@ -232,6 +235,7 @@ class FinishTaskTool(ToolSpec):
             or not answer.strip()
         ):
             raise ToolError("Supply a final status and a non-empty actual answer")
+        state.attempted_answer = answer
         if any(
             not isinstance(v, list) or any(not isinstance(x, str) or not x.strip() for x in v)
             for v in (evidence, remaining)
@@ -255,7 +259,9 @@ class FinishTaskTool(ToolSpec):
         unresolved = browser_state.get("unresolved") or (run.unresolved if run else {})
         if run and run.assistance:
             raise ToolError("Wait for the user to return control before finishing")
-        if run and run.owner != "agent" and status == "completed":
+        # "stopped" means the agent closed its own session (a user stop cancels the
+        # turn first), so only a human holding the browser blocks completion.
+        if run and run.owner == "user" and status == "completed":
             # Reporting the blocker must stay possible while the user holds the browser.
             raise ToolError(
                 "The user controls the browser; report partial/blocked or request control first"

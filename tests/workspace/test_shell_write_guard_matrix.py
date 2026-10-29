@@ -77,6 +77,46 @@ def test_allows_reads_and_allowlisted_writes(command: str) -> None:
     assert v.allowed, f"expected allow for: {command} reason={v.reason}"
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Later commands in a chain are not rm/cp/mv operands.
+        "rm -f shop.db && python3 add.py init",
+        "rm -rf /tmp/pf && python3 photoflow.py -C /tmp/pf init",
+        "rm -rf scratch __pycache__ && python3 clean_contacts.py contacts.csv",
+        # Redirections are not operands.
+        "mkdir -p scratch/t 2>/dev/null; rm -rf scratch/t 2>/dev/null; ls scratch",
+        "rm -f scratch/a.log > /dev/null 2>&1",
+        # The agent's own scratch directory, however it is spelled.
+        "rm -rf ./scratch",
+        "rm -rf scratch/",
+        # `./x` is the same path as `x`.
+        "rm -f ./shop.db",
+    ],
+)
+def test_rm_operands_stay_within_their_own_command(command: str) -> None:
+    v = check_shell_write(command)
+    assert v.allowed, f"expected allow for: {command} reason={v.reason}"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls && rm src/foo.py",
+        "rm -f out.db; rm src/foo.py",
+        "pytest -q || mv src/a.py /tmp/a.py",
+        "sudo rm src/foo.py",
+        "find . -name '*.orig' | xargs rm src/foo.py",
+        "rm -- src/foo.py",
+        "rm ./src/foo.py",
+        "rm ./main.py",
+    ],
+)
+def test_rm_in_any_chain_segment_is_still_checked(command: str) -> None:
+    v = check_shell_write(command)
+    assert not v.allowed, f"expected deny for: {command}"
+
+
 def test_fail_closed_python_write_without_extractable_path() -> None:
     v = check_shell_write("python3 -c 'open(p,\"w\").write(\"x\")'")
     assert not v.allowed

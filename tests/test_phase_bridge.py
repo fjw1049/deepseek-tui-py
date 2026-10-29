@@ -133,6 +133,39 @@ def test_render_plan_joins_finding_and_next_goal() -> None:
     assert not contains_tool_name(text)
 
 
+def test_render_plan_keeps_a_finished_sentence_finished() -> None:
+    # A finding that already ends its sentence must not gain a comma after the
+    # full stop ("…。，接下来…").
+    zh = NarrationPlan(
+        publish=True,
+        phase="verify",
+        finding="已重新计算四份交付文件的校验值。",
+        next_goal="确认复算脚本是否被移动或删除",
+    )
+    assert render_plan(zh, locale="zh") == (
+        "已重新计算四份交付文件的校验值。确认复算脚本是否被移动或删除"
+    )
+    en = NarrationPlan(
+        publish=True,
+        phase="verify",
+        finding="Confirmed the router registers all endpoints.",
+        next_goal="Verify the handler chain next.",
+    )
+    assert render_plan(en, locale="en") == (
+        "Confirmed the router registers all endpoints. Verify the handler chain next."
+    )
+
+
+def test_render_plan_does_not_double_a_trailing_comma() -> None:
+    plan = NarrationPlan(
+        publish=True,
+        phase="locate",
+        finding="已确认切段时机不同，",
+        next_goal="接下来核对 reload 路径",
+    )
+    assert render_plan(plan, locale="zh") == "已确认切段时机不同，接下来核对 reload 路径"
+
+
 def test_validate_plan_accepts_any_language() -> None:
     # Language/style belong to the narration model (locale is in the request);
     # validation stays structural so any provider/language combination works.
