@@ -92,12 +92,36 @@ def test_confirmed_field_changes_count_as_progress():
     from deepseek_tui.engine.ui_progress import UiProgress
     from deepseek_tui.tools.registry import ToolResult
 
-    progress = UiProgress()
-    for i in range(10):  # Field values never appear in page text; the receipts prove change.
+    def fill(progress, call, i):
         browser = {"observation": {"text": "Enter the code"},
                    "receipt": {"action": "fill", "action_id": str(i), "effect": "confirmed"}}
-        progress.record_result("browser_use", ToolResult(True, "{}", metadata={"browser": browser}))
+        return progress.record_result("browser_use", ToolResult(
+            True, "{}", metadata={"browser": browser, "browser_call": call}))
+
+    progress = UiProgress()
+    for i in range(10):  # Field values never appear in page text; the receipts prove change.
+        fill(progress, i, i)
     assert progress.blocked_content("browser_use") is None
+    # The same fill again and again changes nothing, whatever its receipt says.
+    progress = UiProgress()
+    for i in range(10):
+        fill(progress, "same", i)
+    assert progress.blocked_content("browser_use")
+
+
+async def test_line_breaks_and_tabs_are_typed_as_text_not_keys():
+    from deepseek_tui.browser.input import type_text
+
+    client = SimpleNamespace(send=AsyncMock())
+    run = SimpleNamespace(generation=0, session=None)
+    await type_text(run, "a\tb", client=client)
+    calls = [(c.args[0], c.args[1].get("type"), c.args[1].get("text"))
+             for c in client.send.await_args_list]
+    assert ("Input.insertText", None, "\t") in calls
+    assert not any(c[1] == "keyDown" and c[2] == "\t" for c in calls)
+    client.send.reset_mock()
+    await type_text(run, "line1\nline2", client=client)
+    client.send.assert_awaited_once_with("Input.insertText", {"text": "line1\nline2"})
 
 
 def test_drag_needs_source_and_destination_refs():
@@ -261,3 +285,26 @@ async def test_uncaught_errors_reach_the_action_result_and_console(page):
     logs = await page.action("t", BrowserAction(action="console"))
     assert any("42 KB" in entry["text"] for entry in logs["content"]["entries"])
     assert "untrusted" in logs["content"]["source"]
+
+
+async def test_console_capture_starts_only_when_requested(tmp_path):
+    # Sites can detect an enabled Runtime domain; attaching to a page must not enable it.
+    from deepseek_tui.browser.native import NativeBrowserEvents
+
+    class Client:
+        send = AsyncMock(return_value={"frameTree": {"frame": {"id": "main", "loaderId": "doc"}}})
+
+        def on(self, event, callback):
+            pass
+
+    client = Client()
+    run = SimpleNamespace(thread_id="one", native=False, generation=0, observation_context=None,
+                          session=SimpleNamespace(_internal=SimpleNamespace(client=client)))
+    native = NativeBrowserEvents(run, BrowserService(tmp_path))
+    await native.install(client)
+    enabled = lambda: [c.args[0] for c in client.send.await_args_list
+                       if c.args[0] in {"Runtime.enable", "Log.enable"}]
+    assert enabled() == []
+    await native.watch_console()
+    await native.watch_console()
+    assert enabled() == ["Runtime.enable", "Log.enable"]

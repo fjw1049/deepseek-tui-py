@@ -128,10 +128,13 @@ def observation_of(result: ToolResult) -> _Observation | None:
         observation = browser.get("observation")
         text = observation.get("text", "") if isinstance(observation, dict) else ""
         receipt = browser.get("receipt") or {}
-        # Field values stay out of observations, yet a verified field change is progress.
+        # Field values stay out of observations, yet a verified field change is progress;
+        # the same change made again is not. A confirmed scroll always moved.
         if receipt.get("effect") == "confirmed" and receipt.get("action") in {
                 "fill", "type", "select", "set_checked", "scroll"}:
-            text += "\n[confirmed change " + str(receipt.get("action_id")) + "]"
+            change = (receipt.get("action_id") if receipt.get("action") == "scroll"
+                      else result.metadata.get("browser_call"))
+            text += "\n[confirmed change " + str(change) + "]"
     else:
         text = result.content or ""
     try:

@@ -39,6 +39,7 @@ from deepseek_tui.browser.observation import (
     target,
     target_state,
 )
+from deepseek_tui.browser.permissions import is_loopback
 
 # Identity of the focused editable field and its record scope, without its contents.
 FOCUSED_FIELD = (
@@ -186,6 +187,7 @@ class BrowserAction(BaseModel):
         default_factory=list, max_length=16
     )
     level: Literal["interactive", "full"] = "interactive"
+    include_editable: bool = False
     text_offset: int = Field(default=0, ge=0)
     element_offset: int = Field(default=0, ge=0)
     option_offset: int = Field(default=0, ge=0)
@@ -222,6 +224,13 @@ class BrowserAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_action(self) -> BrowserAction:
+        if self.include_editable and (
+            self.action not in {"observe", "check_text", "wait"}
+            or not (self.selector or (self.action == "observe" and self.scope_ref))
+        ):
+            raise ValueError(
+                "include_editable requires observe/check_text/wait with a document selector "
+                "or observe with scope_ref")
         if self.action == "upload" and not (self.ref or self.selector or self.chooser_id):
             raise ValueError("Upload requires an observed file input or the current chooser_id")
         if self.action == "handle_dialog" and not (self.dialog_id and self.accept is not None):
@@ -1859,6 +1868,8 @@ class BrowserService:
         if action.action == "console":
             from deepseek_tui.browser.context import PAGE_CONTENT_NOTICE
 
+            if native:
+                await native.watch_console()
             return {"success": True, "content": {
                 "source": PAGE_CONTENT_NOTICE,
                 "entries": native.console_entries() if native else []}, "receipt": {
@@ -1903,6 +1914,7 @@ class BrowserService:
         settle_warning = None
         effect = "unchecked"
         typed = None
+        scroll_movement = None
         action_id = a._action_id or uuid.uuid4().hex
         before_observation = run.latest_observation
         before_id = (before_observation or {}).get("observation_id")
@@ -1956,6 +1968,8 @@ class BrowserService:
                 if previous["control_generation"] != run.generation:
                     raise ValueError("Scope control changed; start a fresh observation")
                 a = a.model_copy(update={"selector": previous.get("scope_selector"),
+                    "level": previous.get("level", a.level),
+                    "include_editable": previous.get("include_editable", False),
                     "shadow_path": previous.get("scope_shadow_path", []),
                     "frame_id": previous.get("frame_id", "")})
                 frame_id = a.frame_id
@@ -1972,7 +1986,8 @@ class BrowserService:
                                         text_offset=a.text_offset, element_offset=a.element_offset,
                                         option_offset=a.option_offset,
                                         frame_id=frame_id, frame_offset=a.frame_offset,
-                                        shadow_path=a.shadow_path, continuation_id=a.scope_ref)
+                                        shadow_path=a.shadow_path, continuation_id=a.scope_ref,
+                                        include_editable=a.include_editable)
             if a.frame_selector:
                 observation["scope_frame_selector"] = a.frame_selector
             if a.frame_path:
@@ -2144,10 +2159,12 @@ class BrowserService:
                 await evaluate(scroll_context, """(() => {
                   const entries=window.__deepseekObservation?.scrolls;
                   window.__deepseekScrollProbe=entries?.map(v=>({...v,
+                    target:__TARGETED__ && (v.node===window.__deepseekTarget ||
+                      (v.window && window.__deepseekTarget===document.scrollingElement)),
                     x:v.window?v.node.scrollX:v.node.scrollLeft,
                     y:v.window?v.node.scrollY:v.node.scrollTop}));
                   return true;
-                })()""")
+                })()""".replace("__TARGETED__", json.dumps(bool(a.ref or a.selector))))
             except Exception:
                 pass  # Dispatch remains valid when effect verification is unavailable.
             # Wheel deltas are device-independent pixels; at 150% page zoom 300 would move
@@ -2333,18 +2350,36 @@ class BrowserService:
                 settle_warning = "Page readiness unavailable: " + (str(exc) or type(exc).__name__)
             if a.action == "scroll":
                 try:
-                    changed = await evaluate(scroll_context, """(() => {
+                    scroll_movement = await evaluate(scroll_context, """(() => {
                       const entries=window.__deepseekScrollProbe;
                       delete window.__deepseekScrollProbe;
                       if(!entries?.length) return null;
-                      return entries.some(v=>v.x!==(v.window?v.node.scrollX:v.node.scrollLeft)
-                        || v.y!==(v.window?v.node.scrollY:v.node.scrollTop));
+                      const movements=entries.map(v=>{
+                        const x=v.window?v.node.scrollX:v.node.scrollLeft,
+                          y=v.window?v.node.scrollY:v.node.scrollTop;
+                        const node=v.window?v.node.document.scrollingElement:v.node;
+                        return {target:v.target,before:{x:v.x,y:v.y},after:{x,y},
+                          delta:{x:x-v.x,y:y-v.y},
+                          at_top:y<=0,at_bottom:y+node.clientHeight>=node.scrollHeight-1};
+                      });
+                      const targets=movements.filter(v=>v.target),
+                        moved=v=>v.delta.x!==0 || v.delta.y!==0;
+                      return {changed:movements.some(moved),
+                        target_changed:targets.length?targets.some(moved):null,
+                        movements:movements.filter(v=>v.target || moved(v)).slice(0,10)};
                     })()""")
+                    # With a target, only its own movement counts: another panel moving is
+                    # not the requested scroll.
+                    changed = None if not isinstance(scroll_movement, dict) else (
+                        scroll_movement["changed"] if scroll_movement["target_changed"] is None
+                        else scroll_movement["target_changed"])
                     if isinstance(changed, bool):
                         effect = "confirmed" if changed else "not_confirmed"
                         content = (
                             "A scroll position changed; inspect the observation to verify the intended content moved."
                             if changed else
+                            "The target did not scroll, though another scroll position changed; see "
+                            "verification.movement." if scroll_movement["changed"] else
                             "Wheel dispatched but no observed scroll position changed. The target may be at its limit "
                             "or the pointer may be outside the list. Target the intended scroll container with "
                             "its scroll_containers ref, or fresh screenshot coordinates; do not repeat blindly."
@@ -2379,7 +2414,8 @@ class BrowserService:
                 "observation_id": (observation or {}).get("observation_id"),
                 "frame_id": a.frame_id, "selector": a.selector}
         if a.action == "scroll":
-            receipt["verification"] = {"kind": "observed_scroll_position", "x": a.x, "y": a.y}
+            receipt["verification"] = {"kind": "observed_scroll_position", "x": a.x, "y": a.y,
+                                       "movement": scroll_movement}
         entry: dict[str, Any] = {"action": a.action, "success": success, **receipt}
         if a.action == "check_text":
             entry["expected"] = a.text
@@ -2428,6 +2464,10 @@ class BrowserService:
             response["observation_error"] = observation_error
         if evidence_warning:
             response["evidence_warning"] = evidence_warning
+        if run.native_events and is_loopback(urlsplit(
+                (observation or run.latest_observation or {}).get("url") or run.url or "").hostname or ""):
+            # Local pages under development report their errors with every action.
+            await run.native_events.watch_console()
         if run.native_events and (errors := run.native_events.console_entries(
                 after=console_seen, errors_only=True, limit=5)):
             from deepseek_tui.browser.context import PAGE_CONTENT_NOTICE

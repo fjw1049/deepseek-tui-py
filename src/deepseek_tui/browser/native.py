@@ -23,6 +23,7 @@ class NativeBrowserEvents:
         self.loading = set()  # Clients whose main frame is loading a document
         self.console = []  # Recent console messages and uncaught errors, page-written
         self.console_seq = 0
+        self.console_clients = set()
 
     async def install(self, client):
         if client in self.clients:
@@ -184,12 +185,6 @@ class NativeBrowserEvents:
         }.items():
             client.on(event, callback)
         self.clients.add(client)
-        # Enabling replays messages logged before the agent attached.
-        for domain in ("Runtime", "Log"):
-            try:
-                await client.send(domain + ".enable")
-            except Exception:  # noqa: BLE001 - console capture is diagnostic, never required
-                pass
         if self.run.native and not isinstance(client, FrameContext):
             result = await client.send("Workbench.getDownloads")
             for item in result.get("downloads", []):
@@ -205,6 +200,21 @@ class NativeBrowserEvents:
             "client": client,
         })
         del self.console[:-200]
+
+    async def watch_console(self):
+        """Capture the bound page's console. Off by default: sites detect an enabled
+        Runtime domain, so it is used on local pages or when the console is asked for."""
+        page = getattr(getattr(self.run.session, "_internal", None), "client", None)
+        for client in (page, self.run.observation_context):
+            if client is None or client not in self.clients or client in self.console_clients:
+                continue
+            self.console_clients.add(client)
+            # Enabling replays messages logged before the agent attached.
+            for domain in ("Runtime", "Log"):
+                try:
+                    await client.send(domain + ".enable")
+                except Exception:  # noqa: BLE001 - console capture is diagnostic, never required
+                    pass
 
     def console_entries(self, *, after=0, errors_only=False, limit=30):
         """Messages from the bound page (and its frames) for the model; page-written data."""

@@ -17,6 +17,14 @@ from deepseek_tui.tools.registry import (
 )
 
 
+def _call_signature(action: BrowserAction) -> int:
+    """Tells a repeated call apart from a new one. Salted per process, so the typed text
+    cannot be recovered from it; held in memory only."""
+    call = action.model_dump(include={
+        "action", "ref", "to_ref", "selector", "frame_id", "text", "checked", "option_ref", "key"})
+    return hash(json.dumps(call, sort_keys=True, default=str))
+
+
 class BrowserUseTool(ToolSpec):
     def name(self) -> str:
         return "browser_use"
@@ -67,8 +75,8 @@ class BrowserUseTool(ToolSpec):
             "type sends real keystrokes at the focused field (per-key handlers such as code "
             "boxes respond); fill replaces a targeted field's whole value. "
             "drag presses on ref and releases over to_ref, both from the same observation. "
-            "console reads the page's console messages and uncaught errors; action results "
-            "also list new console_errors. "
+            "console reads the page's console messages and uncaught errors; on "
+            "localhost pages action results also list new console_errors. "
             "Use check_text for expected text, optionally scoped to a unique selector. "
             "Screenshot saves evidence; coordinate clicks require its current observation_id. "
             "record_start/record_stop produce a step animation, not continuous video. "
@@ -93,7 +101,13 @@ class BrowserUseTool(ToolSpec):
                 "For observe, ordered CSS selectors of unique open shadow hosts in the selected "
                 "document/frame. Keep scope_shadow_path when continuing; act using returned refs."
             ),
-            "level": "interactive returns up to 120 elements; full returns up to 250.",
+            "level": ("interactive returns up to 120 elements, on-screen ones first; full "
+                      "returns up to 250 in document order."),
+            "include_editable": (
+                "For an authorized document-editing task only: with observe on a unique "
+                "contenteditable selector, read its text, selection offsets and current block; "
+                "with check_text/wait on that selector, match its text. Ordinary field and "
+                "password values stay excluded. scope_ref continuations keep it."),
             "text_offset": "Continue at next_text_offset, keeping scope_selector and frame_id.",
             "element_offset": (
                 "Continue at next_element_offset with the same scope_selector/frame_id; "
@@ -260,7 +274,7 @@ class BrowserUseTool(ToolSpec):
             return ToolResult(
                 result["success"],
                 json.dumps(result, ensure_ascii=False),
-                metadata={"browser": result},
+                metadata={"browser": result, "browser_call": _call_signature(action)},
                 images=images,
             )
         except BrowserActionError as exc:

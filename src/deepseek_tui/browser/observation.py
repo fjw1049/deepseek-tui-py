@@ -19,7 +19,7 @@ VISIBLE = r"""e => {
     return !!e.getClientRects().length;
   }"""
 
-READ_TEXT = r"""root => {
+READ_TEXT = r"""(root, includeEditable=false) => {
   if (!root) return '';
   const texts=[], visible=__VISIBLE__;
   const walker=(root.ownerDocument || document).createTreeWalker(root,NodeFilter.SHOW_TEXT);
@@ -30,7 +30,7 @@ READ_TEXT = r"""root => {
     for (let e=p; e; e=e.parentElement || e.getRootNode()?.host) {
       if (e.isContentEditable) { editable=true; break; }
     }
-    if (!editable && n.textContent.trim()) texts.push(n.textContent.trim());
+    if ((!editable || includeEditable) && n.textContent.trim()) texts.push(n.textContent.trim());
   }
   return texts.join('\n').trim();
 }""".replace("__VISIBLE__", VISIBLE)
@@ -56,7 +56,7 @@ ACCESSIBLE_NAME = r"""e => {
     .map(k=>label(e.getRootNode().getElementById?.(k))).join(' ').trim();
   const buttonValue=e.tagName==='INPUT' && /^(button|submit|reset)$/.test(e.type)?e.value:'';
   return (references || e.getAttribute('aria-label') ||
-    Array.from(e.labels || []).map(read).join(' ') || read(e) ||
+    Array.from(e.labels || []).map(l=>read(l)).join(' ') || read(e) ||
     e.getAttribute('alt') || buttonValue || e.getAttribute('title') ||
     e.getAttribute('placeholder') || '').trim();
 }""".replace("__READ_TEXT__", READ_TEXT).replace("__LABEL_TEXT__", LABEL_TEXT)
@@ -100,7 +100,7 @@ VALUE_INPUTS = "date|time|datetime-local|month|week|color|range"
 
 COLLECT = (
     r"""({id, selector, limit, textOffset=0, elementOffset=0, optionOffset=0,
-               shadowPath=[],continuation=null}) => {
+               shadowPath=[],continuation=null,screenFirst=false,includeEditable=false}) => {
   const previous=window.__deepseekObservation;
   const revision=window.__deepseekPageRevision || {value:0};
   revision.observer?.disconnect();
@@ -139,8 +139,10 @@ COLLECT = (
   };
   const pointer=e=>/^(pointer|grab)$/.test(window.getComputedStyle.call(e.ownerDocument.defaultView,e).cursor);
   const native='button,input:not([type=hidden]),select,textarea,a[href],summary';
+  // Paragraphs inside an editor inherit its textbox role; the editor is the one control.
+  const inEditor=e=>e.isContentEditable && e.parentElement?.isContentEditable;
   const interactive=(e,role)=>e.matches(native) ||
-    (e.isContentEditable && !e.parentElement?.isContentEditable) ||
+    (e.isContentEditable && !inEditor(e)) || !inEditor(e) && (
     /^(button|link|textbox|combobox|checkbox|radio|menuitem|option|switch|tab|searchbox)$/
       .test(role) ||
     // Script-bound controls; a wrapper around a native control is operated through that control.
@@ -150,7 +152,22 @@ COLLECT = (
       // Cards, icon spans and draggable items show a pointer; keep only the outermost one.
       (pointer(e) && !(e.parentElement && pointer(e.parentElement)) &&
         !(e.tagName==='LABEL' && e.control) &&
-        !e.parentElement?.closest('a[href],button,summary,[role=button],[role=link],[role=menuitem],[role=tab],[role=option]'))));
+        !e.parentElement?.closest('a[href],button,summary,[role=button],[role=link],[role=menuitem],[role=tab],[role=option]')))));
+  // Within the viewport and any clipping panel around it.
+  const onScreen=e=>{
+    const v=e.ownerDocument.defaultView, r=e.getBoundingClientRect();
+    let left=Math.max(0,r.left),right=Math.min(v.innerWidth,r.right),
+      top=Math.max(0,r.top),bottom=Math.min(v.innerHeight,r.bottom);
+    for(let p=e.parentElement || e.getRootNode()?.host;p && right>left && bottom>top;
+        p=p.parentElement || p.getRootNode()?.host){
+      const st=window.getComputedStyle.call(v,p);
+      if(!/auto|scroll|hidden|clip/.test(st.overflowX+st.overflowY))continue;
+      const b=p.getBoundingClientRect();
+      if(/auto|scroll|hidden|clip/.test(st.overflowX)){left=Math.max(left,b.left);right=Math.min(right,b.right)}
+      if(/auto|scroll|hidden|clip/.test(st.overflowY)){top=Math.max(top,b.top);bottom=Math.min(bottom,b.bottom)}
+    }
+    return right>left && bottom>top;
+  };
   const elements=[], frames=[],snapshot=[];
   let elementCount=0;
   const focused=()=>{
@@ -171,10 +188,13 @@ COLLECT = (
     : [scopeRoot===document?document.body:scopeRoot];
   if (selector && roots.length!==1)
     throw Error('Observation selector must match exactly one element');
+  if(includeEditable && (!selector || !roots[0].isContentEditable))
+    throw Error('include_editable requires a selector matching one contenteditable document');
+  const found=[];
   const walk = root => {
     if (!root) return;
     watch(root.getRootNode());
-    texts.push(readText(root));
+    texts.push(readText(root,includeEditable));
     const view=(root.ownerDocument || document).defaultView;
     scrolls.push({node:view, x:view.scrollX, y:view.scrollY, window:true});
     for (const e of [...(root.nodeType===1?[root]:[]),...root.querySelectorAll('*')]) {
@@ -182,54 +202,7 @@ COLLECT = (
       if (!proxy && !visible(e)) continue;
       scrolls.push({node:e, x:e.scrollLeft, y:e.scrollTop});
       const tag=e.tagName.toLowerCase(), role=canonicalRole(e);
-      if (interactive(e,role)) {
-        if(!identities.nodes.has(e))identities.nodes.set(e,identities.prefix+':n'+identities.next++);
-        const targetId=identities.nodes.get(e);
-        // A node keeps its ref for the document's lifetime, so later results can list only changes.
-        const index=elementCount++, ref='e'+targetId.slice(targetId.lastIndexOf(':n')+2),
-          scope=context(e,scopeCache);
-        snapshot.push({element:e,name:name(e),scope,options:tag==='select'?
-          Array.from(e.options).map(o=>({node:o,value:o.value,text:o.text})):[]});
-        if (index>=elementOffset && elements.length<limit) {
-          const r=(proxy || e).getBoundingClientRect();
-          const options=new Map();
-          if(tag==='select')Array.from(e.options).slice(optionOffset,optionOffset+50).forEach((o,i)=>
-            options.set(ref+':o'+(optionOffset+i),{node:o,value:o.value,text:o.text}));
-          refs.set(ref, {element:e, target_id:targetId, name:name(e), role, options, parent:e.parentElement, scope,
-            href:e.tagName==='A'?e.href:null,formAction:e.form?.action || null,
-            box:[r.x,r.y,r.width,r.height]});
-          elements.push({ref, target_id:targetId, role, tag, name:Array.from(name(e)).slice(0,300).join(''),
-            name_truncated:Array.from(name(e)).length>300,
-            scope:scope?{tag:scope.tag,id:scope.id.length<=300?scope.id:undefined,
-              keys:scope.keys.filter(([k,v])=>v!==null && v.length<=300),
-              text:Array.from(scope.text).slice(0,500).join(''),
-              truncated:scope.text.length>500 || scope.keys.some(([k,v])=>v?.length>300)}:undefined,
-            type:tag==='input'?e.type:e.getAttribute('type') || undefined,
-            editable:e.isContentEditable || tag==='textarea' ||
-              (tag==='input' && /^(text|search|email|password|tel|url|number)$/.test(e.type)) ||
-              (tag==='input' && /^(__VALUE_INPUTS__)$/.test(e.type)),
-            readonly:!!e.readOnly,
-            selector:e.id && e.getRootNode()===scopeRoot &&
-              scopeRoot.querySelectorAll('#'+CSS.escape(e.id)).length===1
-              ? '#'+CSS.escape(e.id):undefined,
-            href:tag==='a'?e.href:undefined,
-            options:tag==='select'?Array.from(e.options).slice(optionOffset,optionOffset+50)
-              .map((o,i)=>({value:o.value.length<=512?o.value:undefined,
-              value_omitted:o.value.length>512,option_ref:ref+':o'+(optionOffset+i),
-              text:Array.from(o.text).slice(0,300).join(''),disabled:o.disabled ||
-                (o.parentElement?.tagName==='OPTGROUP' && o.parentElement.disabled)})):undefined,
-            option_offset:tag==='select'?optionOffset:undefined,
-            total_options:tag==='select'?e.options.length:undefined,
-            next_option_offset:tag==='select'
-              ?(e.options.length>optionOffset+50?optionOffset+50:null):undefined,
-            disabled:!!e.disabled || e.matches(':disabled') ||
-              e.getAttribute('aria-disabled')==='true',
-            checked:typeof e.checked==='boolean'?e.checked:undefined,
-            selected_text:tag==='select'?e.selectedOptions?.[0]?.text:undefined,
-            expanded:e.getAttribute('aria-expanded') || undefined,
-            box:{x:r.x,y:r.y,width:r.width,height:r.height}});
-        }
-      }
+      if (interactive(e,role)) found.push({e,proxy,tag,role});
       // Inner panels that scroll on their own; the document itself is the viewport.
       if (tag!=='input' && e!==e.ownerDocument.scrollingElement &&
           (e.scrollHeight>e.clientHeight+1 || e.scrollWidth>e.clientWidth+1)) {
@@ -253,6 +226,60 @@ COLLECT = (
     }
   };
   roots.forEach(walk);
+  // An interactive read lists what is on screen first: after scrolling a long page, the
+  // first controls in document order are all above it. Full reads keep document order.
+  if(screenFirst){
+    const on=new Map(found.map(f=>[f,onScreen(f.proxy || f.e)]));
+    found.sort((a,b)=>on.get(b)-on.get(a));
+  }
+  for (const {e,proxy,tag,role} of found) {
+    if(!identities.nodes.has(e))identities.nodes.set(e,identities.prefix+':n'+identities.next++);
+    const targetId=identities.nodes.get(e);
+    // A node keeps its ref for the document's lifetime, so later results can list only changes.
+    const index=elementCount++, ref='e'+targetId.slice(targetId.lastIndexOf(':n')+2),
+      scope=context(e,scopeCache);
+    snapshot.push({element:e,name:name(e),scope,options:tag==='select'?
+      Array.from(e.options).map(o=>({node:o,value:o.value,text:o.text})):[]});
+    if (index>=elementOffset && elements.length<limit) {
+      const r=(proxy || e).getBoundingClientRect();
+      const options=new Map();
+      if(tag==='select')Array.from(e.options).slice(optionOffset,optionOffset+50).forEach((o,i)=>
+        options.set(ref+':o'+(optionOffset+i),{node:o,value:o.value,text:o.text}));
+      refs.set(ref, {element:e, target_id:targetId, name:name(e), role, options, parent:e.parentElement, scope,
+        href:e.tagName==='A'?e.href:null,formAction:e.form?.action || null,
+        box:[r.x,r.y,r.width,r.height]});
+      elements.push({ref, target_id:targetId, role, tag, name:Array.from(name(e)).slice(0,300).join(''),
+        name_truncated:Array.from(name(e)).length>300,
+        scope:scope?{tag:scope.tag,id:scope.id.length<=300?scope.id:undefined,
+          keys:scope.keys.filter(([k,v])=>v!==null && v.length<=300),
+          text:Array.from(scope.text).slice(0,500).join(''),
+          truncated:scope.text.length>500 || scope.keys.some(([k,v])=>v?.length>300)}:undefined,
+        type:tag==='input'?e.type:e.getAttribute('type') || undefined,
+        editable:e.isContentEditable || tag==='textarea' ||
+          (tag==='input' && /^(text|search|email|password|tel|url|number)$/.test(e.type)) ||
+          (tag==='input' && /^(__VALUE_INPUTS__)$/.test(e.type)),
+        readonly:!!e.readOnly,
+        selector:e.id && e.getRootNode()===scopeRoot &&
+          scopeRoot.querySelectorAll('#'+CSS.escape(e.id)).length===1
+          ? '#'+CSS.escape(e.id):undefined,
+        href:tag==='a'?e.href:undefined,
+        options:tag==='select'?Array.from(e.options).slice(optionOffset,optionOffset+50)
+          .map((o,i)=>({value:o.value.length<=512?o.value:undefined,
+          value_omitted:o.value.length>512,option_ref:ref+':o'+(optionOffset+i),
+          text:Array.from(o.text).slice(0,300).join(''),disabled:o.disabled ||
+            (o.parentElement?.tagName==='OPTGROUP' && o.parentElement.disabled)})):undefined,
+        option_offset:tag==='select'?optionOffset:undefined,
+        total_options:tag==='select'?e.options.length:undefined,
+        next_option_offset:tag==='select'
+          ?(e.options.length>optionOffset+50?optionOffset+50:null):undefined,
+        disabled:!!e.disabled || e.matches(':disabled') ||
+          e.getAttribute('aria-disabled')==='true',
+        checked:typeof e.checked==='boolean'?e.checked:undefined,
+        selected_text:tag==='select'?e.selectedOptions?.[0]?.text:undefined,
+        expanded:e.getAttribute('aria-expanded') || undefined,
+        box:{x:r.x,y:r.y,width:r.width,height:r.height}});
+    }
+  }
   // Largest first: the main list or pane matters more than small code blocks.
   const scrollContainers=scrollAreas.sort((a,b)=>b.area-a.area).slice(0,10).map(({element:e},i)=>{
     let ref=[...refs].find(([,v])=>v.element===e)?.[0];
@@ -289,7 +316,34 @@ COLLECT = (
     width:innerWidth,height:innerHeight,
     revision:window.__deepseekPageRevision.value};
   window.__deepseekObservation=state;
-  return {url:location.href,title:document.title,
+  let editor;
+  if(includeEditable){
+    const root=roots[0],selection=root.ownerDocument.getSelection(),
+      blockTags='p,h1,h2,h3,h4,h5,h6,li,pre,blockquote';
+    const blocks=Array.from(root.querySelectorAll(blockTags)).filter(e=>visible(e) && onScreen(e));
+    editor={tag:root.tagName.toLowerCase(),selection:null,total_visible_blocks:blocks.length,
+      visible_blocks:blocks.slice(0,20).map(e=>({tag:e.tagName.toLowerCase(),
+        text:readText(e,true).slice(0,300)}))};
+    if(selection?.rangeCount && root.contains(selection.anchorNode) && root.contains(selection.focusNode)){
+      const offset=(node,end)=>{const r=root.ownerDocument.createRange();
+        r.selectNodeContents(root);r.setEnd(node,end);return r.toString().length};
+      const selected=selection.toString();
+      editor.selection={anchor:offset(selection.anchorNode,selection.anchorOffset),
+        focus:offset(selection.focusNode,selection.focusOffset),unit:'utf16',
+        text:selected.slice(0,1000),text_truncated:selected.length>1000,
+        collapsed:selection.isCollapsed};
+      const p=selection.anchorNode.nodeType===1?selection.anchorNode:selection.anchorNode.parentElement;
+      const block=p?.closest(blockTags);
+      if(block && root.contains(block)){
+        // Enclosing lists and headings: an li inside an h2 is not a standalone heading.
+        const ancestors=[];
+        for(let e=block.parentElement;e && e!==root;e=e.parentElement)ancestors.push(e.tagName.toLowerCase());
+        editor.current_block={tag:block.tagName.toLowerCase(),ancestor_tags:ancestors,
+          text:readText(block,true).slice(0,1000)};
+      }
+    }
+  }
+  return {url:location.href,title:document.title,editor,
     text:text.slice(textOffset,textOffset+16000).join(''),elements,
     text_offset:textOffset, element_offset:elementOffset,
     next_text_offset:text.length>textOffset+16000?textOffset+16000:null,
@@ -339,7 +393,9 @@ async def evaluate(client: Any, expression: str) -> Any:
         },
     )
     if result.get("exceptionDetails"):
-        raise RuntimeError("Page evaluation failed: " + str(result["exceptionDetails"].get("text")))
+        details = result["exceptionDetails"]
+        description = (details.get("exception") or {}).get("description") or details.get("text")
+        raise RuntimeError("Page evaluation failed: " + str(description)[:1000])
     value = result.get("result", {}).get("value")
     if value is None:
         raise RuntimeError("Page observation unavailable")
@@ -412,6 +468,7 @@ async def observe(
     frame_offset: int = 0,
     shadow_path: list[str] | None = None,
     continuation_id: str | None = None,
+    include_editable: bool = False,
 ) -> dict[str, Any]:
     from deepseek_tui.browser.frames import FrameContext, discover_frames
 
@@ -445,6 +502,8 @@ async def observe(
                 "optionOffset": option_offset,
                 "shadowPath": shadow_path or [],
                 "continuation": continuation_id,
+                "screenFirst": not full,
+                "includeEditable": include_editable,
             }
         )
         page = await evaluate(client, f"({COLLECT})({args})")
@@ -467,6 +526,7 @@ async def observe(
             "control_generation": run.generation,
             "scope_selector": selector,
             "scope_shadow_path": shadow_path or [],
+            **({"include_editable": True} if include_editable else {}),
         }
         run.latest_observation = observation
         if not frame_id:
@@ -634,8 +694,18 @@ async def target(run: Any, action: Any, *, scroll: bool = True) -> dict[str, Any
           return {error:'stale_option'};
         window.__deepseekSelectedOption=option.node;
       }
-      if (a.scroll) hitTarget.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
-      const r=hitTarget.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
+      let r=hitTarget.getBoundingClientRect();
+      // Scrolling an on-screen panel must not also move the page around it. Elsewhere,
+      // centering keeps the target clear of sticky headers and footers.
+      const win=hitTarget.ownerDocument.defaultView,
+        onScreen=r.right>0 && r.bottom>0 && r.left<win.innerWidth && r.top<win.innerHeight;
+      if (a.scroll && (a.action!=='scroll' || !onScreen)) {
+        hitTarget.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+        r=hitTarget.getBoundingClientRect();
+      }
+      // The middle of the visible part: a tall panel's own middle may be off screen.
+      const x=(Math.max(0,r.left)+Math.min(win.innerWidth,r.right))/2,
+        y=(Math.max(0,r.top)+Math.min(win.innerHeight,r.bottom))/2;
       const hit=hitTarget.getRootNode().elementFromPoint?.(x,y) ||
         hitTarget.ownerDocument.elementFromPoint(x,y);
       if (!hit || (hit!==hitTarget && !hitTarget.contains(hit))) return {error:'target_obscured'};

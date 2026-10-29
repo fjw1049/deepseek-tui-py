@@ -118,16 +118,20 @@ async def type_text(run, text: str, *, client=None) -> None:
     """Key by key like a person, so per-key handlers (code boxes, masks) respond.
 
     Runs of characters without a key (other scripts, emoji) arrive as one committed text,
-    as from an IME.
+    as from an IME. A tab is text too: as a key it moves the rest into the next field.
     """
     client = client or run.session._internal.client
-    if len(text) > 300:  # Long passages would take thousands of round trips.
+    # Long passages would take thousands of round trips. A line break, as a key or committed
+    # on its own, submits a single-line field's form, so multi-line text is committed whole.
+    if len(text) > 300 or "\n" in text or "\r" in text:
         await client.send("Input.insertText", {"text": text})
         return
     composed = ""
     for char in text:
-        key = {" ": "Space", "\n": "Enter", "\t": "Tab"}.get(char, char)
+        key = "Space" if char == " " else char
         try:
+            if char == "\t":
+                raise ValueError(char)
             key_event(key)
         except ValueError:
             composed += char
@@ -192,6 +196,24 @@ async def dispatch_input(run, body: BrowserInput, *, client=None) -> dict:
                 command = "redo" if body.modifiers & 8 else "undo"
             if command:
                 params["commands"] = [command]
+        if body.event == "keyDown":
+            # Synthetic keys carry no native text-navigation; editors need the command.
+            modifiers = body.modifiers & 7
+            movement = None
+            if modifiers in {2, 4} and body.key in {"Home", "End"}:
+                movement = ("moveToBeginningOfDocument" if body.key == "Home"
+                            else "moveToEndOfDocument")
+            elif modifiers == 4:
+                movement = {"ArrowUp": "moveToBeginningOfDocument",
+                            "ArrowDown": "moveToEndOfDocument",
+                            "ArrowLeft": "moveToBeginningOfLine",
+                            "ArrowRight": "moveToEndOfLine"}.get(body.key)
+            elif modifiers in {1, 2}:
+                movement = {"ArrowLeft": "moveWordLeft",
+                            "ArrowRight": "moveWordRight"}.get(body.key)
+            if movement:
+                params["commands"] = [movement + (
+                    "AndModifySelection" if body.modifiers & 8 else "")]
         await client.send(
             "Input.dispatchKeyEvent",
             params,

@@ -8,6 +8,22 @@ from deepseek_tui.engine.context import compact_tool_result_for_context
 from deepseek_tui.tools.registry import ToolResult
 
 
+def test_navigation_controls_leave_room_for_document_text():
+    from deepseek_tui.browser.context import project_result
+
+    data = {"success": True, "observation": {
+        "observation_id": "document", "text": "Article content. " * 2000,
+        "elements": [{"ref": f"e{i}", "role": "link", "name": "Navigation " * 20}
+                     for i in range(250)],
+    }}
+    output = project_result(data, 18000)
+    observation = json.loads(output)['observation']
+    assert len(output) <= 18000
+    assert len(observation['text']) >= 8000
+    assert observation['elements']
+    assert observation['next_element_offset'] == len(observation['elements'])
+
+
 @pytest.mark.parametrize("budget", [6000, 12000, 36000])
 @pytest.mark.parametrize("branch", ["status", "scope", "unknown"])
 def test_every_response_branch_obeys_budget(budget, branch):

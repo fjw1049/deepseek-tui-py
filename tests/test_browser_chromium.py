@@ -2617,3 +2617,158 @@ async def test_recorded_new_tab_link_does_not_open_twice(chrome, monkeypatch):
     fresh = [t for t in after if t["tab_id"] not in before]
     assert len([t for t in fresh if t["url"].endswith("/child")]) == 1
     assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == "replayed 1"
+
+
+async def test_editor_descendants_do_not_flood_observation(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client,
+        "document.body.innerHTML='<div contenteditable>'+"
+        "Array.from({length:300},(_,i)=>'<p>Paragraph '+i+'</p>').join('')+'</div>';true")
+    observation = await read(service)
+    assert observation['total_elements'] == 1
+    assert len(observation['elements']) == 1
+
+
+async def test_interactive_prioritizes_viewport_but_full_retains_document_order(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client, """document.body.innerHTML=
+      Array.from({length:180},(_,i)=>
+        '<button style="display:block;height:30px">Row '+i+'</button>').join('');
+      window.scrollTo(0,document.body.scrollHeight);true""")
+    current = (await service.action('t', BrowserAction(action='observe')))['observation']
+    assert current['elements'][0]['name'] != 'Row 0'
+    assert any(e['name'] == 'Row 179' for e in current['elements'][:40])
+    full = await read(service)
+    assert full['elements'][0]['name'] == 'Row 0'
+    continued = (await service.action('t', BrowserAction(
+        action='observe', scope_ref=full['observation_id'], element_offset=150)))['observation']
+    assert continued['level'] == 'full'
+    assert continued['elements'][0]['name'] == 'Row 150'
+
+
+async def test_scoped_editor_read_exposes_structure_and_selection_only_on_request(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client, """document.body.innerHTML=
+      '<input type=password value=SECRET><div contenteditable id=editor>'+
+      '<h2>Previous week</h2><p id=p>Keep this paragraph</p></div>';
+      const r=document.createRange();r.setStart(p.firstChild,5);r.setEnd(p.firstChild,9);
+      getSelection().removeAllRanges();getSelection().addRange(r);true""")
+    normal = await read(service)
+    assert 'Keep this paragraph' not in normal['text']
+    assert not normal.get('editor')
+    doc = (await service.action('t', BrowserAction(
+        action='observe', selector='#editor', include_editable=True)))['observation']
+    assert 'Keep this paragraph' in doc['text']
+    assert doc['editor']['selection']['text'] == 'this'
+    assert doc['editor']['current_block']['tag'] == 'p'
+    assert doc['editor']['visible_blocks'][0]['tag'] == 'h2'
+    assert 'SECRET' not in str(doc)
+    continued = (await service.action('t', BrowserAction(
+        action='observe', scope_ref=doc['observation_id'], text_offset=5)))['observation']
+    assert continued['include_editable']
+    assert continued['editor']['selection']['text'] == 'this'
+
+
+async def test_scrolling_visible_panel_preserves_outer_scroll(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, """document.body.innerHTML='<div style=height:1200px></div>'+
+      '<div id=list style="height:300px;overflow:auto"><div style=height:3000px>List</div></div>'+
+      '<div style=height:2000px></div>';window.scrollTo(0,900);true""")
+    observation = await read(service)
+    panel = next(e for e in observation['scroll_containers'] if e['tag'] == 'div')
+    before = await evaluate(client, 'window.scrollY')
+    result = await act(
+        service, observation, 'scroll', ref=panel['ref'], direction='down', amount=100)
+    assert result['success']
+    assert await evaluate(client, 'window.scrollY') == before
+    assert await evaluate(client, 'document.querySelector("#list").scrollTop') > 0
+
+
+async def test_editor_navigation_shortcuts_move_and_select_actual_text(chrome):
+    from deepseek_tui.browser.input import press_key
+
+    _, run = chrome
+    client = run.session._internal.client
+    for key, anchor, focus in [
+        ('Meta+End', 22, 22), ('Ctrl+End', 22, 22),
+        ('Meta+ArrowDown', 22, 22), ('Meta+Home', 0, 0),
+        ('Ctrl+Home', 0, 0), ('Meta+ArrowUp', 0, 0),
+        ('Meta+Shift+ArrowLeft', 5, 0), ('Meta+Shift+ArrowRight', 5, 11),
+        ('Ctrl+Shift+End', 5, 22), ('Meta+Shift+ArrowDown', 5, 22),
+        ('Alt+Shift+ArrowLeft', 5, 0), ('Ctrl+Shift+ArrowRight', 5, 11),
+    ]:
+        await evaluate(client, """(() => {document.body.innerHTML=
+          '<div id=editor contenteditable><p>Hello world</p><p>Second line</p></div>';
+          editor.focus();const r=document.createRange();r.setStart(editor.firstChild.firstChild,5);
+          r.collapse(true);getSelection().removeAllRanges();getSelection().addRange(r);return true})()""")
+        await press_key(run, key)
+        state = await evaluate(client, """(() => {const s=getSelection();
+          const offset=(n,p)=>{const r=document.createRange();r.selectNodeContents(editor);
+            r.setEnd(n,p);return r.toString().length};
+          return [offset(s.anchorNode,s.anchorOffset),offset(s.focusNode,s.focusOffset)];})()""")
+        assert state == [anchor, focus], (key, state)
+
+
+async def test_editable_text_checks_require_explicit_scoped_read(chrome):
+    from deepseek_tui.browser.service import BrowserActionError
+
+    service, run = chrome
+    await evaluate(run.session._internal.client, """document.body.innerHTML=
+      '<div contenteditable id=editor><h2>Week 43</h2><p>Saved draft</p></div>'+
+      '<input type=password id=password value=SECRET><textarea id=field>PRIVATE</textarea>';true""")
+    for action in ('check_text', 'wait'):
+        default = await service.action('t', BrowserAction(
+            action=action, selector='#editor', text='Saved draft', timeout_ms=50))
+        assert not default['success']
+        checked = await service.action('t', BrowserAction(
+            action=action, selector='#editor', text='Saved draft',
+            include_editable=True, timeout_ms=50))
+        assert checked['success'], checked
+    for selector, text in (('#password', 'SECRET'), ('#field', 'PRIVATE')):
+        with pytest.raises(BrowserActionError, match='one contenteditable document'):
+            await service.action('t', BrowserAction(
+                action='check_text', selector=selector, text=text, include_editable=True))
+
+
+async def test_editor_observation_exposes_nested_formatting(chrome):
+    service, run = chrome
+    await evaluate(run.session._internal.client, """(() => {
+      document.body.innerHTML='<article id=editor contenteditable><h2><ul><li>Title</li></ul></h2></article>';
+      editor.focus();const r=document.createRange();r.selectNodeContents(editor.querySelector('li'));
+      r.collapse(false);getSelection().removeAllRanges();getSelection().addRange(r);return true;
+    })()""")
+    observed = await service.action('t', BrowserAction(
+        action='observe', selector='#editor', include_editable=True))
+    block = observed['observation']['editor']['current_block']
+    assert block['tag'] == 'li'
+    assert block['ancestor_tags'] == ['ul', 'h2']
+
+
+async def test_click_scrolls_target_clear_of_fixed_header_and_footer(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, """document.body.innerHTML=
+      '<div style="position:fixed;top:0;left:0;right:0;height:90px;background:#333;z-index:9"></div>'+
+      '<div style="position:fixed;bottom:0;left:0;right:0;height:90px;background:#333;z-index:9"></div>'+
+      '<div style=height:3000px></div><button id=b>Go</button><div style=height:3000px></div>';
+      b.onclick=()=>b.dataset.clicked='yes';true""")
+    for start in (0, 6000):
+        await evaluate(client, f"scrollTo(0,{start});delete b.dataset.clicked;true")
+        observation = await read(service)
+        button = next(e for e in observation['elements'] if e['name'] == 'Go')
+        result = await act(service, observation, 'click', ref=button['ref'])
+        assert result['success'], result
+        assert await evaluate(client, "b.dataset.clicked || 'no'") == 'yes'
+
+
+async def test_typed_line_break_does_not_submit_the_form(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, """document.body.innerHTML='<form id=f><input id=q aria-label=Query></form>';
+      f.onsubmit=e=>{e.preventDefault();f.dataset.submitted='yes'};true""")
+    observation = await read(service)
+    field = next(e for e in observation['elements'] if e['name'] == 'Query')
+    result = await act(service, observation, 'type', ref=field['ref'], text='line1\nline2')
+    assert result['success'], result
+    assert await evaluate(client, "f.dataset.submitted || 'no'") == 'no'

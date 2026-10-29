@@ -150,6 +150,11 @@ def project_result(result: dict[str, Any], budget: int) -> str:
         return encode(data)
     text = observation.get("text", "")
     observation.update(text="", elements=[], context_truncated=True)
+    if isinstance(observation.get("editor"), dict):
+        editor = observation["editor"]
+        editor["visible_blocks"] = editor.get("visible_blocks", [])[:3]
+        editor["blocks_truncated"] = (
+            editor.get("total_visible_blocks", 0) > len(editor["visible_blocks"]))
     scopes = _Scopes(observation)
     observation["scope_ref"] = observation.get("observation_id")
     for key in ("scope_selector", "scope_shadow_path", "scope_frame_selector"):
@@ -178,6 +183,8 @@ def project_result(result: dict[str, Any], budget: int) -> str:
             for t in sorted(data["tabs"], key=lambda t: not t.get("active"))[:2]
         ]
         data["tabs_truncated"] = len(result["tabs"]) > 2
+    # Navigation links must not crowd out a long document's readable text.
+    text_reserve = max(1200, min(len(encode(text)), budget // 2))
     for element in elements:
         item = _compact_element(element)
         added = scopes.bind(item)
@@ -192,12 +199,12 @@ def project_result(result: dict[str, Any], budget: int) -> str:
                 for o in item["options"][:5]
             ]
         observation["elements"].append(item)
-        while len(encode(data)) > budget - 1200 and len(item.get("options", [])) > 1:
+        while len(encode(data)) > budget - text_reserve and len(item.get("options", [])) > 1:
             item["options"].pop()
         if "options" in item and len(item["options"]) < len(element["options"]):
             item["next_option_offset"] = item.get("option_offset", 0) + len(item["options"])
         # Reserve room for readable text and continuation metadata.
-        if len(encode(data)) > budget - 1200:
+        if len(encode(data)) > budget - text_reserve:
             observation["elements"].pop()
             scopes.unbind(added)
             if not observation["elements"]:
