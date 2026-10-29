@@ -127,7 +127,7 @@ function trimHighlightCache(): void {
 }
 
 function loadShiki(): Promise<typeof import('shiki')> {
-  shikiPromise ??= import('shiki')
+  shikiPromise ??= import('shiki').catch((error) => { shikiPromise = null; throw error })
   return shikiPromise
 }
 
