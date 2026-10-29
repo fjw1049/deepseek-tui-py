@@ -379,6 +379,10 @@ export function MessageTimeline({
       const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
       stickToBottomRef.current = distanceToBottom < 96
       if (scrollMemory) { scrollMemory.top = el.scrollTop; scrollMemory.atBottom = stickToBottomRef.current }
+      // Back at the bottom of a window that already reaches the latest turn: follow new turns again.
+      if (stickToBottomRef.current && historyEnd !== null && windowEnd === turns.length) {
+        setHistoryEnd(null)
+      }
       if (hiddenTurnCount > 0 && el.scrollTop <= TOP_LOAD_TRIGGER_PX) {
         loadEarlierTurns()
       }
@@ -424,7 +428,7 @@ export function MessageTimeline({
       el.removeEventListener('touchmove', markUserScroll)
       el.removeEventListener('keydown', onKeyDown)
     }
-  }, [hiddenTurnCount, loadEarlierTurns, scrollMemory])
+  }, [hiddenTurnCount, loadEarlierTurns, scrollMemory, historyEnd, windowEnd, turns.length])
 
   const { spacerPx: tailAnchorSpacerPx, holdRef: tailAnchorHoldRef } = useTailAnchorScroll({
     containerRef,
@@ -497,6 +501,8 @@ export function MessageTimeline({
     // Tail-anchor owns the send scroll: pin the user bubble to the top instead
     // of jumping to the document bottom.
     stickToBottomRef.current = false
+    // A sent message must be visible even while the reader browses history.
+    setHistoryEnd(null)
   }, [currentTurnUserId])
 
   useEffect(() => {
@@ -589,9 +595,9 @@ export function MessageTimeline({
     }
     setVisibleTurnCount((count) => {
       if (!shouldCollapseHistory) return turns.length
-      // Same thread: once the reader has loaded past the default page, grow
-      // with appended turns so loaded history is not yanked away (this also
-      // covers crossing the collapse threshold). An untouched view stays bounded.
+      // Same thread: a reader browsing history keeps their window (sending or
+      // returning to the bottom resumes following). Otherwise the view stays
+      // bounded, re-collapsing once the conversation crosses the threshold.
       if (historyEnd !== null) return count
       if (delta > 0 && scope.turnCount <= AUTO_COLLAPSE_THRESHOLD) return TURN_PAGE_SIZE
       return Math.min(turns.length, Math.min(MAX_VISIBLE_TURNS, Math.max(count, TURN_PAGE_SIZE)))

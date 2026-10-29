@@ -20,6 +20,7 @@ vi.mock('../chat/tool/primitives', async (importOriginal) => ({ ...await importO
 vi.mock('../chat/StreamdownAssistant', () => ({
   StreamdownAssistant: ({ text }: { text: string }) => createElement('p', null, text)
 }))
+vi.mock('../chat/ViewportContent', () => ({ ViewportContent: ({ children }: { children: import('react').ReactNode }) => children }))
 const agent = (id: string, summary?: string): Extract<ChatBlock, { kind: 'subagent' }> => ({
   kind: 'subagent', id, agentId: id, agentType: 'code', cardKind: 'delegate',
   status: summary ? 'completed' : 'running', summary, prompt: `Assignment ${id}`,

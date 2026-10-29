@@ -70,3 +70,12 @@ it('bounds repeated history loads and keeps newer messages reachable', async () 
   await act(async () => latest!.click())
   expect(host.querySelector('#block-u39')).not.toBeNull()
 })
+it('shows a sent message after the reader loaded earlier history', async () => {
+  await render()
+  const button = host.querySelector<HTMLButtonElement>('[data-history-earlier]')!
+  await act(async () => button.click())
+  await act(async () => useChatStore.setState({ currentTurnUserId: 'u40' }))
+  await renderBlocks([...blocks, ...nextTurn])
+  expect(host.querySelector('#block-u40')).not.toBeNull()
+  expect(host.querySelectorAll('.ds-message-turn').length).toBeLessThanOrEqual(36)
+})

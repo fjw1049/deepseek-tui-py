@@ -12,6 +12,7 @@ import type { ChatBlock } from '../../agent/types'
 vi.mock('./StreamdownAssistant', () => ({
   StreamdownAssistant: ({ text }: { text: string }) => createElement('p', null, text)
 }))
+vi.mock('./ViewportContent', () => ({ ViewportContent: ({ children }: { children: import('react').ReactNode }) => children }))
 
 const initial = useChatStore.getState()
 const initialPanel = useRunPanelStore.getState()
