@@ -2775,9 +2775,11 @@ class RuntimeThreadManager:
         if scope != "session":
             raise ValueError(f"unsupported usage scope: {scope}")
         merged: dict[str, dict[str, Any]] = {}
-        for thread in self.store.list_threads():
+        threads = self.store.list_threads()
+        turns_by_thread = self.store.list_turns_by_thread(threads)
+        for thread in threads:
             fallback_model = thread.model or "deepseek-chat"
-            for turn in self.store.list_turns_for_thread(thread.id):
+            for turn in turns_by_thread.get(thread.id, []):
                 if turn.status != RuntimeTurnStatus.COMPLETED:
                     continue
                 if turn.ended_at is not None and turn.ended_at < self._session_started_at:
@@ -7516,12 +7518,14 @@ class RuntimeThreadManager:
         """Mark abandoned turns interrupted without stealing a live runtime."""
         from deepseek_tui.workspace.project_lease import ThreadLease
 
+        candidates = self.store.recovery_turn_ids_by_thread()
         now = datetime.now(timezone.utc)
         for thread in self.store.list_threads():
             lease = ThreadLease(thread.id)
             if not lease.acquire_blocking(nonblocking=True):
                 continue
             try:
+                thread = self.store.load_thread(thread.id)
                 thread_changed = False
                 waiting_on = (thread.publish_waiting_on or "").strip()
                 if waiting_on:
@@ -7544,7 +7548,13 @@ class RuntimeThreadManager:
                     if stale_waiter:
                         thread.publish_waiting_on = None
                         thread_changed = True
-                for turn in self.store.list_turns_for_thread(thread.id):
+                for turn_id in candidates.get(thread.id, []):
+                    try:
+                        turn = self.store.load_turn(turn_id)
+                    except (OSError, ValueError):
+                        continue
+                    if not self.store._visible_import_turn(turn, thread):
+                        continue
                     if turn.status not in (
                         RuntimeTurnStatus.QUEUED,
                         RuntimeTurnStatus.IN_PROGRESS,

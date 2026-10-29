@@ -446,6 +446,33 @@ class RuntimeThreadStore:
                 counts[record.thread_id] = counts.get(record.thread_id, 0) + 1
         return counts
 
+    def list_turns_by_thread(self, threads: list[ThreadRecord]) -> dict[str, list[TurnRecord]]:
+        """Read visible turns for a batch of threads in one directory scan."""
+        by_id = {thread.id: thread for thread in threads}
+        grouped: dict[str, list[TurnRecord]] = {}
+        for path in self._turns_dir.glob("*.json"):
+            turn = self._load_listing_record(path, TurnRecord)
+            if turn is None or turn.thread_id not in by_id:
+                continue
+            if self._visible_import_turn(turn, by_id[turn.thread_id]):
+                grouped.setdefault(turn.thread_id, []).append(turn)
+        for turns in grouped.values():
+            turns.sort(key=lambda turn: turn.created_at)
+        return grouped
+
+    def recovery_turn_ids_by_thread(self) -> dict[str, list[str]]:
+        """Scan once for recovery candidates; callers reload under the thread lease."""
+        from deepseek_tui.server.threads.models import RuntimeTurnStatus
+
+        candidates: dict[str, list[str]] = {}
+        for path in self._turns_dir.glob("*.json"):
+            turn = self._load_listing_record(path, TurnRecord)
+            if turn is not None and turn.status in (
+                RuntimeTurnStatus.QUEUED, RuntimeTurnStatus.IN_PROGRESS
+            ):
+                candidates.setdefault(turn.thread_id, []).append(turn.id)
+        return candidates
+
     def list_turns_for_thread(self, thread_id: str) -> list[TurnRecord]:
         out: list[TurnRecord] = []
         if not self._turns_dir.exists():

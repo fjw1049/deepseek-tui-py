@@ -306,3 +306,31 @@ def test_permanent_lock_error_raises_instead_of_returning_false(
     monkeypatch.setattr(project_lease_module.fcntl, "flock", _boom)
     with pytest.raises(OSError, match="no space left"):
         lease.acquire_blocking(nonblocking=True)
+
+@pytest.mark.asyncio
+async def test_recovery_scans_turns_once_for_many_threads(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    manager = RuntimeThreadManager(
+        config=Config(features=FeatureConfig(mcp=False, tasks=False, subagents=False, automations=False)),
+        workspace=tmp_path,
+        manager_cfg=RuntimeThreadManagerConfig.from_task_data_dir(tmp_path / "tasks"),
+        llm_client=object(),
+    )
+    for i in range(12):
+        thread = await manager.create_thread(CreateThreadRequest())
+        manager.store.save_turn(TurnRecord(
+            id=f"turn_{i}", thread_id=thread.id,
+            status=RuntimeTurnStatus.IN_PROGRESS if i == 0 else RuntimeTurnStatus.COMPLETED,
+            input_summary="test", created_at=datetime.now(timezone.utc),
+        ))
+    reads = []
+    original = manager.store._load_listing_record
+    def record_read(path, model):
+        if model is TurnRecord:
+            reads.append(path)
+        return original(path, model)
+    monkeypatch.setattr(manager.store, "_load_listing_record", record_read)
+    manager._recover_interrupted_state()
+    assert len(reads) == 12
+    assert manager.store.load_turn("turn_0").status == RuntimeTurnStatus.INTERRUPTED
+    assert manager.store.load_turn("turn_1").status == RuntimeTurnStatus.COMPLETED
