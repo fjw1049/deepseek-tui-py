@@ -54,7 +54,9 @@ class BrowserUseTool(ToolSpec):
             "For scrolling a list/panel, target its scroll_containers ref or fresh screenshot "
             "coordinates; "
             "without a target the wheel is sent at viewport center, which may be outside the list. "
-            "Actions return fresh observations of interactive elements automatically; observe "
+            "Actions return fresh observations of interactive elements automatically; on the "
+            "same page they list only changes since changes_since: refs keep working within a "
+            "page, and unlisted elements and text are unchanged. Observe for a full view. "
             "level=full for more. execution is dispatch status; "
             "effect=unchecked does NOT mean the user's task succeeded. If observation fails "
             "after execution, observe again instead of repeating the completed operation. "
@@ -62,7 +64,11 @@ class BrowserUseTool(ToolSpec):
             "Operate this Workbench thread's browser (native shared pages or a temporary "
             "private session). Open an http(s) page, "
             "observe its DOM, then click/fill using returned refs or observed selectors. "
-            "Use type for inserting text at the focused field; fill replaces a targeted field. "
+            "type sends real keystrokes at the focused field (per-key handlers such as code "
+            "boxes respond); fill replaces a targeted field's whole value. "
+            "drag presses on ref and releases over to_ref, both from the same observation. "
+            "console reads the page's console messages and uncaught errors; action results "
+            "also list new console_errors. "
             "Use check_text for expected text, optionally scoped to a unique selector. "
             "Screenshot saves evidence; coordinate clicks require its current observation_id. "
             "record_start/record_stop produce a step animation, not continuous video. "
@@ -110,6 +116,7 @@ class BrowserUseTool(ToolSpec):
             "url_contains": "URL substring used by wait, tested against the current URL.",
             "url": "HTTP(S) address to open; do not include credentials.",
             "ref": "Exact element reference from the latest observation.",
+            "to_ref": "For drag, the destination element reference from the same observation.",
             "observation_id": "Latest observation ID; required for all page interaction actions.",
             "selector": "CSS selector for a unique observed target, or a read/wait scope.",
             "text": (
@@ -156,6 +163,7 @@ class BrowserUseTool(ToolSpec):
                 "status",
                 "operation_status",
                 "downloads",
+                "console",
                 "tabs",
                 "observe",
                 "describe",
@@ -177,7 +185,7 @@ class BrowserUseTool(ToolSpec):
 
     def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
         return input_data.get("action") in {
-            "status", "operation_status", "downloads", "tabs", "observe", "describe", "check_text", "wait", "request_assistance",
+            "status", "operation_status", "downloads", "console", "tabs", "observe", "describe", "check_text", "wait", "request_assistance",
         }
 
     def supports_parallel(self) -> bool:

@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Draft editor (dev build)</title></head><body>
+<h1>Draft editor</h1>
+<textarea id="t">Quarterly update draft</textarea><br>
+<button id="save">Save draft</button> <span id="status"></span>
+<script>
+console.log('[app] editor booted, build 2026.10.28-dev');
+document.getElementById('save').addEventListener('click', () => {
+  document.getElementById('status').textContent = 'Something went wrong.';
+  console.warn('[storage] draft size near quota');
+  throw new Error('DraftStore.persist failed: quota of 42 KB exceeded (draftId=7f3a)');
+});
+</script></body></html>

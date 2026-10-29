@@ -127,6 +127,11 @@ def observation_of(result: ToolResult) -> _Observation | None:
         # Receipts and ids change on every call; only the page's own content counts.
         observation = browser.get("observation")
         text = observation.get("text", "") if isinstance(observation, dict) else ""
+        receipt = browser.get("receipt") or {}
+        # Field values stay out of observations, yet a verified field change is progress.
+        if receipt.get("effect") == "confirmed" and receipt.get("action") in {
+                "fill", "type", "select", "set_checked", "scroll"}:
+            text += "\n[confirmed change " + str(receipt.get("action_id")) + "]"
     else:
         text = result.content or ""
     try:

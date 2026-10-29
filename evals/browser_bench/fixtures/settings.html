@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Settings</title><script src="bench.js"></script>
+<style>
+body{font-family:sans-serif;padding:16px}
+.toggle input{opacity:0;position:absolute;width:1px;height:1px}
+.toggle .knob{display:inline-block;width:32px;height:16px;border-radius:8px;background:#bbb;vertical-align:middle}
+.toggle input:checked + .knob{background:#2a7}
+.slider{display:inline-block;position:relative;width:220px;height:10px;background:#ddd;border-radius:5px;vertical-align:middle}
+.slider .fill{position:absolute;left:0;top:0;bottom:0;background:#36c;border-radius:5px}
+.btn{display:inline-block;background:#36c;color:#fff;padding:6px 14px;border-radius:4px;cursor:pointer}
+</style></head><body>
+<h1>Notification settings</h1>
+<p><label class="toggle"><input type="checkbox" id="notify"><span class="knob"></span> Email notifications</label></p>
+<p>Volume <span class="slider" role="slider" id="vol" aria-label="Volume" aria-valuemin="0" aria-valuemax="10" aria-valuenow="3" tabindex="0"><span class="fill"></span></span> <span id="volv">3</span></p>
+<p><span class="btn" id="save">Save settings</span> <span id="saved"></span></p>
+<script>
+const vol = document.getElementById('vol');
+function setVol(v){ v=Math.max(0,Math.min(10,v)); vol.setAttribute('aria-valuenow', v); vol.querySelector('.fill').style.width=(v*10)+'%'; document.getElementById('volv').textContent=v; }
+setVol(3);
+vol.addEventListener('keydown', e => {
+  const v = +vol.getAttribute('aria-valuenow');
+  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { setVol(v + 1); e.preventDefault(); }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { setVol(v - 1); e.preventDefault(); }
+  if (e.key === 'Home') setVol(0); if (e.key === 'End') setVol(10);
+});
+vol.addEventListener('mousedown', e => { const r = vol.getBoundingClientRect(); setVol(Math.round((e.clientX - r.left) / r.width * 10)); vol.focus(); });
+document.getElementById('save').addEventListener('click', () => {
+  report('save', {notify: document.getElementById('notify').checked, volume: +vol.getAttribute('aria-valuenow')});
+  document.getElementById('saved').textContent = 'Saved';
+});
+</script></body></html>

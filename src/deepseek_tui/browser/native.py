@@ -21,6 +21,8 @@ class NativeBrowserEvents:
         self.changed = asyncio.Event()
         self.requests = {}  # Document/XHR/Fetch requests in flight: id -> (client, seen at)
         self.loading = set()  # Clients whose main frame is loading a document
+        self.console = []  # Recent console messages and uncaught errors, page-written
+        self.console_seq = 0
 
     async def install(self, client):
         if client in self.clients:
@@ -136,6 +138,23 @@ class NativeBrowserEvents:
             blocked.append(str(params.get("url") or "about:blank")[:300])
             del blocked[:-20]
 
+        def console_called(params):
+            frames = (params.get("stackTrace") or {}).get("callFrames") or [{}]
+            text = " ".join(str(arg.get("value", arg.get("description", arg.get("type", ""))))
+                            for arg in params.get("args", []))
+            self._log(client, params.get("type", "log"), text, frames[0])
+
+        def exception_thrown(params):
+            details = params.get("exceptionDetails", {})
+            text = (details.get("exception") or {}).get("description") or details.get("text", "")
+            self._log(client, "error", text, details)
+
+        def log_entry(params):
+            entry = params.get("entry", {})
+            # Browsers request a favicon from every site; its absence is never the page's error.
+            if not str(entry.get("url", "")).split("?")[0].endswith("/favicon.ico"):
+                self._log(client, entry.get("level", "info"), entry.get("text", ""), entry)
+
         def loading(started):
             def update(params):
                 if params.get("frameId") != state["identity"][0]:
@@ -159,15 +178,42 @@ class NativeBrowserEvents:
             "Browser.downloadWillBegin": download_started,
             "Browser.downloadProgress": download_progress,
             "Workbench.popupBlocked": popup_blocked,
+            "Runtime.consoleAPICalled": console_called,
+            "Runtime.exceptionThrown": exception_thrown,
+            "Log.entryAdded": log_entry,
         }.items():
             client.on(event, callback)
         self.clients.add(client)
+        # Enabling replays messages logged before the agent attached.
+        for domain in ("Runtime", "Log"):
+            try:
+                await client.send(domain + ".enable")
+            except Exception:  # noqa: BLE001 - console capture is diagnostic, never required
+                pass
         if self.run.native and not isinstance(client, FrameContext):
             result = await client.send("Workbench.getDownloads")
             for item in result.get("downloads", []):
                 download_started(item["begin"])
                 if item.get("progress"):
                     download_progress(item["progress"])
+
+    def _log(self, client, level, text, source):
+        self.console_seq += 1
+        self.console.append({
+            "seq": self.console_seq, "level": str(level)[:20], "text": str(text)[:500],
+            "url": str(source.get("url") or "")[:200], "line": source.get("lineNumber"),
+            "client": client,
+        })
+        del self.console[:-200]
+
+    def console_entries(self, *, after=0, errors_only=False, limit=30):
+        """Messages from the bound page (and its frames) for the model; page-written data."""
+        page = getattr(getattr(self.run.session, "_internal", None), "client", None)
+        current = {page, self.run.observation_context}
+        entries = [{k: v for k, v in e.items() if k != "client"} for e in self.console
+                   if e["seq"] > after and e["client"] in current
+                   and (not errors_only or e["level"] in {"error", "assert"})]
+        return entries[-limit:]
 
     def pending_requests(self, client, since):
         """Page requests started after ``since`` (loop time) that have not finished."""

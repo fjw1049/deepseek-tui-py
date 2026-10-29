@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Join workspace</title><script src="bench.js"></script>
+<style>.code input{width:28px;font-size:20px;text-align:center;margin:2px}</style></head><body>
+<h1>Join the Acme workspace</h1>
+<p>Enter the 6-character invite code from your email.</p>
+<div class="code" role="group" aria-label="Invite code">
+<input maxlength="1" aria-label="Character 1"><input maxlength="1" aria-label="Character 2"><input maxlength="1" aria-label="Character 3"><input maxlength="1" aria-label="Character 4"><input maxlength="1" aria-label="Character 5"><input maxlength="1" aria-label="Character 6">
+</div>
+<button id="join">Join workspace</button> <p id="msg"></p>
+<script>
+const boxes = [...document.querySelectorAll('.code input')];
+boxes.forEach((b, i) => b.addEventListener('input', () => { b.value = b.value.slice(-1).toUpperCase(); if (b.value && boxes[i + 1]) boxes[i + 1].focus(); }));
+boxes.forEach((b, i) => b.addEventListener('keydown', e => { if (e.key === 'Backspace' && !b.value && boxes[i - 1]) boxes[i - 1].focus(); }));
+document.getElementById('join').addEventListener('click', () => {
+  const code = boxes.map(b => b.value).join('');
+  report('join', {code});
+  document.getElementById('msg').textContent = code.length === 6 ? 'Joining with code ' + code : 'Code is incomplete';
+});
+</script></body></html>

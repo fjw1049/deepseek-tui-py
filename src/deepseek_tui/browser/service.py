@@ -51,9 +51,19 @@ FOCUSED_FIELD = (
 )
 # At the session cap, a session unused this long may be closed for a new thread.
 IDLE_RECLAIM_SECONDS = 600
-TARGET_ACTIONS = {"click", "fill", "type", "select", "set_checked", "hover", "press", "scroll", "upload"}
+TARGET_ACTIONS = {"click", "fill", "type", "select", "set_checked", "hover", "press", "scroll", "upload",
+                  "drag"}
 OBSERVE_AFTER = TARGET_ACTIONS | {"open", "new_tab", "switch_tab", "close_tab", "back",
                                   "forward", "reload", "wait", "check_text", "screenshot"}
+# Where typed text landed, as a verdict only: field values never enter results or logs.
+# Split code boxes advance focus per key, so the target and its following fields count.
+TYPED_STATE = (
+    "(()=>{const t=__TEXT__,value=x=>x.isContentEditable?x.innerText:x.value;"
+    "if(value(e).includes(t))return 'field';"
+    "const group=Array.from(e.parentElement?.querySelectorAll('input:not([type=hidden])')||[]);"
+    "const i=group.indexOf(e);"
+    "return i>=0&&group.slice(i).map(value).join('').startsWith(t)?'fields':'unverified'})()"
+)
 POPUP_TARGET_REFUSAL = (
     "That tab is a window the page opened (often a sign-in or payment window), which the "
     "agent may not drive or close. Ask the user to finish or close it with "
@@ -126,6 +136,7 @@ class BrowserAction(BaseModel):
         "resolve_operation",
         "upload",
         "downloads",
+        "console",
         "handle_dialog",
         "recover",
         "close_session",
@@ -143,6 +154,7 @@ class BrowserAction(BaseModel):
         "observe",
         "describe",
         "click",
+        "drag",
         "fill",
         "type",
         "select",
@@ -184,6 +196,7 @@ class BrowserAction(BaseModel):
     url_contains: str = Field(default="", max_length=4096)
     url: str = Field(default="", max_length=4096)
     ref: str | None = Field(default=None, max_length=200)
+    to_ref: str | None = Field(default=None, max_length=200)
     observation_id: str | None = Field(default=None, max_length=200)
     scope_ref: str | None = Field(default=None, max_length=200)
     option_ref: str | None = Field(default=None, max_length=200)
@@ -248,6 +261,10 @@ class BrowserAction(BaseModel):
             self.ref or self.selector or (self.x is not None and self.y is not None)
         ):
             raise ValueError("click requires ref, selector, or x and y")
+        if self.action == "drag" and not (self.ref and self.to_ref):
+            raise ValueError("drag requires ref and to_ref from the same observation")
+        if self.to_ref and self.action != "drag":
+            raise ValueError("to_ref applies to drag")
         if self.action in {"fill", "select"} and not (self.ref or self.selector):
             raise ValueError("fill requires ref or selector")
         if self.action == "set_checked" and (
@@ -903,7 +920,7 @@ class BrowserService:
         if action_id not in run.operations:
             if not response["success"] or receipt.get("effect") == "not_confirmed":
                 run.consecutive_action_failures += 1
-            elif receipt.get("action") not in {"observe", "describe", "screenshot", "tabs", "downloads"}:
+            elif receipt.get("action") not in {"observe", "describe", "screenshot", "tabs", "downloads", "console"}:
                 run.consecutive_action_failures = 0
             if run.consecutive_action_failures >= 3:
                 receipt["consecutive_action_failures"] = run.consecutive_action_failures
@@ -1506,6 +1523,7 @@ class BrowserService:
             "target_scroll_only": "scroll_containers refs only accept scroll; use a ref from elements for other actions.",
             "screenshot_pixels_changed": "Pixels around the target point changed. Prefer an observed element ref/selector on dynamic pages; if none is available, inspect a fresh screenshot or request manual help.",
             "focus_not_active": "The page could not receive keyboard input. Inspect the active tab or request manual help.",
+            "text_exceeds_maxlength": "The field accepts fewer characters than the text; nothing was entered. For a code split across boxes, use type on the first box: its keystrokes advance between boxes.",
             "reload_would_resubmit_form": "This page came from a form submission; reloading would send the form again. Observe the current page, or open a specific URL for fresh content.",
         }
         content = reason + (": " + guidance[reason] if reason in guidance else "")
@@ -1650,7 +1668,7 @@ class BrowserService:
                 # A page showing a native dialog cannot lay out until it is answered.
                 if run.native and not run.native_events.dialog:
                     await self._sync_viewport(run)
-                if run.native_events.dialog and action.action not in {"handle_dialog", "tabs", "downloads"}:
+                if run.native_events.dialog and action.action not in {"handle_dialog", "tabs", "downloads", "console"}:
                     return await self._reject_action(run, action, "native_dialog_pending")
             if action.operation_id:
                 fingerprint = hashlib.sha256(json.dumps(action.model_dump(exclude={"operation_id"}),
@@ -1666,7 +1684,7 @@ class BrowserService:
                 run.requests[action.operation_id] = (fingerprint, action._action_id)
             if asyncio.get_running_loop().time() >= action._deadline:
                 return await self._reject_action(run, action, "deadline_expired")
-            if actor == "agent" and run.unresolved and action.action not in {"observe", "describe", "tabs", "downloads", "handle_dialog", "wait", "check_text", "screenshot", "open", "new_tab", "switch_tab"}:
+            if actor == "agent" and run.unresolved and action.action not in {"observe", "describe", "tabs", "downloads", "console", "handle_dialog", "wait", "check_text", "screenshot", "open", "new_tab", "switch_tab"}:
                 return await self._reject_action(run, action, "unresolved_operation")
             if actor == "agent" and len(run.unresolved) >= 8 and action.action in {"open", "new_tab", "switch_tab"}:
                 return await self._reject_action(run, action, "unresolved_operation_limit")
@@ -1741,7 +1759,7 @@ class BrowserService:
                 result = await asyncio.wait_for(self._execute_action(run, action, actor), timeout=max(
                     0.001, action._deadline - asyncio.get_running_loop().time()))
             except (Exception, asyncio.CancelledError) as exc:
-                read_only = action.action in {"observe", "describe", "tabs", "downloads", "wait", "check_text", "screenshot"}
+                read_only = action.action in {"observe", "describe", "tabs", "downloads", "console", "wait", "check_text", "screenshot"}
                 known = next((e for e in reversed(run.log)
                               if e.get("action_id") == action._action_id and
                               e.get("execution") == "executed"), None)
@@ -1838,6 +1856,14 @@ class BrowserService:
             return {"success": True, "content": native.state()["downloads"] if native else [], "receipt": {
                 "action_id": action._action_id, "action": action.action,
                 "execution": "executed", "effect": "unchecked"}}
+        if action.action == "console":
+            from deepseek_tui.browser.context import PAGE_CONTENT_NOTICE
+
+            return {"success": True, "content": {
+                "source": PAGE_CONTENT_NOTICE,
+                "entries": native.console_entries() if native else []}, "receipt": {
+                "action_id": action._action_id, "action": action.action,
+                "execution": "executed", "effect": "unchecked"}}
         if not native:
             return await self._action(run, action)
         native.changed.clear()
@@ -1876,8 +1902,10 @@ class BrowserService:
         evidence_warning = None
         settle_warning = None
         effect = "unchecked"
+        typed = None
         action_id = a._action_id or uuid.uuid4().hex
-        before_id = (run.latest_observation or {}).get("observation_id")
+        before_observation = run.latest_observation
+        before_id = (before_observation or {}).get("observation_id")
         before_tabs = await self._refresh_tabs(run) if a.action in OBSERVE_AFTER else run.tabs
         agent_driven = run.native and run.owner == "agent"
         if run.owner == "agent":
@@ -1894,6 +1922,7 @@ class BrowserService:
             own_tab = (current.get("tab_id") in run.agent_tabs
                        or current.get("url", "") in {"", "about:blank"})
         popups_seen = len(run.popups_blocked)
+        console_seen = run.native_events.console_seq if run.native_events else 0
         if a.action in {"open", "new_tab", "switch_tab", "close_tab", "back", "forward", "reload", "select", "set_checked", "press", "type", "scroll", "hover"}:
             run.last_dispatch_id = a._action_id
         kept_user_tab = False
@@ -2013,8 +2042,12 @@ class BrowserService:
             if result is None or result.success:
                 if targeted:
                     await self._focus_ready(run, a)
-                await input_client.send("Input.insertText", {"text": a.text})
+                from deepseek_tui.browser.input import type_text
+
+                await type_text(run, a.text, client=input_client)
                 result = None
+        elif a.action == "drag":
+            result = await self._drag(run, a)
         elif a.action == "fill" and await target_state(
             run, a, f"e.tagName==='INPUT' && /^({VALUE_INPUTS})$/.test(e.type)"
         ) is True:
@@ -2037,11 +2070,15 @@ class BrowserService:
                 # leave existing text selected incorrectly on macOS after takeover.
                 from deepseek_tui.browser.input import press_key
 
-                await press_key(run, "Meta+a" if sys.platform == "darwin" else "Ctrl+a",
-                                client=input_client)
-                await self._focus_ready(run, a)
-                await press_key(run, "Backspace", client=input_client)
-                await self._focus_ready(run, a)
+                # Clearing keys reach page handlers: Backspace in an empty code box moves
+                # focus back a box, so an empty field is filled without them.
+                if await target_state(
+                        run, a, "(e.isContentEditable?e.innerText:e.value)!==''") is not False:
+                    await press_key(run, "Meta+a" if sys.platform == "darwin" else "Ctrl+a",
+                                    client=input_client)
+                    await self._focus_ready(run, a)
+                    await press_key(run, "Backspace", client=input_client)
+                    await self._focus_ready(run, a)
                 await input_client.send("Input.insertText", {"text": a.text})
                 from deepseek_tui.tools.registry import ToolResult
 
@@ -2164,6 +2201,15 @@ class BrowserService:
             if not success:
                 result = None
                 content = "Requested field state was not reached; inspect before retrying"
+        if a.action == "type" and (a.ref or a.selector) and result is None:
+            try:
+                settle_warning = await self._settle(run, frame_id=a.frame_id)
+                typed = await target_state(
+                    run, a, TYPED_STATE.replace("__TEXT__", json.dumps(a.text)))
+            except Exception:
+                typed = None
+            if typed in {"field", "fields"}:
+                effect = "confirmed"
         if (
             a.action in {"new_tab", "switch_tab", "close_tab"}
             and result is not None
@@ -2193,6 +2239,11 @@ class BrowserService:
                            "so it was left as it was.")
         elif effect == "not_confirmed":
             content = "Requested field state was not reached; inspect before retrying"
+        elif a.action == "type" and typed:
+            content = {"field": "Typed text is in the target field",
+                       "fields": "Typed text filled the target and the following fields of its group",
+                       }.get(typed, "Keystrokes sent; the target field does not hold the text as "
+                             "typed (the page may format or move it). Inspect before retrying")
         elif a.action == "check_text":
             content = ("PASS: " if success else "FAIL: ") + a.text
         elif a.action == "wait":
@@ -2303,6 +2354,11 @@ class BrowserService:
             try:
                 # Interactive elements are what the next step acts on; level=full is on request.
                 observation = await observe(run, full=False, frame_id=a.frame_id)
+                from deepseek_tui.browser.context import observation_changes
+
+                # A copy: the stored observation is the next action's baseline.
+                observation = {**observation,
+                               "changes": observation_changes(before_observation, observation)}
                 if settle_warning:
                     observation.setdefault("warnings", []).append(settle_warning)
             except Exception as exc:
@@ -2372,6 +2428,11 @@ class BrowserService:
             response["observation_error"] = observation_error
         if evidence_warning:
             response["evidence_warning"] = evidence_warning
+        if run.native_events and (errors := run.native_events.console_entries(
+                after=console_seen, errors_only=True, limit=5)):
+            from deepseek_tui.browser.context import PAGE_CONTENT_NOTICE
+
+            response["console_errors"] = {"source": PAGE_CONTENT_NOTICE, "entries": errors}
         response["history"] = [{k: v for k, v in entry.items()
                                  if k in {"action", "execution", "effect", "reason", "success"}}
                                for entry in run.log[-10:]]
@@ -2442,6 +2503,36 @@ class BrowserService:
                 pass
             raise
         return ToolResult(True, "Clicked observed target")
+
+    async def _drag(self, run: BrowserRun, action: BrowserAction):
+        """Press on the observed source, move in steps, release over the observed destination."""
+        from deepseek_tui.tools.registry import ToolResult
+
+        if action.frame_id:
+            raise ValueError("drag supports targets observed in the page, not a scoped frame")
+        await run.session._internal.client.send("Page.bringToFront")
+        source = await self._dispatch_guard(run, action)
+        # Resolved after the source scrolled into view, without scrolling it away again.
+        destination = await target(run, action.model_copy(update={"ref": action.to_ref}), scroll=False)
+        if destination.get("error"):
+            raise ValueError("Drag destination unavailable: " + destination["error"])
+        client = run.session._internal.client
+        (x0, y0), (x1, y1) = (source["x"], source["y"]), (destination["x"], destination["y"])
+        run.last_dispatch_id = action._action_id
+        try:
+            await client.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x0, "y": y0})
+            await client.send("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "x": x0, "y": y0, "button": "left", "buttons": 1,
+                "clickCount": 1})
+            for step in range(1, 11):
+                await client.send("Input.dispatchMouseEvent", {
+                    "type": "mouseMoved", "x": x0 + (x1 - x0) * step / 10,
+                    "y": y0 + (y1 - y0) * step / 10, "button": "left", "buttons": 1})
+                await asyncio.sleep(0.02)
+        finally:
+            await asyncio.shield(asyncio.wait_for(client.send("Input.dispatchMouseEvent", {
+                "type": "mouseReleased", "x": x1, "y": y1, "button": "left", "clickCount": 1}), 1))
+        return ToolResult(True, "Dragged observed source onto observed destination")
 
     async def _form_submission_page(self, run: BrowserRun) -> bool:
         """CDP reload silently re-posts form results; Chrome's resubmit prompt is absent."""

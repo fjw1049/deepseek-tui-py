@@ -9,17 +9,17 @@ from urllib.parse import urlsplit
 from deepseek_tui.browser.sites import is_sensitive, site_of
 
 NAVIGATION_ACTIONS = {"open", "new_tab"}
-INTERACTION_ACTIONS = {"click", "fill", "type", "select", "set_checked", "press", "upload"}
+INTERACTION_ACTIONS = {"click", "drag", "fill", "type", "select", "set_checked", "press", "upload"}
 _ACTION_WORDS = {
     "zh": {
-        "open": "打开", "new_tab": "在新标签页打开", "click": "点击", "fill": "填写", "type": "输入",
+        "open": "打开", "new_tab": "在新标签页打开", "click": "点击", "drag": "拖动", "fill": "填写", "type": "输入",
         "select": "选择", "set_checked": "勾选", "press": "按键", "upload": "上传文件到",
         "hover": "悬停", "scroll": "滚动", "handle_dialog": "回应对话框", "recover": "重启浏览器",
         "close_session": "结束浏览器", "close_tab": "关闭标签页", "record_start": "开始录制",
         "record_stop": "结束录制", "video_start": "开始录像", "video_stop": "结束录像",
     },
     "en": {
-        "open": "Open", "new_tab": "Open in a new tab", "click": "Click", "fill": "Fill in",
+        "open": "Open", "new_tab": "Open in a new tab", "click": "Click", "drag": "Drag", "fill": "Fill in",
         "type": "Type into", "select": "Select in", "set_checked": "Check", "press": "Press",
         "upload": "Upload files to", "hover": "Hover over", "scroll": "Scroll",
         "handle_dialog": "Answer the dialog", "recover": "Restart the browser",

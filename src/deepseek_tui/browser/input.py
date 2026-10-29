@@ -55,6 +55,10 @@ def key_event(chord: str, generation: int = 0) -> BrowserInput:
             raise ValueError(f"Unsupported key modifier: {part}")
         modifiers |= flags[part.lower()]
     key = parts[-1]
+    # Common alternative names (xdotool, Playwright, informal).
+    key = {"Esc": "Escape", "Return": "Enter", "Up": "ArrowUp", "Down": "ArrowDown",
+           "Left": "ArrowLeft", "Right": "ArrowRight", "Del": "Delete", "PgUp": "PageUp",
+           "PgDn": "PageDown", "Spacebar": "Space", "BackSpace": "Backspace"}.get(key, key)
     named = {"Enter": 13, "Tab": 9, "Escape": 27, "Backspace": 8, "Delete": 46,
              "ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40,
              "Home": 36, "End": 35, "PageUp": 33, "PageDown": 34, "Space": 32}
@@ -108,6 +112,32 @@ async def press_key(run, chord: str, *, client=None) -> None:
     finally:
         await asyncio.shield(asyncio.wait_for(dispatch_input(run, event.model_copy(
             update={"event": "keyUp", "text": ""}), client=client), 1))
+
+
+async def type_text(run, text: str, *, client=None) -> None:
+    """Key by key like a person, so per-key handlers (code boxes, masks) respond.
+
+    Runs of characters without a key (other scripts, emoji) arrive as one committed text,
+    as from an IME.
+    """
+    client = client or run.session._internal.client
+    if len(text) > 300:  # Long passages would take thousands of round trips.
+        await client.send("Input.insertText", {"text": text})
+        return
+    composed = ""
+    for char in text:
+        key = {" ": "Space", "\n": "Enter", "\t": "Tab"}.get(char, char)
+        try:
+            key_event(key)
+        except ValueError:
+            composed += char
+            continue
+        if composed:
+            await client.send("Input.insertText", {"text": composed})
+            composed = ""
+        await press_key(run, key, client=client)
+    if composed:
+        await client.send("Input.insertText", {"text": composed})
 
 
 async def dispatch_input(run, body: BrowserInput, *, client=None) -> dict:

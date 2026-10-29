@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 from typing import Any
 
@@ -54,6 +55,36 @@ def _compact_element(element: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def observation_changes(before: dict[str, Any] | None, after: dict[str, Any]) -> dict[str, Any] | None:
+    """What changed since the observation the model last received; None sends it whole."""
+    same_view = ("tab_id", "document_id", "frame_id", "frame_document_id", "scope_selector",
+                 "scope_shadow_path", "level", "element_offset", "text_offset",
+                 "control_generation")
+    if not before or before.get("details") or any(before.get(k) != after.get(k) for k in same_view):
+        return None
+    old = {e["ref"]: _compact_element(e) for e in before.get("elements", [])}
+    elements = [e for e in after["elements"] if old.get(e["ref"]) != _compact_element(e)]
+    listed = {e["ref"] for e in after["elements"]}
+    removed = [ref for ref in old if ref not in listed]
+    if len(elements) + len(removed) > 0.6 * max(len(after["elements"]), 1):
+        return None
+    changes: dict[str, Any] = {"base": before["observation_id"], "elements": elements,
+                               "removed": removed, "unchanged": len(after["elements"]) - len(elements)}
+    old_lines, new_lines = before.get("text", "").split("\n"), after.get("text", "").split("\n")
+    if old_lines == new_lines:
+        changes["text"] = []
+    else:
+        diff = []
+        matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag != "equal":
+                diff += ["- " + line for line in old_lines[i1:i2]]
+                diff += ["+ " + line for line in new_lines[j1:j2]]
+        if sum(map(len, diff)) < 0.6 * len(after.get("text", "")):
+            changes["text"] = diff
+    return changes
+
+
 class _Scopes:
     """Shared record/row/form context, listed once and referenced by elements."""
 
@@ -92,6 +123,14 @@ def project_result(result: dict[str, Any], budget: int) -> str:
         return _bounded_result(data, budget)
     # Leads the observation so it frames every page-written string that follows.
     data["observation"] = observation = {"source": PAGE_CONTENT_NOTICE, **observation}
+    changes = observation.pop("changes", None)
+    if changes:
+        # Refs persist within a document: unlisted elements and text are unchanged.
+        observation.update(changes_since=changes["base"], elements=changes["elements"],
+                           unchanged_elements=changes["unchanged"],
+                           removed_refs=changes["removed"])
+        if "text" in changes:
+            observation.update(text="", text_changes=changes["text"])
     # Older/persisted responses may encode the same observation twice.
     data["content"] = (
         data.get("content", "")

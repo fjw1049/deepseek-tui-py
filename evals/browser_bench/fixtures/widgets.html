@@ -1,0 +1,44 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Widget coverage</title>
+<script src="bench.js"></script>
+<style>
+body{font-family:sans-serif;padding:16px} section{margin:8px 0}
+.hide-input input{opacity:0;position:absolute;width:1px;height:1px}
+.box{display:inline-block;width:14px;height:14px;border:1px solid #333;vertical-align:middle}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.card{cursor:pointer;border:1px solid #ccc;padding:6px;display:inline-block}
+.track{display:inline-block;width:200px;height:8px;background:#ddd}
+</style></head><body>
+<h1>Widgets</h1>
+<section><button onclick="report('widget',{id:'W01'})">W01 Native button</button></section>
+<section><label><input type="checkbox" onchange="report('widget',{id:'W02'})"> W02 Native checkbox</label></section>
+<section><label class="hide-input"><input type="checkbox" onchange="report('widget',{id:'W03'})"><span class="box"></span> W03 Styled checkbox</label></section>
+<section><label class="hide-input"><input type="radio" name="plan" onchange="report('widget',{id:'W04'})"><span class="box"></span> W04 Styled radio</label></section>
+<section><div onclick="report('widget',{id:'W05'})">W05 Div with onclick</div></section>
+<section><div class="card" id="w06">W06 Clickable card</div></section>
+<section><div role="button" tabindex="0" onclick="report('widget',{id:'W07'})">W07 Role button</div></section>
+<section><div tabindex="0" id="w08">W08 Focusable div</div></section>
+<section><span>W09 Volume</span> <div role="slider" aria-label="W09 Volume" aria-valuemin="0" aria-valuemax="10" aria-valuenow="3" tabindex="0" class="track" id="w09"></div></section>
+<section><div role="menu"><div role="menuitemcheckbox" aria-checked="false" tabindex="-1" onclick="report('widget',{id:'W10'})">W10 Show grid</div></div></section>
+<section><ul role="tree"><li role="treeitem" aria-expanded="false" onclick="report('widget',{id:'W11'})">W11 Documents folder</li></ul></section>
+<section><ul><li><span class="card" id="w12">W12 Span action</span></li></ul></section>
+<section><button role="switch" aria-checked="false" onclick="report('widget',{id:'W13'})">W13 Switch</button></section>
+<section><a onclick="report('widget',{id:'W14'})" style="cursor:pointer;color:blue">W14 Link without href</a></section>
+<section><img alt="W15 Delete icon" width="24" height="24" style="background:#c00" onclick="report('widget',{id:'W15'})"></section>
+<section><input type="checkbox" class="sr" id="w16" onchange="report('widget',{id:'W16'})"><label for="w16"><span class="box"></span> W16 Visually hidden checkbox</label></section>
+<section><details><summary onclick="report('widget',{id:'W17'})">W17 Details summary</summary>Hidden text</details></section>
+<section><div role="listbox" aria-label="Fruit"><div role="option" aria-selected="false" onclick="report('widget',{id:'W18'})">W18 Banana option</div></div></section>
+<section><div contenteditable="true" aria-label="W19 Editable note" onfocus="report('widget',{id:'W19'})">draft</div></section>
+<section><div id="host"></div></section>
+<script>
+document.getElementById('w06').addEventListener('click', () => report('widget', {id: 'W06'}));
+const w08 = document.getElementById('w08');
+w08.addEventListener('click', () => report('widget', {id: 'W08'}));
+const w09 = document.getElementById('w09');
+w09.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { w09.setAttribute('aria-valuenow', +w09.getAttribute('aria-valuenow') + 1); report('widget', {id: 'W09'}); }
+});
+document.getElementById('w12').addEventListener('click', () => report('widget', {id: 'W12'}));
+const root = document.getElementById('host').attachShadow({mode: 'open'});
+root.innerHTML = '<button>W20 Shadow button</button>';
+root.querySelector('button').addEventListener('click', () => report('widget', {id: 'W20'}));
+</script></body></html>

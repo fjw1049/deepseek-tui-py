@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Sprint board</title><script src="bench.js"></script>
+<style>
+body{font-family:sans-serif} .cols{display:flex;gap:12px}
+.col{width:220px;min-height:300px;background:#f2f2f2;padding:8px;border-radius:6px}
+.task{background:#fff;border:1px solid #ccc;border-radius:4px;padding:8px;margin:6px 0;cursor:grab;user-select:none}
+.ghost{position:fixed;pointer-events:none;opacity:.7}
+</style></head><body>
+<h1>Sprint board</h1><p>Drag cards between columns.</p>
+<div class="cols">
+<section class="col" data-col="todo" aria-label="To do"><h2>To do</h2><div class="task">Fix login timeout</div><div class="task">Write release notes</div><div class="task">Update icons</div></section>
+<section class="col" data-col="doing" aria-label="In progress"><h2>In progress</h2><div class="task">Refactor billing</div></section>
+<section class="col" data-col="done" aria-label="Done"><h2>Done</h2><div class="task">Set up CI</div></section>
+</div>
+<script>
+// Pointer-driven dragging, like most component libraries; no click alternative exists.
+let drag = null;
+document.addEventListener('mousedown', e => {
+  const t = e.target.closest('.task'); if (!t) return;
+  drag = {t, ghost: t.cloneNode(true)}; drag.ghost.classList.add('ghost'); document.body.append(drag.ghost); e.preventDefault();
+});
+document.addEventListener('mousemove', e => { if (drag) { drag.ghost.style.left = e.clientX + 'px'; drag.ghost.style.top = e.clientY + 'px'; } });
+document.addEventListener('mouseup', e => {
+  if (!drag) return; drag.ghost.remove();
+  const col = document.elementFromPoint(e.clientX, e.clientY)?.closest('.col');
+  if (col && col !== drag.t.parentElement) { col.append(drag.t); report('move', {card: drag.t.textContent, column: col.dataset.col}); }
+  drag = null;
+});
+</script></body></html>

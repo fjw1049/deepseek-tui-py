@@ -125,6 +125,32 @@ COLLECT = (
   const readText = __READ_TEXT__;
   const context = __SCOPE_CONTEXT__;
   const name=__NAME__, canonicalRole=__ROLE__;
+  // Styled native controls hide the input itself; operate it through what the user sees:
+  // its visible label, or the transparent control laid over the custom UI.
+  const via=e=>{
+    if(!/^(INPUT|SELECT)$/.test(e.tagName) || e.type==='hidden') return null;
+    const r=e.getBoundingClientRect();
+    if(visible(e) && r.width>=4 && r.height>=4) return null;
+    const label=Array.from(e.labels || []).find(l=>visible(l));
+    if(label) return label;
+    const st=window.getComputedStyle.call(e.ownerDocument.defaultView,e);
+    return r.width>=8 && r.height>=8 && st.display!=='none' && st.visibility!=='hidden' &&
+      (!e.parentElement || visible(e.parentElement)) ? e : null;
+  };
+  const pointer=e=>/^(pointer|grab)$/.test(window.getComputedStyle.call(e.ownerDocument.defaultView,e).cursor);
+  const native='button,input:not([type=hidden]),select,textarea,a[href],summary';
+  const interactive=(e,role)=>e.matches(native) ||
+    (e.isContentEditable && !e.parentElement?.isContentEditable) ||
+    /^(button|link|textbox|combobox|checkbox|radio|menuitem|option|switch|tab|searchbox)$/
+      .test(role) ||
+    // Script-bound controls; a wrapper around a native control is operated through that control.
+    (!e.querySelector(native) && (e.hasAttribute('onclick') || e.draggable && e.tagName!=='IMG' ||
+      (e.hasAttribute('tabindex') && e.tabIndex>=0) ||
+      /^(menuitemcheckbox|menuitemradio|slider|spinbutton|treeitem)$/.test(role) ||
+      // Cards, icon spans and draggable items show a pointer; keep only the outermost one.
+      (pointer(e) && !(e.parentElement && pointer(e.parentElement)) &&
+        !(e.tagName==='LABEL' && e.control) &&
+        !e.parentElement?.closest('a[href],button,summary,[role=button],[role=link],[role=menuitem],[role=tab],[role=option]'))));
   const elements=[], frames=[],snapshot=[];
   let elementCount=0;
   const focused=()=>{
@@ -152,20 +178,20 @@ COLLECT = (
     const view=(root.ownerDocument || document).defaultView;
     scrolls.push({node:view, x:view.scrollX, y:view.scrollY, window:true});
     for (const e of [...(root.nodeType===1?[root]:[]),...root.querySelectorAll('*')]) {
-      if (!visible(e)) continue;
+      const proxy=via(e);
+      if (!proxy && !visible(e)) continue;
       scrolls.push({node:e, x:e.scrollLeft, y:e.scrollTop});
       const tag=e.tagName.toLowerCase(), role=canonicalRole(e);
-      if (e.matches('button,input:not([type=hidden]),select,textarea,a[href],summary') ||
-          (e.isContentEditable && !e.parentElement?.isContentEditable) ||
-          /^(button|link|textbox|combobox|checkbox|radio|menuitem|option|switch|tab|searchbox)$/
-          .test(role)) {
-        const index=elementCount++, ref='e'+index, scope=context(e,scopeCache);
+      if (interactive(e,role)) {
         if(!identities.nodes.has(e))identities.nodes.set(e,identities.prefix+':n'+identities.next++);
         const targetId=identities.nodes.get(e);
+        // A node keeps its ref for the document's lifetime, so later results can list only changes.
+        const index=elementCount++, ref='e'+targetId.slice(targetId.lastIndexOf(':n')+2),
+          scope=context(e,scopeCache);
         snapshot.push({element:e,name:name(e),scope,options:tag==='select'?
           Array.from(e.options).map(o=>({node:o,value:o.value,text:o.text})):[]});
         if (index>=elementOffset && elements.length<limit) {
-          const r=e.getBoundingClientRect();
+          const r=(proxy || e).getBoundingClientRect();
           const options=new Map();
           if(tag==='select')Array.from(e.options).slice(optionOffset,optionOffset+50).forEach((o,i)=>
             options.set(ref+':o'+(optionOffset+i),{node:o,value:o.value,text:o.text}));
@@ -256,7 +282,7 @@ COLLECT = (
           o.value!==previous.snapshot[i].options[j].value ||
           o.text!==previous.snapshot[i].options[j].text))))
     return {error:'paging_snapshot_changed'};
-  const state={id,refs,root:scopeRoot,scrolls,visible,name,canonicalRole,context,focused,focus:focused(),
+  const state={id,refs,root:scopeRoot,scrolls,visible,via,name,canonicalRole,context,focused,focus:focused(),
     snapshot,fullText:text.join(''),
     url:location.href,
     scrollX,scrollY,
@@ -437,6 +463,7 @@ async def observe(
             "document_id": root_identity[1],
             "frame_id": frame_id,
             "frame_document_id": identity[1] if frame_id else None,
+            "level": "full" if full else "interactive",
             "control_generation": run.generation,
             "scope_selector": selector,
             "scope_shadow_path": shadow_path or [],
@@ -476,7 +503,7 @@ async def observe(
     raise RuntimeError("Page navigated while observing; read again before acting")
 
 
-async def target(run: Any, action: Any) -> dict[str, Any]:
+async def target(run: Any, action: Any, *, scroll: bool = True) -> dict[str, Any]:
     """Validate identity and resolve a current, unique, unobstructed DOM target."""
     observation = run.latest_observation
     if (
@@ -514,6 +541,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
             "action": action.action,
             "text": action.text,
             "option_ref": action.option_ref,
+            "scroll": scroll,
         }
     )
     resolved = await evaluate(
@@ -529,6 +557,9 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
               (a.action==='fill' && e?.tagName==='INPUT' && /^(__VALUE_INPUTS__)$/.test(e.type))))
             return 'target_not_editable';
           if (e.readOnly) return 'target_readonly';
+          // A fill cannot fit; split code boxes take keystrokes that advance between them.
+          if (a.action==='fill' && e.maxLength>0 && Array.from(a.text).length>e.maxLength)
+            return 'text_exceeds_maxlength';
         }
         if (a.action==='select' && e?.tagName!=='SELECT') return 'target_not_select';
         if (a.action==='select' && !a.option_ref &&
@@ -554,7 +585,8 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
               v.y!==(v.window?v.node.scrollY:v.node.scrollTop)) ||
             [...s.refs.values()].some(v=>{
               if (v.scrollOnly) return false;
-              const r=v.element.getBoundingClientRect(), scope=s.context(v.element), old=v.scope;
+              const r=(s.via(v.element) || v.element).getBoundingClientRect(),
+                scope=s.context(v.element), old=v.scope;
               return !v.element.isConnected || v.element.parentElement!==v.parent ||
                 !!scope!==!!old || (scope && (scope.node!==old.node || scope.id!==old.id ||
                   scope.text!==old.text || JSON.stringify(scope.keys)!==JSON.stringify(old.keys))) ||
@@ -574,7 +606,8 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
         entry=[...s.refs.values()].find(v=>v.element===e);
         if (!entry) return {error:'target_not_observed'};
       }
-      if (!e || !s.visible(e)) return {error:'target_not_visible'};
+      const proxy=e && s.via(e), hitTarget=proxy || e;
+      if (!e || !(proxy || s.visible(e))) return {error:'target_not_visible'};
       // A scroll container is only scrolled; its text may change while the list loads.
       if (entry?.scrollOnly && a.action!=='scroll') return {error:'target_scroll_only'};
       if (entry && !entry.scrollOnly &&
@@ -601,10 +634,11 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
           return {error:'stale_option'};
         window.__deepseekSelectedOption=option.node;
       }
-      e.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
-      const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
-      const hit=e.getRootNode().elementFromPoint?.(x,y) || e.ownerDocument.elementFromPoint(x,y);
-      if (!hit || (hit!==e && !e.contains(hit))) return {error:'target_obscured'};
+      if (a.scroll) hitTarget.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+      const r=hitTarget.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
+      const hit=hitTarget.getRootNode().elementFromPoint?.(x,y) ||
+        hitTarget.ownerDocument.elementFromPoint(x,y);
+      if (!hit || (hit!==hitTarget && !hitTarget.contains(hit))) return {error:'target_obscured'};
       // Frame-local hit testing cannot detect a parent overlay. Verify the
       // path through each same-origin parent before resolving a nested node.
       let view=e.ownerDocument.defaultView, px=x, py=y;
@@ -618,7 +652,7 @@ async def target(run: Any, action: Any) -> dict[str, Any]:
              ['translate','rotate','scale'].some(k=>style[k] && style[k]!=='none'))
             return {error:'frame_coordinates_unavailable'};
         }
-        frame.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+        if (a.scroll) frame.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
         const b=frame.getBoundingClientRect();
         px+=b.x+frame.clientLeft; py+=b.y+frame.clientTop;
         const outer=frame.ownerDocument.elementFromPoint(px,py);
