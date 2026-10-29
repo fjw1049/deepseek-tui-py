@@ -29,7 +29,7 @@
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
   --ds-chat-font-size: 15px;
-  --ds-chat-column-width: 960px;
+  --ds-chat-column-width: 760px;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
   --surface-3: #ffffff;
