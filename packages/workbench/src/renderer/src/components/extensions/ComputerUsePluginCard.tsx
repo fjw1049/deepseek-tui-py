@@ -1,5 +1,6 @@
 import { CuaApprovedApps } from '../cua-preview/CuaApprovedApps'
 import { CuaPermissionsDialog } from '../cua-preview/CuaPermissionsDialog'
+import { CuaSetupChecklist } from './CuaSetupChecklist'
 import { usePluginNow } from './start-chat-with-plugin'
 import { PluginDescription } from './PluginDescription'
 import { createPortal } from 'react-dom'
@@ -77,9 +78,9 @@ export function ComputerUsePluginCard(): React.JSX.Element {
     {open ? createPortal(<PluginDialog pluginId="computer-use" title={t('computerUseTitle')}
       summary={t('computerUseSummary')} onClose={() => { setOpen(false) }}>
     <PluginDescription copyKey="computerUse" />
-    {window.dsGui.platform === 'darwin' && <button type="button" onClick={() => setPermissionsOpen(true)} className="mt-4 rounded-lg border border-ds-border px-3 py-2 text-sm text-ds-ink hover:bg-ds-hover">{t('cuaPermissionTitle')}</button>}
     <p role="status" className="mt-5 text-sm text-ds-muted">{t(state)}</p>
-    {status?.supported && !status.installed ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseInstallHint')}</p> : null}
+    {status?.supported ? <CuaSetupChecklist onChanged={() => void refresh()}
+      onOpenPermissions={window.dsGui.platform === 'darwin' ? () => setPermissionsOpen(true) : undefined} /> : null}
     {applied ? <p className="mt-2 text-sm text-ds-muted">{t('computerUseApplying')}</p> : null}
     {error ? <p role="alert" className="mt-2 text-sm text-ds-danger">{t('computerUseError')}</p> : null}
     {status?.installed && window.dsGui.platform === 'darwin' ? <CuaApprovedApps /> : null}

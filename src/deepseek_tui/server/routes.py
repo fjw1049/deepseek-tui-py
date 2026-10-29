@@ -825,8 +825,12 @@ async def cua_status(request: Request) -> dict[str, Any]:
             "permissions": "unknown", "connection": "unchecked"}
 
 
-async def _lcu(request: Request, *args: str, timeout: float = 20) -> dict[str, Any]:
-    """Run an ``lcu`` subcommand from the configured installation; never touches the desktop."""
+async def _lcu(request: Request, *args: str, timeout: float = 20,
+               any_exit: bool = False) -> dict[str, Any]:
+    """Run an ``lcu`` subcommand from the configured installation; never touches the desktop.
+
+    ``any_exit`` keeps the output of a report that exits non-zero for a single failed check.
+    """
     from deepseek_tui.cua.session import CuaSession
     from deepseek_tui.tools.registry import ToolError
 
@@ -845,10 +849,76 @@ async def _lcu(request: Request, *args: str, timeout: float = 20) -> dict[str, A
         process.kill()
         await process.wait()
         raise api_error(504, f"lcu {args[0]} timed out", error="cua_apps_timeout") from exc
-    if process.returncode != 0:
+    if process.returncode != 0 and not any_exit:
         message = (err or out).decode(errors="replace").strip() or f"lcu {args[0]} failed"
         raise api_error(502, message[:500], error="cua_apps_failed")
     return {"stdout": out.decode(errors="replace")}
+
+
+_setup_lock = asyncio.Lock()
+
+
+@router_mcp.get("/cua/setup")
+async def cua_setup_state(request: Request) -> dict[str, Any]:
+    """Each setup step's state from local files and connector status; never starts the runtime."""
+    from deepseek_tui.cua import setup
+
+    config = runtime_from_request(request).config.cua
+    version = await asyncio.to_thread(setup.installed_version, Path(config.installation))
+    connector = "unknown"
+    if version:
+        try:
+            report = await _lcu(request, "browser", "status", any_exit=True)
+            connector = setup.connector_state(report["stdout"])
+        except Exception:  # A broken installation still lets the checklist render.
+            connector = "unknown"
+    return {
+        "target": setup.target(), "chatgpt": await asyncio.to_thread(setup.chatgpt_installed),
+        "lcu": {"installed": version is not None, "version": version,
+                "pinned": setup.LCU_VERSION},
+        "chromeConnector": connector, "busy": _setup_lock.locked(),
+        "links": {"chatgpt": setup.CHATGPT_DOWNLOAD, "guide": setup.LCU_GUIDE},
+    }
+
+
+@router_mcp.post("/cua/setup/lcu")
+async def cua_setup_install_lcu(request: Request) -> dict[str, Any]:
+    """Install the pinned LCU release; the runtime itself is not started."""
+    from deepseek_tui.cua import setup
+    from deepseek_tui.cua.session import reset_runtime_cache
+
+    if _setup_lock.locked():
+        raise api_error(409, "Installation is already running", error="cua_setup_busy")
+    async with _setup_lock:
+        try:
+            result = await setup.install_lcu()
+        except setup.SetupError as exc:
+            raise api_error(502, str(exc), error="cua_setup_failed") from exc
+    # A failed earlier connection must not keep its retry window after a fresh install.
+    reset_runtime_cache()
+    return {"ok": True, "version": result["version"]}
+
+
+@router_mcp.post("/cua/setup/chrome")
+async def cua_setup_chrome(request: Request) -> dict[str, Any]:
+    """Register LCU's native host for Chrome (one file in Chrome's NativeMessagingHosts)."""
+    await _lcu(request, "browser", "install", timeout=60)
+    return {"ok": True}
+
+
+@router_mcp.post("/cua/setup/chrome/verify")
+async def cua_setup_chrome_verify(request: Request) -> dict[str, Any]:
+    """Whether the runtime reaches Chrome through its extension; reads no tab or page."""
+    from deepseek_tui.cua import setup
+    from deepseek_tui.cua.session import CuaSession
+    from deepseek_tui.tools.registry import ToolError
+
+    config = runtime_from_request(request).config.cua
+    try:
+        node, client, executable = await asyncio.to_thread(CuaSession._paths, config.installation)
+    except (OSError, ToolError) as exc:
+        raise api_error(409, str(exc), error="cua_unavailable") from exc
+    return await setup.verify_chrome(node, client, executable)
 
 
 @router_mcp.get("/cua/apps")

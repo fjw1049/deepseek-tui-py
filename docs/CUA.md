@@ -16,11 +16,17 @@ Touch ID 或登录密码；不提供“始终允许”入口，长期授权仍�
 设置页“自动允许控制所有应用”（`[cua] auto_allow_apps = true`）开启后，原生应用请求由宿主
 按“本次会话”自动批准，不弹授权卡片，无人值守任务同样生效；不写入“始终允许”名单，
 关闭后重启即恢复询问。Workbench 与终端自身仍禁止控制，Chrome 站点授权仍逐个询问。
-本版本不提供自动下载或安装 LCU。
+卡片详情的“安装与连接”清单逐项显示 ChatGPT 桌面版、LCU、系统权限，以及可选的 Chrome 连接器与扩展连接，
+每项给出可点的操作：Apple Silicon Mac 上 LCU 可一键安装（`/v1/cua/setup/lcu`）。宿主只下载代码中固定的
+LCU 版本，按内置 SHA-256 校验、以安全过滤解压，再运行该版本自带的 `scripts/install.sh --runtime-only --yes`；
+校验不符或解压越界时不安装任何内容。其他平台给出安装指南链接。Chrome 一项可一键注册连接器
+（`lcu browser install`）、在 Chrome 中打开扩展商店或扩展设置页，并“检测连接”（只列出运行时可达的浏览器，
+不读取标签页或页面）；连上后可直接启用 Chrome 控制。
 
 ## 安装和开启
 
-1. 从 [LCU releases](https://github.com/amontlabs/lcu/releases) 下载适合系统的发布包，
+1. Apple Silicon Mac：在“插件 → 电脑控制”详情中点击“一键安装”即可。手动安装或其他平台：
+   从 [LCU releases](https://github.com/amontlabs/lcu/releases) 下载适合系统的发布包，
    校验发布的 SHA256，解压后运行 `./scripts/install.sh --runtime-only`。
    本次验证使用 v0.11.6。macOS 使用 Apple Silicon 和本机 ChatGPT runtime；
    Linux 需要上游支持的 X11 环境。此适配器不支持 Windows。
@@ -40,7 +46,7 @@ chrome = false
 
 项目级配置不能开启 CUA 或替换其可执行程序路径。Workbench 启动后端前会检测
 安装目录、Node 路径和共享客户端，完整安装且未明确设置开关时自动写入启用配置。
-不自动下载运行时，不代替用户授予应用或系统权限。独立 Python 入口仍默认关闭。
+除用户点击一键安装外不下载运行时，不代替用户授予应用或系统权限。独立 Python 入口仍默认关闭。
 LCU 的许可、运行时依赖和平台要求以上游发布说明为准。
 
 设置页中的“继承配置文件”表示尚未在界面指定覆盖值，不表示关闭。

@@ -310,6 +310,8 @@ export type DsGuiApi = {
   openCuaApp: (bundleId: string) => Promise<boolean>
   getCuaScreenPermission: () => Promise<{ status: string; appName: string; appId?: string }>
   openScreenCaptureSettings: () => Promise<void>
+  /** macOS: open the ChatGPT extension's store page or its settings in Chrome. */
+  openChromeSetupPage: (page: 'store' | 'extension') => Promise<boolean>
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
   transcribeAudio: (payload: {
     audio: ArrayBuffer

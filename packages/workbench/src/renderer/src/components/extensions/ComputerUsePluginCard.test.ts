@@ -63,7 +63,8 @@ it('keeps the toggle locked until the runtime confirms the change', async () => 
     await act(async () => finishSave({ cuaEnabled: false }))
     expect(findButton('computerUseEnable').disabled).toBe(false)
     await act(async () => host.querySelector('button')!.click())
-    expect(runtimeRequest).toHaveBeenCalledTimes(2)
+    // The dialog also reads setup state; status itself is read twice.
+    expect(runtimeRequest.mock.calls.filter(call => call[0] === '/v1/cua/status')).toHaveLength(2)
     expect(document.body.textContent).toContain('computerUseApplying')
   } finally { await act(async () => root.unmount()) }
 })

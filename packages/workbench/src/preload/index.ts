@@ -22,6 +22,7 @@ const api = {
   openCuaApp: (bundleId) => ipcRenderer.invoke('cua-preview:open-app', bundleId),
   getCuaScreenPermission: () => ipcRenderer.invoke('cua-preview:screen-permission'),
   openScreenCaptureSettings: () => ipcRenderer.invoke('cua-preview:open-screen-settings'),
+  openChromeSetupPage: (page) => ipcRenderer.invoke('cua-setup:open-in-chrome', page),
   transcribeAudio: (payload) => ipcRenderer.invoke('asr:transcribe', payload),
   getAsrConfig: () => ipcRenderer.invoke('asr:config:read'),
   setAsrConfig: (config) => ipcRenderer.invoke('asr:config:write', config),

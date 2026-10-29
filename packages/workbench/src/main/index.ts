@@ -10,7 +10,8 @@ import {
   Notification,
   screen,
   session,
-  shell
+  shell,
+  type IpcMainInvokeEvent
 } from 'electron'
 import { APP_DISPLAY_NAME, installAppMenu } from './app-menu'
 import { createWindowMaterialApplier, parseWindowMaterial, type WindowMaterialAddon } from './window-material'
@@ -60,6 +61,7 @@ import { installDevPreviewWebviewGuards, setPopupGate, setTabOpener } from './se
 import { configureBrowserDownload } from './services/browser-download-settings'
 import { createBrowserBridge, type BrowserBridge } from './services/browser-bridge'
 import { registerCuaWindowPreviewIpc } from './services/cua-window-preview'
+import { registerCuaSetupIpc } from './services/cua-setup'
 import { installMainWindowNavigationGuards } from './services/main-window-guards'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
@@ -1076,10 +1078,11 @@ app.whenReady().then(async () => {
     if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return false
     return applyWindowMaterial(mainWindow, input)
   })
-  registerCuaWindowPreviewIpc((event) =>
+  const fromMainWindow = (event: IpcMainInvokeEvent): boolean =>
     Boolean(mainWindow && !mainWindow.isDestroyed() &&
       event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame)
-  )
+  registerCuaWindowPreviewIpc(fromMainWindow)
+  registerCuaSetupIpc(fromMainWindow)
   const applySettingsPatch = async (partial: AppSettingsPatch): Promise<AppSettingsV1> => {
     const prev = await store.load()
     const next = normalizeAppSettings({
