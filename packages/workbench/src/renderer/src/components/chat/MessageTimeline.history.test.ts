@@ -39,9 +39,9 @@ const nextTurn = [{kind:'user',id:'u40',text:'Question 40'},{kind:'assistant',id
 it('keeps history the reader loaded when a new turn arrives', async () => {
   await render()
   await act(async () => useChatStore.getState().scrollToBlock('u10'))
-  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(30)
+  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(18)
   await renderBlocks([...blocks, ...nextTurn])
-  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(31)
+  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(18)
   expect(host.querySelector('#block-u10')).not.toBeNull()
 })
 it('keeps an untouched collapsed view bounded as turns arrive', async () => {
@@ -49,4 +49,24 @@ it('keeps an untouched collapsed view bounded as turns arrive', async () => {
   await renderBlocks([...blocks, ...nextTurn])
   expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(18)
   expect(host.querySelector('#block-u40')).not.toBeNull()
+})
+
+it('bounds a conversation that grows across the collapse threshold', async () => {
+  await renderBlocks(blocks.slice(0, 48))
+  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(24)
+  await renderBlocks(blocks.slice(0, 50))
+  expect(host.querySelectorAll('.ds-message-turn')).toHaveLength(18)
+})
+it('bounds repeated history loads and keeps newer messages reachable', async () => {
+  await render()
+  for (let i = 0; i < 3; i++) {
+    const button = host.querySelector<HTMLButtonElement>('[data-history-earlier]')
+    if (button) await act(async () => button.click())
+    expect(host.querySelectorAll('.ds-message-turn').length).toBeLessThanOrEqual(36)
+  }
+  expect(host.querySelector('#block-u0')).not.toBeNull()
+  const latest = host.querySelector<HTMLButtonElement>('[data-history-latest]')
+  expect(latest).toBeDefined()
+  await act(async () => latest!.click())
+  expect(host.querySelector('#block-u39')).not.toBeNull()
 })

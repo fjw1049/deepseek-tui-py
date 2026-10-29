@@ -1,3 +1,4 @@
+import { ViewportContent } from './ViewportContent'
 import { AutomationResultCard } from './AutomationResultCard'
 import {
   TurnActivity,
@@ -182,6 +183,7 @@ type Turn = {
 const COPY_FEEDBACK_RESET_MS = 1600
 const TURN_PAGE_SIZE = 18
 const AUTO_COLLAPSE_THRESHOLD = 24
+const MAX_VISIBLE_TURNS = 36
 const TOP_LOAD_TRIGGER_PX = 120
 
 type AssistantMarkdownProps = {
@@ -332,6 +334,7 @@ export function MessageTimeline({
   const userScrolledAtRef = useRef(0)
   const pendingPrependRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
   const prependInFlightRef = useRef(false)
+  const prependAnchorRef = useRef<{ node: Element; top: number } | null>(null)
   const scrollFrameRef = useRef<number | null>(null)
   const jumpAnimRef = useRef<number | null>(null)
   const previousTurnsRef = useRef<Turn[]>([])
@@ -344,24 +347,30 @@ export function MessageTimeline({
   const [visibleTurnCount, setVisibleTurnCount] = useState(() =>
     shouldCollapseHistory ? TURN_PAGE_SIZE : turns.length
   )
-  const hiddenTurnCount = Math.max(0, turns.length - visibleTurnCount)
+  const [historyEnd, setHistoryEnd] = useState<number | null>(null)
+  const windowEnd = Math.min(historyEnd ?? turns.length, turns.length)
+  const hiddenTurnCount = Math.max(0, windowEnd - visibleTurnCount)
   const visibleTurns = useMemo(
-    () => (hiddenTurnCount > 0 ? turns.slice(hiddenTurnCount) : turns),
-    [hiddenTurnCount, turns]
+    () => turns.slice(hiddenTurnCount, windowEnd),
+    [hiddenTurnCount, windowEnd, turns]
   )
 
   const loadEarlierTurns = useCallback((): void => {
     if (hiddenTurnCount === 0 || prependInFlightRef.current) return
     const el = containerRef.current
     if (el) {
+      const node = el.querySelector('.ds-message-turn')
+      if (node) prependAnchorRef.current = { node, top: node.getBoundingClientRect().top }
       pendingPrependRef.current = {
         scrollHeight: el.scrollHeight,
         scrollTop: el.scrollTop
       }
     }
+    stickToBottomRef.current = false
     prependInFlightRef.current = true
-    setVisibleTurnCount((count) => Math.min(turns.length, count + TURN_PAGE_SIZE))
-  }, [hiddenTurnCount, turns.length])
+    setHistoryEnd(Math.min(windowEnd, hiddenTurnCount + TURN_PAGE_SIZE))
+    setVisibleTurnCount(MAX_VISIBLE_TURNS)
+  }, [hiddenTurnCount, windowEnd])
 
   useEffect(() => {
     const el = containerRef.current
@@ -467,7 +476,7 @@ export function MessageTimeline({
 
   useLayoutEffect(() => {
     pinTimelineToBottom()
-  }, [blocks, live, liveReasoning, pinTimelineToBottom])
+  }, [blocks, live, liveReasoning, windowEnd, visibleTurnCount, pinTimelineToBottom])
 
   useLayoutEffect(() => {
     stickToBottomRef.current = scrollMemory?.atBottom ?? true
@@ -498,10 +507,11 @@ export function MessageTimeline({
       const turnIndex = turns.findIndex((turn) =>
         turn.user?.id === scrollToBlockId || turn.blocks.some((block) => block.id === scrollToBlockId)
       )
-      if (turnIndex >= 0 && turnIndex < hiddenTurnCount) {
+      if (turnIndex >= 0 && (turnIndex < hiddenTurnCount || turnIndex >= windowEnd)) {
         stickToBottomRef.current = false
         tailAnchorHoldRef.current = false
-        setVisibleTurnCount(turns.length - turnIndex)
+        setHistoryEnd(Math.min(turns.length, turnIndex + TURN_PAGE_SIZE))
+        setVisibleTurnCount(TURN_PAGE_SIZE)
         return
       }
     }
@@ -554,7 +564,7 @@ export function MessageTimeline({
       jumpAnimRef.current = requestAnimationFrame(step)
     }
     clearScrollTarget()
-  }, [clearScrollTarget, scrollToBlockId, turns, hiddenTurnCount, tailAnchorHoldRef])
+  }, [clearScrollTarget, scrollToBlockId, turns, hiddenTurnCount, windowEnd, tailAnchorHoldRef])
 
   useEffect(
     () => () => {
@@ -573,6 +583,7 @@ export function MessageTimeline({
     const threadChanged = scope.threadId !== activeThreadId
     collapseScopeRef.current = { threadId: activeThreadId, turnCount: turns.length }
     if (threadChanged) {
+      setHistoryEnd(null)
       setVisibleTurnCount(shouldCollapseHistory ? TURN_PAGE_SIZE : turns.length)
       return
     }
@@ -581,10 +592,11 @@ export function MessageTimeline({
       // Same thread: once the reader has loaded past the default page, grow
       // with appended turns so loaded history is not yanked away (this also
       // covers crossing the collapse threshold). An untouched view stays bounded.
-      if (delta > 0 && count > TURN_PAGE_SIZE) return Math.min(turns.length, count + delta)
-      return Math.min(turns.length, Math.max(count, TURN_PAGE_SIZE))
+      if (historyEnd !== null) return count
+      if (delta > 0 && scope.turnCount <= AUTO_COLLAPSE_THRESHOLD) return TURN_PAGE_SIZE
+      return Math.min(turns.length, Math.min(MAX_VISIBLE_TURNS, Math.max(count, TURN_PAGE_SIZE)))
     })
-  }, [activeThreadId, shouldCollapseHistory, turns.length])
+  }, [activeThreadId, shouldCollapseHistory, turns.length, historyEnd])
 
   useEffect(() => {
     const snapshot = pendingPrependRef.current
@@ -595,10 +607,14 @@ export function MessageTimeline({
     prependInFlightRef.current = false
 
     requestAnimationFrame(() => {
-      const addedHeight = el.scrollHeight - snapshot.scrollHeight
-      el.scrollTop = snapshot.scrollTop + Math.max(0, addedHeight)
+      const anchor = prependAnchorRef.current
+      prependAnchorRef.current = null
+      const addedHeight = anchor?.node.isConnected
+        ? (anchor.node.getBoundingClientRect().top - anchor.top) / (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')) || 1)
+        : Math.max(0, el.scrollHeight - snapshot.scrollHeight)
+      el.scrollTop = snapshot.scrollTop + addedHeight
     })
-  }, [visibleTurnCount])
+  }, [visibleTurnCount, windowEnd])
 
   useEffect(() => {
     const el = containerRef.current
@@ -776,6 +792,7 @@ export function MessageTimeline({
             <button
               type="button"
               onClick={loadEarlierTurns}
+              data-history-earlier
               className="ds-chip rounded-full px-4 py-2 text-[13px] font-medium text-ds-muted transition hover:text-ds-ink"
             >
               {t('timelineShowEarlierTurns', { count: Math.min(hiddenTurnCount, TURN_PAGE_SIZE) })}
@@ -797,7 +814,7 @@ export function MessageTimeline({
             typeof reasoningFirst === 'number' && typeof reasoningLast === 'number'
               ? Math.max(0, reasoningLast - reasoningFirst)
               : undefined
-          const isLatestTurn = index === visibleTurns.length - 1
+          const isLatestTurn = hiddenTurnCount + index === turns.length - 1
           const turnDiffId = resolveTurnDiffId(
             turn.user?.turnId,
             isLatestTurn,
@@ -807,7 +824,7 @@ export function MessageTimeline({
           const processing = busy && isLatestTurn && selectedThreadId === activeThreadId
           return (
             <MemoMessageTurn
-              key={userId ?? `turn-${index}`}
+              key={userId ?? `turn-${hiddenTurnCount + index}`}
               turn={turn}
               isProcessing={processing}
               activity={isLatestTurn ? resolveTurnActivity({
@@ -836,6 +853,20 @@ export function MessageTimeline({
             />
           )
         })}
+
+        {windowEnd < turns.length ? (
+          <div className="flex justify-center gap-3">
+            <button type="button" className="ds-chip rounded-full px-4 py-2" onClick={() => {
+              setHistoryEnd(Math.min(turns.length, windowEnd + TURN_PAGE_SIZE))
+              setVisibleTurnCount(MAX_VISIBLE_TURNS)
+            }}>{t('timelineShowLaterTurns')}</button>
+            <button type="button" data-history-latest className="ds-chip rounded-full px-4 py-2" onClick={() => {
+              setHistoryEnd(null)
+              setVisibleTurnCount(TURN_PAGE_SIZE)
+              stickToBottomRef.current = true
+            }}>{t('timelineReturnLatest')}</button>
+          </div>
+        ) : null}
 
         {hiddenTurnCount === 0 && shouldCollapseHistory && turns.length > TURN_PAGE_SIZE && !busy ? (
           <div className="flex items-center justify-center">
@@ -1039,19 +1070,27 @@ export function RunMessageTimeline({ blocks, liveId, active, workspace }: {
   active: boolean
   workspace: string
 }): ReactElement {
+  const { t } = useTranslation('common')
+  const [pageStart, setPageStart] = useState<number | null>(null)
+  useEffect(() => setPageStart(null), [blocks[0]?.id])
   const viewportRef = useRef<HTMLDivElement>(null)
   const liveBlock = active ? blocks.find((block) => block.id === liveId && block.kind === 'assistant') : null
   const turns = useMemo(() => groupTurns(blocks.filter((block) => block !== liveBlock)), [blocks, liveBlock])
+  const start = Math.min(pageStart ?? Math.max(0, turns.length - TURN_PAGE_SIZE), Math.max(0, turns.length - 1))
+  const end = Math.min(turns.length, start + TURN_PAGE_SIZE)
   return <ConversationScope.Provider value={{ blocks, workspace, active }}>
     <div ref={viewportRef} className="flex min-w-0 flex-col gap-8" data-run-conversation>
-      {turns.map((turn, index) => <MessageTurn
+      {start > 0 ? <button type="button" onClick={() => setPageStart(Math.max(0, start - TURN_PAGE_SIZE))}>{t('timelineShowEarlierTurns', { count: TURN_PAGE_SIZE })}</button> : null}
+      {turns.slice(start, end).map((turn, index) => <MessageTurn
         key={turn.user?.id ?? `run-turn-${index}`}
         turn={turn}
-        isProcessing={active && index === turns.length - 1}
+        isProcessing={active && start + index === turns.length - 1}
         liveReasoning=""
-        live={index === turns.length - 1 && liveBlock && 'text' in liveBlock ? liveBlock.text : ''}
+        live={start + index === turns.length - 1 && liveBlock && 'text' in liveBlock ? liveBlock.text : ''}
         viewportRef={viewportRef}
       />)}
+      {end < turns.length ? <button type="button" onClick={() => setPageStart(end)}>{t('timelineShowLaterTurns')}</button> : null}
+      {pageStart !== null ? <button type="button" onClick={() => setPageStart(null)}>{t('timelineReturnLatest')}</button> : null}
     </div>
   </ConversationScope.Provider>
 }
@@ -2919,7 +2958,7 @@ function MessageBubble({
     return (
       <div id={`block-${block.id}`} className="group/message flex min-w-0 max-w-full flex-col">
         <div className="ds-markdown ds-markdown--answer ds-chat-answer min-w-0 max-w-full text-ds-ink">
-          <AssistantMarkdown text={block.text} streaming={streaming} />
+          <ViewportContent active={streaming}><AssistantMarkdown text={block.text} streaming={streaming} /></ViewportContent>
         </div>
         {afterContent ? (
           <div className="ds-assistant-message-receipt mt-4">{afterContent}</div>
@@ -2940,7 +2979,7 @@ function MessageBubble({
     return (
       <div id={`block-${block.id}`} className="ds-card-soft rounded-[12px] px-4 py-3 text-[13.5px] leading-6 text-ds-faint/80">
         <div className="ds-markdown">
-          <BoundedReasoningMarkdown text={block.text} />
+          <ViewportContent><BoundedReasoningMarkdown text={block.text} /></ViewportContent>
         </div>
       </div>
     )

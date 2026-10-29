@@ -1,4 +1,6 @@
 {
+  "timelineShowLaterTurns": "查看后续消息",
+  "timelineReturnLatest": "返回最新消息",
   "browserStaleFrame": "连接已中断，当前显示最后保存的画面",
   "browserArtifactSaved": "已保存：{{name}}",
   "browserAgentTarget": "Agent 正在操作：{{name}}",

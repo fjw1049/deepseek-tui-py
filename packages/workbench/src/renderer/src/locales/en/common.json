@@ -1,4 +1,6 @@
 {
+  "timelineShowLaterTurns": "Show newer messages",
+  "timelineReturnLatest": "Return to latest",
   "browserStaleFrame": "Connection interrupted. Showing the last saved frame.",
   "browserArtifactSaved": "Saved: {{name}}",
   "browserAgentTarget": "Agent is working on: {{name}}",

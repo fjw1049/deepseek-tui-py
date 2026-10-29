@@ -1,3 +1,4 @@
+import { scheduleChatRenderWarmup } from './lib/chat-render-warmup'
 import { preloadCuaSettings } from './lib/cua-settings-data'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useChatStore } from './store/chat-store'
@@ -57,6 +58,9 @@ export default function AppShell(): React.ReactElement {
   const [revealPhase, setRevealPhase] = useState<RevealPhase>(
     coldStartCeremonyDone ? 'live' : 'waiting'
   )
+  useEffect(() => {
+    if (revealPhase === 'live') return scheduleChatRenderWarmup()
+  }, [revealPhase])
   const [shellModulesReady, setShellModulesReady] = useState(coldStartCeremonyDone)
   const [blankGone, setBlankGone] = useState(coldStartCeremonyDone)
   /** lazy() suspends on first render even when the module is already loaded,

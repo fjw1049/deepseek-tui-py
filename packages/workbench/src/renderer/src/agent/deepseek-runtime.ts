@@ -1152,7 +1152,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       const turnId = deriveTurnId(it)
       if (turnId) completedUserInputTurns.add(turnId)
     }
+    let hydrationDeadline = performance.now() + 8
     for (const it of detail.items) {
+      if (performance.now() >= hydrationDeadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        hydrationDeadline = performance.now() + 8
+      }
       const ap = readActivePlugin(it)
       if (ap !== undefined) activePlugin = ap
       latestTurnId = deriveTurnId(it) ?? latestTurnId
