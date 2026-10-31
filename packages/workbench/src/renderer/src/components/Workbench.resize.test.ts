@@ -29,10 +29,12 @@ vi.mock('./BrowserAssistance', () => ({ BrowserAssistance: () => null }))
 vi.mock('./RuntimeDiagnosticsDialog', () => ({ RuntimeDiagnosticsDialog: () => null }))
 vi.mock('./right-sidebar/WorkbenchRightSidebar', () => ({
   RightSidebarToggleButton: () => null, TerminalToggleButton: () => null,
-  WorkbenchRightSidebar: ({ width, fillWidth, onBeginResize }: { width: number; fillWidth: boolean; onBeginResize: () => void }) =>
+  WorkbenchRightSidebar: ({ width, fillWidth, onBeginResize, onToggleMaximize, onClose }: { width: number; fillWidth: boolean; onBeginResize: () => void; onToggleMaximize: () => void; onClose: () => void }) =>
     createElement('aside', { className: 'ds-workbench-right-panel', style: { width: fillWidth ? '100%' : width } },
       createElement('div', { className: 'ds-right-panel-surface', style: { width } }, 'diff content'),
-      createElement('div', { 'aria-label': 'rightPanelResize', onPointerDown: onBeginResize }))
+      createElement('div', { 'aria-label': 'rightPanelResize', onPointerDown: onBeginResize }),
+      createElement('button', { 'aria-label': 'maximize', onClick: onToggleMaximize }),
+      createElement('button', { 'aria-label': 'close panel', onClick: onClose }))
 }))
 
 it.each(['sidebarResize', 'rightPanelResize'].flatMap(label => ['pointerup', 'pointercancel', 'blur'].map(ending => ({ label, ending }))))('previews $label without Workbench renders or storage writes and commits on $ending', async ({ label, ending }) => {
@@ -190,5 +192,58 @@ it('shares the scroll cooldown between Monaco and native scrolling without reren
     vi.useRealTimers()
     vi.restoreAllMocks()
     useChatStore.setState(initial, true)
+  }
+})
+
+
+it('keeps maximized layout in CSS without rendering or persisting each left sidebar animation frame', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const initial = useChatStore.getState()
+  const save = vi.fn()
+  vi.stubGlobal('localStorage', { getItem: () => null, setItem: save })
+  let notify: () => void = () => {}
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: () => void) {}
+    observe(node: HTMLElement) {
+      if (node.parentElement?.classList.contains('ds-workbench-main')) notify = this.callback
+    }
+    disconnect() {}
+  })
+  let mainWidth = 1320
+  const widthRead = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('ds-workbench-shell') ? 1600 : mainWidth
+  })
+  useChatStore.setState({ route: 'chat', workspaceRoot: '/repo', activeThreadId: null, blocks: [], threads: [], runtimeConnection: 'ready' })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const render = vi.fn()
+  try {
+    await act(async () => root.render(createElement(Profiler, { id: 'workbench', onRender: render }, createElement(Workbench))))
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="maximize"]')!.click())
+    expect(host.querySelector<HTMLElement>('.ds-workbench-right-panel')!.style.width).toBe('100%')
+    render.mockClear()
+    save.mockClear()
+    widthRead.mockClear()
+    for (const width of [1350, 1450, 1550, 1592, 1550, 1450, 1350, 1320]) {
+      mainWidth = width
+      await act(async () => notify())
+      expect(host.querySelector<HTMLElement>('.ds-workbench-right-panel')!.style.width).toBe('100%')
+      expect(host.querySelector<HTMLElement>('.ds-chat-column')!.inert).toBe(true)
+    }
+    expect(render).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+    expect(widthRead).not.toHaveBeenCalled()
+    mainWidth = 1592
+    await act(async () => notify())
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="close panel"]')!.click())
+    expect(host.querySelector<HTMLElement>('.ds-right-panel-surface')!.style.width).toBe('1592px')
+    expect(host.querySelector<HTMLElement>('.ds-chat-column')!.inert).toBe(false)
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    useChatStore.setState(initial, true)
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   }
 })

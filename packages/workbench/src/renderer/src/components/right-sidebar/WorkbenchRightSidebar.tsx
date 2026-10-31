@@ -1,5 +1,6 @@
 import {
   lazy,
+  memo,
   Suspense,
   useEffect,
   useRef,
@@ -35,14 +36,14 @@ import { RightSidebarCollapsedStrip } from './RightSidebarCollapsedStrip'
 const RunPanel = lazy(() => import('./RunPanel').then((module) => ({ default: module.RunPanel })))
 
 const ChangeInspector = lazy(() =>
-  import('../ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
+  import('../ChangeInspector').then((module) => ({ default: memo(module.ChangeInspector) }))
 )
 const BrowserWorkspace = lazy(() =>
   import('../BrowserWorkspace').then((module) => ({ default: module.BrowserWorkspace }))
 )
 const WorkspaceEditorPanel = lazy(() =>
   import('../workspace-editor/WorkspaceEditorPanel').then((module) => ({
-    default: module.WorkspaceEditorPanel
+    default: memo(module.WorkspaceEditorPanel)
   }))
 )
 
@@ -221,7 +222,7 @@ export function WorkbenchRightSidebar({
         inert={!panelVisible}
         style={{
           width,
-          display: panelVisible ? undefined : 'none',
+          display: open && collapsed ? 'none' : undefined,
           minWidth: panelVisible && fillWidth ? '100%' : undefined,
           maxWidth: panelVisible && fillWidth ? '100%' : undefined
         }}
@@ -334,7 +335,7 @@ export function WorkbenchRightSidebar({
               xterm buffers and the terminal:data IPC listener survive tab
               switches; otherwise switching tabs would unmount the panel and
               drop all session scrollback. */}
-          <div className={terminalVisible ? 'h-full w-full' : 'hidden h-full w-full'}>
+          <div className={tab === 'terminal' ? 'h-full w-full' : 'hidden h-full w-full'}>
             <AppTerminalPanel
               workspaceRoot={workspaceRoot}
               mountSurface="sidebar"

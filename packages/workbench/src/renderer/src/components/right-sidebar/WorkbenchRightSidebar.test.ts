@@ -11,7 +11,8 @@ vi.mock('../../store/chat-store', () => ({ useChatStore: (select: (state: unknow
 vi.mock('../../store/run-panel-store', () => ({ useRunPanelStore: (select: (state: unknown) => unknown) => select({ target: null }) }))
 vi.mock('./RightSidebarCollapsedStrip', () => ({ RightSidebarCollapsedStrip: () => null }))
 vi.mock('../AppTerminalPanel', () => ({ AppTerminalPanel: () => createElement('div', { 'data-terminal': '' }) }))
-vi.mock('../workspace-editor/WorkspaceEditorPanel', () => ({ WorkspaceEditorPanel: () => createElement('div', null, 'file content') }))
+const editorRender = vi.hoisted(() => vi.fn())
+vi.mock('../workspace-editor/WorkspaceEditorPanel', () => ({ WorkspaceEditorPanel: ({ workspaceRoot }: { workspaceRoot: string }) => { editorRender(workspaceRoot); return createElement('div', null, 'file content') } }))
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -91,6 +92,11 @@ it('loads on first open and preserves the panel across closing and reopening', a
     expect(frame.style.width).toBe('0px')
     expect(frame.getAttribute('aria-hidden')).toBe('true')
     expect(frame.hasAttribute('inert')).toBe(true)
+    // Keep the outgoing surface paintable while its outer width retracts.
+    const surface = host.querySelector<HTMLElement>('.ds-right-panel-surface')!
+    expect(surface.style.display).not.toBe('none')
+    expect(surface.hasAttribute('inert')).toBe(true)
+    expect(terminal!.parentElement!.classList.contains('hidden')).toBe(false)
     expect(host.querySelector('[data-terminal]')).toBe(terminal)
     await render(true)
     expect(frame.style.width).toBe('420px')
@@ -197,5 +203,29 @@ it('keeps the original browser through a new conversation and disposes only expl
     expect(host.querySelector('[data-browser="first"]')).not.toBe(first)
     await render('second')
     expect(host.querySelector('[data-browser="second"]')).toBe(second)
+  } finally { await act(async () => root.unmount()) }
+})
+
+
+it('does not rebuild file content for shell width changes but updates when its workspace changes', async () => {
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const noop = vi.fn()
+  const blocks: [] = []
+  const render = (width: number, workspaceRoot = '/first') => act(async () => root.render(createElement(WorkbenchRightSidebar, {
+    threadId: null, open: true, collapsed: false, tab: 'editor', tabs: ['editor'],
+    width, fillWidth: true, workspaceRoot, blocks, changesContext: 'branch',
+    devPreviewBlocks: [], latestDevPreviewUrl: null, onCloseTab: noop, onTabChange: noop,
+    onChangesContextChange: noop, onToggleCollapsed: noop, onClose: noop,
+    onToggleMaximize: noop, onBeginResize: noop, onOpenFileInEditor: noop
+  })))
+  try {
+    await render(1000)
+    editorRender.mockClear()
+    await render(1200)
+    await render(1000)
+    expect(editorRender).not.toHaveBeenCalled()
+    await render(1000, '/second')
+    expect(editorRender).toHaveBeenCalledWith('/second')
   } finally { await act(async () => root.unmount()) }
 })

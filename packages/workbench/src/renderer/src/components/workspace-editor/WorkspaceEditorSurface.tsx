@@ -183,32 +183,13 @@ const PreparedWorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, 
       const node = hostRef.current
       if (!node) return
 
-      let frame: number | null = null
-      const layoutEditor = (): void => {
-        if (frame !== null) window.cancelAnimationFrame(frame)
-        frame = null
-        const shell = node.closest('.ds-workbench-shell')
-        const rail = shell?.querySelector('.ds-workbench-sidebar-wrap')
-        // Only defer the maximized editor during the rail's width transition.
-        // Drags, window resizing and reduced-motion layouts remain immediate.
-        const sliding = node.closest('.ds-workbench-right-panel[data-fill-width]') &&
-          rail?.getAnimations?.().some(animation =>
-            'transitionProperty' in animation && animation.transitionProperty === 'width' &&
-            animation.playState === 'running')
-        if (sliding) {
-          frame = window.requestAnimationFrame(layoutEditor)
-          return
-        }
-        editorRef.current?.layout()
-      }
-
+      // ResizeObserver runs before paint. Keep the editor in step with both
+      // directions of the sidebar animation instead of waiting for its end.
+      const layoutEditor = (): void => { editorRef.current?.layout() }
       layoutEditor()
       const observer = new ResizeObserver(layoutEditor)
       observer.observe(node)
-      return () => {
-        observer.disconnect()
-        if (frame !== null) window.cancelAnimationFrame(frame)
-      }
+      return () => observer.disconnect()
     }, [tab.id])
 
     useEffect(() => {

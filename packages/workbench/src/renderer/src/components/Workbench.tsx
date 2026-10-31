@@ -816,7 +816,19 @@ export function Workbench(): ReactElement {
     }
   }, [activeThreadId, rightSidebarTab, runTarget, setRightSidebarPanels])
 
+  const changeSidebarContext = useCallback((context: ChangeReviewContext): void => {
+    setChangesContext(context)
+    setChangesTurnId(null)
+    setChangesProjectRoot(null)
+  }, [])
+  const consumeChangesFocusPath = useCallback(() => setChangesFocusPath(null), [])
+
   const closeRightSidebar = useCallback((): void => {
+    // Capture the final filled width once for the outgoing surface; it may have
+    // changed while the left sidebar animated without updating React state.
+    if (chatColumnHidden && mainRowRef.current) {
+      setRightSidebarWidth(mainRowRef.current.clientWidth)
+    }
     const chatColumn = chatColumnRef.current
     if (chatColumn?.style.getPropertyValue('--ds-chat-rest-width')) {
       chatColumn.style.setProperty('--ds-chat-rest-width', `${mainRowRef.current?.clientWidth ?? chatColumn.clientWidth}px`)
@@ -824,7 +836,7 @@ export function Workbench(): ReactElement {
     setRightSidebarOpen(false)
     setRightSidebarCollapsed(false)
     setChatColumnHidden(false)
-  }, [setRightSidebarOpen, setRightSidebarCollapsed])
+  }, [chatColumnHidden, setRightSidebarOpen, setRightSidebarCollapsed])
 
   const toggleRightSidebar = useCallback((): void => {
     if (!rightSidebarOpen || rightSidebarCollapsed) {
@@ -1326,9 +1338,8 @@ export function Workbench(): ReactElement {
       // beside the editor. Keep fill-width while the right panel is still
       // filling; if it closes or collapses, fall through so chat returns.
       if (chatColumnHidden && rightPanelVisible && autoHiddenRightWidthRef.current === null) {
-        if (measuredMain != null && measuredMain !== rightSidebarWidth) {
-          setRightSidebarWidth(measuredMain)
-        }
+        // CSS already fills the available row. Feeding every animation frame
+        // back into React re-renders the workspace and persists transient widths.
         return
       }
       if (rightPanelVisible && tooNarrow && autoHiddenRightWidthRef.current === null) {
@@ -1344,7 +1355,12 @@ export function Workbench(): ReactElement {
     }
     syncPanelLayoutRef.current = sync
     sync()
-    const observer = new ResizeObserver(sync)
+    const observer = new ResizeObserver(() => {
+      // A filled panel already follows the row in CSS. Avoid forcing another
+      // layout read on every rail-animation frame; window resize still runs sync.
+      if (chatColumnHidden && rightPanelVisible && autoHiddenRightWidthRef.current === null) return
+      sync()
+    })
     if (mainRowRef.current) observer.observe(mainRowRef.current)
     window.addEventListener('resize', sync)
     return () => {
@@ -2134,12 +2150,8 @@ export function Workbench(): ReactElement {
             changesContext={changesContext}
             changesTurnId={changesTurnId}
             changesProjectRoot={changesProjectRoot}
-            onChangesContextChange={(context) => {
-              setChangesContext(context)
-              setChangesTurnId(null)
-              setChangesProjectRoot(null)
-            }}
-            onChangesFocusPathConsumed={() => setChangesFocusPath(null)}
+            onChangesContextChange={changeSidebarContext}
+            onChangesFocusPathConsumed={consumeChangesFocusPath}
             devPreviewBlocks={devPreviewBlocks}
             latestDevPreviewUrl={previewThreadId.current === activeThreadId ? preferredPreviewUrl : null}
             preferredPreviewFilePath={preferredPreviewFilePath}

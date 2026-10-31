@@ -97,7 +97,7 @@ it('allows reading after a grammar load failure', async () => {
   } finally { await act(async () => root.unmount()); host.remove() }
 })
 
-it('defers maximized editor layout only while the left rail animates and cancels pending work on unmount', async () => {
+it('keeps maximized editor layout current during both directions of the left rail animation', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   let resize = () => {}
   vi.stubGlobal('ResizeObserver', class {
@@ -128,22 +128,17 @@ it('defers maximized editor layout only while the left rail animates and cancels
     await act(async () => root.render(createElement(WorkspaceEditorSurface, { paneId: 'primary', tab: tab('a.txt'), readOnly: false, onChange() {} })))
     await act(async () => state.mount!(editor))
     flush(); layout.mockClear()
-    running = true
-    resize(); resize(); flush()
-    expect(layout).not.toHaveBeenCalled()
-    expect(frames.size).toBe(1)
+    for (const collapsed of [true, false, true, false]) {
+      rail.toggleAttribute('data-collapsed', collapsed)
+      running = true
+      layout.mockClear()
+      resize(); resize()
+      expect(layout).toHaveBeenCalledTimes(2)
+      expect(frames.size).toBe(0)
+    }
     running = false
-    flush()
-    expect(layout).toHaveBeenCalledTimes(1)
-    resize()
-    expect(layout).toHaveBeenCalledTimes(2)
-    running = true
-    panel.removeAttribute('data-fill-width')
     resize()
     expect(layout).toHaveBeenCalledTimes(3)
-    panel.setAttribute('data-fill-width', '')
-    resize()
-    expect(frames.size).toBe(1)
   } finally { await act(async () => root.unmount()); shell.remove() }
   expect(frames.size).toBe(0)
 })

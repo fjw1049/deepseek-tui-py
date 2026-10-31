@@ -2859,7 +2859,7 @@ samp {
 .ds-workbench-topbar__inner {
   min-height: var(--ds-header-height);
   padding-inline: 1rem;
-  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: padding-left var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Collapsed sidebar: clear the fixed expand droplet (same spot as collapse).
@@ -2881,7 +2881,7 @@ samp {
 }
 
 .ds-right-panel-tabbar {
-  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: padding-left var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Maximized right panel hides the chat topbar, so the editor/changes/terminal/
@@ -7192,12 +7192,13 @@ select:focus-visible,
 }
 
 .ds-workbench-shell {
+  --ds-sidebar-motion-duration: 220ms;
   gap: var(--ds-window-gap);
   /* Pad the content card via shell padding (reliable in flex). Left stays 0 so
      the sidebar can sit flush; collapsed sidebar restores left inset below. */
   padding: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 0;
   /* The inset follows the rail so its first frame cannot nudge the card. */
-  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: padding-left var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
   /* One chrome color with the left rail: gutters around the floating card
      (top/right/bottom, and left when collapsed) must match --bg-sidebar.
      Using --bg-app here made the four card corners a darker second board tone. */
@@ -7228,7 +7229,7 @@ select:focus-visible,
   right: 0;
   pointer-events: none;
   background: var(--app-chrome-fill);
-  transition: left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: left var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-shell:has(> .ds-workbench-sidebar-wrap[data-collapsed]) {
@@ -7287,7 +7288,7 @@ select:focus-visible,
    left corners, cast a soft depth shadow onto the sidebar, and draw a 1px seam
    ring clipped to the seam-side radius strip (Synara chat-content-card). */
 .ds-workbench-sidebar-wrap {
-  transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: width var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Keep the rail flush with the window throughout its horizontal slide;
@@ -7298,7 +7299,7 @@ select:focus-visible,
 }
 
 .ds-workbench-sidebar-slide {
-  transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-shell.is-resizing,
@@ -7336,7 +7337,7 @@ select:focus-visible,
   width: var(--ds-radius-shell);
   pointer-events: none;
   background: var(--bg-sidebar);
-  transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: opacity var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-sidebar-wrap + .ds-workbench-main {
@@ -7345,8 +7346,8 @@ select:focus-visible,
      board/rail join. Hairline ::before already marks the card edge. */
   box-shadow: var(--card-float-shadow);
   transition:
-    border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1),
-    box-shadow 300ms cubic-bezier(0.32, 0.72, 0, 1);
+    border-radius var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-sidebar-wrap + .ds-workbench-main::before {
@@ -7358,7 +7359,7 @@ select:focus-visible,
   border-radius: inherit;
   /* Border on .ds-workbench-main is the stroke; do not paint an inner band. */
   box-shadow: none;
-  transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: opacity var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Collapsed: wedge fades; the floating card keeps uniform radius + elevation. */
@@ -7417,12 +7418,15 @@ select:focus-visible,
 }
 
 .ds-workbench-right-panel .ds-right-panel-surface {
+  visibility: hidden;
   opacity: 0;
   transform: translateX(12px);
-  transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1), opacity 160ms ease-out, transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1), opacity 300ms ease-out, transform 300ms cubic-bezier(0.32, 0.72, 0, 1), visibility 0s 300ms;
 }
 
 .ds-workbench-right-panel[data-open] .ds-right-panel-surface {
+  visibility: visible;
+  transition-delay: 0s;
   opacity: 1;
   transform: translateX(0);
 }
@@ -8182,18 +8186,23 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   --ds-operation-rail-inset: clamp(0.75rem, 2cqi, 2rem);
 }
 
+/* Interpolate progress so a moving cqi target cannot restart the transition. */
+@property --ds-operation-expansion {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+
 .ds-operation-rail {
+  --ds-operation-expansion: 1;
   position: relative;
   z-index: 2;
-  flex: 0 0 var(--ds-operation-rail-width);
-  width: var(--ds-operation-rail-width);
+  flex: 0 0 calc(2.75rem + (var(--ds-operation-rail-width) - 2.75rem) * var(--ds-operation-expansion));
+  width: calc(2.75rem + (var(--ds-operation-rail-width) - 2.75rem) * var(--ds-operation-expansion));
   flex-direction: column;
   background: transparent;
-  padding-right: var(--ds-operation-rail-inset);
-  transition:
-    flex-basis 220ms cubic-bezier(0.32, 0.72, 0, 1),
-    width 220ms cubic-bezier(0.32, 0.72, 0, 1),
-    padding-right 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  padding-right: calc(0.45rem + (var(--ds-operation-rail-inset) - 0.45rem) * var(--ds-operation-expansion));
+  transition: --ds-operation-expansion 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Keep content at its final width while the rail reveals it, avoiding text reflow. */
@@ -8203,9 +8212,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 /* Compact dock: shrink the rail so chat reclaims the column. */
 .ds-operation-rail:has(.ds-operation-dock[data-compact='true']) {
-  flex-basis: 2.75rem;
-  width: 2.75rem;
-  padding-right: 0.45rem;
+  --ds-operation-expansion: 0;
 }
 
 /*
