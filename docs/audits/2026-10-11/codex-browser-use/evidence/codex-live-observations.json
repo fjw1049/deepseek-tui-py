@@ -1,0 +1,76 @@
+{
+  "target_version": "26.1007.21159",
+  "backend": "iab",
+  "tab_id": "1",
+  "url": "http://127.0.0.1:8767/demo.html",
+  "results": [
+    {
+      "name": "保存结果条件等待",
+      "passed": true,
+      "elapsed_ms": 26,
+      "result": "保存次数：1"
+    },
+    {
+      "name": "重复目标拒绝",
+      "passed": true,
+      "elapsed_ms": 38,
+      "result": "Error: Error: Browser Use encountered an error interacting with this webpage: Error: strict mode violation: getByRole('button', { name: '重复按钮', exact: true }) resolved to 2 elements:\n    1) <button>重复按钮</button> aka getByRole('button', { name: '重复按钮' }).first()\n    2) <button>重复按钮</button> aka getByRole('button', { name: '重复按钮' }).nth(1)\n\nwaiting on click for selector internal:role=button[name=\"重复按钮\"s]\nLocator diagnostics: {\"kind\":\"multiple_match"
+    },
+    {
+      "name": "遮挡目标拒绝",
+      "passed": false,
+      "elapsed_ms": 257,
+      "error": "Error: 意外点击了被遮挡目标"
+    },
+    {
+      "name": "唯一可见候选选择",
+      "passed": true,
+      "elapsed_ms": 275,
+      "result": "唯一可见目标已点击"
+    },
+    {
+      "name": "移除遮挡后完成操作",
+      "passed": true,
+      "elapsed_ms": 545,
+      "result": "遮挡目标已点击"
+    },
+    {
+      "name": "跨源 iframe 定位与填写",
+      "passed": false,
+      "elapsed_ms": 155,
+      "error": "Error: Error: Element does not receive pointer events at the click point; <output#cover-result> intercepts the click\nwaiting on click for selector iframe#cross-origin >> internal:control=enter-frame >> internal:role=button[name=\"Frame 保存\"s]\nLocator diagnostics: {\"kind\":\"intercepted\",\"action\":\"click\",\"locator\":\"iframe#cross-origin >> internal:control=enter-frame >> internal:role=button[name=\\\"Frame 保存\\\"s]\",\"matchCount\":1,\"matches\":[{\"ariaLabel\":null,\"disabled\":false,\"role\":null,\"tag\":\"button\",\"text\":\"Frame 保存\",\"type\":null,\"visible\":true}],\"visibleCount\":1,\"truncated\":false}"
+    },
+    {
+      "name": "开放 Shadow DOM 定位",
+      "passed": true,
+      "elapsed_ms": 278,
+      "result": "Shadow 已保存"
+    },
+    {
+      "name": "跨源 iframe AX 输入恢复",
+      "passed": true,
+      "elapsed_ms": 40,
+      "result": "Frame 已保存：跨源成功"
+    },
+    {
+      "name": "只读 evaluate 拒绝 DOM 写入",
+      "passed": true,
+      "elapsed_ms": 10,
+      "result": "Error: TypeError: document.body.setAttribute is not a function\n    at __playwrightEvaluate (<anonymous>:2686:50)\n    at <anonymous>:2687:14\n    at runUserScript (<anonymous>:2688:10)\n    at <anonymous>:2692:10\n    at <anonymous>:2693:3"
+    },
+    {
+      "name": "延迟结果条件等待",
+      "passed": true,
+      "elapsed_ms": 493,
+      "result": "延迟结果已出现"
+    }
+  ],
+  "dom_snapshot": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": Codex 核查项目\n  - button \"保存项目\"\n  - status: 已保存：Codex 核查项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\" [active]\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - button \"移除遮挡层\"\n  - status: 遮挡目标已点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 唯一可见目标已点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe [id=\"cross-origin\"]:\n    - text: Frame 名称\n    - textbox \"Frame 名称\": 跨源成功\n    - button \"Frame 保存\"\n    - status: Frame 已保存：跨源成功\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 已保存",
+  "scope": "only controlled localhost demo; browser tool returned results captured here",
+  "interpretation": {
+    "summary": "8 expectations passed; 2 expectations failed. Recovery tests are separate and do not erase failures.",
+    "covered_click": "The semantic click returned without error while the overlay remained. A subsequent DOM observation still showed 尚未点击. The recorded error 意外点击了被遮挡目标 refers to unexpected successful dispatch, not evidence that the target received the click.",
+    "frame_click": "Frame textbox fill succeeded. Semantic frame button click rejected due to pointer interception; a fresh AX index click later succeeded. Root cause is not proven.",
+    "evaluate": "Only the attempted setAttribute write was tested. This is not a complete confinement proof."
+  }
+}

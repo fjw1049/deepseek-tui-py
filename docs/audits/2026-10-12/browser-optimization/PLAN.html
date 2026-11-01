@@ -1,0 +1,430 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>浏览器架构审核与标准优化方案</title><script src="https://cdn.tailwindcss.com"></script><style>*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:#f5f4ef;color:#20352e;font:16px/1.85 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}.hero{max-width:1240px;margin:auto;padding:48px 30px 30px}.label{letter-spacing:2px;font-size:12px;color:#647568}.hero h1{font-size:36px;line-height:1.4;margin:12px 0 16px;font-weight:650}.hero p{max-width:900px;margin:0}.badges{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.badges span{font-size:13px;border:1px solid #b5cabc;background:#e9f1e7;padding:6px 12px;border-radius:6px}.layout{max-width:1240px;margin:auto;padding:0 30px 40px;display:grid;grid-template-columns:180px minmax(0,1fr);gap:34px}aside{position:sticky;top:22px;align-self:start;font-size:13px}aside a{display:block;padding:6px 0;color:#526c5d;text-decoration:none}main{min-width:0;background:white;padding:28px 34px;border:1px solid #dde3d9;border-radius:10px}h2{font-size:25px;line-height:1.5;margin:36px 0 18px;padding-top:18px;border-top:1px solid #dde3d9}h3{font-size:20px;line-height:1.5;margin:24px 0 12px}p{margin:14px 0}a{color:#286e51;text-underline-offset:3px}table{border-collapse:collapse;width:100%;font-size:13px;line-height:1.75;table-layout:fixed;margin:22px 0}td,th{padding:11px;border:1px solid #dce3d9;vertical-align:top;overflow-wrap:anywhere}th{background:#edf2e9;text-align:left}tr:nth-child(even){background:#fafbf7}code{background:#f0f3ed;font:13px/1.7 ui-monospace,monospace;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}pre{padding:18px;background:#edf2e9;overflow:auto;border-radius:6px}pre code{padding:0;overflow-wrap:normal}.card{border:1px solid #d6e1d0;border-radius:8px;margin-bottom:20px;padding:18px}.card header{display:flex;justify-content:space-between;gap:16px;align-items:center}.card h3{margin:0;font-size:19px}.card header span{font-size:11px;color:#276745;white-space:nowrap}.compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}.compare div{background:#f3f2ed;padding:16px;border-left:3px solid #a5b1a2;border-radius:4px}.compare .after{background:#e8f0e4;border-color:#397950}.compare small{font-size:11px;color:#6b7d6b;letter-spacing:1px}.compare p{margin:8px 0 0;line-height:1.7}.card>p{font-size:13px;color:#617361;margin:12px 0 0}.diagram{overflow:auto;max-height:570px}.diagram svg{max-width:100%;height:auto}footer{max-width:1240px;margin:auto;padding:0 30px 30px;color:#647568;font-size:12px}@media(max-width:900px){.layout{grid-template-columns:1fr;gap:18px;padding:0 18px 28px}aside{position:static;display:flex;gap:12px;flex-wrap:wrap}main{padding:18px}.hero{padding:28px 18px}.hero h1{font-size:29px}.compare{grid-template-columns:1fr}.card header{display:block}.card header span{display:block;margin-top:8px}th,td{padding:7px}}@media print{aside,.badges{display:none}.layout{display:block;padding:0}main{padding:0;border:0}.hero{padding:10px 0}h2,h3{break-after:avoid}tr,.card{break-inside:avoid}.diagram{max-height:none}}</style></head><body><header class="hero"><div class="label">ARCHITECTURE REVIEW · 2026.10.12</div><h1>保留现有架构，收敛可信执行约定</h1><p>先确保观察可信、目标一致、结果不丢，再推进录制复用、模型泛化、授权与性能。旧问题已修与新实验失败分别记录。</p><div class="badges"><span>真实 Chrome / mock / 合成证据分级</span><span>5 个实施阶段</span><span>当前测试存在未解决失败</span></div></header><div class="layout"><aside><a href="#s-1">核心判断</a><a href="#s-2">1. 已贯通的现有架构</a><a href="#s-3">2. 必须保留、值得吸收的设计</a><a href="#s-4">3. 审查发现与最终状态</a><a href="#s-5">4. 标准目标设计</a><a href="#s-6">5. 泛化需要补的产品约定</a><a href="#s-7">6. 推荐实施顺序与完成定义</a><a href="#s-8">7. 通用性与泛化的验收矩阵</a><a href="#s-9">8. 本轮验证结果与边界</a><a href="#s-10">9. 结论与首个改动</a></aside><main><section><h2 style="margin-top:0;border:0;padding-top:0">首批优化的 Before / After</h2><article class="card"><header><h3>可信 Observation Module</h3><span>F1 / F2 · Strong</span></header><div class="compare"><div><small>当前 Interface</small><p>网页全局 ref 表 → 校验按钮本身</p></div><div class="after"><small>优化后 Interface</small><p>受控文档上下文 → 精确节点＋记录 scope</p></div></div><p>页面不能改 registry；记录 A→B 拒绝。</p></article><article class="card"><header><h3>统一 TargetDescriptor</h3><span>F3 已纠正 / F8 · Strong</span></header><div class="compare"><div><small>当前 Interface</small><p>录制 / 观察分别维护目标语义规则</p></div><div class="after"><small>优化后 Interface</small><p>录制 / 观察 / 回放共享规范化语义</p></div></div><p>默认按钮与真实 Shadow 全流程验收。</p></article><article class="card"><header><h3>统一 ActionReceipt</h3><span>F5 / F9 · Strong</span></header><div class="compare"><div><small>当前 Interface</small><p>动作返回 → 画面报错 → 全部当失败</p></div><div class="after"><small>优化后 Interface</small><p>派发 / 效果 / 观察分别保留，旧场景输入淘汰</p></div></div><p>画面恢复只读取，提交计数不增加。</p></article><article class="card"><header><h3>Compile → Resolve → Verify</h3><span>F4 / F6 · Strong</span></header><div class="compare"><div><small>当前 Interface</small><p>先执行第1步 → 第2步参数错误</p></div><div class="after"><small>优化后 Interface</small><p>全流程静态预检 → 每步 fresh resolve → 有限条件</p></div></div><p>后置参数错误零提前变更；异步结果不误判。</p></article></section><p>核查日期：2026-10-12。对象：当前工作区的浏览器执行、模型上下文、工作台、人工接管、录制、回放与 Skill 链路。</p>
+<h2 id="s-1">核心判断</h2>
+<p>建议保留现在的总体架构：<strong>主模型负责理解任务和决定下一步；BrowserService 负责可信执行；Workbench 负责展示和人工交接；录制与 Skill 提供可复用参考。</strong> 这条路线可以继续做通用浏览器工具。</p>
+<p>当前最需要加强的是三个约定：<strong>观察与目标身份可信、不同模块描述同一目标一致、执行结果在所有入口中保持一致。</strong> 它们比继续增加动作数量更直接影响泛化。普通网页、虚拟列表、Shadow DOM 和异步表单已经暴露了具体断点。</p>
+<p>10 月 11 日的旧结论不能直接沿用：观察进入主模型前的结构化投影已加入；目标滚动、横纵轴混用已修；字段状态验证、直接子 frame/OOPIF 和分页均已有实现；审批 scope 已改为会话目录＋控制 generation。下面只把仍成立的问题列为待纠正。</p>
+<p>本轮交付是审查和实施方案。现有业务代码保持原样。审查期间另有工作更新 <code>recording.py/js</code>、<code>frames.py</code> 和 <code>workflows.py</code>，我们针对录制变更补验并分别保留新旧快照；没有把旧失败冒充当前缺陷。源码身份见 <a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/source-snapshot.json">source-snapshot.json</a>，各实验还记录自己的时间、版本和范围。</p>
+<h2 id="s-2">1. 已贯通的现有架构</h2>
+<div class="diagram"><pre class="mermaid">flowchart TD
+  M[主模型 / Engine 工具循环] --&gt; A[BrowserUseTool]
+  A --&gt; B[BrowserService / 每对话 BrowserRun]
+  U[AgentBrowserPanel / BrowserViewport] --&gt; H[鉴权 HTTP browser_routes]
+  H --&gt; B
+  B --&gt; O[observation / frame context / 目标校验]
+  O --&gt; D[Octop 1.0.0 / CDP / 独立 Chrome profile]
+  B --&gt; D
+  D --&gt; R[动作收据 + 新观察 + 证据]
+  R --&gt; A
+  A --&gt; P[metadata.browser 结构投影]
+  P --&gt; M
+  R --&gt; U
+  S[ThreadManager / RunPause] &lt;--&gt; B
+  S &lt;--&gt; M
+  D --&gt; C[录制适配 / 语义步骤]
+  C --&gt; W[workflow 回放 / Skill 导出]
+  W --&gt; B
+  V[普通 HTML / 开发预览] --&gt; E[DevBrowserPanel / Electron webview]
+</pre></div>
+<table>
+<thead>
+<tr>
+<th>职责</th>
+<th>当前实现与关键约定</th>
+<th>审核判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型工具循环</td>
+<td><code>Engine</code> 执行 <code>browser_use</code>；动态注入运行时能力和提示词；工具串行；暂停 generation 淘汰旧模型输出和未派发工具</td>
+<td>保留主模型决策。不要另加一个网页分类模型来接管整个流程</td>
+</tr>
+<tr>
+<td>会话与执行</td>
+<td>ThreadManager 持有 BrowserService；BrowserRun 按 thread 隔离 profile/端口，维护 owner、generation、revision、锁、标签、观察和证据</td>
+<td>保留统一入口；把 CDP 和文档上下文知识集中在内部</td>
+</tr>
+<tr>
+<td>观察与定位</td>
+<td>最新 observation_id、document、control generation；ref、selector、截图坐标；frame/shadow scope；可见/禁用/遮挡检查</td>
+<td>已有正确基础，但 registry 信任和业务记录上下文仍有真实缺陷</td>
+</tr>
+<tr>
+<td>模型入境</td>
+<td>完整结果保存于 <code>metadata.browser</code>；通用 spillover 后由 browser 专用投影输出完整 JSON 和续读信息</td>
+<td>旧 G1 主入口已修；还需补无观察和大 scope 分支的预算约束</td>
+</tr>
+<tr>
+<td>图片能力</td>
+<td>按模型能力附图；文本模型可通过视觉 helper 获取带来源标签的观察；原始 transcript 不被偷偷替换</td>
+<td>保留。新增图像与 observation/尺寸的显式关联</td>
+</tr>
+<tr>
+<td>人工接管</td>
+<td>ThreadManager 暂停原 turn；BrowserService 改控制代次并等待在途动作；恢复前观察，再给原模型注入新上下文</td>
+<td>保留原任务与真实执行事实；已派发动作不能保证撤回</td>
+</tr>
+<tr>
+<td>自动化界面</td>
+<td>AgentBrowserPanel 通过 <code>/view</code> 展示同一 Octop 会话，BrowserViewport 经 <code>/input</code> 发送人工输入</td>
+<td>修复结果传播与场景失效约定，保持 IME、队列和交接行为</td>
+</tr>
+<tr>
+<td>普通预览</td>
+<td>BrowserWorkspace 当前保留 DevBrowserPanel，独立 Electron webview，不要求 Python 会话</td>
+<td>与自动化有不同职责；页面和登录状态不可默认视为同一份</td>
+</tr>
+<tr>
+<td>录制与复用</td>
+<td>新 WorkbenchRecordSession/ScopedSemanticProcessor → StepsDocument → 当前会话回放；Skill 摘要校验安装</td>
+<td>加强 capture→compile→replay 的统一目标规范和整体预检</td>
+</tr>
+</tbody>
+</table>
+<p>已检查上述相连模块以及定向测试，不把未审查的远端模型行为、所有生产网站和全仓其他功能写成已验证能力。当前没有 <code>CONTEXT.md</code>、领域词汇表或 ADR；建议后续用一份短架构决策记录固定这些职责和约定。</p>
+<h2 id="s-3">2. 必须保留、值得吸收的设计</h2>
+<table>
+<thead>
+<tr>
+<th>保留或借鉴点</th>
+<th>如何落实到当前架构</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>浏览器对象、标签与任务显式绑定</td>
+<td>保留 thread/session/tab/document/generation；frame 和图像也用同一身份链</td>
+</tr>
+<tr>
+<td>观察→行动→验证的闭环</td>
+<td>保留动作后新观察与收据；补跨入口传播和异步结果检查，不要求每次整页重读</td>
+</tr>
+<tr>
+<td>严格拒绝歧义与旧目标</td>
+<td>保留唯一性与失效检查；增加记录 scope。重新定位必须仍能证明是同一目标</td>
+</tr>
+<tr>
+<td>有限等待和窄范围恢复</td>
+<td>等待具体条件并共享 deadline；断连后的变更动作先查结果，避免自动重放</td>
+</tr>
+<tr>
+<td>能力按实际后端暴露</td>
+<td>在现有 <code>status/environment/schema</code> 上补细粒度能力；不可调用的 frame/录制路径提前解释</td>
+</tr>
+<tr>
+<td>接管属于原任务状态转移</td>
+<td>继续使用 RunPause 和 control generation；恢复不等于业务已完成，也不需要创建新聊天</td>
+</tr>
+<tr>
+<td>浏览器底层复杂度对模型隐藏</td>
+<td>模型理解目标、范围、预期效果即可；CDP session、OOPIF、隔离上下文由执行模块处理</td>
+</tr>
+<tr>
+<td>证据诚实区分派发和效果</td>
+<td><code>executed</code>、<code>unknown</code>、<code>confirmed</code> 各自独立；截图失败和业务失败分别表达</td>
+</tr>
+</tbody>
+</table>
+<p>前次 Codex 逆向可借鉴会话绑定、语义范围、能力过滤和生命周期设计；其真实 IAB 也出现过遮挡点击无效、frame 点击异常。应通过本项目的行为验收决定吸收哪些机制，不以模仿某个工具作为完成标准。</p>
+<h2 id="s-4">3. 审查发现与最终状态</h2>
+<p>证据分为：真实 Chrome 自建 localhost 实验；mock 调用链表征；合成函数输入；静态设计风险。全部实验使用专用测试数据，没有调用真实外部模型或读取用户账号。</p>
+<table>
+<thead>
+<tr>
+<th>编号 / 级别</th>
+<th>当前事实</th>
+<th>为什么影响通用性</th>
+<th>证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F1 / P1 / Strong</td>
+<td>页面可以改写顶层 <code>window.__deepseekObservation</code>：原 Chosen=e0 被改为 Other，同一 observation_id/ref 点击实际命中 Other</td>
+<td>网页可改状态不能充当目标身份的验证源；隔离 frame 与顶层保护不一致</td>
+<td>真实 Chrome，<a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/target-identity-results.json">target-identity-results.json</a>，<code>tampering</code>；<code>observation.py:140,179,298</code></td>
+</tr>
+<tr>
+<td>F2 / P1 / Strong</td>
+<td>正常 SPA 复用同一个 Details 按钮节点，父记录 A→B，旧 ref 仍操作 B</td>
+<td>节点相同、按钮名称相同，也可能属于不同业务记录</td>
+<td>同一真实实验的 <code>recycled_row</code>；<code>observation.py:101,351</code></td>
+</tr>
+<tr>
+<td>F3 / 审查期间已纠正</td>
+<td>22:39 复验发现默认 button 类型不一致；22:44 快照已统一属性读取方式，随后两个真实 Shadow 回放均通过</td>
+<td>保留统一目标规范的建议与真实回归测试，当前不再列为未修 P1</td>
+<td><a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/plan-review-recording.xml">最新复验 XML</a>：2 passed；录制脚本 SHA <code>be4565cc305c8c071b125770ca59b1fed4c3f1dbd54b8e8f09df0de5c0a6a558</code></td>
+</tr>
+<tr>
+<td>F4 / P1 / Strong</td>
+<td>回放第 2 步的 9000 字参数直到运行时才拒绝，前面的 Save 已执行 1 次</td>
+<td>可以提前发现的静态错误造成部分副作用，用户误以为整个回放没有开始</td>
+<td>真实 Chrome，<a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/replay-probe-results.json">replay-probe-results.json</a>；<code>workflows.py:80,142</code>、<code>service.py:123</code></td>
+</tr>
+<tr>
+<td>F5 / P1 / Strong</td>
+<td><code>/action</code> 成功后 <code>/view</code> 失败，UI 返回操作失败；HTTP 异常入口把 unknown 收据降成 detail 字符串，工具入口却保留结构</td>
+<td>用户和不同调用者无法区分已执行、未知与仅画面不可读，容易重复提交</td>
+<td>2 项 mock 表征之一＋注入 route probe，<a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/ui-review.json">ui-review.json</a>；<code>BrowserWorkspace.tsx:147</code>、<code>browser_routes.py:60</code></td>
+</tr>
+<tr>
+<td>F6 / P2 / Strong</td>
+<td>回放 input_value_equals/title_contains 只读一次。350ms 后满足的字段在 0ms 被判失败</td>
+<td>异步表单和客户端格式化产生虚假失败；固定 200ms 间隔无法解决</td>
+<td>真实 Chrome 回放 probe；<code>workflows.py:240</code></td>
+</tr>
+<tr>
+<td>F7 / P2 / Strong</td>
+<td>6000 字符预算下，无 observation 的 status 样例输出 23991，合法深 shadow scope 输出 16295</td>
+<td>JSON 完整不等于预算成立；新特殊投影绕过通用裁剪</td>
+<td>合成当前函数实验，<a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/projection-results.json">projection-results.json</a>；<code>context.py:14,112</code></td>
+</tr>
+<tr>
+<td>F8 / P2 / Worth exploring</td>
+<td>submit 的 value 标签、隐藏 aria-labelledby 的名称未被当前手写算法表达；原生 AX 能识别</td>
+<td>“Continue”按钮等可见语义丢失；录制、观察和模型理解不一致</td>
+<td>真实 Chrome＋原生 AX 对照，target identity 结果中的 <code>native_ax_comparison</code></td>
+</tr>
+<tr>
+<td>F9 / P2 / Worth exploring</td>
+<td>UI 队列只绑定控制 generation。同 generation 下 disabled→enabled 后仍会发送旧文本</td>
+<td>标签/文档/输入场景变化与控制所有权变化不是同一事件</td>
+<td>第二项 mock 表征；跨文档误输入尚未真实复现；<code>BrowserViewport.tsx:18</code>、<code>service.py:512</code></td>
+</tr>
+</tbody>
+</table>
+<p>F1/F2 是当前可复现的身份保证失效，F4/F5 是跨模块约定失效。它们应先于性能优化、上传下载和增加新后端。F3 已通过后续复验，记录为本次发现后得到纠正的回归。</p>
+<p>录制变化的准确状态：旧实现的 Shadow 采集和停止 flush 失败已得到纠正；新实现立即停止、当前 tab 录制通过，Shadow 路径与脱敏通过。随后默认 button 的属性规范也得到纠正，两个真实 Shadow 完整回放在最后复验中通过。新增直接子 frame 回放有代码，但任意深 frame 链尚不是已验证的通用能力。</p>
+<h2 id="s-5">4. 标准目标设计</h2>
+<p>这里的 Module 指一个有清晰职责的模块，Interface 包含调用顺序、身份和错误约定；Seam 是可以替换具体实现的位置。目标是增加 Depth，把容易分散的知识集中起来，从而获得 Locality 和 Leverage。采用现有模块名，不为文件数量而拆分。</p>
+<h3>A. 统一可信观察与 TargetDescriptor</h3>
+<p><strong>涉及：</strong> observation、frames、新 recording、workflows、service。</p>
+<p>**当前：**顶层 main world ref 表；frame 有隔离 context；采集/回放分别计算 role/name/type（已纠正默认 button 类型）；ref 校验只看按钮本身。</p>
+<p>**之后：**一个 Observation Module 负责文档上下文、ref registry 和规范化目标；录制与回放复用同一 TargetDescriptor Implementation。</p>
+<p>建议保留既有 observation 字段，逐步补充以下信息：</p>
+<pre><code class="language-text">ObservationIdentity = thread/session + tab + frame/document + control_generation
+TargetDescriptor = role + accessible_name + control_type + semantic_scope
+TargetBinding = observation_id + ref + exact_node + target_context_fingerprint
+</code></pre>
+<ol>
+<li>顶层、同源 frame、OOPIF 使用受控 execution context；服务端绑定 frame/document/节点。所有目标校验都走同一上下文，不从网页可替换的全局读取 registry。</li>
+<li>为 row/card/dialog/region 等 scope 保留可见的记录上下文，执行前核验目标相关 fingerprint。A→B 节点复用应拒绝；无关时钟、广告或动画变化不应让所有 ref 永久失效。</li>
+<li>统一 button/input 默认类型、ARIA 名称、disabled/editable 与 scope 的规范。保留原始 tag/type 作为事实，使用另一个 canonical_control_type 比较，避免“没写属性”与浏览器默认值相互矛盾。</li>
+<li>先修明确漏项，再评估用原生 AX 提供语义；DOM 提供精确节点和几何。AX 与 DOM 必须有映射，不能直接用扁平 AX 替代全部定位逻辑。</li>
+<li>semantic ref 优先；截图坐标必须绑定 observation、viewport、frame、缩放关系。闭合 shadow、复杂变换等不足能力应明确拒绝或协助。</li>
+</ol>
+<p>**验收：**页面同名全局覆盖不能重定向 ref；A→B 复用拒绝且零误点；同记录无关变化仍可执行；默认/显式 button 类型、input submit、隐藏引用名称和重复行明确匹配；真实录制→编译→回放完整通过。</p>
+<h3>B. 统一 ActionReceipt，分开动作与显示</h3>
+<p><strong>涉及：</strong> BrowserService、BrowserUseTool、browser_routes、AgentBrowserPanel、BrowserViewport、workflow。</p>
+<p>建议扩展既有 receipt，而非另造一种平行结果：</p>
+<pre><code class="language-text">action_id / operation_id
+execution: not_dispatched | executed | unknown
+effect: unchecked | confirmed | not_confirmed
+observation: available | unavailable | stale
+evidence: saved | unavailable
+error: code + phase + retry_kind + reason
+</code></pre>
+<p>字段名可按当前规范保持兼容；关键是所有调用者使用相同含义。<code>success</code> 仅作兼容字段，不再承担所有状态。</p>
+<ul>
+<li>HTTP 错误保留结构化 receipt；工具与 UI 读取相同结构。</li>
+<li>UI 拿到动作结果后立即保存 execution；随后 <code>/view</code> 失败显示“操作已发出，画面暂不可读”。恢复按钮只重试 view/observe。</li>
+<li>timeout/disconnect 的未知变更不得自动重放；查 action_id 与新页面结果后才决定下一步。operation_id 只防本地重复派发，不能承诺远端提交恰好一次。</li>
+<li>rejected 的含义是实际改变型动作未派发；准备阶段的滚动、focus 等若可能发生，应单独解释。</li>
+<li>接管、恢复、回放、UI 同样保留已执行步骤，不以外层异常覆盖已知结果。</li>
+</ul>
+<p><strong>验收：</strong><code>/action</code> 执行 1 次后 <code>/view</code> 503，UI 不把动作变成未执行；unknown 在 HTTP/Tool/UI 之间不丢；观察恢复不增加保存计数；刷新和重复响应以 action_id 对账。</p>
+<h3>C. 回放先编译，执行时再验证目标</h3>
+<p><strong>涉及：</strong> workflows、recording、skills、BrowserAction。</p>
+<p>在改 owner/generation、启动后台 task 和任何页面变更之前，把所有参数替换为内存中的完整动作，按同一 schema 做整体静态预检：长度、key、URL、selector/scope、支持的 step/断言。临时编译结果不写入含秘密值的持久文件。</p>
+<p>静态预检与运行时观察分工明确：无法提前知道的页面目标仍在每步执行前 fresh resolve；未知结果仍不能重放。回放中已完成步骤与未派发步骤分别留档。</p>
+<p>录制 stop 的顺序固定为 flush pending input → drain binding events → 脱敏 → semantic compile → 保存；新实现已改善这些环节，应保留真实回归。Skill 应保存任务意图、参数、scope 和预期效果，将录制 selector 作为候选证据，变化后仍验证同一目标；不得扩大授权或凭模糊相似度点击另一个记录。</p>
+<p>**验收：**第 2 步 9000 字、无效 key/scope 或不支持断言均在第 1 次 Save 前拒绝；合法 Unicode 边界值可运行；真实父页、已有/动态 shadow 和已声明 frame 能力完整闭环通过；mask-all 的原始事件、步骤、Skill 不含测试私密文本。</p>
+<h3>D. 条件检查共享 deadline 和 scope</h3>
+<p><strong>涉及：</strong> service 等待/字段确认、workflow <code>_verify</code>。</p>
+<p>复用一个有限条件检查 Implementation：URL、文本、存在性、标题、值是否匹配、checked/selected。每个条件绑定当前 tab/frame/shadow、control generation 和 operation；所有 await 消耗同一 deadline，不在每个内部步骤重新获得完整超时。</p>
+<p>先检查 actionability，再派发，再等效果。效果未确认与 execution=unknown 分开。字段检查优先回传布尔匹配，不暴露密码、OTP 或未授权草稿。业务成功条件要针对本次操作，不能仅匹配页面上原来就有的“成功”提示。</p>
+<p>**验收：**350ms 更新在预算内通过；永不满足到期限失败；接管/导航停止原条件检查；旧成功文本不能证明本次保存；到期后不派发新变更。</p>
+<p>标准 actionability 可参考 <a href="https://playwright.dev/docs/actionability">Playwright 官方文档</a>，语义范围可参考 <a href="https://playwright.dev/docs/locators">Locators</a>。它们提供行为参照，不表示本项目调用底层 CDP 就自动获得全部保证。</p>
+<h3>E. 所有 browser 输出均遵守预算与分页约定</h3>
+<p><strong>涉及：</strong> browser/context、engine/context、tooling、manager 恢复上下文。</p>
+<p>延续已修的 metadata.browser 专用投影，对成功、拒绝、未知、status、无 observation 等分支统一分配预算。优先保留身份、receipt、失败原因、当前目标和可用续读入口；正文/history/tabs 按剩余预算输出。</p>
+<p>不可截短的 selector、ref、scope 和 value 不按字符串截成另一含义；大 scope 使用服务端短 handle，或明确返回预算无法表达，不能静默超出。字符上限与实际模型 token 预算分别计量。</p>
+<p>分页 cursor 绑定 document＋scope＋snapshot/revision。列表插入/删除导致位置变化时，应重新读取或按稳定 key 继续；每次新观察仍淘汰旧 refs，不能把多个观察的 ref 混在一次动作中。先使用局部 scope 和按需扩大，只有测量证明成本后再建设全量增量索引。</p>
+<p>**验收：**6000/12000/36000 字符预算下全部分支有明确上限，JSON 有效，身份不丢；合法 16 层长 shadow scope 可拒绝或短 handle 表达；动态分页不静默漏项；多语言 token 压力有真实计量。</p>
+<h3>F. UI 输入与视觉证据绑定场景</h3>
+<p><strong>涉及：</strong> BrowserViewport、AgentBrowserPanel、<code>/view</code>、<code>/input</code>、client/media。</p>
+<p>控制 generation 保留；另加 tab/document、viewport epoch、队列 epoch 和 view 序号。hidden、disabled、换 tab、导航、resize 和恢复后淘汰旧积压输入；同 generation 的旧响应不能覆盖新画面。键盘/鼠标成对状态在异常和交接时正确释放。</p>
+<p>视觉 manifest 应声明 asset_id、observation/document/frame、screenshot scope、原始图像尺寸、传输尺寸和 CSS viewport 变换。helper 输出归属图像、facts 和不确定性；仅在需要坐标时提供变换。延续 native/helper/unknown 的能力区分与失败后不丢原图的规则。</p>
+<p>**验收：**排队文字不能跨页；old view 不能回盖新 view；中文 IME 一次输入；cut/copy 保护保持；crop/full_page/缩略图/resize 不允许旧坐标点击。跨页队列目前是 mock＋静态风险，修复验收需要真实 Chrome 联调。</p>
+<h2 id="s-6">5. 泛化需要补的产品约定</h2>
+<h3>任务授权与实现方法分开</h3>
+<p>当前 <code>approval_scope</code> 已不含 revision，应保留这一改进。但审批缓存仍对全部参数哈希，最新 observation_id/ref 会改变 key；click/fill 等调用逐个审批时，很难复用同一任务已获授权。</p>
+<p>建议引入结构化 TaskConstraints 与受限 TaskGrant：任务、允许 origin/资源、动作类别、期限、控制代次和撤销规则。<strong>目标的新鲜性继续逐次验证；授权复用只限用户已经允许的具体任务。</strong> 新资源、扩大数据/访问、不同影响的变更仍重新确认。</p>
+<p>提示词里“换方法/来源一律询问”应根据 task constraints 决定：用户锁定网站、流程或账户时遵守；泛化任务内同义定位、局部读取、正常等待和已有授权范围内的恢复可继续。验证或权限障碍不能以切换工具规避。这是产品决策，先用授权矩阵测试，再改变默认策略。</p>
+<h3>保留两种浏览器用途，暴露能力而非假装统一</h3>
+<p>普通 HTML/开发预览与 Agent 自动化继续各自承担职责。明确 session/profile/page 的来源；从预览转自动化时，不能暗示自动带入同一登录状态和未保存草稿。</p>
+<p>在 status 上提供能力声明：模型工具动作、观察层级、frame 深度、OOPIF、shadow、截图坐标、录制、回放、视频、上传下载和系统弹窗。配置改变后更新能力 revision；不支持的流程在开始前拒绝。</p>
+<p>暂时只有一个主要自动化 Adapter（Octop＋CDP），没有必要建设全功能多浏览器框架。可以先集中少量私有 Octop/CDP 调用，使将来版本变化有 Locality；当第二个真实后端接入时，再扩展 Seam。</p>
+<h3>性能按阶段测量后再优化</h3>
+<p>当前 view 每次完成后等待约 120ms（人工）/300ms（agent），读页面状态、tabs 和截图时持有同一 run.lock。这是有依据的成本关注，尚无本轮性能基线，不能直接声称卡顿根因已定位。</p>
+<p>先采集输入排队、CDP 派发、capture、observe、projection、模型耗时和 payload/token。再考虑 tabs 慢变缓存、重复帧复用、可见性降频、输入优先和有界 move/wheel 合并；离散 click/key、IME、release 不丢。补 wheel page 单位换算。不要先加流式视频或多线程来掩盖共享锁的行为问题。</p>
+<h2 id="s-7">6. 推荐实施顺序与完成定义</h2>
+<p>每阶段只交付可独立验证的一组变更，不同时重写执行器、模型循环和前端。</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>改动</th>
+<th>必须通过的完成定义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1：目标可信</td>
+<td>F1 隔离 registry；F2 scope/context 校验</td>
+<td>registry 重绑定、A→B 复用全部零误点；shadow/frame/原有目标检查不退化</td>
+</tr>
+<tr>
+<td>2：结果一致</td>
+<td>F5 receipt 跨 HTTP/Tool/UI；场景输入 epoch</td>
+<td>动作完成＋画面失败仍保留执行；unknown 不丢；读恢复不重放；旧输入/旧 view 拒绝</td>
+</tr>
+<tr>
+<td>3：录制回放闭环</td>
+<td>延续 F3 修复，统一 TargetDescriptor；F4 compile preflight；F6 统一条件</td>
+<td>已通过的真实 Shadow 完整回放保持；后置参数错误零提前变更；异步断言正确；脱敏和 flush 回归保持</td>
+</tr>
+<tr>
+<td>4：上下文与语义</td>
+<td>F7 全分支预算；F8 role/name；稳定分页、视觉 manifest</td>
+<td>边界预算成立；submit/隐藏名称准确；动态续读不静默错位；图像与坐标一致</td>
+</tr>
+<tr>
+<td>5：策略与性能</td>
+<td>TaskConstraints/TaskGrant；能力声明；性能与泛化基准</td>
+<td>授权矩阵无扩大授权；真实任务成功率、误操作、协助次数和成本有可复查基线</td>
+</tr>
+</tbody>
+</table>
+<p>发布前还要处理下面三个媒体测试失败：不能简单归为环境问题，也不能直接解释为浏览器业务失败。分别确认 bundle schema、配置快照隔离、SubAgent 当前对象契约，再修测试或实现并重跑。</p>
+<p>不建议优先投入：新增第二规划模型、放松唯一性后按相似度点击、整套替换 Octop、多浏览器抽象框架、无条件全页截图、固定 sleep、自动提交重试。它们没有解决已确认的断点。</p>
+<h2 id="s-8">7. 通用性与泛化的验收矩阵</h2>
+<p>验收覆盖同一个 Interface 的真实行为，不只测试 helper 的内部输出。</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>最小必要变体</th>
+<th>硬性不变量</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>页面结构</td>
+<td>普通 DOM、已有/动态 open shadow、同源 frame、跨源/OOPIF；深层路径按声明支持</td>
+<td>不能跨 scope 猜另一个节点</td>
+</tr>
+<tr>
+<td>语义与记录</td>
+<td>submit/default button、icon/多语言 label、隐藏引用名、重复行、虚拟列表复用</td>
+<td>所请求记录与所操作记录相同；歧义拒绝</td>
+</tr>
+<tr>
+<td>动态性</td>
+<td>挂载/禁用后启用、overlay、动画、异步字段格式化、导航与 frame detach</td>
+<td>有限等待；身份变化拒绝；无关变化不过度拒绝</td>
+</tr>
+<tr>
+<td>接管与输入</td>
+<td>接管发生在等待/预检/派发之后；旧队列、换 tab、resize、IME、cut</td>
+<td>淘汰未派发动作；保留已派发事实；成对输入释放</td>
+</tr>
+<tr>
+<td>故障</td>
+<td>派发前断连、派发后 timeout、观察失败、截图失败、HTTP 响应丢失</td>
+<td>未知不变未执行；恢复仅查证，不自动重复变更</td>
+</tr>
+<tr>
+<td>上下文</td>
+<td>大 status、250 控件、长合法 scope、动态分页、CJK 文本、模型预算压力</td>
+<td>JSON 与身份完整；上限成立；续读可操作</td>
+</tr>
+<tr>
+<td>录制复用</td>
+<td>真实 record→stop→redact→compile→replay→business check→Skill</td>
+<td>不能用手工 StepsDocument 通过代替真实录制闭环</td>
+</tr>
+<tr>
+<td>模型泛化</td>
+<td>文本模型、native vision、helper、未知能力；同意图多模板和提示表达</td>
+<td>先验证模型真的收到结构/图像；不能以固定 demo 代替自然语言任务</td>
+</tr>
+</tbody>
+</table>
+<p>先建离线 localhost 行为集，随后在用户授权的隔离环境做真实模型任务集。保留与调参隔离的模板/语言变体，分别报告确定性执行能力和模型规划能力，不合成一个模糊成功率。</p>
+<p>建议发布门槛：上述安全拒绝与重复提交不变量必须 100% 通过；现有相关测试零未解释失败；新旧实现同一任务集无明显回归。任务完成率、p95 延迟、token 与人工打断目标应由实际基线制定，本轮没有测得生产成功率或承诺一个百分比。</p>
+<h2 id="s-9">8. 本轮验证结果与边界</h2>
+<table>
+<thead>
+<tr>
+<th>检查组</th>
+<th>本轮结果</th>
+<th>解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>初始真实 Chrome＋模块/共享输入/contract</td>
+<td>129 passed、3 failed、1 skipped</td>
+<td>修改前快照；3 个失败是旧录制，唯一 skip 为 FFmpeg 编码</td>
+</tr>
+<tr>
+<td>新录制相关复验</td>
+<td>2 passed、2 failed</td>
+<td>flush/当前 tab 通过；两个 Shadow 完整回放转为默认 button 类型问题</td>
+</tr>
+<tr>
+<td>默认 button 修正后的最终复验</td>
+<td>2 passed、53 deselected</td>
+<td>两个真实 Shadow 完整回放通过；仅重跑受变更影响的用例，未冒充最新全组通过</td>
+</tr>
+<tr>
+<td>观察/上下文/主模型循环/协助/能力</td>
+<td>42 passed</td>
+<td>当前相关测试通过；真实身份探针仍发现 F1/F2</td>
+</tr>
+<tr>
+<td>多模态与视觉提交</td>
+<td>27 passed、3 failed</td>
+<td>三个失败为未解决验证阻断，详见下面</td>
+</tr>
+<tr>
+<td>原有前端 3 文件</td>
+<td>26 passed</td>
+<td>覆盖现有交接、输入和预览行为</td>
+</tr>
+<tr>
+<td>新 UI mock 表征</td>
+<td>2 passed</td>
+<td>表征成功代表确认当前缺陷，不代表修复通过</td>
+</tr>
+<tr>
+<td>localhost/合成探针</td>
+<td>F1/F2/F4/F6/F7/F8 有复现</td>
+<td>F7 为合成输入预算；F9 为 mock/静态，等级不混用</td>
+</tr>
+</tbody>
+</table>
+<p>分组存在覆盖重叠和不同快照，不能直接累加成“全部通过数”。本次没有真实外部模型/账号任务集、性能测试、上传下载或所有深层 frame 的证明。</p>
+<p>三个媒体验证阻断：</p>
+<ol>
+<li><code>test_conversation_bundle_restores_original_images</code>：fixture 写裸 Message，但 importer 要求 ThreadRecord。明确当前 schema 后验证合法记录＋图片往返。</li>
+<li><code>test_switch_route_updates_new_subagent_runtime_only</code>：fixture 要求对象 identity，但实现深拷贝。明确配置 snapshot isolation 后同时验证值一致和后续变更隔离。</li>
+<li><code>test_subagent_qualified_route_preserves_identity_and_closes_owned_client</code>：fixture 缺 provider。按真实 SubAgent 契约验证路由和 owned client 关闭；如仍要求旧对象兼容，补实现。</li>
+</ol>
+<p>完整命令、失败 nodeid 和源码位置见 <a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/observe-ledger.json">observe-ledger.json</a>、<a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/control-review.json">control-review.json</a>、<a href="/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-10-12/browser-optimization/evidence/ui-review.json">ui-review.json</a>。它们是此方案的可复核依据。</p>
+<h2 id="s-10">9. 结论与首个改动</h2>
+<p>首个改动应落在<strong>可信 Observation Module</strong>：统一文档执行上下文并阻止 ref 注册表被页面改写，同时补目标的记录 scope。第二组统一收据，第三组统一录制/观察/回放 TargetDescriptor 与完整预检。</p>
+<p>这样可以继续保留现有工具和 UI，逐步把“这个演示能运行”提升为“不同页面、不同记录、不同模型和故障条件下仍遵守同一行为约定”。</p>
+</main></div><footer>标准方案＋分区审查＋源码快照 · 未修改现有业务代码 · 不把固定演示等同于生产通用性</footer><script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'; mermaid.initialize({startOnLoad:true,theme:'neutral',securityLevel:'strict'});</script></body></html>

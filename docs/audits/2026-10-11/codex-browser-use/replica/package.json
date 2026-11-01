@@ -1,0 +1,16 @@
+{
+  "name": "browser-use-reconstruction-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node browser-use.mjs --demo",
+    "start": "node browser-use.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.58.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

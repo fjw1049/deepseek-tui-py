@@ -1,0 +1,635 @@
+{
+  "generatedAt": "2026-10-11T14:28:24.255Z",
+  "playwright": "1.58.2",
+  "checks": [
+    {
+      "name": "语义填写、提交与条件等待；保存恰好一次",
+      "passed": true
+    },
+    {
+      "name": "有限条件等待",
+      "passed": true
+    },
+    {
+      "name": "重复目标明确拒绝",
+      "passed": true
+    },
+    {
+      "name": "仅隐藏重复项时选择唯一可见目标",
+      "passed": true
+    },
+    {
+      "name": "遮挡点击在执行前拒绝且无副作用",
+      "passed": true
+    },
+    {
+      "name": "解除遮挡后可执行",
+      "passed": true
+    },
+    {
+      "name": "跨源 frame 独立定位与验证",
+      "passed": true
+    },
+    {
+      "name": "开放 Shadow DOM 语义操作",
+      "passed": true
+    },
+    {
+      "name": "新观察使旧观察失效",
+      "passed": true
+    },
+    {
+      "name": "接管期间拒绝执行",
+      "passed": true
+    },
+    {
+      "name": "恢复后必须重新观察",
+      "passed": true
+    },
+    {
+      "name": "预检查期间接管：派发前重新校验并拒绝",
+      "passed": true
+    },
+    {
+      "name": "跨标签页 token 明确拒绝",
+      "passed": true
+    },
+    {
+      "name": "切换后绑定原标签页状态",
+      "passed": true
+    },
+    {
+      "name": "预检查期间导航：派发前拒绝旧观察",
+      "passed": true
+    },
+    {
+      "name": "动作完成、观察失败仍保留执行事实",
+      "passed": true
+    },
+    {
+      "name": "观察失败后不重放；再次观察确认一次",
+      "passed": true
+    },
+    {
+      "name": "效果等待超时与动作完成分开记录",
+      "passed": true
+    }
+  ],
+  "trace": [
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "项目名称",
+        "scope": {
+          "role": "region",
+          "name": "本地表单"
+        }
+      },
+      "value": "复现项目",
+      "execution": {
+        "state": "completed"
+      },
+      "effect": null,
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 5,
+        "token": "dfe4653d-f683-4986-8b08-121bca8d7b7f",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 尚未保存\n  - paragraph: 保存次数：0\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 等待触发\n  - button \"被遮挡按钮\"\n  - text: 遮挡层\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 尚未点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "保存项目",
+        "scope": {
+          "role": "region",
+          "name": "本地表单"
+        }
+      },
+      "requestedEffect": {
+        "text": "已保存：复现项目",
+        "scope": {
+          "role": "region",
+          "name": "本地表单"
+        }
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "verified",
+        "text": "已保存：复现项目"
+      },
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 6,
+        "token": "33a90bbd-a17d-401e-b22d-566c8d9937f5",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 等待触发\n  - button \"被遮挡按钮\"\n  - text: 遮挡层\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 尚未点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "延迟显示结果"
+      },
+      "requestedEffect": {
+        "text": "延迟结果已出现"
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "verified",
+        "text": "延迟结果已出现"
+      },
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 7,
+        "token": "f05671b8-2d53-424c-a6fa-a78aca4d1ee5",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - text: 遮挡层\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 尚未点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "重复按钮"
+      },
+      "execution": {
+        "state": "rejected",
+        "reason": "Target must be unique and visible; matched 2."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "可见按钮"
+      },
+      "requestedEffect": {
+        "text": "唯一可见目标已点击"
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "verified",
+        "text": "唯一可见目标已点击"
+      },
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 8,
+        "token": "fba13400-24c1-43ab-9e2f-a579a82201c8",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - text: 遮挡层\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 唯一可见目标已点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "被遮挡按钮"
+      },
+      "execution": {
+        "state": "rejected",
+        "reason": "locator.click: Timeout 750ms exceeded."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "移除遮挡层"
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": null,
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 9,
+        "token": "2228159f-2026-4366-a639-18f19b45f9e5",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 唯一可见目标已点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "被遮挡按钮"
+      },
+      "requestedEffect": {
+        "text": "遮挡目标已点击"
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "verified",
+        "text": "遮挡目标已点击"
+      },
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 10,
+        "token": "66031685-eb71-4343-9fa9-f1b9a22b3ed4",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - button \"移除遮挡层\"\n  - status: 遮挡目标已点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 唯一可见目标已点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "Frame 名称",
+        "frame": "跨源验证表单"
+      },
+      "value": "跨源项目",
+      "execution": {
+        "state": "completed"
+      },
+      "effect": null,
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 11,
+        "token": "dedd0272-9194-4eec-99bc-bee15ec7d3f1",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - button \"移除遮挡层\"\n  - status: 遮挡目标已点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 唯一可见目标已点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\": 跨源项目\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Frame 保存",
+        "frame": "跨源验证表单"
+      },
+      "requestedEffect": {
+        "text": "Frame 已保存：跨源项目",
+        "frame": "跨源验证表单"
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "verified",
+        "text": "Frame 已保存：跨源项目"
+      },
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 12,
+        "token": "ff47ee5f-2c9c-41ff-a0f2-ad795028942d",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - button \"移除遮挡层\"\n  - status: 遮挡目标已点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 唯一可见目标已点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\": 跨源项目\n- button \"Frame 保存\"\n- status: Frame 已保存：跨源项目",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Shadow 保存"
+      },
+      "requestedEffect": {
+        "text": "Shadow 已保存"
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "verified",
+        "text": "Shadow 已保存"
+      },
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "82b29307-c172-487d-8312-5175ad27355b",
+        "generation": 13,
+        "token": "91a6c01c-5bfc-4e7f-ac75-d15520681e17",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 复现项目\n  - button \"保存项目\"\n  - status: 已保存：复现项目\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 延迟结果已出现\n  - button \"被遮挡按钮\"\n  - button \"移除遮挡层\"\n  - status: 遮挡目标已点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 唯一可见目标已点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 已保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\": 跨源项目\n- button \"Frame 保存\"\n- status: Frame 已保存：跨源项目",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "stale observation",
+      "execution": {
+        "state": "rejected",
+        "reason": "Stale observation or wrong session/tab; observe again."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "保存项目"
+      },
+      "execution": {
+        "state": "rejected",
+        "reason": "Human takeover is active."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "scenario": "after takeover",
+      "execution": {
+        "state": "rejected",
+        "reason": "Stale observation or wrong session/tab; observe again."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "保存项目"
+      },
+      "execution": {
+        "state": "rejected",
+        "reason": "Human takeover is active."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "scenario": "wrong tab",
+      "execution": {
+        "state": "rejected",
+        "reason": "Stale observation or wrong session/tab; observe again."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "保存项目"
+      },
+      "execution": {
+        "state": "rejected",
+        "reason": "Stale observation or wrong session/tab; observe again."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "action": "fill",
+      "target": {
+        "role": "textbox",
+        "name": "项目名称"
+      },
+      "value": "只执行一次",
+      "execution": {
+        "state": "completed"
+      },
+      "effect": null,
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "f4aaa0b9-5e9a-429a-b089-a536c5016de4",
+        "generation": 27,
+        "token": "1dc6802c-c3b6-4247-a77b-20843367a73b",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 只执行一次\n  - button \"保存项目\"\n  - status: 尚未保存\n  - paragraph: 保存次数：0\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 等待触发\n  - button \"被遮挡按钮\"\n  - text: 遮挡层\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 尚未点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "保存项目"
+      },
+      "requestedEffect": {
+        "text": "已保存：只执行一次"
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "verified",
+        "text": "已保存：只执行一次"
+      },
+      "observation": null,
+      "requiresObserve": true,
+      "observationError": "Injected observation failure for the demo."
+    },
+    {
+      "scenario": "prevent replay after observation failure",
+      "execution": {
+        "state": "rejected",
+        "reason": "Stale observation or wrong session/tab; observe again."
+      },
+      "effect": null,
+      "observation": null
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "延迟显示结果"
+      },
+      "requestedEffect": {
+        "text": "不会出现的结果",
+        "timeout": 100
+      },
+      "execution": {
+        "state": "completed"
+      },
+      "effect": {
+        "state": "unverified",
+        "reason": "locator.waitFor: Timeout 100ms exceeded."
+      },
+      "observation": {
+        "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+        "tabId": "f4aaa0b9-5e9a-429a-b089-a536c5016de4",
+        "generation": 29,
+        "token": "881b6ca3-f666-4f7d-89a1-1edeb39ce1b6",
+        "url": "http://localhost:54969/demo.html",
+        "frames": [
+          {
+            "url": "http://localhost:54969/demo.html",
+            "name": "",
+            "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 只执行一次\n  - button \"保存项目\"\n  - status: 已保存：只执行一次\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 等待触发\n  - button \"被遮挡按钮\"\n  - text: 遮挡层\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 尚未点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+            "truncated": false
+          },
+          {
+            "url": "http://127.0.0.1:54969/frame.html",
+            "name": "",
+            "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+            "truncated": false
+          }
+        ]
+      }
+    }
+  ],
+  "finalObservation": {
+    "sessionId": "b1e3c818-868d-4c49-a62d-35cab822c3bc",
+    "tabId": "f4aaa0b9-5e9a-429a-b089-a536c5016de4",
+    "generation": 29,
+    "token": "881b6ca3-f666-4f7d-89a1-1edeb39ce1b6",
+    "url": "http://localhost:54969/demo.html",
+    "frames": [
+      {
+        "url": "http://localhost:54969/demo.html",
+        "name": "",
+        "tree": "- heading \"Browser Use 可控验收页\" [level=1]\n- paragraph: 所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。\n- region \"本地表单\":\n  - text: 项目名称\n  - textbox \"项目名称\": 只执行一次\n  - button \"保存项目\"\n  - status: 已保存：只执行一次\n  - paragraph: 保存次数：1\n- region \"等待与遮挡\":\n  - button \"延迟显示结果\"\n  - status: 等待触发\n  - button \"被遮挡按钮\"\n  - text: 遮挡层\n  - button \"移除遮挡层\"\n  - status: 尚未点击\n- region \"定位歧义\":\n  - button \"重复按钮\"\n  - button \"重复按钮\"\n  - button \"可见按钮\"\n  - status: 尚未点击\n- region \"嵌入页面\":\n  - heading \"跨源 iframe\" [level=2]\n  - iframe\n- region \"Shadow DOM\":\n  - heading \"开放 Shadow DOM\" [level=2]\n  - button \"Shadow 保存\"\n  - status: Shadow 尚未保存",
+        "truncated": false
+      },
+      {
+        "url": "http://127.0.0.1:54969/frame.html",
+        "name": "",
+        "tree": "- text: Frame 名称\n- textbox \"Frame 名称\"\n- button \"Frame 保存\"\n- status: Frame 尚未保存",
+        "truncated": false
+      }
+    ]
+  }
+}

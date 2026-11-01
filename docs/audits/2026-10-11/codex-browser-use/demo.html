@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Browser Use 可控验收页</title>
+<style>
+body{font:16px system-ui;max-width:820px;margin:32px auto;color:#162335;background:#f6f8fb}
+section{background:white;padding:24px;border:1px solid #d9e1eb;border-radius:12px;margin:16px 0}
+button,input{font:inherit;padding:10px;margin:8px}button{cursor:pointer}
+#covered{position:relative;display:inline-block}#overlay{position:absolute;inset:0;background:#28354ae8;color:white;display:grid;place-items:center;z-index:2}
+iframe{width:100%;height:145px;border:1px solid #ccd5e1}output{display:block;min-height:30px;color:#086442}
+</style>
+<h1>Browser Use 可控验收页</h1>
+<p>所有操作只修改本页内存。刷新后重置，不保存或发送个人数据。</p>
+<section aria-label="本地表单">
+<label>项目名称 <input aria-label="项目名称" id="project"></label>
+<button id="save">保存项目</button><output role="status" id="result">尚未保存</output>
+<p id="save-count">保存次数：0</p>
+</section>
+<section aria-label="等待与遮挡">
+<button id="delayed">延迟显示结果</button><output id="delay-result" role="status">等待触发</output>
+<span id="covered"><button id="target">被遮挡按钮</button><span id="overlay">遮挡层</span></span>
+<button id="remove-overlay">移除遮挡层</button><output id="cover-result">尚未点击</output>
+</section>
+<section aria-label="定位歧义">
+<button>重复按钮</button><button>重复按钮</button>
+<button style="display:none">可见按钮</button><button id="visible">可见按钮</button><output id="visible-result">尚未点击</output>
+</section>
+<section aria-label="嵌入页面"><h2>跨源 iframe</h2><iframe id="cross-origin" title="跨源验证表单"></iframe></section>
+<section aria-label="Shadow DOM"><h2>开放 Shadow DOM</h2><div id="shadow-host"></div></section>
+<script>
+let saves=0;
+document.querySelector('#save').onclick=()=>{saves++;document.querySelector('#save-count').textContent='保存次数：'+saves;const name=document.querySelector('#project').value;setTimeout(()=>document.querySelector('#result').textContent='已保存：'+name,250)};
+document.querySelector('#delayed').onclick=()=>setTimeout(()=>document.querySelector('#delay-result').textContent='延迟结果已出现',350);
+document.querySelector('#target').onclick=()=>document.querySelector('#cover-result').textContent='遮挡目标已点击';
+document.querySelector('#remove-overlay').onclick=()=>document.querySelector('#overlay').remove();
+document.querySelector('#visible').onclick=()=>document.querySelector('#visible-result').textContent='唯一可见目标已点击';
+const frame=document.querySelector('#cross-origin');frame.src=location.protocol+'//'+(location.hostname==='localhost'?'127.0.0.1':'localhost')+':'+location.port+'/frame.html';
+const shadow=document.querySelector('#shadow-host').attachShadow({mode:'open'});shadow.innerHTML='<button>Shadow 保存</button><output>Shadow 尚未保存</output>';shadow.querySelector('button').onclick=()=>shadow.querySelector('output').textContent='Shadow 已保存';
+</script>
+</html>

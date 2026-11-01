@@ -1,0 +1,125 @@
+{
+  "date": "2026-10-12",
+  "files": [
+    {
+      "path": "PLAN.html",
+      "bytes": 37817,
+      "sha256": "918b78813dfc8476ee550709dd2612dd7cae80dbfbbc57b7c64b3663f1b5b6ea"
+    },
+    {
+      "path": "PLAN.md",
+      "bytes": 27395,
+      "sha256": "408abd5c27f8177e9191492f0b678f42b8a609d0098d9796b666399abc823a3a"
+    },
+    {
+      "path": "README.md",
+      "bytes": 717,
+      "sha256": "93df7e7946f04c0a6d881cd46cd22a07143b4da8e471b29f0459520706c86867"
+    },
+    {
+      "path": "evidence/browser-tests-initial.xml",
+      "bytes": 31166,
+      "sha256": "636c86c03eae318b4534397c632dc36dd8051eb008ad0cc4f2bfe189f344da3c"
+    },
+    {
+      "path": "evidence/control-review.json",
+      "bytes": 12180,
+      "sha256": "2741b623aefcf12074466d7142884d321dffd6d1047ac748418679e8364489d0"
+    },
+    {
+      "path": "evidence/control-source-snapshot.json",
+      "bytes": 4086,
+      "sha256": "0a2a1e97ba40e504592882d29268ed7e4c518dfc5d589e70dcfeca6b228a6a1b"
+    },
+    {
+      "path": "evidence/observe-ledger.json",
+      "bytes": 5673,
+      "sha256": "4052b50fcadd35ec98aafed846f10fad60c43b6a9b22cbe9b211deddb73cae34"
+    },
+    {
+      "path": "evidence/observe-review.json",
+      "bytes": 18935,
+      "sha256": "8ce2f946ccdbdd46c52d4305b4e78371862963ebf2eaccb2ab116d42aea5a211"
+    },
+    {
+      "path": "evidence/observe-review.md",
+      "bytes": 13998,
+      "sha256": "13ef05149ed6e653de5c25f4ace50e278ed18c34782e228839de7f1b53ab75ed"
+    },
+    {
+      "path": "evidence/observe-snapshot-comparison.json",
+      "bytes": 5137,
+      "sha256": "32fc9f959c93cbc6ce8154f32bbcce0f553364a8e4f4b7f8738b7a8b54600881"
+    },
+    {
+      "path": "evidence/plan-review-recording.xml",
+      "bytes": 536,
+      "sha256": "b6961a450c16a4288b0d4f16600614bb3f2304e605874d3760c901dd2e6c364a"
+    },
+    {
+      "path": "evidence/plan-review.json",
+      "bytes": 4892,
+      "sha256": "72a71c7cd1e8258e83fd8c5773cb8f3a3d5e7f2f736fef63f1e1d1d48433ce92"
+    },
+    {
+      "path": "evidence/probe-projection.py",
+      "bytes": 1465,
+      "sha256": "d88739b361f2bac0cfc4bcc77f628c321710a542e878695c4fd9829613aee8b2"
+    },
+    {
+      "path": "evidence/probe-replay.py",
+      "bytes": 5178,
+      "sha256": "31b63eb04aea4021f438651bff6f186d0aa9c10d56cba12ddefb79c3bf5edc12"
+    },
+    {
+      "path": "evidence/probe-route-receipt.py",
+      "bytes": 1670,
+      "sha256": "59a08a6d7daec05e5451b971a0905b55572f9da663e57c8548e888d4894f832c"
+    },
+    {
+      "path": "evidence/probe-target-identity.py",
+      "bytes": 4968,
+      "sha256": "100edcda2486e2a50d82b2f0a8bfdb14f205dd3d98b3650cfd170f5acb337039"
+    },
+    {
+      "path": "evidence/projection-results.json",
+      "bytes": 497,
+      "sha256": "0424dbc20d3388cbfbbd969c96a4751fe072e5a7ec51ba70816923878d8d352b"
+    },
+    {
+      "path": "evidence/recording-tests-updated.xml",
+      "bytes": 9401,
+      "sha256": "4f171263c2876e75b5fb6a984971e064c20dc621e42666c35d578de86d8e27d5"
+    },
+    {
+      "path": "evidence/replay-probe-results.json",
+      "bytes": 900,
+      "sha256": "3e422b08bc34eae21ac67d3d29e0ca903e01d4b8c055e5f05829199308b50b85"
+    },
+    {
+      "path": "evidence/source-final-comparison.json",
+      "bytes": 10661,
+      "sha256": "cc6e115971f07722bf46104ab5cb3d5389913fa286112f2e37870151aa21c295"
+    },
+    {
+      "path": "evidence/source-snapshot.json",
+      "bytes": 7311,
+      "sha256": "809ffe4f91714d187bb1d6eff32327ac1ebe436cfe160ebde049f2023559da9a"
+    },
+    {
+      "path": "evidence/target-identity-results.json",
+      "bytes": 2539,
+      "sha256": "b45d292d4a146833b6b6c7f8a7980c51f8445d86b0c63aeaea9e75cc39244007"
+    },
+    {
+      "path": "evidence/ui-characterization.test.ts",
+      "bytes": 3456,
+      "sha256": "3f5844fc20150315669613818b5b3b4ccb1ef398b391f3fe7016dad5d1b7e210"
+    },
+    {
+      "path": "evidence/ui-review.json",
+      "bytes": 10779,
+      "sha256": "f18a2d41c3695fcc62ca5aed1fe89a6bbfdda29c940397886434cafdab2a0cb6"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "evidence_id": "ev_05c7406ba6c075535b0fe8e1a39cb1c767ba0a28a30148a4feb88623b2b4fb21",
+    "canonical_local_path": "/private/tmp/rea-review/cua-wrapper-verified-evidence.json",
+    "sha256": "a23bcc3c1129fb7f215d6b943f319ba19c89aa001bcd60365200e20fe95b18b5",
+    "delivered_summary": "cua-wrapper-verified-summary.json"
+  },
+  {
+    "evidence_id": "ev_776b14d11b566b16165497471a6505392f0e384e20276bb6f391b1f70fed4f07",
+    "canonical_local_path": "/private/tmp/rea-review/browser-backend-verified-evidence.json",
+    "sha256": "1a1ede616feea84c8626b794daff1a06fea74cf1267e8cb55e25652f2b8aba3d",
+    "delivered_summary": "browser-backend-verified-summary.json"
+  }
+]

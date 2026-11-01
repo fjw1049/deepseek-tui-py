@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Computer Use：审核与产品升级方案</title>
+<style>
+:root{color-scheme:light;--ink:#182526;--muted:#5c6a6b;--line:#dce3df;--green:#166653;--paper:#f4f6f2}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.8 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}main{max-width:1080px;margin:auto;padding:56px 30px 90px}header{border-bottom:1px solid var(--line);padding-bottom:30px}h1{font-size:40px;line-height:1.25;letter-spacing:-1.5px;max-width:850px}h2{font-size:25px;margin:48px 0 15px}h3{font-size:18px;margin:0 0 10px}p{margin:12px 0}.eyebrow{font-size:12px;letter-spacing:2px;color:var(--green);font-weight:700}.muted,small{color:var(--muted)}.lead{font-size:20px;max-width:850px}.tags{display:flex;gap:8px;flex-wrap:wrap}.tag{font-size:12px;background:#e5ece5;padding:4px 10px;border-radius:20px}nav{display:flex;gap:20px;flex-wrap:wrap;margin-top:24px}a{color:var(--green);text-underline-offset:3px}table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:13px 12px;vertical-align:top;text-align:left;border-bottom:1px solid var(--line)}th{background:#e9eee8}code{font:12px/1.6 ui-monospace,monospace;overflow-wrap:anywhere;background:#e9eee8;padding:2px 5px;border-radius:4px}.card{background:white;border:1px solid var(--line);border-radius:16px;padding:24px;margin:16px 0}.priority{font-size:12px;color:#8f3d25;font-weight:700}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.good{border-left:4px solid var(--green);padding-left:18px}.note{background:#fff7e8;padding:16px 20px;border-radius:12px}.flow{padding:22px;background:#e5eee7;border-radius:14px;font-size:17px;text-align:center}.prototype{background:#e9eee8;border:1px solid var(--line);padding:26px;border-radius:20px}.picker{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 20px}button{font:inherit;font-size:13px;border:1px solid #cad4cd;background:white;color:var(--ink);border-radius:8px;padding:8px 13px;cursor:pointer}button:hover{background:#e3eae4}button:focus-visible{outline:3px solid #6eab94;outline-offset:2px}button[aria-pressed=true]{background:var(--green);color:white;border-color:var(--green)}.mock{max-width:650px;margin:auto;background:white;border-radius:14px;border:1px solid #cbd7ce;overflow:hidden}.mocktop{padding:16px 20px;display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line)}.status{font-size:13px;color:var(--green)}.screen{height:180px;background:linear-gradient(145deg,#edf2f0,#dce8e1);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#567265}.screen b{font-size:22px}.mockbody{padding:18px 20px}.actions{display:flex;gap:9px;margin-top:18px}.primary{background:var(--green);color:white}.danger{margin-left:auto;color:#9a332a}.mini{font-size:12px}.wrap{overflow-x:auto}details{margin:16px 0}summary{cursor:pointer;font-weight:600}ul,ol{padding-left:24px}li{margin:7px 0}footer{margin-top:45px;border-top:1px solid var(--line);padding-top:20px;font-size:13px;color:var(--muted)}@media(max-width:700px){main{padding:28px 18px}h1{font-size:30px}.grid{grid-template-columns:1fr}.prototype{padding:12px}td,th{min-width:125px}.mocktop{flex-direction:column}}@media print{.picker,nav{display:none}body{background:white}main{padding:0}.card{break-inside:avoid}}
+</style></head><body><main>
+<header><div class="eyebrow">PRODUCT & ENGINEERING REVIEW · 2026.10.25</div><h1>让用户始终知道：<br>电脑正在做什么，下一步由谁操作。</h1>
+<p class="lead">现有执行能力已有基础。下一轮升级最值得投入的是：真实的状态展示、一致的控制权交接、可恢复的异常流程。</p>
+<div class="tags"><span class="tag">当前工作区 + 未提交改动</span><span class="tag">HEAD 44f723ca</span><span class="tag">174 项定向测试通过</span><span class="tag">产品代码未修改</span></div>
+<nav><a href="#findings">关键问题</a><a href="#reference">Codex 对照</a><a href="#design">交互方案</a><a href="#engineering">工程升级</a><a href="#acceptance">验收与边界</a></nav></header>
+
+<h2>审核结论</h2>
+<p>浏览器侧已经有控制者、控制代际、人工协助、操作回执、未知结果协调与恢复前观察；桌面侧已经有跨进程锁、取消监视、会话重置和人工交接。建议保留这些实现，补齐两条链路的共同状态契约。</p>
+<p>现在用户最容易困惑的地方是：同样在“操作电脑”，浏览器与桌面显示不同的控制方式；预览、任务状态和操作结果也没有始终一致。扩充按钮或照搬另一款产品的菜单，会让这些差异更难理解。</p>
+<div class="good"><b>产品目标：</b>默认只回答四个问题——操作哪个目标、谁在控制、当前进展是什么、用户现在能做什么。工具名、运行时、捕获方式与协议细节保留在诊断层。</div>
+
+<h2 id="findings">当前实现中需要先处理的问题</h2>
+<p class="muted">“静态确认”表示代码路径可以确定；不表示已经用真实应用复现。优先级用于安排升级顺序。</p>
+<article class="card"><div class="priority">P1 · 静态确认</div><h3>1. 切换目标或捕获失败后，旧画面可能仍被当成当前画面</h3>
+<p>A 应用已有画面，随后切到 B，但 B 没有窗口或捕获失败：卡片保留旧 canvas，新应用名却已更新。组件的 <code>hasFrame</code> 在本轮只从 false 变 true；错误提示又受 <code>!hasFrame</code> 限制，出现过画面后就可能不再显示捕获故障。</p>
+<p><b>用户影响：</b>用户看到的应用名、画面和工作状态可能互相矛盾，无法可靠判断 agent 是否在操作正确对象。</p>
+<p><b>升级：</b>画面携带目标身份与时间；切目标即废弃“实时”资格。保留最后画面时明确写“上一画面 · 12 秒前”。捕获失败不能被历史成功遮蔽；执行正常与画面断开应分别呈现。</p>
+<small>证据：<code>packages/workbench/src/renderer/src/components/cua-preview/CuaPreview.tsx:128</code>；<code>use-cua-window-stream.ts:62</code>；<code>store/cua-preview-store.ts:135</code>。</small></article>
+
+<article class="card"><div class="priority">P1 · 静态确认</div><h3>2. 用户停止后仍显示“已完成”</h3><p>预览 store 把结束与停止都转成 <code>ended</code>，没有结果字段；视图随后统一显示完成文案和绿勾。</p><p><b>升级：</b>区分“操作已结束”“已停止”“未完成”“结果待确认”；只有结果确实得到验证时显示“已完成”。模型一轮结束或工具返回成功，都不能单独证明用户目标完成。</p><small>证据：<code>store/cua-preview-store.ts:144</code>；<code>store/chat-store.ts:4082</code>；<code>components/cua-preview/CuaPreview.tsx:183</code>。</small></article>
+
+<article class="card"><div class="priority">P1 · 宿主缺口已确认，实际抢占需实机验证</div><h3>3. 用户接管桌面期间，另一任务可能获得桌面锁</h3><p>聊天 A 等用户完成登录时释放 CUA 连接与跨进程锁，只暂停自己的输入请求。聊天 B 可以进入同一个锁的获取路径。当前宿主没有单独保留“用户正在使用桌面”的全局所有权。</p><p><b>升级：</b>人工接管时转入全局 user reservation；其他桌面任务进入等待。显式“继续”或结束接管后才让出。底层 LCU 是否有其他保护尚未验证，因此这里不能写成已复现的抢屏故障。</p><small>证据：<code>src/deepseek_tui/engine/orchestrator/tooling.py:1357</code>；<code>src/deepseek_tui/cua/session.py:369</code>、<code>:427</code>。</small></article>
+
+<article class="card"><div class="priority">P2 · 静态确认</div><h3>4. 一个局部错误可能让浏览器接管按钮消失</h3><p>无效 URL、打开外部浏览器失败、打开输出目录失败等都可能写入通用 <code>error</code>。视图把它归为连接故障，并据此隐藏控制按钮，即使执行连接本身正常。</p><p><b>升级：</b>分开连接错误、当前动作错误和输出展示错误。用户需要接管时，不能因为一个旁支动作失败失去入口；真正断连时显示可解释的不可用状态并保留停止路径。</p><small>证据：<code>packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx:569</code>、<code>:573</code>；同文件 <code>:554</code>、<code>:773</code>。</small></article>
+
+<article class="card"><div class="priority">P2 · 静态确认</div><h3>5. 预览隐藏后，本轮无法主动重新打开</h3><p><code>hidden-for-task</code> 会保持到下一轮，未找到当前轮手动恢复入口。用户为了腾空间关掉预览后，反而无法再查看正在发生的操作。</p><p><b>升级：</b>改成“收起”，留下“查看操作”入口。关闭预览仅改变可见性；停止执行必须是另一个明确动作。</p><small>证据：<code>store/cua-preview-store.ts:51</code>、<code>:61</code>；<code>components/cua-preview/CuaPreview.tsx:260</code>。</small></article>
+
+<div class="wrap"><table><thead><tr><th>另外需要补齐的边界</th><th>现状与用户影响</th><th>建议</th></tr></thead><tbody>
+<tr><td>桌面未知结果</td><td>Browser 有 durable receipt/unresolved；CUA 更多依赖中断后的文本提醒与重新观察。</td><td>先建立 call 级 outcome_unknown，显示“操作可能已执行，待确认”，避免提供直接重复提交。</td></tr>
+<tr><td>精确窗口身份</td><td>CUA 预览只拿 appId，按应用的前方普通窗口选择，不能保证就是 agent 操作窗口。</td><td>执行端提供 windowId；拿不到则诚实标注“应用窗口预览”。</td></tr>
+<tr><td>可用性检查</td><td><code>/cua/status</code> 仅 supported / installed / enabled；未共同表达模型视觉、连接、系统权限和占用。</td><td>按任务返回一个可用状态、原因和恢复动作；无法检查的权限显示 unknown。</td></tr>
+<tr><td>关闭自动授权</td><td>auto_allow 使用 session grant，代码注释明确关闭设置在重启 runtime 后生效。</td><td>安全重建会话或明确说明当前会话范围；撤销语义一致，不暗示已立即取消现有授权。</td></tr>
+<tr><td>桌面占用等待</td><td>匿名 flock 等待，30 秒后报占用，没有对应占用任务与前端等待事件。</td><td>显示“另一任务正在使用电脑”；可取消等待、定位占用任务，无需专门队列管理页面。</td></tr>
+</tbody></table></div>
+<details><summary>这些边界的代码定位</summary><ul><li><code>src/deepseek_tui/browser/service.py:820</code>、<code>:1579</code>：browser receipt 与阻塞。</li><li><code>src/deepseek_tui/cua/session.py:395</code>；<code>src/deepseek_tui/cua/tools.py:195</code>：CUA 中断恢复。</li><li><code>packages/workbench/src/main/services/cua-window-preview.ts:8</code>：窗口选择限制。</li><li><code>src/deepseek_tui/server/routes.py:758</code>；<code>src/deepseek_tui/cua/readiness.py:7</code>：状态与模型检查。</li><li><code>src/deepseek_tui/cua/approval.py:104</code>；<code>src/deepseek_tui/cua/engine.py:41</code>：会话授权与复用。</li><li><code>src/deepseek_tui/cua/session.py:53</code>：桌面锁等待。</li></ul></details>
+
+<h2 id="reference">Codex 安装包中，哪些设计值得对齐</h2>
+<p>定位到的实际应用是 <code>/Applications/ChatGPT.app</code>，bundle id 为 <code>com.openai.codex</code>，版本 <code>26.1021.31345</code>。以下来自安装包中明确的组件和处理分支，属于静态观察；功能开关、账户资格与真实运行可达性未全部验证。</p>
+<div class="wrap"><table><thead><tr><th>观察到的实现</th><th>对你产品的启发</th><th>证据边界</th></tr></thead><tbody>
+<tr><td>应用授权卡以应用名称提问；会话许可为主操作，持久许可按 persistModes 条件提供；提交时防重复。</td><td>在使用具体应用时说明用途与范围。允许当前会话和始终允许必须分清，失败后允许重试。</td><td>approval-request-card 模块 + REA E1。没有证明你的底层 session 与 Codex conversation 生命周期等价。</td></tr>
+<tr><td>授权列表读取、移除许可与窗口重新聚焦刷新有独立接口。</td><td>授权管理应可发现、可撤销、状态可刷新；无需在每个动作前重复问相同问题。</td><td>approvals-query 模块 + E1。即时中断底层动作的语义未验证。</td></tr>
+<tr><td>PiP 按 conversation / presentation 身份展示，浏览器截图和原生视频分别渲染；有隐藏后显示、侧栏与浮窗选项。</td><td>统一“查看操作”的入口，同时保持画面来源和目标身份准确。你的侧栏/浮窗基础已经接近，可先补重开入口。</td><td>local-conversation-thread 模块 + E2；部分语义图截断，结论由具体源片段复核。</td></tr>
+<tr><td>接管组件区分 observing / requesting / controlling；请求期间按钮禁用，状态文字独立。</td><td>点击“我来操作”后先显示“正在暂停”，收到控制权确认再显示“你正在操作”。</td><td>takeover-border + E1；其文案涉及 dot 场景，不能据此宣称所有本地桌面控制使用同一协议。</td></tr>
+<tr><td>Computer Use 设置按能力分组，浏览器扩展、应用许可与错误恢复分开呈现。</td><td>用户选择应用或浏览器即可；安装、检测、权限修复按需展开。</td><td>computer-use-settings 手工源读取。未验证全部平台能力，不能把打包内容视为当前已启用。</td></tr>
+</tbody></table></div>
+<p><b>建议吸收：</b>明确的授权范围、控制交接中间态、可恢复预览、按目标绑定画面。<b>暂不照搬：</b>所有浏览器设置、复杂浮窗去向、锁屏运行或更多插件入口；这些都需要对应能力与用户需求支撑。</p>
+
+<h2 id="design">建议的交互：一张操作面板，随状态改变主动作</h2>
+<p>聊天负责目标、说明与最终结果；操作面板负责现场、控制权和当前阻塞。桌面和浏览器使用一致的外层结构，里面分别保留实时窗口、内置网页、截图等最适合的内容。</p>
+<div class="prototype"><div class="eyebrow">交互草案 · 仅演示推荐状态，不连接真实电脑</div><div class="picker" id="picker"></div>
+<div class="mock"><div class="mocktop"><strong id="target">浏览器 · 示例订单页面</strong><span class="status" id="status" role="status"></span></div><div class="screen"><b id="screenTitle"></b><span id="freshness" class="mini"></span></div><div class="mockbody"><strong id="step"></strong><p id="description" class="muted"></p><div class="actions"><button class="primary" id="primary"></button><button id="more" title="实际产品中放置标注、示范与诊断">更多</button><button class="danger" id="stop">停止任务</button></div><p class="mini muted" id="hint"></p></div></div></div>
+<p class="muted">草案中的按钮只切换示意状态。“更多”展示收纳原则，未实现真实菜单；截图区域是占位设计，不是实际捕获。</p>
+<div class="grid"><div class="card"><h3>默认留在眼前</h3><ul><li>明确目标：应用 + 窗口，或浏览器 + 页面。</li><li>控制者与进展：AI 操作、正在交接、你在操作、等待确认。</li><li>一个随状态变化的主动作。</li><li>稳定可见的停止入口；收起后仍可恢复查看。</li></ul></div><div class="card"><h3>按需展开</h3><ul><li>标注与“给 AI 演示一次”放到更多。</li><li>技术日志、调用详情、捕获来源放诊断。</li><li>首次使用或失效时显示配置与权限修复。</li><li>任务结束保留结果摘要、输出与必要截图入口。</li></ul></div></div>
+<p>涉及密码、验证码或系统验证时，面板只告诉用户完成哪一步；不要让用户把这些内容发进聊天。用户点击“继续”后重新观察实际页面，检查是否完成，再恢复任务。</p>
+<p>录制示范适合放在“AI 不知道怎么做”时的辅助入口。完成后先让用户查看将附加的示范，再用于任务；不要把录制、标注、登录同步、浏览器控制模式都压在默认工具栏上。</p>
+
+<h2 id="engineering">工程上如何升级，才能保持简单</h2>
+<div class="flow">Browser / Desktop 执行器 → 宿主控制与事件 → 同一操作面板 → 可追溯的结果</div>
+<p>不必强行合并执行器。Browser 与桌面能力天然不同：一边有 tab、DOM 和导航，另一边有应用、窗口与系统输入。共同部分应是用户承诺与状态协议。</p>
+<div class="wrap"><table><thead><tr><th>共同字段</th><th>用途与约束</th></tr></thead><tbody>
+<tr><td>identity</td><td>thread / turn / call / surface / window 或 tab。事件不属于当前目标时不能覆盖当前画面。</td></tr>
+<tr><td>control</td><td>idle / assistant / transferring / user；接管必须有后端确认。桌面 owner 作用于整台宿主，浏览器按实际隔离资源定作用域。</td></tr>
+<tr><td>phase + blocker</td><td>执行、等待、观察确认、已结束分开；等待具体说明是用户操作、权限、占用还是连接问题。</td></tr>
+<tr><td>observation</td><td>captureEpoch、目标、capturedAt、live / stale / unavailable。新截图不等于任务完成；视频断开也不等于执行失败。</td></tr>
+<tr><td>outcome</td><td>completed / stopped / failed / unknown；“completed”由目标验证支持。未知结果先观察，不盲目重放有副作用的调用。</td></tr>
+<tr><td>revision + recovery</td><td>拒绝迟到事件；重连先读取宿主快照再接增量。前端只执行当前状态允许的恢复动作。</td></tr>
+</tbody></table></div>
+<p>CUA 允许任意 JavaScript，因此第一版只做到 <b>call 级结果记录</b>。不要承诺能从任意脚本中恢复每次点击的事务语义。优先记清“未开始、已返回、可能执行但结果未知”，再接入工具证据与人工确认。</p>
+<ol><li><b>第一批：修复会误导用户的展示。</b>停止结果、旧帧标记、局部错误分类、收起后重开。改动集中在现有 store 和组件，先用回归用例锁定行为。</li><li><b>第二批：补齐真实控制权。</b>桌面用户占用、排队通知、接管确认、未知结果记录与恢复检查。没有后端协议时不先放一个“接管成功”的按钮。</li><li><b>第三批：统一操作面板。</b>BrowserWorkspace 和 CuaPreview 共享状态文案、控制条和结果展示；人工协助成为面板内的阻塞态，聊天内只保留定位入口。</li><li><b>第四批：完善通用能力。</b>按实际支持提供文件选择、上传下载、弹窗、跨应用跳转与可撤销授权；保留每类能力的真实边界。再根据使用反馈扩展平台和高级录制流程。</li></ol>
+<p>成功指标也应对应用户体验：接管从点击到确认的时间、发生误操作后能否安全停止、未知提交是否被重复、失败能否在原任务继续、用户能否找到正在控制的目标。先采基线，再决定数值目标。</p>
+
+<h2 id="acceptance">验收场景与本轮覆盖</h2>
+<div class="wrap"><table><thead><tr><th>场景</th><th>应满足的结果</th><th>本轮结论</th></tr></thead><tbody>
+<tr><td>A 窗口切到 B，B 捕获失败</td><td>不得用 B 标签把 A 旧图标成实时；展示故障与旧帧时间。</td><td>静态发现，待新增回归与实机验证。</td></tr>
+<tr><td>用户中途停止</td><td>显示已停止，保存已完成与未完成部分；不得出现无条件成功绿勾。</td><td>静态发现。</td></tr>
+<tr><td>A 等用户登录，B 请求桌面</td><td>B 等待，不在用户操作期间发出输入；停止 B 不影响 A。</td><td>宿主锁边界确认；底层行为未实测。</td></tr>
+<tr><td>点击提交后断线</td><td>显示结果待确认；重连观察回执，不自动再次提交。</td><td>Browser 有基础；CUA 宿主契约待补。</td></tr>
+<tr><td>打开外部浏览器失败</td><td>局部报错，仍能找到接管与停止。</td><td>静态发现。</td></tr>
+<tr><td>关闭并重新查看预览</td><td>任务持续，随时可恢复查看，不自动反复弹出。</td><td>当前缺少本轮恢复入口。</td></tr>
+<tr><td>用户说完成登录，但页面仍未登录</td><td>重新观察并提示未完成，不直接恢复依赖登录的动作。</td><td>已有提示与验证原则；需真实场景验收。</td></tr>
+<tr><td>跨聊天、刷新、迟到事件</td><td>目标与状态不串线，重连读取权威状态。</td><td>已有 thread 隔离；不能据此宣称所有竞态已覆盖。</td></tr>
+</tbody></table></div>
+<div class="card"><h3>已执行测试</h3><p>后端：<b>82 passed</b>，覆盖 <code>tests/test_cua.py</code>、<code>tests/test_browser_assistance.py</code>、<code>tests/contract/test_cua_status.py</code>。</p><p>前端：<b>7 个文件、92 passed</b>，覆盖 CUA store、chat 接入、window stream、window picker、BrowserWorkspace、Assistance、AssistanceMonitor。</p><p>这些主要是协议与 mock 测试。没有运行真实敏感任务、没有验证多聊天同时控制桌面的端到端行为，也没有把测试通过当成上述新发现已被覆盖。</p></div>
+<div class="note"><b>逆向分析边界：</b>整包 REA 分析在 300 秒后超时；之后对 4 个授权/接管模块与 1 个会话模块做定向分析。一个 unpacked 原生 permissions.node 校验值与 ASAR 声明不一致，未据其推断原生功能。PiP 分析语义图达到 100,000 节点上限；动态调用、跨包引用及功能启用条件仍有未知。实际 UI 只查看了 Workbench 的空闲布局，未做两款产品完整任务的交互录像对照。</div>
+
+<h2>证据与后续复核</h2>
+<p>本报告把现有实现审核、竞品静态观察和产品建议分开。桌面全局接管与真实异常恢复仍需受控实机实验，因此不把本次称为完整运行时行为复刻。</p>
+<ul><li><b>E1：</b><code>ev_70848a5d2782670f79e51d3959742ec3722894e8932268deb5024d2faaf235db</code>，4 个定向模块；静态语义存在 688 项未知。</li><li><b>E2：</b><code>ev_115a7d83a6a5f44ce674e7596be5beb5c92ba50b8a4a4487a668745362e2b5d8</code>，会话/PiP 模块；语义图部分截断。</li><li><a href="source-manifest.json">版本、模块 SHA-256 与分析限制清单</a>。完整 Evidence 临时保存在 <code>/tmp/codex-cua-audit-20261025/rea-evidence.json</code>，不加入仓库以免引入 60 MB 分析数据。</li><li><a href="https://github.com/morluto/rea">REA 项目</a>用于静态分析，不能替代实际运行验证。所有工程定位均相对本项目根目录。</li></ul>
+<footer>新增内容仅为本审核报告与来源清单。保留原有未提交修改；未修改产品代码、提交或部署。</footer>
+</main><script>
+const states={
+running:{label:'执行中',status:'AI 正在操作',screen:'页面预览',fresh:'实时画面（示意）',step:'正在查找订单导出入口',description:'你可以随时接管。接管后，AI 会等待你归还控制。',action:'我来操作',next:'transferring',hint:'收起预览不会停止任务。'},
+transferring:{label:'交接中',status:'正在暂停操作…',screen:'等待控制权确认',fresh:'预览保留 · 正在交接（示意）',step:'正在停止新的自动输入',description:'收到执行端确认后，才允许你接管。不要提前显示“你已取得控制”。',action:'模拟收到确认',next:'human',hint:'真实产品中此转换由宿主确认事件触发。'},
+human:{label:'人工接管',status:'你正在操作',screen:'你的操作区域',fresh:'实时画面（示意）',step:'请在页面中完成登录',description:'其他使用同一桌面的任务等待。完成后，AI 会重新检查页面再继续。',action:'继续任务',next:'checking',hint:'密码与验证码直接在目标应用填写。'},
+checking:{label:'恢复检查',status:'正在确认当前页面',screen:'重新观察',fresh:'获取新画面（示意）',step:'检查登录是否完成',description:'你的“完成”是继续检查的信号；恢复后的页面状态仍需要验证。',action:'模拟确认通过',next:'running',hint:'未确认时继续等待或提供明确帮助，不重复提交。'},
+unknown:{label:'结果未知',status:'操作结果待确认',screen:'最近一次画面',fresh:'历史画面 · 12 秒前（示意）',step:'提交后连接中断',description:'操作可能已经执行。先查看页面或回执，再决定下一步。',action:'检查当前结果',next:'checking',hint:'这里不提供直接“重新提交”。'},
+stale:{label:'预览断开',status:'画面暂不可用',screen:'上一目标的画面',fresh:'历史画面 · 12 秒前（示意）',step:'当前目标的画面尚未获取',description:'执行状态与画面状态分别呈现。旧画面不能代表新窗口，仍可请求接管或停止。',action:'我来操作',next:'transferring',hint:'只有收到新目标的有效帧，才恢复实时标识。'},
+stopped:{label:'已停止',status:'任务已停止',screen:'最后一次画面',fresh:'任务历史（示意）',step:'已停止，订单尚未导出',description:'保留已经完成的步骤和剩余事项。结束执行不等于完成目标。',action:'查看示意执行态',next:'running',hint:'实际产品提供结果详情；本按钮仅重置演示。'}};
+const picker=document.getElementById('picker');let current='running';
+for(const [key,value]of Object.entries(states)){const b=document.createElement('button');b.textContent=value.label;b.dataset.key=key;b.addEventListener('click',()=>render(key));picker.append(b)}
+function render(key){current=key;const s=states[key];for(const [id,value]of Object.entries({status:s.status,screenTitle:s.screen,freshness:s.fresh,step:s.step,description:s.description,primary:s.action,hint:s.hint}))document.getElementById(id).textContent=value;for(const b of picker.children)b.setAttribute('aria-pressed',String(b.dataset.key===key));document.getElementById('stop').hidden=key==='stopped'}
+document.getElementById('primary').onclick=()=>render(states[current].next);document.getElementById('stop').onclick=()=>render('stopped');document.getElementById('more').onclick=()=>{document.getElementById('hint').textContent='建议收纳：标注、给 AI 演示一次、查看操作详情。默认不展开技术设置。'};render('running');
+</script></body></html>

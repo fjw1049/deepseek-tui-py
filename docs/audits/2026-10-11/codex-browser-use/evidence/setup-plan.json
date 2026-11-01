@@ -1,0 +1,26 @@
+{
+  "status": "planned",
+  "plannedActions": [
+    {
+      "id": "configure_client:codex",
+      "kind": "configure_client",
+      "label": "Codex",
+      "target": "/Users/fjw/.codex/config.toml",
+      "detail": "Add the REA MCP registration for Codex; preserve unrelated configuration. Command: \"/Users/fjw/.local/share/rea/node_modules/rea-agents/scripts/rea.mjs\" \"mcp\". No additional provider environment variables. Existing server environment overrides are retained.",
+      "external": false,
+      "operation": "update",
+      "backupPath": "/Users/fjw/.codex/config.toml.rea.backup"
+    },
+    {
+      "id": "install_skill",
+      "kind": "install_skill",
+      "label": "REA reverse-engineering skill",
+      "target": "/Users/fjw/.agents/skills/reverse-engineer-anything",
+      "detail": "Install or update the bundled REA reverse-engineering skill and on-demand references.",
+      "external": false,
+      "operation": "install"
+    }
+  ],
+  "appliedActions": [],
+  "clients": {}
+}

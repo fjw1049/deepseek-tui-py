@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-13",
+  "head": "d4f6983695019ecc8846effe50b046afad54d260",
+  "source_sha256": {
+    "src/deepseek_tui/browser/service.py": "f216b9c903684bba8e6dfcf3508355ac4a526b2195b3ed743fdeb9ac3c9927d8",
+    "src/deepseek_tui/browser/observation.py": "c5c73a91fa538cf18b8ae1cf353ee5eff594221cce41f732ffadd007fce4a2b5",
+    "src/deepseek_tui/browser/picker.py": "3ac086472a4c0a3bfa5f1da53688f6f9c662622763d6717daa3c3f5ca82c6000",
+    "src/deepseek_tui/browser/skills.py": "be1712050be3d820fbe147987177dc47bf5394dad6bae4c1763a9251dfba989f",
+    "src/deepseek_tui/browser/recording.py": "d7901674ddfe72902a82f69b9115b572c904f9a85f5709fbd4cda11eac352ed3",
+    "src/deepseek_tui/browser/__init__.py": "c79b6b36b82ab07289635aad875ea8e7ab17bb0d04a1c3a7b7b9f4dc438755e4",
+    "src/deepseek_tui/browser/native.py": "3ac1d536636914f1172b8fd02056305c3ccd72e94cb94f905c18dd654c567533",
+    "src/deepseek_tui/browser/conditions.py": "b2d1ae924058fc51ef46de204408c07da05101cc00d5bbbeb71e9db2139e53fd",
+    "src/deepseek_tui/browser/context.py": "86fecf8909088058e4d9cad3eb2b1d7448f178b558629ef714eea8d23c7b2f7b",
+    "src/deepseek_tui/browser/frames.py": "b191297112d3070527724c1651a341ae2749c906ba83b346774fa8438b07c882",
+    "src/deepseek_tui/browser/capabilities.py": "fe6381006c834b94ece0c6559742e32e36c3e347e1059b85df3c4e388e7ea718",
+    "src/deepseek_tui/browser/input.py": "27396be5410c411cdbfe7bd2e1f66a40e4d9e68f26b047007f57d49ffbe0ac61",
+    "src/deepseek_tui/browser/workflows.py": "dce85c7d3e8e902f0e8e83ea0a61ec69d34baa16dfe5693e91eb095dde90b3c8",
+    "src/deepseek_tui/browser/install.py": "ea2f48fbad90a78f4d80793740d0a2293badfb912cdfd0c6c1afecbfd5131407",
+    "src/deepseek_tui/browser/video.py": "b1996fc679373c7fa9725e5ececb69490f155fa791eb909337310b56c3c02f90",
+    "src/deepseek_tui/browser/recording.js": "1c52ddccff14587657b5f8ff68359c6f207173c643e510fddce1c70b53fc4b41",
+    "src/deepseek_tui/client/media.py": "c0b20430b3a0219850031f7e7b6a368b6cd985d9a5997a24aa02b59615b8c1ff",
+    "src/deepseek_tui/protocol/messages.py": "f3031a5dbc3e16b185f509dbc3c99b19744394f11f91fa0c5d793fc3cad74d99",
+    "src/deepseek_tui/engine/orchestrator/tooling.py": "ebf0c56d06837a4f2e51f5a52224fe00a415a4c0f2a4c559738f85bd14c3a8be",
+    "src/deepseek_tui/tools/browser.py": "0292db6156713071d80d7b1ff50dd2156ba9fef2636e4d5637cddaf516c46df0",
+    "src/deepseek_tui/tools/file.py": "a3733048861a9b385d603eb01b6d658489d9d2e0563272e33a94567daaab35d2",
+    "src/deepseek_tui/server/browser_routes.py": "8430deae8ee075f7027914730edd26530c8960b77bae98e7d89e39dff18877c9",
+    "src/deepseek_tui/prompts/browser.md": "1cbffcdd225a1781f8e08e3dc6e0d6a0b8dcaba11d1b4f8d925e86efd454fa82",
+    "scripts/browser_benchmark.py": "83da3dc3cfe8202c80b9c9edc87d74a7ccecd94b33d58d5114c5a7a3cf9aaae9",
+    "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx": "9e631f1ee7d95e17c4d38d114e81fe970ab832e4cc272954872e1e7ee4be9082",
+    "packages/workbench/src/renderer/src/components/BrowserViewport.tsx": "47d3aa814a46497cd2a00763e0c2f7ff154270ef691caea923c868c56e88f8bb"
+  },
+  "validation": {
+    "related_backend": {
+      "passed": 296,
+      "failed": 0,
+      "skipped": 0,
+      "log": "round4-evidence/browser-round4-final-related-4.log"
+    },
+    "frame_cleanup_after_last_edit": {
+      "passed": 11,
+      "failed": 0
+    },
+    "frontend": {
+      "files": 239,
+      "passed": 1422,
+      "failed": 0
+    },
+    "real_model": {
+      "completed": 3,
+      "cases": 3,
+      "wrong_record_mutations": 0,
+      "duplicate_mutations": 0
+    },
+    "baseline_real_model": {
+      "completed": 3,
+      "cases": 3
+    },
+    "real_vision_helper": "passed",
+    "electron_fixture_business_check": "passed; unresolved=0",
+    "ffmpeg": "temporary imageio-ffmpeg 0.6.0 / FFmpeg v7.1 actual WebM encoding passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "compileall": "passed",
+    "javascript_syntax": "passed",
+    "ruff_F_I": "passed",
+    "diff_check": "passed"
+  },
+  "whole_project_extended": {
+    "passed": 3221,
+    "failed": 27,
+    "skipped": 3,
+    "deselected": 36,
+    "note": "Two related schema/catalog checks fixed afterward. Frozen browser baseline reproduces 23 unrelated failures; old cancellation fixture also failed after its 600s wait. These failures are not counted as passing."
+  },
+  "package": {
+    "wheel": "/private/tmp/browser-round4-dist-final/deepseek_tui_py-0.1.0-py3-none-any.whl",
+    "bytes": 1079084,
+    "sha256": "c9e54e646f9f5739b763d0b1593f606d235c050f0804feae57d10221f8abd05a",
+    "python_sources_match": true
+  },
+  "evidence": {
+    "browser-round4-build-release.log": "2f8824e442fbcb1d727bc39b19755848512d3094fef3c4deff5b3a68697b820d",
+    "browser-round4-ui-release.log": "02051eee339ed80da22562072a9e9e77b47d372507b67f23d008184484b67d2f",
+    "browser-round4-static-final.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "browser-round4-final-related-4.log": "6acb61b1af1e93269a564dfefe7110f0a3eddd1a5406c14bbb97b8b9a4ef4f16",
+    "browser-round4-upload-dialog-recording-2.log": "497256b8b19511f9bb862c41c9398fcd27ef127574549b930b7d9380115838bd",
+    "browser-round4-model-final.json": "31a5f45fe88649fc28dfbaf35bd271616c3a8ab92c7588ee102455934edc6886",
+    "browser-round4-behavior-final.json": "7cfa99e98fb00e5ced0a17d96533766ed66b91a22915302c01c2d5fbbe0b5f78",
+    "browser-round4-full-suite-2.log": "07e077d7d7295cb34c660e728fb10cb9627728eee755f6b6a44df120a3fd999d",
+    "browser-round4-model-baseline.json": "8b95571a93593731cfe0320446a2526f7f914f364fbdc79f0f0fa1e84946a3a9",
+    "browser-round4-frame-cleanup-final.log": "7bec068688fdc6f27d84fc145ca604c02a74146deccae5bd0c138cfc5cb42f16",
+    "browser-round4-typecheck-release.log": "bdd1ee5c877e1bc84f231ee6d34fee194fd6c8778fa1daa9631ac0ca23569724",
+    "browser-round4-human-dialog-reproduction.log": "5a5f1e235906e8ee4237d19d581f8c4e904da7061470b1c7d64e2323595df0af",
+    "browser-round4-scene-and-remote-final.log": "cf2fd4ebea76b5fbac2f3388fc760935df6683799ce4150bfb8f6728c94b57ac",
+    "browser-round4-package-final.log": "96cac5e133face64c35d165e5d456430cdf63eab5dd0522e94d4f10fc7a7c5c1",
+    "browser-round4-human-dialog-fixed.log": "957695738a89ab0c32e8c3fe7b245ac8b1144f603ad691f78d17af7f9fdcb750",
+    "browser-round4-electron-ready.png": "0aef0df9790dd4ad8f63cea9224ca20b9fd01b0dce680481a147ed6d05c95c76",
+    "browser-round4-nonbrowser-baseline.log": "31ac57bccae03881963d4d36c60f6ce56e1c6ecc7f229b6a8fc824aff8e32750",
+    "browser-round4-helper-check.json": "e28ece22f131a26de42e8f747064fe64cde33e72992016d3e2a6a610551a69c2",
+    "browser-round4-electron-saved.png": "417d383db1c5f20b65ece7ecf60658990c806deda06630c56f485985f51f13ea"
+  }
+}

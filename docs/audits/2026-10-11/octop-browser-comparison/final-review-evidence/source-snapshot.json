@@ -1,0 +1,50 @@
+[
+  {
+    "path": "src/deepseek_tui/browser/observation.py",
+    "sha256": "73f80729c6dc70b79b8551a528e49c37341d10a6a17838cc7b953cc73f11335b"
+  },
+  {
+    "path": "src/deepseek_tui/browser/service.py",
+    "sha256": "c04ecb76a93e78f94e2fd2a3289334e047b5b90b528b57954b77576aa8c503d8"
+  },
+  {
+    "path": "src/deepseek_tui/browser/context.py",
+    "sha256": "110d852041b6aa1b1d9e3ae2b783f4a71f8344a2c07eecb8762991b23360fb90"
+  },
+  {
+    "path": "src/deepseek_tui/browser/recording.py",
+    "sha256": "198f54912b2a29fbf5fb3ac40ba0f1c4859fc0fade3d27a118bd3cf7cc012e81"
+  },
+  {
+    "path": "src/deepseek_tui/browser/recording.js",
+    "sha256": "3e797cc61fe43798d35ee7eb49c03d6771a85d5def17087b5ce4febae5ecca3f"
+  },
+  {
+    "path": "src/deepseek_tui/browser/workflows.py",
+    "sha256": "3c7281d669fd09973d1ce986a6035e6f000f1c6a7f354442fefe4175fee9afc8"
+  },
+  {
+    "path": "src/deepseek_tui/browser/frames.py",
+    "sha256": "c621ec6938464c814b2bc17855c945146b0a3d3159bd8c7d96075b36e366d012"
+  },
+  {
+    "path": "src/deepseek_tui/browser/skills.py",
+    "sha256": "3910a932cd563894cb056b13c5ed2f84c24fac0204e086a4aa5328aba48fa4df"
+  },
+  {
+    "path": "src/deepseek_tui/server/browser_routes.py",
+    "sha256": "2d59121befc3cc7dac5d10a9a8d1579ff62b37dbcdc64af3b9a74ce0a034eb8c"
+  },
+  {
+    "path": "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx",
+    "sha256": "2fe8ad1c7375ad69b959a7164b1371b676e9d74fe9653b6f6379d3b2a711fb22"
+  },
+  {
+    "path": "packages/workbench/src/renderer/src/components/BrowserViewport.tsx",
+    "sha256": "e609f5f0ddb39e7025f02d19a70c83c0546066c9af5cdef7fbd0b9b0b6ea9bb2"
+  },
+  {
+    "path": "tests/test_multimodal_pipeline.py",
+    "sha256": "14d0ecedc92b49f1df9933b42001b05194476095a0995959088fa3422b90ed5d"
+  }
+]

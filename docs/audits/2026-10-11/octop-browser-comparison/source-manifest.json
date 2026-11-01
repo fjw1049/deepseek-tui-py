@@ -1,0 +1,375 @@
+{
+  "local_head": "2b0644671633722e955390eb48024d66a4b75349",
+  "local_scope": "working tree including pre-existing uncommitted changes",
+  "local_files": [
+    {
+      "path": "src/deepseek_tui/browser/service.py",
+      "sha256": "2a628e1e8aff27ae43036f1c2517fd0a4f8dff9baac2a765e64448f8ee49dcd5"
+    },
+    {
+      "path": "src/deepseek_tui/browser/observation.py",
+      "sha256": "ea00cac652bafe1210c435f54e4c05dc86ebae48ba23bb6a30ad075c8a6d15bb"
+    },
+    {
+      "path": "src/deepseek_tui/browser/picker.py",
+      "sha256": "3ac086472a4c0a3bfa5f1da53688f6f9c662622763d6717daa3c3f5ca82c6000"
+    },
+    {
+      "path": "src/deepseek_tui/browser/skills.py",
+      "sha256": "3b45f756636fa01d9d008556630154a4821ec66e1fda15058f5443cd8643f09d"
+    },
+    {
+      "path": "src/deepseek_tui/browser/__init__.py",
+      "sha256": "c79b6b36b82ab07289635aad875ea8e7ab17bb0d04a1c3a7b7b9f4dc438755e4"
+    },
+    {
+      "path": "src/deepseek_tui/browser/input.py",
+      "sha256": "52344c2bcfde8f8460ae7462fb75e48a5352142ce63b727aa8bc9741538b93d4"
+    },
+    {
+      "path": "src/deepseek_tui/browser/workflows.py",
+      "sha256": "f1112efd329c19efef37f23e21f1d00e8aff9415248291db62ec8e8ecb236a60"
+    },
+    {
+      "path": "src/deepseek_tui/browser/install.py",
+      "sha256": "ea2f48fbad90a78f4d80793740d0a2293badfb912cdfd0c6c1afecbfd5131407"
+    },
+    {
+      "path": "src/deepseek_tui/browser/video.py",
+      "sha256": "b1996fc679373c7fa9725e5ececb69490f155fa791eb909337310b56c3c02f90"
+    },
+    {
+      "path": "src/deepseek_tui/tools/browser.py",
+      "sha256": "453ae60c349457b8fc7cbec45fe2804858e2f8c33047b4f93925be16e7c3d4c9"
+    },
+    {
+      "path": "src/deepseek_tui/prompts/browser.md",
+      "sha256": "fd4809675abc9cacc0ad522c3bf418436ec3db77927145d246421309ee5eaafc"
+    },
+    {
+      "path": "src/deepseek_tui/server/browser_routes.py",
+      "sha256": "76176b9f08d3d8e69be4267de6daec8fda8bf8796808f15ae2cfe164f97286a7"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/manager.py",
+      "sha256": "d60f5895bdbb768d4f44e39597809e3d5fa44645ccb938809831bca8618f366e"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/tooling.py",
+      "sha256": "240f2ded02b8d3fe06bc2f6779dfe326d071b6f94dcae344e4c9597e9a7df0d5"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/core.py",
+      "sha256": "04b9b0588efae0fdc67fdd7a0cf7e091583d737a97859c1a15046ca5f223f83b"
+    },
+    {
+      "path": "src/deepseek_tui/engine/context.py",
+      "sha256": "b9342bf5b7cbf531c221f95ad7d68ed51c82e2eb5480d416a1e1604ec7c37331"
+    },
+    {
+      "path": "src/deepseek_tui/engine/tool_dedup.py",
+      "sha256": "c34c7344d7c5af236fb3775a42f377763ad06b968bdd803659ad4119697cc217"
+    },
+    {
+      "path": "src/deepseek_tui/engine/pause.py",
+      "sha256": "29c5c1bd92b8a8993667c22adb9f03e026b0b80ec6bfe9c557e690b752c9fd2d"
+    },
+    {
+      "path": "src/deepseek_tui/tools/approval.py",
+      "sha256": "854625986344f0606528844a545762898c7d3dd3645cae4efe191ba15634849f"
+    },
+    {
+      "path": "src/deepseek_tui/tools/registry.py",
+      "sha256": "32e8fae43dc51ad457ee62dcc8cbe4b31dfddf1e81397de67520d12c40046155"
+    },
+    {
+      "path": "src/deepseek_tui/client/media.py",
+      "sha256": "375f30970ee16029494364ea37265be3df657ae5acc84d5a9f94ea91f01d0cd2"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "14f759bac9de532623b62f29717e9f171212a7690da4bd5bb8af4e52adbda4b5"
+    },
+    {
+      "path": "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx",
+      "sha256": "39cebd1d6277d9f28021326ff59253db30c0414627f6a8fddd2d019aecd4cdf5"
+    },
+    {
+      "path": "packages/workbench/src/renderer/src/components/BrowserViewport.tsx",
+      "sha256": "e609f5f0ddb39e7025f02d19a70c83c0546066c9af5cdef7fbd0b9b0b6ea9bb2"
+    },
+    {
+      "path": "packages/workbench/src/renderer/src/components/BrowserSessionSettings.tsx",
+      "sha256": "2dcc8b626c0ab7835cf933a7ec99e6c3764bcbe6b2c71b5b8467601c2f5c2e5a"
+    },
+    {
+      "path": "packages/workbench/src/renderer/src/components/BrowserAssistance.tsx",
+      "sha256": "de33f52d9e96ccb4032e1aa83d398bb04ba6f645ec471c23f7f6292d9a6d6266"
+    },
+    {
+      "path": "packages/workbench/src/renderer/src/components/BrowserAssistanceCard.tsx",
+      "sha256": "cd06f6efc5410e447d4dda973e5a475115d11990b39fcd93348c9e45f55a6591"
+    },
+    {
+      "path": "packages/workbench/src/renderer/src/store/browser-assistance-store.ts",
+      "sha256": "20ab79d316fd12bb586389bdd835acf929e9314581274e6e0cac25f4415c988d"
+    },
+    {
+      "path": "packages/workbench/src/renderer/src/lib/browser-activity.ts",
+      "sha256": "24155c619b9769583575469488bc1e2390b08a88909d36dfa44b3732b706a932"
+    },
+    {
+      "path": "tests/test_browser_observation.py",
+      "sha256": "08affce785feda5f29b0405e8bd3a979cfffdb8b6ef18f79734ce69d3eba7785"
+    },
+    {
+      "path": "tests/test_browser_assistance.py",
+      "sha256": "8a38f03d7889460307116438a38b924a4e59633bc756a66652f1a74f409a6ce5"
+    },
+    {
+      "path": "tests/test_browser_chromium.py",
+      "sha256": "79406e5edf3f8f0c0c542cffa02beb3cd1bcc6f2b281472f1fddd749fd38220a"
+    },
+    {
+      "path": "tests/test_browser_module.py",
+      "sha256": "0215222f998ed6bea1e3e9e9cd26fd47f986eec7107ba9a917a6e5c0f312c3f3"
+    },
+    {
+      "path": "tests/test_browser_extensions.py",
+      "sha256": "f0c95cd69cfaa480d3ca143ff0e07911b0bdcaebdfca0d8cf200ca313e687e31"
+    },
+    {
+      "path": "tests/test_browser_shared_input.py",
+      "sha256": "a6443469fb487adfb943c34419e056543ac1b6c89e3d62c400f13f4a55bc8e32"
+    },
+    {
+      "path": "tests/contract/test_browser.py",
+      "sha256": "cbec1a9215a287de10654613cec9f0c746945f1742d1ca291151c7ed3f6dacdc"
+    },
+    {
+      "path": "tests/engine/test_browser_primary_loop.py",
+      "sha256": "8f7efcc79e3db5cdd58091ef2b831e1e2828db7c808a8da5e0b6492bcf9203db"
+    }
+  ],
+  "upstream": [
+    {
+      "repo": "Octop",
+      "commit": "0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda",
+      "files": [
+        {
+          "path": "dashboard/src/api/modules/browser.ts",
+          "sha256": "5376ac9514cba2a2e8b75862719083d71961e96bdb0a1661db4644c696a15d95",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/dashboard/src/api/modules/browser.ts"
+        },
+        {
+          "path": "dashboard/src/api/types/browser.ts",
+          "sha256": "dd5524b40d7fa7adfed1be64086becc748e4b9999e2c29eccfbf6b942e341807",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/dashboard/src/api/types/browser.ts"
+        },
+        {
+          "path": "dashboard/src/utils/browserCanvas.ts",
+          "sha256": "b833f084ce39ff22aeeeaaea83aba863aa56f87b4a6bad510779bb363e4f6b45",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/dashboard/src/utils/browserCanvas.ts"
+        },
+        {
+          "path": "dashboard/src/utils/browserViewport.ts",
+          "sha256": "51ac03a1fb0177491224f47651c721f48b068652b13879e4ae0a9575cf6d1c7b",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/dashboard/src/utils/browserViewport.ts"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "f564a2fac59ee04e9a081d1c918987061dc01ad6e694a13800e902d37eb44d72",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/pyproject.toml"
+        },
+        {
+          "path": "src/octop/api/routers/browser/__init__.py",
+          "sha256": "efb5cce02c8d1358abcc50c9a82356072123b82f7c1e3f5e4f799014678e120b",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/api/routers/browser/__init__.py"
+        },
+        {
+          "path": "src/octop/api/routers/browser/env.py",
+          "sha256": "669ff8bd4b4468142dff7d5a00a40715ef3021237f40c689f2e5d439a854abc0",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/api/routers/browser/env.py"
+        },
+        {
+          "path": "src/octop/api/routers/browser/harness.py",
+          "sha256": "926203458019791ab81d415abe5ebac4e9d4cbf53f57400b14c1313ce69d6faa",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/api/routers/browser/harness.py"
+        },
+        {
+          "path": "src/octop/api/routers/browser/record_replay.py",
+          "sha256": "db8494ce60c90272ba890312c0a8109cad32edd20d6bd305ac0d5de76f8d159d",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/api/routers/browser/record_replay.py"
+        },
+        {
+          "path": "src/octop/api/routers/browser/stream.py",
+          "sha256": "d69e1f7315b239d0f9a0006134aef49d7ef33adfb679afee5eb17c238c75e232",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/api/routers/browser/stream.py"
+        },
+        {
+          "path": "src/octop/api/routers/browser/uninstall.py",
+          "sha256": "5aa978a053d66f676c2191653a71c609cbce6aca45620515c6479aa7424ad44f",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/api/routers/browser/uninstall.py"
+        },
+        {
+          "path": "src/octop/infra/agents/middleware/browser_profile.py",
+          "sha256": "0d7d8abdeb5948fa45c4185fd87320459e3b54310274d6b5765aa52d585ad33c",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/infra/agents/middleware/browser_profile.py"
+        },
+        {
+          "path": "src/octop/infra/agents/providers/harness_factory.py",
+          "sha256": "d0fc6671ab342633d0dc942ba77b125216418a584b080c341c4786faa489ec85",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/infra/agents/providers/harness_factory.py"
+        },
+        {
+          "path": "src/octop/infra/browser/__init__.py",
+          "sha256": "a26bc3a4237ffe00864079d61d41a80a6a8226ff8110ff8b5575d0d66ad0e5a4",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/infra/browser/__init__.py"
+        },
+        {
+          "path": "src/octop/infra/browser/setup.py",
+          "sha256": "c2751597a7e8bc6567ef669fa39e0e5744da46f701036cadd3b964046f1e761f",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/infra/browser/setup.py"
+        },
+        {
+          "path": "src/octop/infra/utils/browser_media.py",
+          "sha256": "dd33a44bc40e99f16f39e7a701654111177d70f6147b1e48079738b4d527f9ae",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/src/octop/infra/utils/browser_media.py"
+        },
+        {
+          "path": "tests/integration/test_browser_record_replay_api.py",
+          "sha256": "631c59e687e80512bbcd2d51b39d440e27038b858378e82d5f2bd94b07dd5497",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/tests/integration/test_browser_record_replay_api.py"
+        },
+        {
+          "path": "tests/unit/agents/test_browser_profile_middleware.py",
+          "sha256": "da762a5202042e35321285c2ba9c09367096c261eb35b947f15869d1e1952da3",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/tests/unit/agents/test_browser_profile_middleware.py"
+        },
+        {
+          "path": "tests/unit/api/test_browser_stream_listen.py",
+          "sha256": "0c99a04d14a321f58f2b57f078c4c6649a4c9d19d8d41fa607fad38cd3e022e4",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/tests/unit/api/test_browser_stream_listen.py"
+        },
+        {
+          "path": "tests/unit/api/test_browser_stream_mouse.py",
+          "sha256": "4110f3ec0b752dbeafd8ce3a738d117f77926e36c6144c6200156232d602b90d",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/tests/unit/api/test_browser_stream_mouse.py"
+        },
+        {
+          "path": "uv.lock",
+          "sha256": "9dd1e05b55d10383a0cfd575d19af05c05d616ed257eb148eb59bca28b62de2e",
+          "url": "https://github.com/TencentCloud/Octop/blob/0c5a46ab5f82e5ad9d1a56fa09b00e542f042fda/uv.lock"
+        }
+      ],
+      "locked_browser_dependencies": {
+        "octop-browser": "1.0.0",
+        "octop-harness": "1.0.1"
+      }
+    },
+    {
+      "repo": "octop-harness",
+      "commit": "bf9c882b7f8236c184c160f772369f770619bd01",
+      "files": [
+        {
+          "path": "src/octop_harness/builtin/tools/browser_use.py",
+          "sha256": "e4be43b2985901c556d69e3ca4797239c885db30d0a538284f2ce6bef672c93b",
+          "url": "https://github.com/TencentCloud/octop-harness/blob/bf9c882b7f8236c184c160f772369f770619bd01/src/octop_harness/builtin/tools/browser_use.py"
+        },
+        {
+          "path": "tests/test_browser_use.py",
+          "sha256": "0d2d067dc369e2a1d8b6d70629f8d08bf3d542f31f4496459ce635920e1b98bd",
+          "url": "https://github.com/TencentCloud/octop-harness/blob/bf9c882b7f8236c184c160f772369f770619bd01/tests/test_browser_use.py"
+        },
+        {
+          "path": "src/octop_harness/middleware/tool_guard.py",
+          "sha256": "2d6cd6b6ff347323baf04c26a2e3832f5faed937b7dac10e9a78a5a0833bcf0a",
+          "url": "https://github.com/TencentCloud/octop-harness/blob/bf9c882b7f8236c184c160f772369f770619bd01/src/octop_harness/middleware/tool_guard.py"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "edcb9192d6096fbb34838f0d0a7b21f95d2cf60b5fb3f3519e9192970d44abe9",
+          "url": "https://github.com/TencentCloud/octop-harness/blob/bf9c882b7f8236c184c160f772369f770619bd01/pyproject.toml"
+        }
+      ]
+    }
+  ],
+  "driver": {
+    "distribution": "octop-browser",
+    "version": "1.0.0",
+    "files": [
+      {
+        "path": "session.py",
+        "sha256": "385665441a4480415d321c71aa61f2d3d928d3c85ad3b50aa3892b6a07ffc002"
+      },
+      {
+        "path": "tool_interface.py",
+        "sha256": "71f6bf1701df341bc8f80212f1757cdc056142cd65292397530f16288dc2bf4b"
+      },
+      {
+        "path": "settings.py",
+        "sha256": "60b2b30cb13c79fcdb052063ba54c7a6eb45d599bfe70f4a1ac66549b65b79de"
+      },
+      {
+        "path": "cdp/client.py",
+        "sha256": "a8ab3bf448399d5dea6345d42f02123fa9e2297f1e10f75a9fb4e7a15256b832"
+      },
+      {
+        "path": "cdp/launcher.py",
+        "sha256": "9de4cd2b6ad3956a884cf4424f33ddd6f28ed00768f7fa52ca33a7d2b88e61ff"
+      },
+      {
+        "path": "actions/interact.py",
+        "sha256": "45a3d844cb42cc291ca88e0b6ed0912c0817d5a0a4b4b3ca6c1f58abd5f95d79"
+      },
+      {
+        "path": "actions/navigate.py",
+        "sha256": "c4eed657e81ff02dd4a2a69674b5f9a266102eaf01fb98d9bbb0c6743563a3dd"
+      },
+      {
+        "path": "actions/capture.py",
+        "sha256": "fc4a5e320cd98c3a8007b4c515fc21d7903b4e9ce8516c48b19ff6e6073d330a"
+      },
+      {
+        "path": "dom/builder.py",
+        "sha256": "76ce8a2a3282c6b738b435ad17fa894d1f666121d7145f83841183d498141e0a"
+      },
+      {
+        "path": "dom/refs.py",
+        "sha256": "8e5c8895b2dc8c6bc33148939658971284e049e21348febfab77fa16ea5223da"
+      },
+      {
+        "path": "record/replay.py",
+        "sha256": "0c8cae77c1b1d29bd39fef860255c2592ba4ae0ba47bd15ea6963203facf1154"
+      },
+      {
+        "path": "record/matcher.py",
+        "sha256": "14f2d898a5ba38d88324e0d7ed7e105405f12fb522f8245000b3cd103fc0664f"
+      },
+      {
+        "path": "record/recorder.py",
+        "sha256": "1d385672688d6f5c74da00539bdff831302a9ce52990e523d208bfa451b88480"
+      },
+      {
+        "path": "record/models.py",
+        "sha256": "abdb6b3ec0121c8b0e84c75d7df876cd8a6453969c5fb7ec07916550f4b80359"
+      },
+      {
+        "path": "record/semantic.py",
+        "sha256": "bc9e7990b93e1d7ba36c51f43118c01b45407431264b02e848890dbbc658d3f5"
+      },
+      {
+        "path": "record/privacy.py",
+        "sha256": "3262a59307f2a6f4221b12016b390ee32e1868d1490360734d0655546663c5cd"
+      }
+    ]
+  },
+  "locked_harness_wheel": {
+    "version": "1.0.1",
+    "url": "https://files.pythonhosted.org/packages/e6/b6/45dd42e5278234812a3eb38b205aa5282cafbdcb53fa29d2eb66266112c7/octop_harness-1.0.1-py3-none-any.whl",
+    "sha256": "167700a86309ca4a73c414e6b8a94b4d8aa2c3a05cdb15738652af525ec72864",
+    "browser_use_path": "octop_harness/builtin/tools/browser_use.py",
+    "browser_use_sha256": "e4be43b2985901c556d69e3ca4797239c885db30d0a538284f2ce6bef672c93b",
+    "browser_use_identical_to_audited_git_snapshot": true
+  }
+}

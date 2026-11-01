@@ -1,0 +1,127 @@
+{
+  "date": "2026-10-12",
+  "scope": "read-only current working tree; owned localhost runtime probes; no paid/external APIs",
+  "source_identity": [
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/context.py",
+      "sha256": "110d852041b6aa1b1d9e3ae2b783f4a71f8344a2c07eecb8762991b23360fb90",
+      "bytes": 4839
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+      "sha256": "73f80729c6dc70b79b8551a528e49c37341d10a6a17838cc7b953cc73f11335b",
+      "bytes": 21025
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/frames.py",
+      "sha256": "e861b057b2a1943ea44461f0b1664ad14de64ae6340e92bc7841717496c11847",
+      "bytes": 10405
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/browser.py",
+      "sha256": "5d8a9c8dd9fdfa6476836ac00f2abf7c3716aa81bd7001ad65523305a5c2372a",
+      "bytes": 10951
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+      "sha256": "4c0968df0f2d7c57e3c14a51f06054edb9a732304ce8b035c309214e8c3080e0",
+      "bytes": 64802
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/context.py",
+      "sha256": "a0e5b4ab9fde2e18157d2be8d3add81baf362e70ca5784c3e521089192c451de",
+      "bytes": 43928
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/orchestrator/tooling.py",
+      "sha256": "240f2ded02b8d3fe06bc2f6779dfe326d071b6f94dcae344e4c9597e9a7df0d5",
+      "bytes": 60455
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/runtime.py",
+      "sha256": "b376533a04a791a63cdc26148f8371051b982a2b75b6006fc0d6908b53120016",
+      "bytes": 23062
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/client/media.py",
+      "sha256": "6767ea839a84f53112c55bd7b67294fe770a4e0c62f07435c805821871315617",
+      "bytes": 10278
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/media.py",
+      "sha256": "bc446a0d0b10d25978e0d7863a48423f2ad265478a1c630eb59a465781eace5b",
+      "bytes": 5932
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_context.py",
+      "sha256": "f641c134625ef3b0f004dd73bb98242894369940a135524021e7d551d771dd72",
+      "bytes": 8282
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_observation.py",
+      "sha256": "5da5224416ea2c021f2451b5411599ec0c1015581d450a3d3a52cb518496455a",
+      "bytes": 5681
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/engine/test_browser_primary_loop.py",
+      "sha256": "9b159362a8bb13e2b86df859ab8f6b3d6cd45fac2b253802252a5f7450c72bc6",
+      "bytes": 6273
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_assistance.py",
+      "sha256": "0af707252a0a1317d9e87dd0b2f285ff5323cc5de166b33ff85f601e0ba62c6a",
+      "bytes": 13089
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_image_capabilities.py",
+      "sha256": "a2bc1e21d196915acce9d5eca1e8450ccc0c49959a1fc9e6bf1be17027e5507c",
+      "bytes": 2189
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_multimodal_pipeline.py",
+      "sha256": "14d0ecedc92b49f1df9933b42001b05194476095a0995959088fa3422b90ed5d",
+      "bytes": 22663
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_client_audit_fixes.py",
+      "sha256": "bd7c078632876e83a7767f1df480f4fb2c3134855cb64327d608ed6bb1495056",
+      "bytes": 13767
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -m pytest tests/test_browser_context.py tests/test_browser_observation.py tests/engine/test_browser_primary_loop.py tests/test_browser_assistance.py tests/test_image_capabilities.py -q",
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 0.96
+    },
+    {
+      "command": ".venv/bin/python -m pytest tests/test_multimodal_pipeline.py tests/test_client_audit_fixes.py::test_vision_commits_only_successful_observations -q",
+      "passed": 27,
+      "failed": 3,
+      "skipped": 0,
+      "duration_seconds": 0.36
+    }
+  ],
+  "failures": [
+    {
+      "nodeid": "tests/test_multimodal_pipeline.py::test_conversation_bundle_restores_original_images",
+      "failure": "pydantic ValidationError ThreadRecord missing id,created_at,updated_at,model,workspace",
+      "evidence": "fixture line 448 serializes Message into threads/record.json; data_bundle.py line 561 validates ThreadRecord",
+      "status": "unresolved validation blocker; migrate fixture or correct intended importer contract"
+    },
+    {
+      "nodeid": "tests/test_multimodal_pipeline.py::test_switch_route_updates_new_subagent_runtime_only",
+      "failure": "assert metadata.task_config is cfg fails",
+      "evidence": "core.py line 640 explicitly deep copies config; fixture line 496 requires object identity",
+      "status": "unresolved validation blocker; determine snapshot contract and test both value consistency and isolation"
+    },
+    {
+      "nodeid": "tests/test_multimodal_pipeline.py::test_subagent_qualified_route_preserves_identity_and_closes_owned_client",
+      "failure": "AttributeError SimpleNamespace has no attribute provider",
+      "evidence": "dispatch.py line 1093 reads agent.provider; fixture SimpleNamespace lacks field",
+      "status": "unresolved validation blocker; fixture current SubAgent contract or implementation backwards-compatibility decision"
+    }
+  ]
+}

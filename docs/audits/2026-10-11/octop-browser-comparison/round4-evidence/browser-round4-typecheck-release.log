@@ -1,0 +1,4 @@
+
+> deepseek-workbench@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json
+

@@ -1,0 +1,46 @@
+{
+  "captured_at_utc": "2026-10-11T15:28:10.223826+00:00",
+  "scope": "Adoption review of working-tree snapshot; business source unchanged by this review. Selected tests, not natural-language task success rate.",
+  "current_snapshot_sha256": {
+    "src/deepseek_tui/browser/context.py": "4a9faa06fef981fa4b5e6da2bd385bc37557f385c0ac9a143a2508c5baea6bb3",
+    "src/deepseek_tui/browser/input.py": "7219158c9401edbb94fdeaee7043618b891fb2807bc955fc59e906c3e02c4711",
+    "src/deepseek_tui/browser/service.py": "94529a0c4f495cf1639bda7b3db54f8aaeab447bffc22aa6abb71c652e5bfc0a",
+    "src/deepseek_tui/browser/observation.py": "945d7841d1b3ac4fe9217d60a431dc52ef308cd12503c3fa56ed6fae9eaff662",
+    "src/deepseek_tui/engine/context.py": "a0e5b4ab9fde2e18157d2be8d3add81baf362e70ca5784c3e521089192c451de",
+    "src/deepseek_tui/engine/orchestrator/tooling.py": "240f2ded02b8d3fe06bc2f6779dfe326d071b6f94dcae344e4c9597e9a7df0d5",
+    "src/deepseek_tui/tools/browser.py": "b0237666e5fbaee2404e920ce16b33d117776cdbe093e06263e65cfab68f95cc",
+    "tests/test_browser_context.py": "cb3a6972ad06328a21c4e2cc74bf436b6099278ea2008a6d66d19f663f2d39f9",
+    "tests/test_browser_chromium.py": "a6d261ac42fae1a488d14371658a095414bfe47213157dde17595b7f70eb7321"
+  },
+  "selected_test_runs": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_browser_context.py",
+      "result": "5 passed in 0.02s",
+      "boundary": "Real context projection with synthetic input; no browser/model"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 DEEPSEEK_BROWSER_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_browser_chromium.py::test_harness_verifies_states_and_chords tests/test_browser_chromium.py::test_harness_continues_long_pages_and_checks_full_scope tests/test_browser_chromium.py::test_harness_scrolls_target_and_only_requested_axis",
+      "result": "3 passed in 2.09s",
+      "boundary": "Actual isolated Chrome and localhost fixtures; no paid language model",
+      "environment_note": "Default sandbox blocked localhost bind before setup; same selected tests passed with approved local-test escalation."
+    }
+  ],
+  "boundary_probe": "probe.py rerun on current source: both pending-transfer cases confirmed; mocked 80ms calls exceed 1ms condition timeout. Not production browser/model.",
+  "interaction_probe": {
+    "boundary": "real BrowserService / observe / target Python logic; mocked CDP and click",
+    "interpretation": "Expected safety contract: prebuilt second call is rejected after the first refreshes observation. Not a real model task failure.",
+    "first_execution": "executed",
+    "second_execution": "not_executed",
+    "second_reason": "stale_observation",
+    "first_action_changed_observation_id": true,
+    "actual_click_dispatch_count": 1,
+    "input_commands": [
+      "Input.dispatchKeyEvent",
+      "Input.dispatchKeyEvent",
+      "Input.dispatchKeyEvent",
+      "Input.insertText"
+    ]
+  },
+  "document_sha256": "3538ba5d7be38de54bf816598ac57401f2b357cc360f9986646fa0cf9a038864",
+  "document_links_exist": true
+}

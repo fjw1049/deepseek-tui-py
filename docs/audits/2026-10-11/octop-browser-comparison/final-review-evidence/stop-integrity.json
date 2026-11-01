@@ -1,0 +1,11 @@
+{
+  "evidence": "real_localhost_chrome_with_injected_Runtime_exceptionDetails",
+  "fault": "stop dispose did not flush pending input",
+  "injected_failures": 2,
+  "finish_returned_success": true,
+  "manifest_status": "stopped",
+  "input_events": 0,
+  "capture_warnings": 0,
+  "completeness_gate_accepted": true,
+  "private_text_in_events": false
+}

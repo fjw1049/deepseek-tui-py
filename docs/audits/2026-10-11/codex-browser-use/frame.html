@@ -1,0 +1,4 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>跨源验证表单</title>
+<style>body{font:16px system-ui}input,button{font:inherit;padding:8px}</style>
+<label>Frame 名称 <input aria-label="Frame 名称"></label><button>Frame 保存</button><output role="status">Frame 尚未保存</output>
+<script>document.querySelector('button').onclick=()=>document.querySelector('output').textContent='Frame 已保存：'+document.querySelector('input').value;</script></html>

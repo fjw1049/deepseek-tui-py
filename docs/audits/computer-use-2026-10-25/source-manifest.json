@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-25",
+  "workspace_head": "44f723ca",
+  "includes_uncommitted_changes": true,
+  "app": "/Applications/ChatGPT.app",
+  "bundle_version": "26.1021.31345",
+  "asar": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+  "extracted_files": [
+    {
+      "path": "/webview/assets/computer-use-app-approval-request-5a243e46bb57.js",
+      "size": 889,
+      "sha256": "531e956e73a624a6993c0310d14c85f8172a8daa4fe10a8748cef75ad7cb0b36"
+    },
+    {
+      "path": "/webview/assets/computer-use-app-approval-request-card-e1c708307790.js",
+      "size": 4339,
+      "sha256": "051e1f3846b1aa926ee2cf049b72de0f023fa09a618eeee650e3b161b811a203"
+    },
+    {
+      "path": "/webview/assets/computer-use-app-approvals-query-6f6a69845ec0.js",
+      "size": 2230,
+      "sha256": "7f7ed2dfc25a9ba5f4d2b1409130cff7f8c9998ab9a8cd189dd179de2b447d70"
+    },
+    {
+      "path": "/webview/assets/computer-use-settings-48ac019dee78.js",
+      "size": 73676,
+      "sha256": "b60bbadd3659876ef7e3ddaeed0fdc761ce93d70940b7b06bc8ab9c4d84eee7e"
+    },
+    {
+      "path": "/webview/assets/local-conversation-thread-f8411a03e6c2.js",
+      "size": 413950,
+      "sha256": "4f94f2c3ec4fac892800f78f791c76615f29545f888454dee2f1db7b1f8e183f"
+    },
+    {
+      "path": "/webview/assets/takeover-border-896681bfc1a9.js",
+      "size": 5851,
+      "sha256": "20092797bde1a607ff4c1a5ccf8bdd995710563a933c617e89c42ad54f72d889"
+    }
+  ],
+  "rea_parents": [
+    "ev_70848a5d2782670f79e51d3959742ec3722894e8932268deb5024d2faaf235db",
+    "ev_115a7d83a6a5f44ce674e7596be5beb5c92ba50b8a4a4487a668745362e2b5d8"
+  ],
+  "full_evidence_temporary_path": "/tmp/codex-cua-audit-20261025/rea-evidence.json",
+  "limitations": [
+    "Full ASAR analysis timed out after 300 seconds.",
+    "One unpacked native permissions.node integrity mismatch; no native behavior conclusions.",
+    "Focused analysis covers extracted modules only; unresolved imports and dynamic behavior remain unknown.",
+    "PiP semantic graph truncated at 100000 nodes; manual bounded source reading used for the stated UI observations.",
+    "No real task end-to-end comparison. Workbench screenshot confirms idle layout only."
+  ]
+}

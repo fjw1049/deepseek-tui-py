@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-12",
+  "scope": "Read-only current UI, browser HTTP routes, tool approvals, assistance and handoff review",
+  "production_changes": false,
+  "architecture": {
+    "lightweight_preview": "BrowserWorkspace.tsx:59-64 retains DevBrowserPanel Electron webview, independently usable without Python/thread; keeps guest mounted when hidden.",
+    "agent_workspace": "BrowserWorkspace.tsx:66-70 mounts AgentBrowserPanel by thread. Its screenshot BrowserViewport sends /input to the same thread-scoped BrowserService used by browser_use.",
+    "recommendation": "Keep these two existing backends with clear purpose/capabilities; do not claim DevBrowserPanel was removed or demand merging sessions. Transferring a URL does not transfer login state or an existing DOM target."
+  },
+  "preserve": [
+    {"behavior": "Handoff pauses the existing task before transferring ownership; read failure preserves manual ownership and pause", "source": "src/deepseek_tui/server/threads/manager.py:4677-4709"},
+    {"behavior": "Assistance requests bind to active turn and request ID; late responses rejected", "source": "src/deepseek_tui/server/threads/manager.py:4581-4589"},
+    {"behavior": "UI input serialized, generation-fenced, clipboard cut only after local clipboard write succeeds", "source": "packages/workbench/src/renderer/src/components/BrowserViewport.tsx:17-30"},
+    {"behavior": "IME text sent once in existing composition test; letterbox geometry and in-page wheel prevention tested", "source": "packages/workbench/src/renderer/src/components/BrowserWorkspace.test.ts:110-128; BrowserViewport.test.ts:37-50"},
+    {"behavior": "UI frame failures disable screenshot-based input; hidden panel stops polling", "source": "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx:101,130-146,307"}
+  ],
+  "findings": [
+    {
+      "id": "UI-01",
+      "priority": "P1",
+      "kind": "contract defect reproduced with injected responses",
+      "title": "Dispatch outcome and later observation/view errors lose their separation across UI and HTTP entry points",
+      "source": ["packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx:147-158", "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx:184-187", "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx:319-324", "src/deepseek_tui/server/browser_routes.py:59-71", "src/deepseek_tui/tools/browser.py:201-203", "src/deepseek_tui/browser/service.py:43-48,824-855,1163-1192"],
+      "evidence": "UI mock executes /action exactly once with success=true, then rejects /view. UI displays a generic action-area error and perform returns false, so opened-success branches cannot update preview mapping or clear waiting preview. A separate Python injected BrowserActionError retains receipt.execution=unknown in the tool metadata but is downgraded by the HTTP route to 409 detail string. Normal post-action observation errors are already kept separately by BrowserService and are not BrowserActionError.",
+      "scope_limit": "Injected transport/read faults; no external submit or repeat was performed. Does not assert UI automatically retries; it creates misleading failure status and invites user-driven repeated operations.",
+      "proposal": "Define one ActionResult contract at service/API/tool/UI boundaries. Preserve action_id, execution, effect, before/after IDs and observation_error on known/unknown outcomes. Treat /view refresh errors as view warnings while retaining the completed receipt; return dispatch outcome from perform separately from refresh status. Unknown dispatch requires fresh read before any replay.",
+      "acceptance": ["/action execution=executed + /view 503 => UI retains executed receipt, shows view unavailable and retries only /view", "BrowserActionError => HTTP returns structured unknown receipt compatible with tool result", "Successful new_tab followed by view failure still records opened outcome and does not create a second tab on view recovery", "Resize dispatch success followed by view failure keeps successful resize receipt"]
+    },
+    {
+      "id": "UI-02",
+      "priority": "P2",
+      "kind": "mock-confirmed fence gap; cross-tab effect remains static risk",
+      "title": "Queued user input is bound only to control generation, not the viewed tab/document/input epoch",
+      "source": ["packages/workbench/src/renderer/src/components/BrowserViewport.tsx:17-23", "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx:124-129,147-159", "src/deepseek_tui/browser/input.py:8-14", "src/deepseek_tui/browser/service.py:518-522"],
+      "evidence": "With one in-flight send and a queued text event, disabled->enabled with unchanged generation followed by resolving the first send dispatches the old queued text. Current token checks only current enabled/generation, and the endpoint checks owner/transferring/generation. Browser view response ordering is also checked only by generation, so equal-generation older reads can replace a newer scene.",
+      "scope_limit": "The transient disable/re-enable behavior is reproduced in Vitest; actual wrong-tab typing was not reproduced in a live browser. Risks apply when tab/navigation/screen changes preserve control generation, not to the existing generation-changing handoff path already tested.",
+      "proposal": "Introduce a small scene token comprising tab ID/document ID plus an input queue epoch. Capture it with the displayed frame and input enqueue; invalidate epoch on navigation, tab switch, hiding, takeover and resize scene changes. Drop obsolete mouse moves, preserve ordered press/release/key pairs, and compare a monotonically increasing view sequence before applying a response.",
+      "acceptance": ["Delayed input + same-owner tab switch => old queued input discarded", "Late previous-document /view response => cannot overwrite current frame", "Handoff still drops old input", "New input on current scene remains ordered and IME/paste/cut behavior preserved"]
+    },
+    {
+      "id": "UI-03",
+      "priority": "P2",
+      "kind": "verified policy/product tradeoff",
+      "title": "Exact-call approval caching and blanket method/source confirmation limit generalization",
+      "source": ["src/deepseek_tui/tools/browser.py:30-32,113-135", "src/deepseek_tui/tools/approval.py:185-190", "src/deepseek_tui/engine/orchestrator/tooling.py:914-920", "src/deepseek_tui/browser/service.py:448-450", "src/deepseek_tui/server/threads/manager.py:4621-4631"],
+      "evidence": "Approval scope is now directory:generation, so previous revision-based invalidation criticism is obsolete. However full arguments including fresh observation_id/ref are hashed, and ordinary click/fill/type/select/set_checked/press require explicit gate approval. Prompts demand asking before any alternative method/source after help, without distinguishing a safe equivalent method within the user's authorized task.",
+      "proposal": "Separate current-target validation from user authorization. Preserve observation freshness on every execution; authorize bounded task/domain/account/effect scope and expiry independently. Low-risk equivalent locator or read-source changes within authorized scope can proceed; request confirmation for goal changes, new account/domain trust boundaries, or a more consequential external effect. Avoid indiscriminate allow-all click heuristics; when effect is unknown retain the existing approval path.",
+      "acceptance": ["A safe locator fallback after a fresh observation needs no new task approval", "Existing submit authorization covers the same stated operation despite new observation IDs", "New external recipient/account or more consequential action triggers approval", "Page text cannot grant authorization", "User takeover/stop revokes pending execution access"]
+    },
+    {
+      "id": "UI-04",
+      "priority": "P2",
+      "kind": "static performance design concern, not measured slowdown",
+      "title": "UI refresh performs screenshot plus tab discovery on every poll under the action/input lock",
+      "source": ["packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx:135-143", "src/deepseek_tui/browser/service.py:487-510"],
+      "evidence": "A visible user-owned session polls 120 ms after every completed request. Each view performs page_state, list_tabs and screenshot while holding run.lock, sharing it with actions/input. No screen-change deduplication/frame reuse is present in this path.",
+      "proposal": "Measure first: input queue latency and capture duration, then cache/coalesce only UI frames and slow-changing tab metadata. Prioritize input over periodic capture and cap read work per deadline. Keep model observations separate from screenshot streaming so a display frame is not treated as fresh semantic evidence.",
+      "acceptance": ["Controlled slow capture workload has bounded input queue latency", "Unchanged pages do not repeatedly transmit identical screenshot payloads", "Tab/document transition invalidates cached frame", "Hidden panels generate no capture work"]
+    },
+    {
+      "id": "UI-05",
+      "priority": "P3",
+      "kind": "static input normalization gap",
+      "title": "WheelEvent page-unit deltas are treated as pixel units",
+      "source": ["packages/workbench/src/renderer/src/components/BrowserViewport.tsx:97-100"],
+      "evidence": "deltaMode 1 is multiplied by 16; deltaMode 2 receives multiplier 1. A browser/device reporting page units therefore produces a very small scroll. Existing wheel test uses the default pixel mode.",
+      "proposal": "Normalize pixel/line/page delta modes against viewport dimensions and cover horizontal and vertical axes; keep current bounded deltas and scene coordinates.",
+      "acceptance": ["deltaMode 0/1/2 produce correct bounded CSS-pixel deltas", "Horizontal page-unit wheel uses viewport width", "Wheel stays inside the guest page"]
+    }
+  ],
+  "validation": {
+    "baseline": {"command": "node ./node_modules/vitest/vitest.mjs run src/renderer/src/components/BrowserWorkspace.test.ts src/renderer/src/components/BrowserViewport.test.ts src/renderer/src/components/DevBrowserPanel.test.ts", "cwd": "/Users/fjw/Desktop/deepseek-tui-py-main/packages/workbench", "files": 3, "tests_passed": 26},
+    "mock_characterization": {"command": "node ./node_modules/vitest/vitest.mjs run --config /private/tmp/browser-optimization-20261012/ui/vitest.config.mts", "tests_passed": 2, "interpretation": "Passing assertions reproduce current defects, not implementation correctness."},
+    "route_probe": {"command": "PYTHONPATH=src .venv/bin/python /private/tmp/browser-optimization-20261012/ui/route-receipt-probe.py", "http_receipt": "discarded into detail string", "tool_receipt": "preserved"}
+  }
+}

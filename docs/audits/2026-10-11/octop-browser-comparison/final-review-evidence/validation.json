@@ -1,0 +1,156 @@
+{
+  "completed_at_utc": "2026-10-12T16:02:58.151121+00:00",
+  "scope": "review only, production source unchanged; owned localhost and temporary Chrome profiles; no external model or account",
+  "source_changed_during_final_review": [],
+  "third_round_manifest_changed": [],
+  "checks": [
+    {
+      "name": "positive_backend",
+      "command": ".venv/bin/python -m pytest tests/test_browser_context.py tests/test_browser_observation.py tests/engine/test_browser_primary_loop.py tests/test_browser_assistance.py tests/test_image_capabilities.py tests/test_browser_recording.py -q --tb=short",
+      "passed": 55,
+      "failed": 0
+    },
+    {
+      "name": "media_pipeline",
+      "command": ".venv/bin/python -m pytest tests/test_multimodal_pipeline.py tests/test_client_audit_fixes.py::test_vision_commits_only_successful_observations -q --tb=short",
+      "passed": 27,
+      "failed": 3,
+      "failures": [
+        "test_conversation_bundle_restores_original_images",
+        "test_switch_route_updates_new_subagent_runtime_only",
+        "test_subagent_qualified_route_preserves_identity_and_closes_owned_client"
+      ]
+    },
+    {
+      "name": "frontend_positive",
+      "cwd": "packages/workbench",
+      "command": "node ./node_modules/vitest/vitest.mjs run src/renderer/src/components/BrowserWorkspace.test.ts src/renderer/src/components/BrowserViewport.test.ts src/renderer/src/components/DevBrowserPanel.test.ts",
+      "passed": 26,
+      "failed": 0
+    },
+    {
+      "name": "frontend_characterization",
+      "cwd": "packages/workbench",
+      "command": "node ./node_modules/vitest/vitest.mjs run --config /private/tmp/browser-final-audit-20261012/ui/vitest.config.mts",
+      "passed": 2,
+      "failed": 0,
+      "meaning": "passing assertions reproduce current defects"
+    },
+    {
+      "name": "followup_boundary_probes",
+      "command": "DEEPSEEK_BROWSER_E2E=1 PYTHONPATH=src .venv/bin/python -m pytest -c pyproject.toml /private/tmp/browser-final-audit-20261012/probe-followup_test.py -q --tb=short",
+      "passed": 3,
+      "failed": 0,
+      "meaning": "passing assertions reproduce current boundaries; two real Chrome, one synthetic"
+    }
+  ],
+  "standalone_probes": [
+    {
+      "name": "probe-target-identity.py",
+      "command": "PYTHONPATH=src .venv/bin/python /private/tmp/browser-final-audit-20261012/probe-target-identity.py",
+      "exit_code": 0
+    },
+    {
+      "name": "probe-replay.py",
+      "command": "PYTHONPATH=src .venv/bin/python /private/tmp/browser-final-audit-20261012/probe-replay.py",
+      "exit_code": 0
+    },
+    {
+      "name": "probe-stop-integrity.py",
+      "command": "PYTHONPATH=src .venv/bin/python /private/tmp/browser-final-audit-20261012/probe-stop-integrity.py",
+      "exit_code": 0
+    },
+    {
+      "name": "probe-projection.py",
+      "command": "PYTHONPATH=src .venv/bin/python /private/tmp/browser-final-audit-20261012/probe-projection.py",
+      "exit_code": 0
+    },
+    {
+      "name": "probe-route-receipt.py",
+      "command": "PYTHONPATH=src .venv/bin/python /private/tmp/browser-final-audit-20261012/probe-route-receipt.py",
+      "exit_code": 0
+    }
+  ],
+  "initial_probe_setup_errors": [
+    "First UI temp setup used frontend cwd for relative Python path; corrected before run.",
+    "Initial temporary pytest did not load repository asyncio configuration; rerun with -c pyproject.toml.",
+    "Stop-integrity server logged harmless empty HTTP connection; reader guard added afterward, result JSON preserves actual completed run."
+  ],
+  "historical_baseline": {
+    "backend_passed": 288,
+    "backend_skipped": 1,
+    "skip_reason": "FFmpeg unavailable",
+    "source_ruff": "passed",
+    "compileall": "passed",
+    "javascript_syntax": "passed",
+    "git_diff_check": "passed",
+    "offline_wheel_build": "passed",
+    "wheel_script_content_matches": true
+  },
+  "artifacts": [
+    {
+      "name": "delayed-rollback.json",
+      "sha256": "7ef97c071db9df35675f9b8c6aec3846354eda0491c268ad51dc635db1d5fe92"
+    },
+    {
+      "name": "identity.json",
+      "sha256": "ab32bef2d90be3a64b21d174327f4be719cebcf4e1ca52124d2d2f60cf9a646e"
+    },
+    {
+      "name": "oversized-detail.json",
+      "sha256": "c13a937203f23e2c9e5b1fffe09641ea67b6556c0ed887ba2bc2f3be268527ee"
+    },
+    {
+      "name": "probe-followup_test.py",
+      "sha256": "ea0e283df0dc00e5011e94b26144b807717b65516653874daf7a30f149f4e00d"
+    },
+    {
+      "name": "probe-projection.py",
+      "sha256": "c7b1649f6ba2277b9469db677cb4452f26b404511d0f40c4c8486815036d5cec"
+    },
+    {
+      "name": "probe-replay.py",
+      "sha256": "045a64027edea2214e067b8529fe156ec16e2503f76fe623b4cfa9c816ac7abd"
+    },
+    {
+      "name": "probe-route-receipt.py",
+      "sha256": "59a08a6d7daec05e5451b971a0905b55572f9da663e57c8548e888d4894f832c"
+    },
+    {
+      "name": "probe-stop-integrity.py",
+      "sha256": "66339bb303335eaa672b769424c60a4755c4dd790f0531aee1dc702750ef8ed6"
+    },
+    {
+      "name": "probe-target-identity.py",
+      "sha256": "b9f851a7afaf16b3e861be16a06b4e5f8ae0715475cea408dc53de03a7bb7474"
+    },
+    {
+      "name": "projection.json",
+      "sha256": "0424dbc20d3388cbfbbd969c96a4751fe072e5a7ec51ba70816923878d8d352b"
+    },
+    {
+      "name": "replay.json",
+      "sha256": "3e422b08bc34eae21ac67d3d29e0ca903e01d4b8c055e5f05829199308b50b85"
+    },
+    {
+      "name": "route-receipt.json",
+      "sha256": "a60f54e27d1579b5901d4e44ccea397483deb864d5b2dcf2f293d037ad77e442"
+    },
+    {
+      "name": "source-snapshot.json",
+      "sha256": "da739d4a24ea5810a470e761a539be3da382f4ded81a69284f50817e17519d60"
+    },
+    {
+      "name": "stop-integrity.json",
+      "sha256": "603cff147cd260760e16f2c6bacf7cba928d70b4f5d70720449e28beba44c35e"
+    },
+    {
+      "name": "ui-characterization.test.ts",
+      "sha256": "3f5844fc20150315669613818b5b3b4ccb1ef398b391f3fe7016dad5d1b7e210"
+    },
+    {
+      "name": "vitest.config.mts",
+      "sha256": "33ed0eb31294e7b224187666ef444071c11d17d118737660b459b9ae430a6358"
+    }
+  ]
+}

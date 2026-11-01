@@ -1,0 +1,47 @@
+{
+  "identifier": "com.openai.codex",
+  "version": "26.1007.21159",
+  "build": "20052",
+  "archive_path": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+  "archive_bytes": 567757028,
+  "archive_sha256": "97b8e5fddfced82d782c5f3f3e7c5aba7940b8cb1068dd214ffa3d71687d9fdb",
+  "entries": [
+    {
+      "archive_entry": ".vite/build/main-39FdJ_vp.js",
+      "bytes": 3824255,
+      "sha256": "78ffc19681d7605d0b48c8cbfdc185211a58d218c4512647de567519dd5ca3bc",
+      "method": "@electron/asar exact entry extraction; inert text only"
+    },
+    {
+      "archive_entry": ".vite/build/browser-background-switches-Zzmx0u5p.js",
+      "bytes": 144216,
+      "sha256": "86b083490f39350ba981d04b843f790fc2021a5fc278d2cb49c2313a57b097c9",
+      "method": "@electron/asar exact entry extraction; inert text only"
+    },
+    {
+      "archive_entry": ".vite/build/browser-page-preload.js",
+      "bytes": 527604,
+      "sha256": "6844ec68a38171555a8dbdd97c1bfb524e358edff60e0146fd77073694dbb515",
+      "method": "@electron/asar exact entry extraction; inert text only"
+    },
+    {
+      "archive_entry": ".vite/build/service-DABseRGi.js",
+      "bytes": 29664,
+      "sha256": "f665d1a5fd9a0a70eaaa724961452eaa9b5727cf8f019358476e2bd344b3d1ff",
+      "method": "@electron/asar exact entry extraction; inert text only"
+    },
+    {
+      "archive_entry": "package.json",
+      "bytes": 5754,
+      "sha256": "3795f5f4c33df284331c7b67400c51f04a325e3f6aa5a9b59cbf97e65afd7ff6",
+      "method": "@electron/asar exact entry extraction; inert text only"
+    },
+    {
+      "archive_entry": "webview/assets/hidden-browser-use-webview-host-bdd4db5a6c73.js",
+      "bytes": 1626,
+      "sha256": "7bc7b1181ad101b38f98c1e813d64dc12f42d759be5d1616fede954b25c5327d",
+      "method": "@electron/asar exact entry extraction; inert text only"
+    }
+  ],
+  "scope": "Selected browser host entries, not exhaustive application analysis. Distributed source text is not included."
+}

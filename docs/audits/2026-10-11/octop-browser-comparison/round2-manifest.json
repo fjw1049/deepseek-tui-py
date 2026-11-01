@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-12",
+  "round": 2,
+  "prior_validation": "fix-manifest.json",
+  "validation": {
+    "backend_passed": 262,
+    "backend_skipped": 1,
+    "skip_reason": "FFmpeg unavailable",
+    "source_ruff": "passed",
+    "compileall": "passed",
+    "git_diff_check": "passed"
+  },
+  "source_sha256": {
+    "src/deepseek_tui/browser/input.py": "a6eff9005d21757c21ecdbf440bb97122e4c5151037c751bbf62c36c807caef6",
+    "src/deepseek_tui/browser/observation.py": "73f80729c6dc70b79b8551a528e49c37341d10a6a17838cc7b953cc73f11335b",
+    "src/deepseek_tui/browser/service.py": "4c0968df0f2d7c57e3c14a51f06054edb9a732304ce8b035c309214e8c3080e0",
+    "src/deepseek_tui/browser/workflows.py": "03ab0f4a1838229e17ca3d8cfbc82854681c5bba2479b19253bb090851b1d1df",
+    "src/deepseek_tui/tools/browser.py": "5d8a9c8dd9fdfa6476836ac00f2abf7c3716aa81bd7001ad65523305a5c2372a",
+    "tests/test_browser_chromium.py": "9de63c8bb77131532ac1abe1d1c084baad4885c3be875399988a06eb53f469db",
+    "tests/test_browser_observation.py": "5da5224416ea2c021f2451b5411599ec0c1015581d450a3d3a52cb518496455a",
+    "tests/test_browser_module.py": "14e8b6ef7464d3774b8ddbe442683de0e0d7601fd21d107bbbe3bf2c01514c9b",
+    "tests/test_browser_shared_input.py": "558e7fa5ad19d33d03faa3ca2557a11f69c76d9ad4b56d15be6a23271f3aa888",
+    "tests/test_browser_context.py": "f641c134625ef3b0f004dd73bb98242894369940a135524021e7d551d771dd72"
+  }
+}

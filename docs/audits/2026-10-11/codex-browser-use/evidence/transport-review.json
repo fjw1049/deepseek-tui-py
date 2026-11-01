@@ -1,0 +1,1266 @@
+{
+  "scope": {
+    "app": "/Applications/ChatGPT.app",
+    "appVersion": "26.1007.21159",
+    "appBuild": "20052",
+    "analysis": "只读本地分发代码的浏览器传输、会话、权限与恢复逻辑；未读cookies、凭证、私人会话日志；未修改应用或用户配置。",
+    "versionSource": "父代理核对 Info.plist；本报告独立记录分发文件SHA-256。"
+  },
+  "sources": [
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+      "bytes": 1915181,
+      "sha256": "8c83e93bdca10cdffa9f7af80db7775ddf1d993186dbf4b8b3d32d11e9bd9666"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+      "bytes": 169521,
+      "sha256": "8c54d904966957aee5201b472b4214d0c186008ccf23ccb48494e9ee4a47a925"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_browser/dist/skill/scripts/browser-client.js",
+      "bytes": 160575,
+      "sha256": "0420baac078ed7c1544659618436c3c0e8f766eaccd9f521684ea5115a9608e3"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_browser/dist/skill/scripts/browser-service.mjs",
+      "bytes": 1416363,
+      "sha256": "278f70adf11b54e59766101b71145cb057c52168681d236282d6e0d300848320"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/create_browser_api.js",
+      "bytes": 5738,
+      "sha256": "fe00757868fc4dd01b00d2cd1b315d7442497a4b33d7cd030450da4d47a114f0"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/setup_browser.js",
+      "bytes": 540,
+      "sha256": "a1cf70b2ec89d51f9bc33b056dbe31af9cc6fd605c365e93f5d0649d12748216"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/tab_reference.js",
+      "bytes": 1360,
+      "sha256": "d08f46f12ba96fd4a2844eae737697ab4ed51cf9a2beb6c5034362ca17108949"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/dist/lib/js/oai_js_cua_repl/src/launch.js",
+      "bytes": 2037,
+      "sha256": "3e52a41f4da41d35be8cc3723fe97251711087a998c1ed7f2cfdf7e20b50fc2b"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/package.json",
+      "bytes": 308,
+      "sha256": "a7bfc13a4f9a8a22fd4a275adedf352e5f10ea57f8259301b905c3e997bc3b63"
+    },
+    {
+      "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+      "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+      "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+      "bytes": 3824255,
+      "sha256": "78ffc19681d7605d0b48c8cbfdc185211a58d218c4512647de567519dd5ca3bc",
+      "provenance": "父代理精确@electron/asar提取同.app；完整版archive/entry provenance由父代理另存asar-provenance.json"
+    }
+  ],
+  "defaultExecutionChain": [
+    "CUA facade → setup_browser(decorateTab=bind_tab) → setupBrowserRuntime (CUA bundled browser-client.js)",
+    "client nodeRepl.rpc(\"browser\", {method:\"setup\",params}) → 返回 apiManifest、disabledMemberIds、credentialRecoveryErrorVersion",
+    "client每个Tab方法 → type + browser_id + tab_id → executeWithRecovery (Recovery v1)，否则 execute",
+    "cua-repl launch 默认 NODE_REPL_TRUSTED_SERVICES.browser = @oai/browser-desktop/service → browser-desktop/scripts/browser-service.mjs handleRpc",
+    "service handleRpc → rq.execute → eL.executeAgentCommand → access host认证 → credential gate → runtime/backend解析 → turn reclaim → origin/action权限 → YN已知handler或executeUnhandledCommand",
+    "backend bh → An JSON-RPC → da/vi framed native pipe → extension/IAB/CDP/MCP-app backend；响应id对账、事件通知分流",
+    "page事件与成功结果回传；结束当前代码段/turn后hook采集生命周期、detach debugger、清clipboard桥、发送turnEnded"
+  ],
+  "clientBuildComparison": {
+    "commandLiteralDifference": {
+      "onlyCuaClient": [],
+      "onlyDesktopClient": [],
+      "sharedCount": 96
+    },
+    "publicClassMethodDifference": {
+      "onlyCuaClient": [
+        "actionError,all,allTextContents,and,assertCompatibleLocator,browserAuthSelector,cachedRead,check,click,constructor,count,dblclick,downloadMedia,evaluate,evaluateAll,fill,filter,first,getAttribute,getByLabel,getByPlaceholder,getByRole,getByTestId,getByText,innerText,isEnabled,isVisible,last,locator,nth,or,press,pressSequentially,selectOption,setChecked,textContent,type,uncheck,vl,waitFor"
+      ],
+      "onlyDesktopClient": [
+        "Yi,actionError,all,allTextContents,and,assertCompatibleLocator,browserAuthSelector,cachedRead,check,click,constructor,count,dblclick,downloadMedia,evaluate,evaluateAll,fill,filter,first,getAttribute,getByLabel,getByPlaceholder,getByRole,getByTestId,getByText,innerText,isEnabled,isVisible,last,locator,nth,or,press,pressSequentially,selectOption,setChecked,textContent,type,uncheck,waitFor"
+      ]
+    }
+  },
+  "findings": [
+    {
+      "id": "T01",
+      "title": "真实服务绑定与构建边界",
+      "claim": "桌面launcher在启用browser surface时把browser service默认绑定到@oai/browser-desktop/service；package exports映射到新browser-service.mjs。已有NODE_REPL_TRUSTED_SERVICES环境变量会覆盖默认值。CUA facade导入的是同包嵌套browser-client.js，嵌套browser-client.mjs与browser-desktop客户端hash相同；两个service hash不同。客户端96项命令字面量集合一致，接口公开方法差异只有内部缩写名；mock合同测试均通过。不可把“存在两份service”误写成运行两份服务。 当前unified-computer-use/26.1007.21159/.mcp.json第38行已独立核实browser映射同为@oai/browser-desktop/service。主进程ac另一个配置生成分支可构造cache插件browser-service.mjs路径；这两条入口要分开记录，不能因旧分支存在就推断本次用旧service。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/dist/lib/js/oai_js_cua_repl/src/launch.js",
+          "symbol": null,
+          "utf8ByteStart": 924,
+          "utf8ByteEnd": 964,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/dist/lib/js/oai_js_cua_repl/src/launch.js",
+          "symbol": null,
+          "utf8ByteStart": 1512,
+          "utf8ByteEnd": 1539,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/package.json",
+          "symbol": null,
+          "utf8ByteStart": 204,
+          "utf8ByteEnd": 248,
+          "line": 8,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/cua.js",
+          "symbol": null,
+          "utf8ByteStart": 80,
+          "utf8ByteEnd": 104,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_browser/dist/skill/scripts/browser-client.js",
+          "symbol": "jm",
+          "utf8ByteStart": 158915,
+          "utf8ByteEnd": 160540,
+          "line": 1,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Users/fjw/.codex/plugins/cache/openai-bundled/unified-computer-use/26.1007.21159/.mcp.json",
+          "line": 38,
+          "verifiedExpression": "NODE_REPL_TRUSTED_SERVICES.browser = @oai/browser-desktop/service",
+          "verifiedBy": "parsed only public browser mapping, did not print other env values"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "ac",
+          "utf8ByteStart": 174455,
+          "utf8ByteEnd": 176756,
+          "line": 33,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        }
+      ],
+      "certainty": "verified-static",
+      "limits": [
+        "当前已安装插件配置已核实；未读取完整live进程env，因此不把可覆盖配置的其他启动入口错误等同于本次执行入口。"
+      ]
+    },
+    {
+      "id": "T02",
+      "title": "客户端是带能力过滤的远程对象",
+      "claim": "Browser/Tab持有browser_id、tab_id与同一transport，API方法生成command payload。setup返回的disabledMemberIds，以及backend的apiSupportOverrides与unsupportedByDefaultIn合并为禁用成员集合；Proxy在get/has/ownKeys/getOwnPropertyDescriptor均隐藏这些成员，保存方法缓存与对象身份。某成员存在于底层class并不保证当前backend可调用。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "OC",
+          "utf8ByteStart": 168272,
+          "utf8ByteEnd": 169486,
+          "line": 9,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "Ct",
+          "utf8ByteStart": 164905,
+          "utf8ByteEnd": 165444,
+          "line": 9,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "re",
+          "utf8ByteStart": 155082,
+          "utf8ByteEnd": 157649,
+          "line": 9,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "zc",
+          "utf8ByteStart": 165751,
+          "utf8ByteEnd": 166024,
+          "line": 9,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "Af",
+          "utf8ByteStart": 166700,
+          "utf8ByteEnd": 167939,
+          "line": 9,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Gu",
+          "utf8ByteStart": 619889,
+          "utf8ByteEnd": 619933,
+          "line": 5433,
+          "verifiedBy": "Babel AST definition boundary"
+        }
+      ],
+      "certainty": "verified-static"
+    },
+    {
+      "id": "T03",
+      "title": "文档呈现与权限不同",
+      "claim": "setup_browser把Tab.ax设为undocumented并排除两个tab定位文档；这些参数进入dh文档生成。undocumentedApiMembers增加的是文档过滤集合，excludedDocumentation跳过文档内容。实际api禁用来自Gu与backend support。service还记录已读文档名，requiredFor命令在执行前检查是否已读；因此有独立的文档先决条件，但不能将“文档排除”当作权限关闭。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/setup_browser.js",
+          "symbol": null,
+          "utf8ByteStart": 452,
+          "utf8ByteEnd": 485,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "dh.readBrowser",
+          "utf8ByteStart": 1733086,
+          "utf8ByteEnd": 1734463,
+          "line": 8833,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "dh.assertRequiredDocumentationRead",
+          "utf8ByteStart": 1734463,
+          "utf8ByteEnd": 1734857,
+          "line": 8838,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "eL",
+          "utf8ByteStart": 1746639,
+          "utf8ByteEnd": 1746675,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Gu",
+          "utf8ByteStart": 619889,
+          "utf8ByteEnd": 619933,
+          "line": 5433,
+          "verifiedBy": "Babel AST definition boundary"
+        }
+      ],
+      "certainty": "verified-static"
+    },
+    {
+      "id": "T04",
+      "title": "两段RPC、帧协议与关闭处理",
+      "claim": "client到trusted service使用Node REPL rpc。service到native backend使用JSON-RPC 2.0：请求递增id，pendingRequests按id resolve/reject；id缺失的方法消息作为事件。native pipe将UTF-8 JSON前置4字节长度，按主机endianness读写，检查帧大小并支持分片组装；close会reject全部pending请求。An.sendRequest自身未设统一timer，也未见JSON-RPC cancelRequest。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "OC",
+          "utf8ByteStart": 168272,
+          "utf8ByteEnd": 169486,
+          "line": 9,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "An",
+          "utf8ByteStart": 610944,
+          "utf8ByteEnd": 613028,
+          "line": 5430,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "vi",
+          "utf8ByteStart": 1752764,
+          "utf8ByteEnd": 1754484,
+          "line": 8846,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "mh",
+          "utf8ByteStart": 1754651,
+          "utf8ByteEnd": 1756551,
+          "line": 8846,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "H_",
+          "utf8ByteStart": 1754485,
+          "utf8ByteEnd": 1754644,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Xee",
+          "utf8ByteStart": 1756552,
+          "utf8ByteEnd": 1756627,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        }
+      ],
+      "certainty": "verified-static",
+      "limits": [
+        "native backend/Node REPL RPC内部可能另有取消或超时，本层不能据此宣称全系统没有取消。"
+      ]
+    },
+    {
+      "id": "T05",
+      "title": "session与turn明确绑定",
+      "claim": "bh.sendSessionRequest将session_id、turn_id、session_context附到backend请求。当前metadata存在时live；metadata暂缺但已见有效请求时复用cached；从未有有效session或turn则失败。wt对thread_source=subagent使用thread_id作为浏览器session，其他使用session_id。extension在支持request header协议且配置启用时携带agent_request_header_enabled；不支持新版header协议时失败要求更新，不能静默忽略。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Le",
+          "utf8ByteStart": 1050969,
+          "utf8ByteEnd": 1051147,
+          "line": 5498,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "wt",
+          "utf8ByteStart": 1051230,
+          "utf8ByteEnd": 1051382,
+          "line": 5498,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bh.sendSessionRequest",
+          "utf8ByteStart": 1777430,
+          "utf8ByteEnd": 1778446,
+          "line": 8846,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bh.getSessionParams",
+          "utf8ByteStart": 1778627,
+          "utf8ByteEnd": 1779136,
+          "line": 8846,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Tk",
+          "utf8ByteStart": 1051475,
+          "utf8ByteEnd": 1051591,
+          "line": 5498,
+          "verifiedBy": "Babel AST definition boundary"
+        }
+      ],
+      "certainty": "verified-static"
+    },
+    {
+      "id": "T06",
+      "title": "backend发现和选取",
+      "claim": "默认搜索Unix /tmp/codex-browser-use或Windows命名管道，也允许显式BROWSER_USE_BACKEND_PATHS（绝对路径、去重）。每个候选连接getInfo，超时5秒；刷新复用原pipe，移除失效pipe。IAB/MCP-app默认session作用域，仅接受codexSessionId匹配和可选build flavor匹配；backend允许列表还会过滤。无显式选择时IAB优先，再preferred extension profile，再其他extension。按URL选择时优先匹配已有tab：exact、origin+pathname、hostname、hostname hierarchy，再IAB/profile fallback；file/localhost等本地URL偏IAB。URL匹配读取extension user tabs与IAB session tabs，1秒无法返回则用空集合。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Rte",
+          "utf8ByteStart": 1771241,
+          "utf8ByteEnd": 1771581,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Ja",
+          "utf8ByteStart": 613748,
+          "utf8ByteEnd": 613820,
+          "line": 5430,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "gL",
+          "utf8ByteStart": 1767708,
+          "utf8ByteEnd": 1768850,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "_te",
+          "utf8ByteStart": 1767363,
+          "utf8ByteEnd": 1767655,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Tte",
+          "utf8ByteStart": 1768851,
+          "utf8ByteEnd": 1769002,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Y_",
+          "utf8ByteStart": 1769836,
+          "utf8ByteEnd": 1770065,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "vL",
+          "utf8ByteStart": 1780096,
+          "utf8ByteEnd": 1780232,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "qte",
+          "utf8ByteStart": 1780561,
+          "utf8ByteEnd": 1780945,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Wte",
+          "utf8ByteStart": 1781666,
+          "utf8ByteEnd": 1781889,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        }
+      ],
+      "certainty": "verified-static"
+    },
+    {
+      "id": "T07",
+      "title": "tab定位抵御歧义与过期引用",
+      "claim": "CUA getTab允许具体id/providerTabId、tab mention或绝对URL+明确browser。先查session managed tabs，再查user tabs；URL多匹配报错。mention解析严格校验scheme/host/source/tab-v1/重复参数；extension mention绑定extensionInstanceId，IAB在可见候选中必须唯一；mention的title/url与当前tab不一致即stale。managed tab调用tabs.get，外部user tab调用claimTab。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/create_browser_api.js",
+          "symbol": null,
+          "utf8ByteStart": 2544,
+          "utf8ByteEnd": 2555,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/create_browser_api.js",
+          "symbol": null,
+          "utf8ByteStart": 3264,
+          "utf8ByteEnd": 3281,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/tab_reference.js",
+          "symbol": null,
+          "utf8ByteStart": 76,
+          "utf8ByteEnd": 89,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/tab_reference.js",
+          "symbol": null,
+          "utf8ByteStart": 824,
+          "utf8ByteEnd": 839,
+          "line": 1,
+          "verifiedBy": "direct wrapper source expression"
+        }
+      ],
+      "certainty": "verified-static"
+    },
+    {
+      "id": "T08",
+      "title": "所有权与debugger恢复",
+      "claim": "ch按session记录acquiredTabs与claimedTurnIds，已acquire的tab进入新turn且需要user ownership时，在命令前再次claim。IAB attach会记acquire。CDP attach使用单个pending promise防止并发重复attach，开启Page、focus emulation和OOPIF自动attach。detach事件会忘记tab attachment并清frame session、file chooser、JS dialog、raw events与document缓存。“Debugger unattached”/“not attached”最多一次重新attach重试，不无限递归。turn-ended hook最多允许4秒清理；detach后仍保留tab生命周期记录用于后续turn reclaim。 后续审核主进程HOe已补足IAB turnEnded实际tab关闭/释放逻辑，见T16。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "ch",
+          "utf8ByteStart": 1714657,
+          "utf8ByteEnd": 1715563,
+          "line": 8831,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "eL",
+          "utf8ByteStart": 1748422,
+          "utf8ByteEnd": 1748454,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "uh",
+          "utf8ByteStart": 1720074,
+          "utf8ByteEnd": 1723876,
+          "line": 8831,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bf.ensureAttachedTab",
+          "utf8ByteStart": 1250733,
+          "utf8ByteEnd": 1251501,
+          "line": 5675,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bf.executeTargetCdp",
+          "utf8ByteStart": 1241033,
+          "utf8ByteEnd": 1242725,
+          "line": 5675,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bf.forgetAttachedTab",
+          "utf8ByteStart": 1256716,
+          "utf8ByteEnd": 1257552,
+          "line": 5675,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "wh",
+          "utf8ByteStart": 1779193,
+          "utf8ByteEnd": 1780040,
+          "line": 8846,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        }
+      ],
+      "certainty": "verified-static",
+      "limits": [
+        "extension UI接管按钮的native/extension端ownership状态机不在这些JS文件中，无法推断按钮具体协议或夺回规则。"
+      ]
+    },
+    {
+      "id": "T09",
+      "title": "扩展与IAB共有接口、底层差异",
+      "claim": "两者通过同一JSON-RPC backend facade并提供executeCdp/tab管理，但getInfo返回不同capability与support overrides。committed URL老backend fallback：CDP取Page.getFrameTree，IAB取Target.getTargetInfo，extension从session tabs找URL。IAB滚动用mouseWheel，extension/CDP用synthesizeScrollGesture，IAB额外blockClosedShadowInput。Browser.user默认只支持extension，IAB默认隐藏；extension metadata含family/profile/extensionInstanceId，默认全局发现；IAB绑定Codex session。IAB特定下载命令有service级限制。AX是否启用由后台override/env/flag共同决定，启用AX时隐藏Tab.cua、Tab.dom_cua。 主进程HOe明确将IAB CDP命令落到Electron webContents.debugger.sendCommand；详见T15。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bh.getCommittedTabUrl",
+          "utf8ByteStart": 1775451,
+          "utf8ByteEnd": 1776143,
+          "line": 8846,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "uh",
+          "utf8ByteStart": 1720074,
+          "utf8ByteEnd": 1723876,
+          "line": 8831,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "kte",
+          "utf8ByteStart": 1770282,
+          "utf8ByteEnd": 1770904,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "RN",
+          "utf8ByteStart": 1725172,
+          "utf8ByteEnd": 1725278,
+          "line": 8831,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "FC",
+          "utf8ByteStart": 743837,
+          "utf8ByteEnd": 743985,
+          "line": 5433,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "_te",
+          "utf8ByteStart": 1767363,
+          "utf8ByteEnd": 1767655,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        }
+      ],
+      "certainty": "verified-static",
+      "limits": [
+        "IAB native host在主进程已验证；Chrome extension真实executeCdp实现仍不在这些源文件中，不能据IAB实现推断extension实现。"
+      ]
+    },
+    {
+      "id": "T10",
+      "title": "安全检查发生在执行之前",
+      "claim": "eL.executeAgentCommand先assertBrowserAccess；配置access executor时每session+turn向本地access host发随机nonce挑战，验证signed payload且允许当前executor/session/turn，10秒关闭连接。每动作security.runCommand先ensureCommandAllowed：目标navigation用目标URL授权，当前tab操作用committed URL授权，history/file transfer/raw CDP/WebMCP有各自permission；还查询URL协议/站点状态/admin origin policy/持久deny。permission配置支持turn/conversation/global范围和guardian缓存。raw CDP capability只有设置与enterprise policy允许时注入，成员出现后仍逐次检查受影响origin。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "eL",
+          "utf8ByteStart": 1751700,
+          "utf8ByteEnd": 1751728,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "TL",
+          "utf8ByteStart": 1783727,
+          "utf8ByteEnd": 1784075,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Gte",
+          "utf8ByteStart": 1784163,
+          "utf8ByteEnd": 1784812,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "$p",
+          "utf8ByteStart": 1070570,
+          "utf8ByteEnd": 1078732,
+          "line": 5499,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "ca",
+          "utf8ByteStart": 1684558,
+          "utf8ByteEnd": 1689708,
+          "line": 8827,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Ite",
+          "utf8ByteStart": 1770065,
+          "utf8ByteEnd": 1770282,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "oT",
+          "utf8ByteStart": 587440,
+          "utf8ByteEnd": 587677,
+          "line": 5430,
+          "verifiedBy": "Babel AST definition boundary"
+        }
+      ],
+      "certainty": "verified-static"
+    },
+    {
+      "id": "T11",
+      "title": "超时是分层预算，取消覆盖有限",
+      "claim": "backend getInfo 5秒、URL选取tabs 1秒、access handshake 10秒、turn cleanup hook 4秒。qe默认locator类预算3秒并受max上限；CDP hf将timeoutMs裁剪到deadlineMs剩余，kt在dispatch前检查deadline，gf以Promise.race等待截止，executeCdp payload带timeoutMs。waitForEvent同时支持timer和AbortSignal并finally删除监听；输入类用AbortController释放按键/中断连续输入。客户端可写client_timeout_ms，但desktop service没有读取该字段；它不是本service已验证生效的总超时。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Y_",
+          "utf8ByteStart": 1769836,
+          "utf8ByteEnd": 1770065,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Gte",
+          "utf8ByteStart": 1784163,
+          "utf8ByteEnd": 1784812,
+          "line": 8846,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "wh",
+          "utf8ByteStart": 1779193,
+          "utf8ByteEnd": 1780040,
+          "line": 8846,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "qe",
+          "utf8ByteStart": 747314,
+          "utf8ByteEnd": 747424,
+          "line": 5433,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "hf",
+          "utf8ByteStart": 1263743,
+          "utf8ByteEnd": 1263881,
+          "line": 5675,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "gf",
+          "utf8ByteStart": 1263933,
+          "utf8ByteEnd": 1264205,
+          "line": 5675,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bf.executeTargetCdp",
+          "utf8ByteStart": 1241033,
+          "utf8ByteEnd": 1242725,
+          "line": 5675,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "bf.waitForEvent",
+          "utf8ByteStart": 1246803,
+          "utf8ByteEnd": 1247647,
+          "line": 5675,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "ob",
+          "utf8ByteStart": 752801,
+          "utf8ByteEnd": 753402,
+          "line": 5437,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "Ct",
+          "utf8ByteStart": 164905,
+          "utf8ByteEnd": 165444,
+          "line": 9,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        }
+      ],
+      "certainty": "verified-static",
+      "limits": [
+        "Promise.race超时不证明下游实际操作立即取消；native backend是否detach/abort需要实测或进一步分析native实现。"
+      ]
+    },
+    {
+      "id": "T12",
+      "title": "受保护状态与错误恢复是结构化协议",
+      "claim": "P_在before_command、command、after_command、error_recheck维护保护检查，跨tab/retained data也检查。保护失败生成Recovery v1的command/phase/reason/next_action，底层可能含受保护数据的错误不会直接回传。rq.executeWithRecovery只将BrowserCredentialRecoveryError转为{ok:false,error};client协商v1后恢复typed error；其他错误仍抛出。新tab/导航/handoff等有特定返回值约束。requestManualHandoff在默认desktop API隐藏且handler只接受带browserAuth的CDP；不能把恢复建议里的handoff当成所有浏览器都有的能力。",
+      "evidence": [
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "P_",
+          "utf8ByteStart": 1717185,
+          "utf8ByteEnd": 1719902,
+          "line": 8831,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": "Oi",
+          "utf8ByteStart": 595952,
+          "utf8ByteEnd": 596207,
+          "line": 5430,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+          "symbol": "OC",
+          "utf8ByteStart": 168272,
+          "utf8ByteEnd": 169486,
+          "line": 9,
+          "verifiedBy": "Babel AST definition boundary"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": null,
+          "utf8ByteStart": 1914826,
+          "utf8ByteEnd": 1914854,
+          "line": 8871,
+          "verifiedBy": "direct wrapper source expression"
+        },
+        {
+          "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+          "symbol": null,
+          "utf8ByteStart": 1213755,
+          "utf8ByteEnd": 1213776,
+          "line": 5513,
+          "verifiedBy": "direct wrapper source expression"
+        }
+      ],
+      "certainty": "verified-static",
+      "limits": [
+        "未获取、观察或输出任何凭证值；只分析状态类型与恢复协议。"
+      ]
+    },
+    {
+      "id": "T13",
+      "title": "native pipe接入与多客户端对账",
+      "claim": "lke构造native pipe server，传apiImpl到cr，cr注册apiImpl自身与prototype的方法并将CDP、detach、download、page事件作为JSON-RPC通知。_ae给每个socket分配clientId并在请求id前加内部前缀；响应解析前缀后仅发回原client，通知则广播socket。帧解码无效时断开连接。该server入站上限8MiB，出站默认64MiB，过大CDP事件被跳过而不是崩溃。",
+      "certainty": "verified-static",
+      "evidence": [
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "lke",
+          "utf8ByteStart": 1789565,
+          "utf8ByteEnd": 1791046,
+          "line": 1001,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "cr",
+          "utf8ByteStart": 52004,
+          "utf8ByteEnd": 52730,
+          "line": 8,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "_ae",
+          "utf8ByteStart": 299847,
+          "utf8ByteEnd": 302437,
+          "line": 101,
+          "verifiedBy": "Babel AST containing class definition boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "vae",
+          "utf8ByteStart": 302438,
+          "utf8ByteEnd": 302495,
+          "line": 101,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "yae",
+          "utf8ByteStart": 302495,
+          "utf8ByteEnd": 302736,
+          "line": 101,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        }
+      ]
+    },
+    {
+      "id": "T14",
+      "title": "pipe peer认证有真实代码边界",
+      "claim": "native socket连接前调用socketPeerAuthorizer。主进程cp在macOS按package build flavor和dev模式决定是否启用原生peer授权addon；packaged app若缺build flavor会fail closed。启用时提取socket fd并调用authorizeSocketPeer，缺fd或拒绝立即断开。非macOS/未启用的分支返回允许。不能只看到/tmp pipe就误称任何本地进程都可接入。",
+      "certainty": "verified-static",
+      "evidence": [
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "cp",
+          "utf8ByteStart": 304742,
+          "utf8ByteEnd": 305751,
+          "line": 101,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "_ae.handleSocketConnection",
+          "utf8ByteStart": 301223,
+          "utf8ByteEnd": 301898,
+          "line": 101,
+          "verifiedBy": "Babel AST exact class method boundary"
+        }
+      ],
+      "limits": [
+        "addon内部签名、进程身份判断细节未反编译；未实测任意第三方socket接入。"
+      ]
+    },
+    {
+      "id": "T15",
+      "title": "IAB native执行确为Electron debugger",
+      "claim": "HOe.getInfo声明type=iab、discoveryScope=session及当前session metadata。每请求requireBrowserUseSession并ensureBrowserUseSessionRoute。tab须属于当前route，pageKey/webContents必须与当前browser page相符；导航目标与现有URL再次检查policy。executeCdpForBrowserUse在input前等待debugger同步、设置focus emulation、再次检查page与policy，最终sendDebuggerCommand调用webContents.debugger.sendCommand(method,params,optional sessionId)。Target.getTargets/getTargetInfo/closeTarget有emulated实现；其他Target方法只允许setAutoAttach，Input只支持dispatchMouseEvent、dispatchKeyEvent、insertText。",
+      "certainty": "verified-static",
+      "evidence": [
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.getInfo",
+          "utf8ByteStart": 1752829,
+          "utf8ByteEnd": 1753808,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.requireBrowserUseSession",
+          "utf8ByteStart": 1758845,
+          "utf8ByteEnd": 1758954,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.requireBrowserUseTab",
+          "utf8ByteStart": 1774322,
+          "utf8ByteEnd": 1774752,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.assertTabMatchesCurrentBrowserUsePage",
+          "utf8ByteStart": 1770647,
+          "utf8ByteEnd": 1771234,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.executeCdpForBrowserUse",
+          "utf8ByteStart": 1762085,
+          "utf8ByteEnd": 1763959,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.sendDebuggerCommand",
+          "utf8ByteStart": 1784377,
+          "utf8ByteEnd": 1784799,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "dq",
+          "utf8ByteStart": 1786468,
+          "utf8ByteEnd": 1786731,
+          "line": 1001,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "UOe",
+          "utf8ByteStart": 1785681,
+          "utf8ByteEnd": 1785782,
+          "line": 1001,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        }
+      ]
+    },
+    {
+      "id": "T16",
+      "title": "IAB tab生命周期：临时关闭与handoff/deliverable",
+      "claim": "新agent tab生成browser-use UUID，并映射numeric CDP tab id + provider browserTabId，lifetime=temporary。mark必须为handoff/deliverable且带turn_id。turnEnded只处理记录的当前turn：恢复page clipboard、清理debugger；temporary+本turnhandoff保留tab并删mark；有deliverable等mark或persistent lifetime则release给host；其余temporary tab关闭。releaseTab从控制映射移除，调用host.releasePageForBrowserUse。sessionControl释放还会清blob下载、cursor/active状态与待应用capability。",
+      "certainty": "verified-static",
+      "evidence": [
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.createTabForBrowserUse",
+          "utf8ByteStart": 1760631,
+          "utf8ByteEnd": 1761447,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.serializeTab",
+          "utf8ByteStart": 1767970,
+          "utf8ByteEnd": 1768379,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.markTab",
+          "utf8ByteStart": 1754544,
+          "utf8ByteEnd": 1755061,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.turnEnded",
+          "utf8ByteStart": 1755972,
+          "utf8ByteEnd": 1756771,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.releaseTab",
+          "utf8ByteStart": 1773534,
+          "utf8ByteEnd": 1773645,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.releaseSessionControl",
+          "utf8ByteStart": 1755683,
+          "utf8ByteEnd": 1755972,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        }
+      ]
+    },
+    {
+      "id": "T17",
+      "title": "IAB超时下游真的执行debugger清理",
+      "claim": "IAB主进程CDP默认20秒，page-ready默认15秒，cursor到达默认1.5秒；传入timeoutMs只能缩短到默认上限。wq是timer竞争包装，本身不取消sendCommand。executeCdpForBrowserUse捕获识别的timeout后默认cleanupDebuggerForTabBestEffort；preserveDebuggerOnTimeout时只释放capture lease。debugger attachment通过IB引用计数lease共享，detachTab释放lease并通知onCDPDetach；仍有其他users时未必物理detach。故“超时后清理控制状态”已验证，但不能保证已发送的页面side effect被回滚。",
+      "certainty": "verified-static",
+      "evidence": [
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.constructor",
+          "utf8ByteStart": 1746386,
+          "utf8ByteEnd": 1746747,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "Cq",
+          "utf8ByteStart": 1789076,
+          "utf8ByteEnd": 1789160,
+          "line": 1001,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "wq",
+          "utf8ByteStart": 1789160,
+          "utf8ByteEnd": 1789351,
+          "line": 1001,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.executeCdpForBrowserUse",
+          "utf8ByteStart": 1762085,
+          "utf8ByteEnd": 1763959,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.cleanupDebuggerForTabBestEffort",
+          "utf8ByteStart": 1775500,
+          "utf8ByteEnd": 1775956,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "HOe.detachTab",
+          "utf8ByteStart": 1781842,
+          "utf8ByteEnd": 1782423,
+          "line": 1001,
+          "verifiedBy": "Babel AST exact class method boundary"
+        },
+        {
+          "path": "/private/tmp/rea-review/asar-host/main-39FdJ_vp.js",
+          "archivePath": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+          "archiveEntry": ".vite/build/main-39FdJ_vp.js",
+          "symbol": "IB",
+          "utf8ByteStart": 1472500,
+          "utf8ByteEnd": 1473312,
+          "line": 991,
+          "verifiedBy": "Babel AST definition boundary; parent provided exact @electron/asar extraction provenance"
+        }
+      ]
+    }
+  ],
+  "controlledValidation": {
+    "kind": "isolated mocked RPC contract test, no browser navigation or app mutation",
+    "result": "12 checks passed (6 per client variant)",
+    "artifact": "/private/tmp/rea-review/transport/mock-contract-result.json",
+    "details": [
+      {
+        "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_browser/dist/skill/scripts/browser-client.js",
+        "checks": [
+          "setup environment default",
+          "trusted browser RPC namespace",
+          "executeWithRecovery v1 negotiation",
+          "browser/tab bound command IDs",
+          "disabled member inaccessible through get/has",
+          "typed credential recovery"
+        ],
+        "capturedCommands": [
+          {
+            "method": "setup"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "get_browser"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "get_tab",
+            "browser_id": "7",
+            "tab_id": "42"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "navigate_tab_url",
+            "browser_id": "7",
+            "tab_id": "42"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "get_tab",
+            "browser_id": "7",
+            "tab_id": "42"
+          }
+        ]
+      },
+      {
+        "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-client.mjs",
+        "checks": [
+          "setup environment default",
+          "trusted browser RPC namespace",
+          "executeWithRecovery v1 negotiation",
+          "browser/tab bound command IDs",
+          "disabled member inaccessible through get/has",
+          "typed credential recovery"
+        ],
+        "capturedCommands": [
+          {
+            "method": "setup"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "get_browser"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "get_tab",
+            "browser_id": "7",
+            "tab_id": "42"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "navigate_tab_url",
+            "browser_id": "7",
+            "tab_id": "42"
+          },
+          {
+            "method": "executeWithRecovery",
+            "type": "get_tab",
+            "browser_id": "7",
+            "tab_id": "42"
+          }
+        ]
+      }
+    ]
+  },
+  "implementationRecommendations": [
+    {
+      "kind": "inference",
+      "suggestion": "复现工具采用Browser/Tab稳定绑定、能力清单与可隐藏成员，命令统一携带browserId/tabId/sessionId/turnId。",
+      "derivedFrom": [
+        "T02",
+        "T05",
+        "T07"
+      ]
+    },
+    {
+      "kind": "inference",
+      "suggestion": "tab所有权、debugger attachment、当前document revision分别记录；新turn重claim，导航失效观察缓存，断开时单次恢复。",
+      "derivedFrom": [
+        "T08"
+      ]
+    },
+    {
+      "kind": "inference",
+      "suggestion": "使用按动作/target origin划分的执行前权限检查，返回明确reason+retryability；凭证状态只返回恢复枚举。",
+      "derivedFrom": [
+        "T10",
+        "T12"
+      ]
+    },
+    {
+      "kind": "inference",
+      "suggestion": "独立设置观察/定位/CDP总deadline；超时与真正取消分开测试并记录，不能将client_timeout_ms假设为总超时。",
+      "derivedFrom": [
+        "T11"
+      ]
+    }
+  ],
+  "unknowns": [
+    "服务端guardian具体审核决策模型、远程策略与网络egress实现不在本地可读JS证据内。",
+    "所有backend与浏览器版本差异的完整支持矩阵需要live getInfo能力输出，不能由class方法存在推断。",
+    "本报告为桌面26.1007.21159/build20052局部实现审核，不是Codex全量产品的100%源码复刻。",
+    "当前插件配置browser service已核验；是否存在未记录的live启动override仍未通过读取进程全env确认。",
+    "Chrome extension侧executeCdp/用户接管具体state machine与native peer addon内部算法未分析；IAB主进程CDP/生命周期已确认。"
+  ]
+}

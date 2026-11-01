@@ -1,0 +1,16 @@
+{
+  "boundary": "Real Chrome/current BrowserService; controlled local page counters only",
+  "target_originally_observed": "#expected",
+  "ref": "e0",
+  "expected_clicks": 0,
+  "other_clicks": 1,
+  "receipt": {
+    "action_id": "2f65757589204a689f0c8d5ab8165aee",
+    "action": "click",
+    "execution": "executed",
+    "effect": "unchecked",
+    "before_observation_id": "obs_6d7280986c934045ba490b5aeceba7f7",
+    "after_observation_id": "obs_12ad3c0f022e41119b9788a724a3abf2"
+  },
+  "interpretation": "Page-accessible ref Map can redirect the validated target without changing observation identity."
+}

@@ -1,0 +1,116 @@
+{
+  "scope": "Owned localhost fixture only; no external sites, APIs or credentials",
+  "tampering": {
+    "shared_world_state_visible": true,
+    "public_fixture_ref_rebound": true
+  },
+  "requested_name": "Chosen",
+  "actual_clicked": "OTHER",
+  "receipt": {
+    "action_id": "65f67d8b5de541f9a2620a202fcd57a0",
+    "action": "click",
+    "execution": "executed",
+    "effect": "unchecked",
+    "before_observation_id": "obs_0b671869ece34a518054a7c17d258920",
+    "after_observation_id": "obs_47b862ce01f9462b95d11569708cc789"
+  },
+  "accessible_elements": [
+    {
+      "ref": "e0",
+      "tag": "button",
+      "role": "button",
+      "name": "Chosen",
+      "disabled": false,
+      "editable": false
+    },
+    {
+      "ref": "e1",
+      "tag": "button",
+      "role": "button",
+      "name": "Other",
+      "disabled": false,
+      "editable": false
+    },
+    {
+      "ref": "e2",
+      "tag": "input",
+      "role": "input",
+      "name": "",
+      "disabled": false,
+      "editable": false
+    },
+    {
+      "ref": "e3",
+      "tag": "button",
+      "role": "button",
+      "name": "Disabled inherited",
+      "disabled": true,
+      "editable": false
+    },
+    {
+      "ref": "e4",
+      "tag": "input",
+      "role": "input",
+      "name": "ARIA label",
+      "disabled": false,
+      "editable": true
+    },
+    {
+      "ref": "e5",
+      "tag": "button",
+      "role": "button",
+      "name": "",
+      "disabled": false,
+      "editable": false
+    },
+    {
+      "ref": "e6",
+      "tag": "div",
+      "role": "div",
+      "name": "",
+      "disabled": false,
+      "editable": true
+    },
+    {
+      "ref": "e7",
+      "tag": "button",
+      "role": "button",
+      "name": "Details",
+      "disabled": false,
+      "editable": false
+    }
+  ],
+  "native_ax_comparison": [
+    {
+      "role": "button",
+      "name": "Continue"
+    },
+    {
+      "role": "button",
+      "name": "Hidden referenced"
+    },
+    {
+      "role": "StaticText",
+      "name": "Continue"
+    },
+    {
+      "role": "InlineTextBox",
+      "name": "Continue"
+    }
+  ],
+  "finding_reproduced": true,
+  "recycled_row": {
+    "observed_record": "A",
+    "actual_record": "B",
+    "same_button_node": true,
+    "receipt": {
+      "action_id": "a88711561edc4d5cb978da87f20e1f77",
+      "action": "click",
+      "execution": "executed",
+      "effect": "unchecked",
+      "before_observation_id": "obs_8cb424a3701a444189f4e8e0b5e2f060",
+      "after_observation_id": "obs_68420f760112412fb657ddcb53cfa70a"
+    },
+    "finding_reproduced": true
+  }
+}

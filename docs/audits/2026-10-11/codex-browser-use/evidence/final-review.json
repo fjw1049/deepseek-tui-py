@@ -1,0 +1,83 @@
+{
+  "reviewed_at": "2026-10-11T14:48:04.072754+00:00",
+  "role": "Independent final read-only delivery review",
+  "status": "passed_with_explicit_boundaries",
+  "blocking_findings": [],
+  "nonblocking_findings": [],
+  "scope": [
+    "REPORT.md, README.md, replica/README.md, replica/browser-use.mjs and package lock",
+    "Codex IAB observations, independent demo report, project probe results, client mock results",
+    "Transport report source identity/ranges, shipped source scope digests, app.asar provenance",
+    "No existing business source changed; only this new review record written"
+  ],
+  "checks": [
+    {
+      "name": "Evidence grades and backend scope",
+      "result": "pass",
+      "detail": "Static confirmation, live IAB results, synthetic/mocked boundary probes and independent Chrome demo are separated. Chrome extension, model/cloud, native addon and WASM internals remain unknown."
+    },
+    {
+      "name": "Actual Codex IAB expectations",
+      "result": "pass",
+      "detail": "Raw record has 10 cases: 8 passed and 2 failed. Covered click returned successfully without confirmed target effect; frame fill succeeded while semantic click failed. Fresh AX recovery remains a separate case; root cause is not asserted."
+    },
+    {
+      "name": "Independent demo claims",
+      "result": "pass",
+      "detail": "18 successful assertion entries match the 18 check calls. Takeover/navigation/observation failure cases use deliberate injection with a real controlled browser; these do not establish native Codex or production UI behavior."
+    },
+    {
+      "name": "Action semantics and recovery",
+      "result": "pass",
+      "detail": "Prechecks reject ambiguity/occlusion; final token recheck fences injected takeover/navigation. Dispatch errors become unknown. Effect timeout is unverified while dispatch remains completed. Old token is invalidated before dispatch, including post-action observation failure; there is no outer mutation replay."
+    },
+    {
+      "name": "Execution scope and privacy",
+      "result": "pass",
+      "detail": "Fresh temporary profile, exact pinned Playwright, loopback HTTP fixture scope, no login profile/cookie import, cleanup in finally. README correctly disclaims complete network isolation and atomic cancellation."
+    },
+    {
+      "name": "File and scope identity",
+      "result": "pass",
+      "detail": "5 shipped-index files and 18 function scopes independently matched SHA-256, line and UTF-8/UTF-16 boundaries. All 10 transport source identities and 104 recorded byte/line ranges matched. The complete app.asar digest and 6 selected extracted entry digests matched recorded provenance."
+    },
+    {
+      "name": "Project gap figures",
+      "result": "pass",
+      "detail": "REPORT G1 figures 53886→10106 and 145706→33197 match final synthetic probe output. G2 fixed coordinates and deltaX/deltaY match mocked dispatch output. G3 remains an unexercised static risk. Production fixes are explicitly outside this demo."
+    },
+    {
+      "name": "Local document references",
+      "result": "pass",
+      "detail": "Relative local Markdown links in REPORT/READMEs resolve to delivered files."
+    }
+  ],
+  "reviewed_result_counts": {
+    "codex_iab": {
+      "passed": 8,
+      "failed": 2
+    },
+    "independent_demo": {
+      "passed": 18,
+      "failed": 0
+    },
+    "client_mock_contract_checks": 12,
+    "project_existing_tests_recorded_passed": 20
+  },
+  "tests_rerun": false,
+  "tests_rerun_reason": "No new implementation or unresolved code suspicion found; reviewed existing traces and assertions instead of repeating passing browser tests.",
+  "boundaries": [
+    "This audit corroborates the named local build, controlled IAB run and deterministic replica; it is not a complete decompilation or production reliability proof.",
+    "REA semantic graphs explicitly remain partial/unknown; large bundle workers exhausted their heaps.",
+    "Snapshot tokens do not automatically detect arbitrary DOM changes; README documents serial caller and non-atomic browser command limitations.",
+    "ARIA per-frame clipping is lossy; it is not the proposed project G1 structured context projection.",
+    "The 18 demo assertions include explicit fault injection; they are not 18 independent end-to-end natural-language tasks.",
+    "No full Codex application source or embedded instruction text was included in this review record."
+  ],
+  "reviewed_artifact_sha256": {
+    "REPORT.md": "a378d58b398da4ef9e5b0fb8e3798245e74d1d17d692b5e15725d2bfffa73f57",
+    "replica/browser-use.mjs": "f5f564e967feb831f601e12648a2c03cfb2c1c13bbbbf0b77d175298f6c64ce8",
+    "replica/README.md": "897630a6ff3038d1de877a0ba523cb51a53b1c24928ed1c658209b9288107996",
+    "replica/results/report.json": "6bbda86f4b5838050052ea744ac5f1b28deba362d74fe47134ef7c7ddcc19895"
+  }
+}

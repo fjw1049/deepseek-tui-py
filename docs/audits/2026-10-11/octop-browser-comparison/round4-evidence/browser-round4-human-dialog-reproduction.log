@@ -1,0 +1,261 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_human_viewport_dialog_returns_a_dispatched_receipt_and_readable_dialog __
+
+fut = <coroutine object dispatch_input at 0x109289440>, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/deepseek_tui/browser/input.py:141: in dispatch_input
+    await client.send("Input.dispatchMouseEvent", params)
+.venv/lib/python3.12/site-packages/octop_browser/cdp/client.py:99: in send
+    result = await asyncio.wait_for(future, timeout=self._timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+fut = <Future cancelled>, timeout = 30.0
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+self = <deepseek_tui.browser.service.BrowserService object at 0x108af5dc0>
+thread_id = 't'
+body = BrowserInput(generation=1, scene_id='d751da5aa498ddc97c1ce23c76dd01df', kind='mouse', event='mouseReleased', x=41.1171..., buttons=0, clicks=1, delta_x=0, delta_y=0, key='', code='', key_code=0, modifiers=0, text='', width=1200, height=760)
+
+    async def input(self, thread_id: str, body: BrowserInput) -> dict[str, Any]:
+        from deepseek_tui.browser.input import dispatch_input
+    
+        run = self.runs.get(thread_id)
+        if not run or not run.session:
+            raise ValueError("Open a browser page first")
+        async with run.lock:
+            if run.owner != "user" or run.transferring or run.generation != body.generation:
+                raise ValueError("Browser control changed; queued input was discarded")
+            if body.kind == "release":
+                await self._release_inputs(run)
+                return {"success": True, "released": True}
+            if run.native_events and run.native_events.dialog:
+                raise ValueError("Answer the current native dialog before sending page input")
+            if run.unresolved and body.kind not in {"resize", "copy", "pick", "devtools"}:
+                raise ValueError("An earlier input outcome is unknown; review its receipt before further changes")
+            if body.scene_id is not None or run.scene is not None:
+                scene = await self._scene(run)
+                if body.scene_id != scene["scene_id"]:
+                    raise ValueError("Browser page changed; queued input was discarded")
+            if run.recorder and run.recorder.frame_changed.is_set():
+                await run.recorder._sync_frames()
+                run.recorder.frame_changed.clear()
+            run.revision += 1
+            action_id = uuid.uuid4().hex
+            if body.kind == "key" and body.event == "keyDown":
+                run.pressed_keys[body.code or body.key] = body
+            elif body.kind == "mouse" and body.event == "mousePressed":
+                run.pressed_buttons[body.button] = body
+            try:
+>               result = await asyncio.wait_for(dispatch_input(run, body), timeout=5)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/deepseek_tui/browser/service.py:737: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x10921d840>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+chrome = (<deepseek_tui.browser.service.BrowserService object at 0x108af5dc0>, BrowserRun(thread_id='t', directory=PosixPath('/...total_ms': 203.8}], last_dispatch_id='48d001ca234c49869635dc8119677843', tab_cache_time=205322.243692416, failures={}))
+
+    async def test_human_viewport_dialog_returns_a_dispatched_receipt_and_readable_dialog(chrome):
+        from deepseek_tui.browser.input import BrowserInput
+    
+        service, run = chrome
+        await evaluate(run.session._internal.client, "document.body.innerHTML=`<button id=ask onclick=\"window.n=(window.n||0)+1;window.answer=confirm('Save?');\">Ask</button>`;true")
+        await service.control("t", "user")
+        scene = (await service.view("t"))["scene"]["scene_id"]
+        box = await evaluate(run.session._internal.client, "(()=>{const r=document.querySelector('button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()")
+        for event in ["mousePressed", "mouseReleased"]:
+>           result = await service.input("t", BrowserInput(kind="mouse", event=event, button="left",
+                generation=run.generation, scene_id=scene, **box))
+
+tests/test_browser_chromium.py:1761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <deepseek_tui.browser.service.BrowserService object at 0x108af5dc0>
+thread_id = 't'
+body = BrowserInput(generation=1, scene_id='d751da5aa498ddc97c1ce23c76dd01df', kind='mouse', event='mouseReleased', x=41.1171..., buttons=0, clicks=1, delta_x=0, delta_y=0, key='', code='', key_code=0, modifiers=0, text='', width=1200, height=760)
+
+    async def input(self, thread_id: str, body: BrowserInput) -> dict[str, Any]:
+        from deepseek_tui.browser.input import dispatch_input
+    
+        run = self.runs.get(thread_id)
+        if not run or not run.session:
+            raise ValueError("Open a browser page first")
+        async with run.lock:
+            if run.owner != "user" or run.transferring or run.generation != body.generation:
+                raise ValueError("Browser control changed; queued input was discarded")
+            if body.kind == "release":
+                await self._release_inputs(run)
+                return {"success": True, "released": True}
+            if run.native_events and run.native_events.dialog:
+                raise ValueError("Answer the current native dialog before sending page input")
+            if run.unresolved and body.kind not in {"resize", "copy", "pick", "devtools"}:
+                raise ValueError("An earlier input outcome is unknown; review its receipt before further changes")
+            if body.scene_id is not None or run.scene is not None:
+                scene = await self._scene(run)
+                if body.scene_id != scene["scene_id"]:
+                    raise ValueError("Browser page changed; queued input was discarded")
+            if run.recorder and run.recorder.frame_changed.is_set():
+                await run.recorder._sync_frames()
+                run.recorder.frame_changed.clear()
+            run.revision += 1
+            action_id = uuid.uuid4().hex
+            if body.kind == "key" and body.event == "keyDown":
+                run.pressed_keys[body.code or body.key] = body
+            elif body.kind == "mouse" and body.event == "mousePressed":
+                run.pressed_buttons[body.button] = body
+            try:
+                result = await asyncio.wait_for(dispatch_input(run, body), timeout=5)
+            except (TimeoutError, RuntimeError, ConnectionError) as exc:
+                response = self._remember_response(run, {"success": False,
+                    "content": "Browser input outcome is unknown; inspect the page before retrying",
+                    "receipt": {"action_id": action_id, "action": "input:" + body.kind,
+                                "execution": "unknown", "effect": "unchecked"}})
+>               raise BrowserActionError(response) from exc
+E               deepseek_tui.browser.service.BrowserActionError: Browser input outcome is unknown; inspect the page before retrying
+
+src/deepseek_tui/browser/service.py:743: BrowserActionError
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_human_viewport_dialog_returns_a_dispatched_receipt_and_readable_dialog
+1 failed, 84 deselected in 35.99s

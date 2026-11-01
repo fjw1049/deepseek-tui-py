@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-12",
+  "started_from_uncommitted_workspace": true,
+  "audit_baseline": "source-manifest.json",
+  "fix_details": "FIXES.md",
+  "sha256": {
+    "src/deepseek_tui/browser/context.py": "110d852041b6aa1b1d9e3ae2b783f4a71f8344a2c07eecb8762991b23360fb90",
+    "src/deepseek_tui/browser/frames.py": "b4163c338090a4f6429170f752bbe05ec62f8363e19dde1274911ed15b454791",
+    "src/deepseek_tui/browser/observation.py": "d78cbe6b91aaf0e00d63d5b68bfeaa7ead774c2e33bf255103715b8c7990384b",
+    "src/deepseek_tui/browser/input.py": "5d98bd4a2fa8e39596cb5ae3cfa73bb422ebf91904f328e74a7161daffd6b25b",
+    "src/deepseek_tui/browser/service.py": "d213ae3db3dd22268dfa7c9ff9848c7847ccec7390b3e46caad82aa445f8481c",
+    "src/deepseek_tui/browser/workflows.py": "f57f0e9eb6ef9799d1b39cdd418c1a178124fec7dde4cf40f2ca94fb91bc9d5b",
+    "src/deepseek_tui/browser/skills.py": "98614928327233c02a24ed3c2510372cafe826e82af618da103fc325f22c4432",
+    "src/deepseek_tui/tools/browser.py": "c3034a28ec429f1c11c9cfeb87bc4f652f9a7257d7812c4416825cee13dc92f8",
+    "src/deepseek_tui/tools/registry.py": "672290885fe6c779971e51829882e6b6b003f0855681716c96a25297a0874f55",
+    "src/deepseek_tui/engine/context.py": "a0e5b4ab9fde2e18157d2be8d3add81baf362e70ca5784c3e521089192c451de",
+    "src/deepseek_tui/client/media.py": "6767ea839a84f53112c55bd7b67294fe770a4e0c62f07435c805821871315617",
+    "src/deepseek_tui/server/browser_routes.py": "2d59121befc3cc7dac5d10a9a8d1579ff62b37dbcdc64af3b9a74ce0a034eb8c",
+    "src/deepseek_tui/server/threads/manager.py": "69d6f6881d1ba3668cb3e458c446a6d68cf88bcb013558b24465fdc2807bb95a",
+    "src/deepseek_tui/prompts/browser.md": "59fd54f64456e14dbb9a274ccfd4557b46dd7d0385b6cdfbad8ac9e9b7a87619",
+    "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx": "2fe8ad1c7375ad69b959a7164b1371b676e9d74fe9653b6f6379d3b2a711fb22",
+    "packages/workbench/src/renderer/src/components/BrowserWorkspace.test.ts": "120d54dff14384e4ad14dd1a9027ac8c9302727ba6b25c47d38fcb23e9e42dc2",
+    "tests/test_browser_context.py": "b846a2a0463df3db3f01fd8e43a6ca550eb3a5597a96cd6381626e9076201241",
+    "tests/test_browser_chromium.py": "8205deab2d04b40e69bebd5feccd71f1dbf4c5be0f54620ee91371e072e151c5",
+    "tests/test_browser_module.py": "0579e0448af68289d3f9b575006e5cb3ad0cac2baa2563c73c844a3eba7b097c",
+    "tests/test_browser_shared_input.py": "0a4d8ad41dbf3e84acc8d899f44402e242784336940e3b6d97905032eeede230",
+    "tests/engine/test_browser_primary_loop.py": "9b159362a8bb13e2b86df859ab8f6b3d6cd45fac2b253802252a5f7450c72bc6",
+    "tests/contract/test_browser.py": "34831ee6ce25c773ea70ab7fc4286740e9f0ed234413fee3634ed635502d3787"
+  }
+}

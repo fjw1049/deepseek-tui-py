@@ -1,0 +1,15 @@
+{
+  "boundary": "real BrowserService / observe / target Python logic; mocked CDP and click",
+  "interpretation": "Expected safety contract: prebuilt second call is rejected after the first refreshes observation. Not a real model task failure.",
+  "first_execution": "executed",
+  "second_execution": "not_executed",
+  "second_reason": "stale_observation",
+  "first_action_changed_observation_id": true,
+  "actual_click_dispatch_count": 1,
+  "input_commands": [
+    "Input.dispatchKeyEvent",
+    "Input.dispatchKeyEvent",
+    "Input.dispatchKeyEvent",
+    "Input.insertText"
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "scope": "Synthetic/mocked boundary probes; no real model/browser success claims.",
+  "context_projection": [
+    {
+      "boundary": "synthetic observation -> real spillover/context projection",
+      "control_count": 120,
+      "visible_text_chars": 8000,
+      "context_limits": [
+        40000,
+        15000,
+        10000
+      ],
+      "raw_chars": 53886,
+      "after_spillover_chars": 53886,
+      "projected_chars": 10106,
+      "observation_id_preserved": true,
+      "middle_ref_preserved": false,
+      "middle_name_preserved": false,
+      "spillover_reread_path_present": false
+    },
+    {
+      "boundary": "synthetic observation -> real spillover/context projection",
+      "control_count": 250,
+      "visible_text_chars": 8000,
+      "context_limits": [
+        40000,
+        15000,
+        10000
+      ],
+      "raw_chars": 94706,
+      "after_spillover_chars": 94706,
+      "projected_chars": 10106,
+      "observation_id_preserved": true,
+      "middle_ref_preserved": false,
+      "middle_name_preserved": false,
+      "spillover_reread_path_present": false
+    },
+    {
+      "boundary": "synthetic observation -> real spillover/context projection",
+      "control_count": 250,
+      "visible_text_chars": 16000,
+      "context_limits": [
+        40000,
+        15000,
+        10000
+      ],
+      "raw_chars": 145706,
+      "after_spillover_chars": 33197,
+      "projected_chars": 33197,
+      "observation_id_preserved": false,
+      "middle_ref_preserved": false,
+      "middle_name_preserved": false,
+      "spillover_reread_path_present": true
+    }
+  ],
+  "scroll_dispatch": [
+    {
+      "boundary": "real BrowserService.action; mocked target/CDP/session, no Chrome",
+      "validated_target": {
+        "selector": "#nested-list",
+        "x": 80,
+        "y": 650
+      },
+      "actual_scroll_arguments": {
+        "direction": "down",
+        "amount": 300
+      },
+      "receipt_execution": "executed"
+    },
+    {
+      "boundary": "real installed Octop scroll; mocked CDP client, no Chrome",
+      "requested_direction": "right",
+      "requested_amount": 300,
+      "actual_cdp_method": "Input.dispatchMouseEvent",
+      "actual_cdp_parameters": {
+        "type": "mouseWheel",
+        "x": 400,
+        "y": 300,
+        "deltaX": 300,
+        "deltaY": -300
+      }
+    }
+  ]
+}

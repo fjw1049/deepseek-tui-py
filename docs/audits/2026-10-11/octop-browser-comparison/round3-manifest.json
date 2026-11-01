@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-12",
+  "round": 3,
+  "prior_validation": "round2-manifest.json",
+  "validation": {
+    "backend_passed": 288,
+    "backend_skipped": 1,
+    "skip_reason": "FFmpeg unavailable",
+    "source_ruff": "passed",
+    "compileall": "passed",
+    "javascript_syntax": "passed",
+    "git_diff_check": "passed",
+    "offline_wheel_build": "passed",
+    "wheel_script_content_matches": true
+  },
+  "wheel_sha256": "d0ded7ec684537c7733ce81eadc46ed97bcfc98f7529608dbc9b06d0fe20b021",
+  "source_sha256": {
+    "src/deepseek_tui/browser/recording.py": "198f54912b2a29fbf5fb3ac40ba0f1c4859fc0fade3d27a118bd3cf7cc012e81",
+    "src/deepseek_tui/browser/recording.js": "3e797cc61fe43798d35ee7eb49c03d6771a85d5def17087b5ce4febae5ecca3f",
+    "src/deepseek_tui/browser/frames.py": "c621ec6938464c814b2bc17855c945146b0a3d3159bd8c7d96075b36e366d012",
+    "src/deepseek_tui/browser/workflows.py": "3c7281d669fd09973d1ce986a6035e6f000f1c6a7f354442fefe4175fee9afc8",
+    "src/deepseek_tui/browser/service.py": "c04ecb76a93e78f94e2fd2a3289334e047b5b90b528b57954b77576aa8c503d8",
+    "src/deepseek_tui/browser/skills.py": "3910a932cd563894cb056b13c5ed2f84c24fac0204e086a4aa5328aba48fa4df",
+    "src/deepseek_tui/tools/browser.py": "c1f91c5e70822c45992e3fcb3dc802dee92742c73bf805dfdcc2cc02d864ba6b",
+    "tests/test_browser_recording.py": "711cd933d0929f1fe52fbe8dd4d4231ab66f37c0f1cc35fef69765d86a2ee3e0",
+    "tests/test_browser_chromium.py": "c38676b35f05069c3775a4cda815928611ecf542db9274c5b8daf75af2b47001",
+    "tests/test_browser_extensions.py": "8d42c0032d375f90531416016b04012ab6992c4c4a0e0fbfd72d9fe9b838d36a",
+    "THIRD_PARTY_NOTICES.md": "d96785b1342610aab5b0e2dcfea6a4135080c4d44f69262f7204b04a62dd6ffe"
+  }
+}

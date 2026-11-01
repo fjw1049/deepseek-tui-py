@@ -1,0 +1,15 @@
+{
+  "evidence": "current injected BrowserActionError; not a live transport failure",
+  "http": {
+    "status": 409,
+    "detail": "Transport disconnected; outcome unknown. Observe before retrying."
+  },
+  "tool_receipt": {
+    "action_id": "synthetic_action",
+    "action": "reload",
+    "execution": "unknown",
+    "effect": "unchecked"
+  },
+  "http_receipt_preserved": false,
+  "tool_receipt_preserved": true
+}

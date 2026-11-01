@@ -1,0 +1,66 @@
+{
+  "version": "6.4.0",
+  "engines": {
+    "node": "^22.19.0 || ^24.11.0 || >=26.0.0"
+  },
+  "dist": {
+    "shasum": "c919f5c7742ab2abf601db422e4e8fea36d511c2",
+    "tarball": "https://registry.npmjs.org/rea-agents/-/rea-agents-6.4.0.tgz",
+    "fileCount": 1161,
+    "integrity": "sha512-Vj1zWfSlna5bphGoaoI/TcVBuYvze9u+OyPC3Shz8YkBqaCTqB4COnnRoX7XDwMpwI24ZlFEel2yEj0k8LTWEQ==",
+    "signatures": [
+      {
+        "sig": "MEYCIQC8H2XX3zQn89pNlCNBsnhhUcqDBrbAfoc2y2/Ixid/CAIhAO7SVmWWQ+a0NZ1uNGXkJMlGNzKzLW1cwTz2XlNqWier",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+      },
+      {
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "sig": "MEYCIQDiIupsDoBv2NnE86IZ3POidRudZb6hw3ggB4CbzuOCgAIhALGlbgY+1xT1VXnMicB41Uc/1UOsR7xwd3w/sgxHbG1V"
+      }
+    ],
+    "attestations": {
+      "url": "https://registry.npmjs.org/-/npm/v1/attestations/rea-agents@6.4.0",
+      "provenance": {
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    },
+    "unpackedSize": 7776450
+  },
+  "dependencies": {
+    "ws": "8.21.0",
+    "ajv": "8.20.0",
+    "zod": "4.4.3",
+    "diff": "9.0.0",
+    "pino": "10.4.0",
+    "yaml": "2.9.0",
+    "incur": "0.6.1",
+    "plist": "5.0.0",
+    "evmole": "0.9.3",
+    "ignore": "7.0.6",
+    "parse5": "8.0.1",
+    "semver": "7.8.5",
+    "smol-toml": "1.9.0",
+    "har-schema": "2.0.0",
+    "ajv-formats": "3.0.1",
+    "cross-spawn": "7.0.6",
+    "stream-json": "3.7.0",
+    "@babel/types": "8.0.4",
+    "canonicalize": "3.0.0",
+    "jsonc-parser": "3.3.1",
+    "@babel/parser": "8.0.4",
+    "lossless-json": "4.3.1",
+    "@clack/prompts": "1.7.0",
+    "@electron/asar": "4.2.0",
+    "@xmldom/xmldom": "0.9.12",
+    "@zip.js/zip.js": "2.15.0",
+    "isomorphic-git": "1.38.7",
+    "@xterm/headless": "6.0.0",
+    "playwright-core": "1.58.2",
+    "@lydell/node-pty": "1.1.0",
+    "write-file-atomic": "7.0.0",
+    "@xterm/addon-serialize": "0.14.0",
+    "@jridgewell/trace-mapping": "0.3.31",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1"
+  }
+}

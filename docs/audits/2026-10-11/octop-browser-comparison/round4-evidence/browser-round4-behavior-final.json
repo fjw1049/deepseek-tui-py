@@ -1,0 +1,217 @@
+{
+  "fixture_version": 1,
+  "source": "current_workspace",
+  "behavior": [
+    {
+      "language": "en",
+      "variant": 0,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.632083992590196,
+      "input_p95_ms": 18.317249981919304,
+      "projection_chars": 1735,
+      "projection_utf8_bytes": 1735,
+      "projection_token_estimate": 532,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": [
+        {
+          "action_id": "cbe9875f3cb94b359ce3d8604974fc5a",
+          "action": "open",
+          "queue_ms": 0.11,
+          "observe_ms": 20.68,
+          "execute_and_observe_ms": 220.78,
+          "total_ms": 224.13
+        },
+        {
+          "action_id": "ea934ab2e7dc4fbea166da5e09d8ccf0",
+          "action": "observe",
+          "queue_ms": 0.08,
+          "observe_ms": 3.32,
+          "execute_and_observe_ms": 7.12,
+          "total_ms": 7.23
+        },
+        {
+          "action_id": "ef8e7444e51a4416900aad5e2d597fa4",
+          "action": "fill",
+          "queue_ms": 0.02,
+          "observe_ms": 3.38,
+          "execute_and_observe_ms": 179.11,
+          "total_ms": 181.54
+        },
+        {
+          "action_id": "e73417432fd7464aa93b4273943d73ab",
+          "action": "observe",
+          "queue_ms": 0.01,
+          "observe_ms": 2.58,
+          "execute_and_observe_ms": 3.21,
+          "total_ms": 3.24
+        },
+        {
+          "action_id": "41b7f4acaf804e4abc79f3bb7568f829",
+          "action": "click",
+          "queue_ms": 0.01,
+          "observe_ms": 4.32,
+          "execute_and_observe_ms": 167.71,
+          "total_ms": 168.99
+        },
+        {
+          "action_id": "0dcbfe8f9af54098988504d149a0fa14",
+          "action": "wait",
+          "queue_ms": 0.02,
+          "observe_ms": 3.56,
+          "execute_and_observe_ms": 377.47,
+          "total_ms": 377.51
+        }
+      ]
+    },
+    {
+      "language": "zh",
+      "variant": 1,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.68187500035856,
+      "input_p95_ms": 16.85900002485141,
+      "projection_chars": 1691,
+      "projection_utf8_bytes": 1727,
+      "projection_token_estimate": 532,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": [
+        {
+          "action_id": "d46bc6c76e2b4829bed0e7609419fc35",
+          "action": "open",
+          "queue_ms": 0.04,
+          "observe_ms": 6.44,
+          "execute_and_observe_ms": 196.23,
+          "total_ms": 201.87
+        },
+        {
+          "action_id": "2f0dd7a1786f4a0cb59552a86c869089",
+          "action": "observe",
+          "queue_ms": 0.02,
+          "observe_ms": 3.39,
+          "execute_and_observe_ms": 4.09,
+          "total_ms": 4.12
+        },
+        {
+          "action_id": "060a56abf3a043f5ad211365f8daba87",
+          "action": "fill",
+          "queue_ms": 0.01,
+          "observe_ms": 4.84,
+          "execute_and_observe_ms": 176.65,
+          "total_ms": 177.91
+        },
+        {
+          "action_id": "5756dcfa7ee54ac18cbb1b5a8a32986c",
+          "action": "observe",
+          "queue_ms": 0.02,
+          "observe_ms": 3.67,
+          "execute_and_observe_ms": 4.53,
+          "total_ms": 4.57
+        },
+        {
+          "action_id": "6073eceb42d64fb9afb2777084882418",
+          "action": "click",
+          "queue_ms": 0.01,
+          "observe_ms": 9.83,
+          "execute_and_observe_ms": 177.89,
+          "total_ms": 179.43
+        },
+        {
+          "action_id": "cda71544b17345d8ae0e0eb5e3412f5e",
+          "action": "wait",
+          "queue_ms": 0.02,
+          "observe_ms": 3.21,
+          "execute_and_observe_ms": 383.32,
+          "total_ms": 383.35
+        }
+      ]
+    },
+    {
+      "language": "en",
+      "variant": 2,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.63074998941738,
+      "input_p95_ms": 19.22104202094488,
+      "projection_chars": 1735,
+      "projection_utf8_bytes": 1735,
+      "projection_token_estimate": 529,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": [
+        {
+          "action_id": "a779dc8d1bed4e3892ae90edcd77e7ce",
+          "action": "open",
+          "queue_ms": 0.04,
+          "observe_ms": 3.7,
+          "execute_and_observe_ms": 192.38,
+          "total_ms": 194.62
+        },
+        {
+          "action_id": "255d96fb661041538ed1e01bc1551a20",
+          "action": "observe",
+          "queue_ms": 0.01,
+          "observe_ms": 2.45,
+          "execute_and_observe_ms": 3.08,
+          "total_ms": 3.1
+        },
+        {
+          "action_id": "578eff2ba29544ec8a59bc22fd8e1288",
+          "action": "fill",
+          "queue_ms": 0.01,
+          "observe_ms": 19.56,
+          "execute_and_observe_ms": 193.16,
+          "total_ms": 194.48
+        },
+        {
+          "action_id": "3f7d4ecfcc4244fba29cd07d87f15b28",
+          "action": "observe",
+          "queue_ms": 0.02,
+          "observe_ms": 3.81,
+          "execute_and_observe_ms": 5.01,
+          "total_ms": 5.05
+        },
+        {
+          "action_id": "5698700a1ee44b69ae0018fc378a09b8",
+          "action": "click",
+          "queue_ms": 0.02,
+          "observe_ms": 2.91,
+          "execute_and_observe_ms": 276.4,
+          "total_ms": 279.27
+        },
+        {
+          "action_id": "16ca1a7e25434902ad20a9201413b534",
+          "action": "wait",
+          "queue_ms": 0.01,
+          "observe_ms": 3.33,
+          "execute_and_observe_ms": 269.16,
+          "total_ms": 269.19
+        }
+      ]
+    }
+  ],
+  "real_model": []
+}

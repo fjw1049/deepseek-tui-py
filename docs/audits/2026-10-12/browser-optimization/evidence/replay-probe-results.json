@@ -1,0 +1,24 @@
+[
+  {
+    "name": "oversized_later_input",
+    "evidence": "real_loopback_chrome",
+    "status": "failed",
+    "error": "1 validation error for BrowserAction\ntext\n  String should have at most 8000 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_too_long",
+    "earlier_clicks": 1
+  },
+  {
+    "name": "async_input_verification",
+    "evidence": "real_loopback_chrome",
+    "initial": "failed",
+    "elapsed_ms": 0,
+    "after_condition_reached": "passed"
+  },
+  {
+    "name": "mask_all_contenteditable_target_metadata",
+    "evidence": "real_loopback_chrome",
+    "raw_event_contains_private_text": false,
+    "semantic_document_contains_private_text": false,
+    "exported_skill_contains_private_text": false,
+    "recorded_value_is_masked": true
+  }
+]

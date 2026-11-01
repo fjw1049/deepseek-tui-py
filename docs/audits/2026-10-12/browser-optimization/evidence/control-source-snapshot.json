@@ -1,0 +1,95 @@
+{
+  "recorded_at": "2026-10-12T14:39:38.176183+00:00",
+  "files": [
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+      "sha256": "4c0968df0f2d7c57e3c14a51f06054edb9a732304ce8b035c309214e8c3080e0",
+      "modified_at": "2026-10-11T21:58:08.441501+00:00",
+      "bytes": 64802
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+      "sha256": "73f80729c6dc70b79b8551a528e49c37341d10a6a17838cc7b953cc73f11335b",
+      "modified_at": "2026-10-11T18:30:46.157869+00:00",
+      "bytes": 21025
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/picker.py",
+      "sha256": "3ac086472a4c0a3bfa5f1da53688f6f9c662622763d6717daa3c3f5ca82c6000",
+      "modified_at": "2026-10-10T07:59:03.936635+00:00",
+      "bytes": 2561
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/skills.py",
+      "sha256": "98614928327233c02a24ed3c2510372cafe826e82af618da103fc325f22c4432",
+      "modified_at": "2026-10-11T16:11:26.973244+00:00",
+      "bytes": 6450
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/recording.py",
+      "sha256": "91ae781c9e94ffcf81f2a497479da7c4a4e3456523860e46e929b6230770ee76",
+      "modified_at": "2026-10-12T14:36:35.021203+00:00",
+      "bytes": 9246
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/recording.js",
+      "sha256": "3f9214069d8d790b63593e4cb55aa3db83580bb11d9266a4cd869fb0bcbf65db",
+      "modified_at": "2026-10-12T14:36:34.972304+00:00",
+      "bytes": 8455
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/__init__.py",
+      "sha256": "c79b6b36b82ab07289635aad875ea8e7ab17bb0d04a1c3a7b7b9f4dc438755e4",
+      "modified_at": "2026-10-10T07:59:03.935840+00:00",
+      "bytes": 67
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/context.py",
+      "sha256": "110d852041b6aa1b1d9e3ae2b783f4a71f8344a2c07eecb8762991b23360fb90",
+      "modified_at": "2026-10-11T16:16:13.694577+00:00",
+      "bytes": 4839
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/frames.py",
+      "sha256": "e861b057b2a1943ea44461f0b1664ad14de64ae6340e92bc7841717496c11847",
+      "modified_at": "2026-10-12T14:36:34.934051+00:00",
+      "bytes": 10405
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/input.py",
+      "sha256": "a6eff9005d21757c21ecdbf440bb97122e4c5151037c751bbf62c36c807caef6",
+      "modified_at": "2026-10-12T14:15:40.705474+00:00",
+      "bytes": 8914
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/workflows.py",
+      "sha256": "1f52650bbb435922e0a0023adaf14420968e489c0bdf6bde996babdc813c4103",
+      "modified_at": "2026-10-12T14:35:21.650096+00:00",
+      "bytes": 13286
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/browser_demo.html",
+      "sha256": "68c9fdcf3a5af6e3294a244e62e72df15f2e6ceda61045f4f452f7e5c249e4e8",
+      "modified_at": "2026-10-10T07:59:03.936409+00:00",
+      "bytes": 1982
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/install.py",
+      "sha256": "ea2f48fbad90a78f4d80793740d0a2293badfb912cdfd0c6c1afecbfd5131407",
+      "modified_at": "2026-10-10T07:59:03.936581+00:00",
+      "bytes": 3736
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/video.py",
+      "sha256": "b1996fc679373c7fa9725e5ececb69490f155fa791eb909337310b56c3c02f90",
+      "modified_at": "2026-10-10T07:59:03.936918+00:00",
+      "bytes": 3198
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_chromium.py",
+      "sha256": "6e5098edcec76efec4f3aab770e1b63c2c341f3593345dc78699eac6d51e6e09",
+      "modified_at": "2026-10-12T14:39:01.494952+00:00",
+      "bytes": 51889
+    }
+  ]
+}

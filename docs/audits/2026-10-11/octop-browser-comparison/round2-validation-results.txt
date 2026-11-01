@@ -1,0 +1,212 @@
+Browser harness round 2 validation, 2026-10-12
+
+Initial keyboard / label reproduction
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+________ test_press_printable_key_inserts_once_with_native_events[a-a] _________
+tests/test_browser_chromium.py:813: in test_press_printable_key_inserts_once_with_native_events
+    assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == expected
+E   AssertionError: assert '' == 'a'
+E     
+E     - a
+_____ test_press_printable_key_inserts_once_with_native_events[Shift+a-A] ______
+tests/test_browser_chromium.py:813: in test_press_printable_key_inserts_once_with_native_events
+    assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == expected
+E   AssertionError: assert '' == 'A'
+E     
+E     - A
+______ test_press_printable_key_inserts_once_with_native_events[Space- ] _______
+tests/test_browser_chromium.py:813: in test_press_printable_key_inserts_once_with_native_events
+    assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == expected
+E   AssertionError: assert '' == ' '
+E     
+E     Strings contain only whitespace, escaping them using repr()
+E     - ' '
+E     ?  -
+E     + ''
+________ test_press_printable_key_inserts_once_with_native_events[+-+] _________
+tests/test_browser_chromium.py:811: in test_press_printable_key_inserts_once_with_native_events
+    result = await act(service, await read(service), "press", selector="#q", key=key)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_browser_chromium.py:85: in act
+    BrowserAction(action=action, observation_id=observation["observation_id"], **kwargs),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   pydantic_core._pydantic_core.ValidationError: 1 validation error for BrowserAction
+E     Value error, Unsupported key modifier:  [type=value_error, input_value={'action': 'press', 'obse...ctor': '#q', 'key': '+'}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.13/v/value_error
+_____ test_press_printable_key_inserts_once_with_native_events[Shift+1-!] ______
+tests/test_browser_chromium.py:813: in test_press_printable_key_inserts_once_with_native_events
+    assert await evaluate(run.session._internal.client, "document.querySelector('#q').value") == expected
+E   AssertionError: assert '' == '!'
+E     
+E     - !
+_______________ test_press_rejects_target_that_cannot_gain_focus _______________
+tests/test_browser_chromium.py:825: in test_press_rejects_target_that_cannot_gain_focus
+    assert not result["success"] and result["receipt"]["execution"] == "not_executed", result
+E   AssertionError: {'artifact': None, 'content': 'press', 'history': [{'action': 'open', 'effect': 'unchecked', 'execution': 'executed', ...: True, ...}, 'control_generation': 0, 'document_id': '3809F6ACA21858A0FBFDFDBE983E2A7C', 'dom_revision': 1, ...}, ...}
+E   assert (not True)
+_______ test_shadow_label_uses_its_own_tree_and_guards_semantic_changes ________
+tests/test_browser_chromium.py:836: in test_shadow_label_uses_its_own_tree_and_guards_semantic_changes
+    target_ref = ref(observation, "Inner name")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_browser_chromium.py:79: in ref
+    return next(e["ref"] for e in observation["elements"] if e["name"] == name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:469: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:716: in inner
+    runner.run(coro, context=context)
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_press_printable_key_inserts_once_with_native_events[a-a]
+FAILED tests/test_browser_chromium.py::test_press_printable_key_inserts_once_with_native_events[Shift+a-A]
+FAILED tests/test_browser_chromium.py::test_press_printable_key_inserts_once_with_native_events[Space- ]
+FAILED tests/test_browser_chromium.py::test_press_printable_key_inserts_once_with_native_events[+-+]
+FAILED tests/test_browser_chromium.py::test_press_printable_key_inserts_once_with_native_events[Shift+1-!]
+FAILED tests/test_browser_chromium.py::test_press_rejects_target_that_cannot_gain_focus
+FAILED tests/test_browser_chromium.py::test_shadow_label_uses_its_own_tree_and_guards_semantic_changes
+7 failed, 32 deselected in 6.28s
+
+
+Shadow path / scope reproduction
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_______ test_shadow_path_replay_never_fills_similar_parent_target[False] _______
+tests/test_browser_chromium.py:867: in test_shadow_path_replay_never_fills_similar_parent_target
+    assert await evaluate(run.session._internal.client,
+E   AssertionError: assert 'child' == 'replacement'
+E     
+E     - replacement
+E     + child
+_______ test_shadow_path_replay_never_fills_similar_parent_target[True] ________
+tests/test_browser_chromium.py:862: in test_shadow_path_replay_never_fills_similar_parent_target
+    with pytest.raises(ValueError, match="matching"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+____________ test_scoped_shadow_observation_can_continue_large_tree ____________
+tests/test_browser_chromium.py:878: in test_scoped_shadow_observation_can_continue_large_tree
+    first = (await service.action("t", BrowserAction(action="observe", shadow_path=["#host"],
+E   pydantic_core._pydantic_core.ValidationError: 1 validation error for BrowserAction
+E   shadow_path
+E     Extra inputs are not permitted [type=extra_forbidden, input_value=['#host'], input_type=list]
+E       For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_shadow_path_replay_never_fills_similar_parent_target[False]
+FAILED tests/test_browser_chromium.py::test_shadow_path_replay_never_fills_similar_parent_target[True]
+FAILED tests/test_browser_chromium.py::test_scoped_shadow_observation_can_continue_large_tree
+3 failed, 39 deselected in 2.76s
+
+
+Focus / frame transform reproduction
+FFF.                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_field_input_does_not_edit_previous_field_when_click_cannot_focus[fill] __
+tests/test_browser_chromium.py:954: in test_field_input_does_not_edit_previous_field_when_click_cannot_focus
+    assert await evaluate(run.session._internal.client,
+E   AssertionError: assert ['replacement', 'TARGET', 2] == ['KEEP', 'TARGET', 0]
+E     
+E     At index 0 diff: 'replacement' != 'KEEP'
+E     Use -v to get more diff
+_ test_field_input_does_not_edit_previous_field_when_click_cannot_focus[type] __
+tests/test_browser_chromium.py:953: in test_field_input_does_not_edit_previous_field_when_click_cannot_focus
+    assert not result["success"], result
+E   AssertionError: {'artifact': None, 'content': 'Typed 11 character(s)', 'history': [{'action': 'open', 'effect': 'unchecked', 'executio...: True, ...}, 'control_generation': 0, 'document_id': '5C904F08BFFB4C13337AA1B607310C0C', 'dom_revision': 1, ...}, ...}
+E   assert not True
+_________ test_transformed_same_origin_frame_is_rejected_before_click __________
+tests/test_browser_chromium.py:965: in test_transformed_same_origin_frame_is_rejected_before_click
+    assert result["receipt"]["execution"] == "not_executed", result
+E   AssertionError: {'artifact': None, 'content': 'Clicked ref=deepseek_target at (97, 305)', 'history': [{'action': 'open', 'effect': 'un...: True, ...}, 'control_generation': 0, 'document_id': '5487B98DF28F2675322DEC75664C71ED', 'dom_revision': 2, ...}, ...}
+E   assert 'executed' == 'not_executed'
+E     
+E     - not_executed
+E     ? ----
+E     + executed
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_field_input_does_not_edit_previous_field_when_click_cannot_focus[fill]
+FAILED tests/test_browser_chromium.py::test_field_input_does_not_edit_previous_field_when_click_cannot_focus[type]
+FAILED tests/test_browser_chromium.py::test_transformed_same_origin_frame_is_rejected_before_click
+3 failed, 1 passed, 42 deselected in 3.91s
+
+
+Balanced fill key reproduction
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_fill_balances_shortcut_keys_before_replacing_text ____________
+tests/test_browser_chromium.py:1003: in test_fill_balances_shortcut_keys_before_replacing_text
+    assert await evaluate(run.session._internal.client, "window.keys") == [
+E   AssertionError: assert [['keydown', ...pace', False]] == [['keydown', ...pace', False]]
+E     
+E     At index 0 diff: ['keydown', 'a', False] != ['keydown', 'a', True]
+E     Right contains one more item: ['keyup', 'Backspace', False]
+E     Use -v to get more diff
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_fill_balances_shortcut_keys_before_replacing_text
+1 failed, 46 deselected in 1.12s
+
+
+Workflow preflight reproduction
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_workflow_rejects_invalid_later_input_before_taking_control[press-None-UnsupportedKey-Unsupported] _
+tests/test_browser_module.py:306: in test_workflow_rejects_invalid_later_input_before_taking_control
+    with pytest.raises(ValueError, match=error):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+_ test_workflow_rejects_invalid_later_input_before_taking_control[set_checked-maybe-None-Checkbox] _
+tests/test_browser_module.py:306: in test_workflow_rejects_invalid_later_input_before_taking_control
+    with pytest.raises(ValueError, match=error):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+_ test_workflow_rejects_invalid_later_input_before_taking_control[set_checked-{{confirmation}}-None-Missing] _
+tests/test_browser_module.py:306: in test_workflow_rejects_invalid_later_input_before_taking_control
+    with pytest.raises(ValueError, match=error):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+=========================== short test summary info ============================
+FAILED tests/test_browser_module.py::test_workflow_rejects_invalid_later_input_before_taking_control[press-None-UnsupportedKey-Unsupported]
+FAILED tests/test_browser_module.py::test_workflow_rejects_invalid_later_input_before_taking_control[set_checked-maybe-None-Checkbox]
+FAILED tests/test_browser_module.py::test_workflow_rejects_invalid_later_input_before_taking_control[set_checked-{{confirmation}}-None-Missing]
+3 failed, 47 deselected in 0.20s
+
+
+Extra modifier reproduction
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_extra_modifiers_do_not_trigger_select_all_editing_command[Ctrl+Alt+a] __
+tests/test_browser_chromium.py:1073: in test_extra_modifiers_do_not_trigger_select_all_editing_command
+    assert await evaluate(run.session._internal.client,
+E   assert [0, 5] == [1, 1]
+E     
+E     At index 0 diff: 0 != 1
+E     Use -v to get more diff
+_ test_extra_modifiers_do_not_trigger_select_all_editing_command[Ctrl+Shift+a] _
+tests/test_browser_chromium.py:1073: in test_extra_modifiers_do_not_trigger_select_all_editing_command
+    assert await evaluate(run.session._internal.client,
+E   assert [0, 5] == [1, 1]
+E     
+E     At index 0 diff: 0 != 1
+E     Use -v to get more diff
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_extra_modifiers_do_not_trigger_select_all_editing_command[Ctrl+Alt+a]
+FAILED tests/test_browser_chromium.py::test_extra_modifiers_do_not_trigger_select_all_editing_command[Ctrl+Shift+a]
+2 failed, 48 deselected in 1.93s
+
+
+Final comprehensive regression
+......................................................................s. [ 27%]
+........................................................................ [ 54%]
+........................................................................ [ 82%]
+...............................................                          [100%]
+262 passed, 1 skipped in 74.18s (0:01:14)
+
+
+Source Ruff: passed. Python compileall: passed. git diff --check: passed.

@@ -1,0 +1,605 @@
+{
+  "fixture_version": 1,
+  "source": "current_workspace",
+  "behavior": [
+    {
+      "language": "en",
+      "variant": 0,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.617208006209694,
+      "input_p95_ms": 17.189624981256202,
+      "projection_chars": 1735,
+      "projection_utf8_bytes": 1735,
+      "projection_token_estimate": 542,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": [
+        {
+          "action_id": "e9b992dba8e544d1a2702922c71ffae5",
+          "action": "open",
+          "queue_ms": 0.09,
+          "observe_ms": 5.38,
+          "execute_and_observe_ms": 183.08,
+          "total_ms": 193.02
+        },
+        {
+          "action_id": "b2056560aa7c40f2adb133c4e80b0510",
+          "action": "observe",
+          "queue_ms": 0.01,
+          "observe_ms": 4.64,
+          "execute_and_observe_ms": 5.26,
+          "total_ms": 5.29
+        },
+        {
+          "action_id": "f7579fb700074e63a19d85abb4e45651",
+          "action": "fill",
+          "queue_ms": 0.01,
+          "observe_ms": 4.53,
+          "execute_and_observe_ms": 176.47,
+          "total_ms": 177.83
+        },
+        {
+          "action_id": "d24843100529490f9054aaf88d264473",
+          "action": "observe",
+          "queue_ms": 0.02,
+          "observe_ms": 2.95,
+          "execute_and_observe_ms": 3.72,
+          "total_ms": 3.75
+        },
+        {
+          "action_id": "be6915ebc6db40e6b8576ab2171d3a5a",
+          "action": "click",
+          "queue_ms": 0.01,
+          "observe_ms": 5.13,
+          "execute_and_observe_ms": 170.55,
+          "total_ms": 172.01
+        },
+        {
+          "action_id": "3b6568007b3a4a8cb430b2a2253b8ac1",
+          "action": "wait",
+          "queue_ms": 0.02,
+          "observe_ms": 6.09,
+          "execute_and_observe_ms": 381.48,
+          "total_ms": 381.53
+        }
+      ]
+    },
+    {
+      "language": "zh",
+      "variant": 1,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.68687499477528,
+      "input_p95_ms": 18.58529099263251,
+      "projection_chars": 1691,
+      "projection_utf8_bytes": 1727,
+      "projection_token_estimate": 530,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": [
+        {
+          "action_id": "8d4c4f91e9494865930465c9cc6d2351",
+          "action": "open",
+          "queue_ms": 0.04,
+          "observe_ms": 26.05,
+          "execute_and_observe_ms": 238.37,
+          "total_ms": 270.38
+        },
+        {
+          "action_id": "d0a05edd55ec4b84905868b7dfcb21dd",
+          "action": "observe",
+          "queue_ms": 0.01,
+          "observe_ms": 4.67,
+          "execute_and_observe_ms": 5.97,
+          "total_ms": 6.0
+        },
+        {
+          "action_id": "19b3e727bb524ebc8f7c7f01214cae64",
+          "action": "fill",
+          "queue_ms": 0.02,
+          "observe_ms": 5.85,
+          "execute_and_observe_ms": 208.31,
+          "total_ms": 210.45
+        },
+        {
+          "action_id": "3b9698f816674efdad779f5dca50d2f4",
+          "action": "observe",
+          "queue_ms": 0.03,
+          "observe_ms": 13.75,
+          "execute_and_observe_ms": 15.03,
+          "total_ms": 15.09
+        },
+        {
+          "action_id": "73e7ff835aa04a6984dbce6877953a66",
+          "action": "click",
+          "queue_ms": 0.02,
+          "observe_ms": 16.15,
+          "execute_and_observe_ms": 239.9,
+          "total_ms": 246.13
+        },
+        {
+          "action_id": "bce92b3225d1410480d9e17d37cc4017",
+          "action": "wait",
+          "queue_ms": 0.02,
+          "observe_ms": 15.66,
+          "execute_and_observe_ms": 350.17,
+          "total_ms": 350.21
+        }
+      ]
+    },
+    {
+      "language": "en",
+      "variant": 2,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.652666497975588,
+      "input_p95_ms": 17.468249978264794,
+      "projection_chars": 1735,
+      "projection_utf8_bytes": 1735,
+      "projection_token_estimate": 528,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": [
+        {
+          "action_id": "9788daf459514c088b1053dfcd92f3e5",
+          "action": "open",
+          "queue_ms": 0.04,
+          "observe_ms": 6.01,
+          "execute_and_observe_ms": 233.27,
+          "total_ms": 237.62
+        },
+        {
+          "action_id": "5c340f693e924e79a1469d18b41bd984",
+          "action": "observe",
+          "queue_ms": 0.02,
+          "observe_ms": 6.95,
+          "execute_and_observe_ms": 8.83,
+          "total_ms": 8.87
+        },
+        {
+          "action_id": "9b8616599cf34a2abd49f4dc0db71d84",
+          "action": "fill",
+          "queue_ms": 0.02,
+          "observe_ms": 3.77,
+          "execute_and_observe_ms": 181.01,
+          "total_ms": 182.99
+        },
+        {
+          "action_id": "e45f5e76eec443daa5113d395aadf694",
+          "action": "observe",
+          "queue_ms": 0.01,
+          "observe_ms": 2.84,
+          "execute_and_observe_ms": 3.59,
+          "total_ms": 3.62
+        },
+        {
+          "action_id": "a49976003bdc457ba3498a3349a71458",
+          "action": "click",
+          "queue_ms": 0.01,
+          "observe_ms": 3.07,
+          "execute_and_observe_ms": 267.5,
+          "total_ms": 268.86
+        },
+        {
+          "action_id": "ddf374f983274d7cb35f5898cc059fa2",
+          "action": "wait",
+          "queue_ms": 0.01,
+          "observe_ms": 3.73,
+          "execute_and_observe_ms": 271.73,
+          "total_ms": 271.76
+        }
+      ]
+    }
+  ],
+  "real_model": [
+    {
+      "language": "en",
+      "variant": 0,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "模型验收"
+        }
+      },
+      "model": "deepseek-v4-pro",
+      "rounds": 6,
+      "usage": [
+        {
+          "input_tokens": 5825,
+          "output_tokens": 112,
+          "cache_creation_input_tokens": 5825,
+          "cache_read_input_tokens": 0,
+          "reasoning_tokens": 66,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 6389,
+          "output_tokens": 57,
+          "cache_creation_input_tokens": 501,
+          "cache_read_input_tokens": 5888,
+          "reasoning_tokens": 10,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 7581,
+          "output_tokens": 243,
+          "cache_creation_input_tokens": 1181,
+          "cache_read_input_tokens": 6400,
+          "reasoning_tokens": 123,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 9112,
+          "output_tokens": 164,
+          "cache_creation_input_tokens": 1560,
+          "cache_read_input_tokens": 7552,
+          "reasoning_tokens": 61,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 10514,
+          "output_tokens": 386,
+          "cache_creation_input_tokens": 1426,
+          "cache_read_input_tokens": 9088,
+          "reasoning_tokens": 323,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 12104,
+          "output_tokens": 199,
+          "cache_creation_input_tokens": 1608,
+          "cache_read_input_tokens": 10496,
+          "reasoning_tokens": 97,
+          "input_tokens_include_cache": true
+        }
+      ],
+      "model_seconds": [
+        4.284998083981918,
+        1.062281916005304,
+        2.4525903339963406,
+        1.2818057499825954,
+        2.907002542022383,
+        1.9786745000164956
+      ],
+      "total_seconds": 14.59295774999191,
+      "error": null,
+      "answer": "The task is complete. Here's what I did and verified:\n\n1. **Changed** Record A's Draft field to `模型验收`.\n2. **Saved once** by clicking Record A's Save button.\n3. **Verified** the saved content in Record A itself: the page now displays **`Saved A: 模型验收`** within Record A's section.\n\nRecord B was left untouched — it still shows only `Record B / Draft / Save` with no \"Saved B\" indicator.",
+      "wrong_record_mutations": 0,
+      "duplicate_mutations": 0,
+      "assistance_requested": false,
+      "success_claim_requires_review": false,
+      "stages": [
+        {
+          "action_id": "719b64012b244375b59bdacf004b0bbc",
+          "action": "open",
+          "queue_ms": 0.02,
+          "observe_ms": 5.71,
+          "execute_and_observe_ms": 181.44,
+          "total_ms": 183.32
+        },
+        {
+          "action_id": "6298f8fbb3a64dc5a32930600793038b",
+          "action": "observe",
+          "queue_ms": 0.02,
+          "observe_ms": 3.5,
+          "execute_and_observe_ms": 4.4,
+          "total_ms": 4.43
+        },
+        {
+          "action_id": "49799c4e2bf6491f92ca4d97f8cbec4b",
+          "action": "fill",
+          "queue_ms": 0.02,
+          "observe_ms": 5.5,
+          "execute_and_observe_ms": 188.74,
+          "total_ms": 190.49
+        },
+        {
+          "action_id": "74234b3e9d0049b4a2f7b3d46d9b382d",
+          "action": "click",
+          "queue_ms": 0.02,
+          "observe_ms": 4.77,
+          "execute_and_observe_ms": 175.67,
+          "total_ms": 178.19
+        },
+        {
+          "action_id": "e1d092e9406b421996b1dd51d085242f",
+          "action": "observe",
+          "queue_ms": 0.08,
+          "observe_ms": 10.86,
+          "execute_and_observe_ms": 13.33,
+          "total_ms": 13.55
+        }
+      ]
+    },
+    {
+      "language": "zh",
+      "variant": 1,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "模型验收"
+        }
+      },
+      "model": "deepseek-v4-pro",
+      "rounds": 6,
+      "usage": [
+        {
+          "input_tokens": 5829,
+          "output_tokens": 55,
+          "cache_creation_input_tokens": 69,
+          "cache_read_input_tokens": 5760,
+          "reasoning_tokens": 9,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 6336,
+          "output_tokens": 87,
+          "cache_creation_input_tokens": 576,
+          "cache_read_input_tokens": 5760,
+          "reasoning_tokens": 24,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 7496,
+          "output_tokens": 273,
+          "cache_creation_input_tokens": 1224,
+          "cache_read_input_tokens": 6272,
+          "reasoning_tokens": 159,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 9003,
+          "output_tokens": 168,
+          "cache_creation_input_tokens": 1579,
+          "cache_read_input_tokens": 7424,
+          "reasoning_tokens": 68,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 10361,
+          "output_tokens": 651,
+          "cache_creation_input_tokens": 1401,
+          "cache_read_input_tokens": 8960,
+          "reasoning_tokens": 568,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 13389,
+          "output_tokens": 201,
+          "cache_creation_input_tokens": 3149,
+          "cache_read_input_tokens": 10240,
+          "reasoning_tokens": 92,
+          "input_tokens_include_cache": true
+        }
+      ],
+      "model_seconds": [
+        1.0374725419969764,
+        1.1361385420022998,
+        1.914490458992077,
+        1.8816852500021923,
+        5.714033125026617,
+        14.051430625026114
+      ],
+      "total_seconds": 26.25553683299222,
+      "error": null,
+      "answer": "已完成。\n\n操作过程：\n1. 在记录 A 的“草稿”输入框（`#draftA`）填入“模型验收”。\n2. 点击记录 A 的“保存”按钮一次。\n3. 等待后核对页面：记录 A 下方显示已保存状态文本 **“已保存 A: 模型验收”**，与输入内容一致，确认保存成功。\n\n记录 B 未被修改：其草稿输入框仍为空，也没有出现任何“已保存 B”状态。",
+      "wrong_record_mutations": 0,
+      "duplicate_mutations": 0,
+      "assistance_requested": false,
+      "success_claim_requires_review": false,
+      "stages": [
+        {
+          "action_id": "64589c002e374db2abb11b1abed76ebc",
+          "action": "open",
+          "queue_ms": 0.03,
+          "observe_ms": 16.67,
+          "execute_and_observe_ms": 242.05,
+          "total_ms": 254.35
+        },
+        {
+          "action_id": "ac30c6327103494ab3228c020bde7c91",
+          "action": "observe",
+          "queue_ms": 0.02,
+          "observe_ms": 8.45,
+          "execute_and_observe_ms": 10.1,
+          "total_ms": 10.16
+        },
+        {
+          "action_id": "584c9edfdf9a4b718e56cc01d06ef66e",
+          "action": "fill",
+          "queue_ms": 0.02,
+          "observe_ms": 4.25,
+          "execute_and_observe_ms": 206.87,
+          "total_ms": 211.34
+        },
+        {
+          "action_id": "34eab4512d3a46feab9ef85483bc3a88",
+          "action": "click",
+          "queue_ms": 0.02,
+          "observe_ms": 10.35,
+          "execute_and_observe_ms": 189.94,
+          "total_ms": 197.78
+        },
+        {
+          "action_id": "94ebacf3193a43b0b59bc102b862cfd9",
+          "action": "screenshot",
+          "queue_ms": 0.04,
+          "observe_ms": 3.23,
+          "capture_ms": 8.17,
+          "execute_and_observe_ms": 17.66,
+          "total_ms": 17.72
+        }
+      ]
+    },
+    {
+      "language": "en",
+      "variant": 2,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "模型验收"
+        }
+      },
+      "model": "deepseek-v4-pro",
+      "rounds": 7,
+      "usage": [
+        {
+          "input_tokens": 5825,
+          "output_tokens": 57,
+          "cache_creation_input_tokens": 65,
+          "cache_read_input_tokens": 5760,
+          "reasoning_tokens": 11,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 6334,
+          "output_tokens": 77,
+          "cache_creation_input_tokens": 574,
+          "cache_read_input_tokens": 5760,
+          "reasoning_tokens": 30,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 7514,
+          "output_tokens": 333,
+          "cache_creation_input_tokens": 1242,
+          "cache_read_input_tokens": 6272,
+          "reasoning_tokens": 216,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 9112,
+          "output_tokens": 412,
+          "cache_creation_input_tokens": 1688,
+          "cache_read_input_tokens": 7424,
+          "reasoning_tokens": 311,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 10738,
+          "output_tokens": 551,
+          "cache_creation_input_tokens": 1650,
+          "cache_read_input_tokens": 9088,
+          "reasoning_tokens": 488,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 12475,
+          "output_tokens": 495,
+          "cache_creation_input_tokens": 1851,
+          "cache_read_input_tokens": 10624,
+          "reasoning_tokens": 366,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 14327,
+          "output_tokens": 507,
+          "cache_creation_input_tokens": 1911,
+          "cache_read_input_tokens": 12416,
+          "reasoning_tokens": 374,
+          "input_tokens_include_cache": true
+        }
+      ],
+      "model_seconds": [
+        1.0424880419741385,
+        0.8694437079830095,
+        2.5555130839929916,
+        3.611345250013983,
+        5.221429957979126,
+        4.176864792010747,
+        4.1316440839727875
+      ],
+      "total_seconds": 22.229464749980252,
+      "error": null,
+      "answer": "已完成任务。\n\n操作步骤与结果：\n1. 在 Record A 的 Draft 输入框（`#draftA`）填入「模型验收」，字段状态已确认。\n2. 点击 Record A 的 Save 按钮一次。\n3. 校验 Record A 区域内容：`section[data-record=\"A\"]` 中显示「Saved A: 模型验收」，`check_text` 返回 **PASS**，确认保存内容已写入 Record A。\n\nRecord B 未做任何改动，其区域内仍只有「Record B / Draft / Save」，没有出现保存结果，Draft 保持原样。",
+      "wrong_record_mutations": 0,
+      "duplicate_mutations": 0,
+      "assistance_requested": false,
+      "success_claim_requires_review": false,
+      "stages": [
+        {
+          "action_id": "1e8714b235f44ece9bb1aa41f5ba35a2",
+          "action": "open",
+          "queue_ms": 0.03,
+          "observe_ms": 4.14,
+          "execute_and_observe_ms": 183.98,
+          "total_ms": 185.27
+        },
+        {
+          "action_id": "2deb30a382cf4382b3a83699d15e688c",
+          "action": "observe",
+          "queue_ms": 0.01,
+          "observe_ms": 2.93,
+          "execute_and_observe_ms": 3.62,
+          "total_ms": 3.65
+        },
+        {
+          "action_id": "0255b8a3f45d4a2999567dd45261dfd8",
+          "action": "fill",
+          "queue_ms": 0.01,
+          "observe_ms": 3.55,
+          "execute_and_observe_ms": 176.27,
+          "total_ms": 178.01
+        },
+        {
+          "action_id": "3bb27d2846394745a00b840b2306cafe",
+          "action": "click",
+          "queue_ms": 0.03,
+          "observe_ms": 3.83,
+          "execute_and_observe_ms": 187.03,
+          "total_ms": 188.84
+        },
+        {
+          "action_id": "511638b4fa31489f87193afbede29b78",
+          "action": "observe",
+          "queue_ms": 0.01,
+          "observe_ms": 3.2,
+          "execute_and_observe_ms": 3.97,
+          "total_ms": 4.0
+        },
+        {
+          "action_id": "9cbb971567a642169304b304bbf316a2",
+          "action": "check_text",
+          "queue_ms": 0.03,
+          "observe_ms": 5.15,
+          "execute_and_observe_ms": 171.32,
+          "total_ms": 171.39
+        }
+      ]
+    }
+  ]
+}

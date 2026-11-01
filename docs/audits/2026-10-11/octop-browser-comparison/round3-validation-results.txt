@@ -1,0 +1,93 @@
+Browser harness round 3 validation, 2026-10-12
+
+Initial native recording reproduction
+FFF.                                                                     [100%]
+=================================== FAILURES ===================================
+___ test_recorded_shadow_input_and_click_replay_in_the_original_tree[False] ____
+tests/test_browser_chromium.py:1125: in test_recorded_shadow_input_and_click_replay_in_the_original_tree
+    fill = next(step for step in doc.steps if step.kind == "fill" and (step.target or {}).get("shadowPath"))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:469: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:716: in inner
+    runner.run(coro, context=context)
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+____ test_recorded_shadow_input_and_click_replay_in_the_original_tree[True] ____
+tests/test_browser_chromium.py:1125: in test_recorded_shadow_input_and_click_replay_in_the_original_tree
+    fill = next(step for step in doc.steps if step.kind == "fill" and (step.target or {}).get("shadowPath"))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:469: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:716: in inner
+    runner.run(coro, context=context)
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+________ test_stopping_recording_flushes_the_last_input_without_waiting ________
+tests/test_browser_chromium.py:1147: in test_stopping_recording_flushes_the_last_input_without_waiting
+    assert any(step.kind == "fill" for step in doc.steps)
+E   assert False
+E    +  where False = any(<generator object test_stopping_recording_flushes_the_last_input_without_waiting.<locals>.<genexpr> at 0x1080358a0>)
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_recorded_shadow_input_and_click_replay_in_the_original_tree[False]
+FAILED tests/test_browser_chromium.py::test_recorded_shadow_input_and_click_replay_in_the_original_tree[True]
+FAILED tests/test_browser_chromium.py::test_stopping_recording_flushes_the_last_input_without_waiting
+3 failed, 1 passed, 50 deselected in 4.89s
+
+
+Frame URL mismatch reproduction
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________ test_replay_rejects_frame_url_change_before_click _______________
+tests/test_browser_chromium.py:1351: in test_replay_rejects_frame_url_change_before_click
+    with pytest.raises(ValueError, match="frame URL"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+=========================== short test summary info ============================
+FAILED tests/test_browser_chromium.py::test_replay_rejects_frame_url_change_before_click
+1 failed, 57 deselected in 1.08s
+
+
+Scope recording and replay fixed
+.....                                                                    [100%]
+5 passed, 50 deselected in 11.24s
+
+
+Cross-origin/OOPIF and recording scenarios
+........                                                                 [100%]
+8 passed, 49 deselected in 17.98s
+
+
+Targeted backend regression
+.....................................................................s.. [ 56%]
+........................................................                 [100%]
+127 passed, 1 skipped in 85.08s (0:01:25)
+
+
+Final comprehensive backend regression
+........................................................................ [ 24%]
+.......................s................................................ [ 49%]
+........................................................................ [ 74%]
+........................................................................ [ 99%]
+.                                                                        [100%]
+288 passed, 1 skipped in 94.58s (0:01:34)
+
+
+Source Ruff, compileall, Node syntax, git diff --check: passed.
+Offline wheel build: passed. Both recording resources match source byte for byte.

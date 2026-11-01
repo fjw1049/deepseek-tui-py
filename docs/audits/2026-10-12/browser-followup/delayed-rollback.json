@@ -1,0 +1,16 @@
+{
+  "boundary": "Real Chrome/current BrowserService; controlled local input only",
+  "rollback_delay_ms": 900,
+  "response_elapsed_ms": 172,
+  "fixture_value_at_return": "replacement",
+  "fixture_value_after_delay": "old",
+  "receipt": {
+    "action_id": "125d6ce5ca474f1789bbae9a3350d772",
+    "action": "fill",
+    "execution": "executed",
+    "effect": "confirmed",
+    "before_observation_id": "obs_5d9b038e24be4438988d7a4569c0816a",
+    "after_observation_id": "obs_9b45f605df6f4d5aa64c88a26d669040"
+  },
+  "interpretation": "DOM quiet plus value equality confirms an instant; it does not establish acceptance by an asynchronous application."
+}

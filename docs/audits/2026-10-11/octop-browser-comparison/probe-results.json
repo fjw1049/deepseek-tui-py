@@ -1,0 +1,89 @@
+{
+  "context_compaction": {
+    "raw_chars": 69188,
+    "model_chars": 556,
+    "context_window": 128000,
+    "raw_element_count": 100,
+    "model_remaining_refs": 0,
+    "model_has_first_ref": false,
+    "content_duplicates_observation": true,
+    "model_snippet": "[browser_use output compacted to protect context]\nSnippet: {\"success\": true, \"content\": \"{\\\"url\\\": \\\"http://127.0.0.1:62357/\\\", \\\"title\\\": \\\"Audit fixture\\\", \\\"text\\\": \\\"Reading material. Reading material. Reading material. Reading material. Reading material. Reading material. Reading material. Reading material. Reading material.\n\n[... output truncated for context ...]\n\nA53D54150CB541573E78BACC3DB67F\", \"document_id\": \"F2A1987645530D680231A5288B123EDD\", \"control_generation\": 0}, \"vision_available\": false}\n(Original: 69188 chars, omitted: 68738 chars.)"
+  },
+  "targeted_scroll": {
+    "success": true,
+    "target_scroll_top": 0
+  },
+  "horizontal_scroll": {
+    "success": true,
+    "actual_wheel": {
+      "x": 300,
+      "y": -300
+    }
+  },
+  "invalid_select": {
+    "success": true,
+    "execution": "executed",
+    "actual_value": "",
+    "actual_index": -1
+  },
+  "fill_non_editable": {
+    "success": true,
+    "button_clicks": 1
+  },
+  "keyboard_chord": {
+    "success": true,
+    "selection": [
+      3,
+      3
+    ]
+  },
+  "replay_fill": {
+    "replay_success": true,
+    "replay_value": "oldreplacement",
+    "browser_use_success": true,
+    "browser_use_value": "replacement"
+  },
+  "text_limit": {
+    "actual_page_has_sentinel": true,
+    "observation_chars": 16000,
+    "truncated": true,
+    "check_success": false
+  },
+  "element_limit": {
+    "actual_buttons": 270,
+    "returned_elements": 250,
+    "truncated": true,
+    "has_last_button": false
+  },
+  "set_checked_postcondition": {
+    "success": true,
+    "actual_checked": false
+  },
+  "recording_failure_after_click": {
+    "actual_clicks": 1,
+    "execution": "unknown",
+    "success": false
+  },
+  "batch_refs": {
+    "second_success": false,
+    "reason": "stale_observation"
+  },
+  "popup_discovery": {
+    "click_response_has_tabs": false,
+    "click_observation_url": "http://127.0.0.1:62357/",
+    "explicit_tabs_count": 2,
+    "session_state_tabs_count": 0
+  },
+  "cross_origin_frame": {
+    "warnings": [
+      "Unreadable frame"
+    ],
+    "frame_text_seen": false,
+    "has_frame_id_in_observation": false
+  },
+  "dead_session": {
+    "tool_exception": "CDPSessionError",
+    "ensure_returns_same_session": true,
+    "ui_still_claims_active": true
+  }
+}

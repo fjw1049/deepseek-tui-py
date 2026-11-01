@@ -1,0 +1,239 @@
+{
+  "target_version": "26.1007.21159",
+  "method": "Babel AST scopes and SHA-256 over inert shipped files",
+  "entries": [
+    {
+      "file": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/dist/lib/js/oai_js_cua_repl/src/launch.js",
+      "bytes": 2037,
+      "sha256": "3e52a41f4da41d35be8cc3723fe97251711087a998c1ed7f2cfdf7e20b50fc2b",
+      "findings": [
+        {
+          "anchor": "function E()",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "E",
+          "line": 1,
+          "source_start_utf16": 311,
+          "source_end_utf16": 2016,
+          "source_start_byte": 311,
+          "source_end_byte": 2016,
+          "scope_sha256": "69c28638cc28c2ad59a207532cd8d401e3c994d683bfe52cfd35717f37393830"
+        }
+      ]
+    },
+    {
+      "file": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/create_browser_api.js",
+      "bytes": 5738,
+      "sha256": "fe00757868fc4dd01b00d2cd1b315d7442497a4b33d7cd030450da4d47a114f0",
+      "findings": [
+        {
+          "anchor": "function t(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "t",
+          "line": 1,
+          "source_start_utf16": 219,
+          "source_end_utf16": 5072,
+          "source_start_byte": 219,
+          "source_end_byte": 5072,
+          "scope_sha256": "5a37e7d8c28613d9998aa2a6f6b4729a94c6221a886206217f2ea74fdb89d22f"
+        },
+        {
+          "anchor": "function n(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "n",
+          "line": 1,
+          "source_start_utf16": 5072,
+          "source_end_utf16": 5705,
+          "source_start_byte": 5072,
+          "source_end_byte": 5705,
+          "scope_sha256": "fef33758df6df0ff98b7b5bac833ae4445ac3491d81360da7b308b4a443ea50a"
+        }
+      ]
+    },
+    {
+      "file": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/bind_tab.js",
+      "bytes": 2309,
+      "sha256": "a693e078ecbaa34020cf0caa373edb9c525dad87fd3ada62706a07eadaa6dc2a",
+      "findings": [
+        {
+          "anchor": "function n(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "n",
+          "line": 1,
+          "source_start_utf16": 198,
+          "source_end_utf16": 1489,
+          "source_start_byte": 198,
+          "source_end_byte": 1489,
+          "scope_sha256": "195f493c86fe9c810f16e0f48dc7fbfa1604bfa780b9fdeb2f9fe0908dcc038f"
+        },
+        {
+          "anchor": "function u(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "u",
+          "line": 1,
+          "source_start_utf16": 1887,
+          "source_end_utf16": 2020,
+          "source_start_byte": 1887,
+          "source_end_byte": 2020,
+          "scope_sha256": "61ba14c4c4413b5a1cb7c6af8e0472838c6963b2e94770f8ce2ca5eff2dfcf90"
+        },
+        {
+          "anchor": "function c(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "c",
+          "line": 1,
+          "source_start_utf16": 2020,
+          "source_end_utf16": 2193,
+          "source_start_byte": 2020,
+          "source_end_byte": 2193,
+          "scope_sha256": "a7f4013aed672bb7ba600b844912cfeb431dc9549aee921d05aeeb0b5e2f87e5"
+        }
+      ]
+    },
+    {
+      "file": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/tab_reference.js",
+      "bytes": 1360,
+      "sha256": "d08f46f12ba96fd4a2844eae737697ab4ed51cf9a2beb6c5034362ca17108949",
+      "findings": [
+        {
+          "anchor": "function r(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "r",
+          "line": 1,
+          "source_start_utf16": 76,
+          "source_end_utf16": 824,
+          "source_start_byte": 76,
+          "source_end_byte": 824,
+          "scope_sha256": "2cfefb38eb37ccd9339f71087b0b9d30d636226418019d06dfbee8703a58b033"
+        },
+        {
+          "anchor": "function t(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "t",
+          "line": 1,
+          "source_start_utf16": 824,
+          "source_end_utf16": 1298,
+          "source_start_byte": 824,
+          "source_end_byte": 1298,
+          "scope_sha256": "d08ec9f0981dae254ca9ef6a03469c51c796ca1d4b50ddfddd3bc8569d20db27"
+        }
+      ]
+    },
+    {
+      "file": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+      "bytes": 1915181,
+      "sha256": "8c83e93bdca10cdffa9f7af80db7775ddf1d993186dbf4b8b3d32d11e9bd9666",
+      "findings": [
+        {
+          "anchor": "async performPointerAction(",
+          "ast_type": "ClassMethod",
+          "symbol": "performPointerAction",
+          "line": 5756,
+          "source_start_utf16": 1535907,
+          "source_end_utf16": 1536346,
+          "source_start_byte": 1535911,
+          "source_end_byte": 1536350,
+          "scope_sha256": "24c4f5b497f448f56e8455051f3b8ba146e5f38dda31c8c0253ace1de96ea0eb"
+        },
+        {
+          "anchor": "async resolvePointerActionTarget(",
+          "ast_type": "ClassMethod",
+          "symbol": "resolvePointerActionTarget",
+          "line": 5756,
+          "source_start_utf16": 1536346,
+          "source_end_utf16": 1538236,
+          "source_start_byte": 1536350,
+          "source_end_byte": 1538240,
+          "scope_sha256": "2fcaba5f54a9458c42d3d8acf9804691346500db93b12e67311481b58b850152"
+        },
+        {
+          "anchor": "async prepareLocatorFill(",
+          "ast_type": "ClassMethod",
+          "symbol": "prepareLocatorFill",
+          "line": 5756,
+          "source_start_utf16": 1533221,
+          "source_end_utf16": 1534247,
+          "source_start_byte": 1533225,
+          "source_end_byte": 1534251,
+          "scope_sha256": "fb9d546325e95b0b168ad5d18de19b6490a3fce6aa43c810e2c7bcb6ea2b78cd"
+        },
+        {
+          "anchor": "async function r_(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "r_",
+          "line": 6097,
+          "source_start_utf16": 1563143,
+          "source_end_utf16": 1563725,
+          "source_start_byte": 1563147,
+          "source_end_byte": 1563729,
+          "scope_sha256": "35208fbdb110dcff8c047b9fd6649c02ca861bc7ba455202c16db871797d4ada"
+        },
+        {
+          "anchor": "function Ff(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "Ff",
+          "line": 6097,
+          "source_start_utf16": 1564533,
+          "source_end_utf16": 1564730,
+          "source_start_byte": 1564537,
+          "source_end_byte": 1564734,
+          "scope_sha256": "cf232c29858c613f8796cee6a7caef8dc54579c21a03ab4788ca10f9fca2c273"
+        },
+        {
+          "anchor": "function HO(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "HO",
+          "line": 5678,
+          "source_start_utf16": 1272880,
+          "source_end_utf16": 1272987,
+          "source_start_byte": 1272884,
+          "source_end_byte": 1272991,
+          "scope_sha256": "b79ccbf728d6fa1fb0a67d67260cf60b6ea11edb4bf0151f5039b18ec4f41377"
+        },
+        {
+          "anchor": "function DJ(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "DJ",
+          "line": 5682,
+          "source_start_utf16": 1273631,
+          "source_end_utf16": 1273720,
+          "source_start_byte": 1273635,
+          "source_end_byte": 1273724,
+          "scope_sha256": "3abf9cbd443851974831b70a8458dbb0b5afed3f712596af8194ce6f38a135e8"
+        },
+        {
+          "anchor": "async function IJ(",
+          "ast_type": "FunctionDeclaration",
+          "symbol": "IJ",
+          "line": 5678,
+          "source_start_utf16": 1271797,
+          "source_end_utf16": 1272777,
+          "source_start_byte": 1271801,
+          "source_end_byte": 1272781,
+          "scope_sha256": "22658fa30d8cc852160d68c295c4487943b788813853879d7d432501ea098320"
+        },
+        {
+          "anchor": "querySelectorStrictWithVisibleFallback(injected, parsedSelector, root",
+          "ast_type": "VariableDeclarator",
+          "symbol": "la",
+          "line": 6097,
+          "source_start_utf16": 1564916,
+          "source_end_utf16": 1565691,
+          "source_start_byte": 1564920,
+          "source_end_byte": 1565695,
+          "scope_sha256": "27b8ea2d2916a221ae68eed5b51c416c79ebb12c9044bbfbfcffdb978c20ed88"
+        },
+        {
+          "anchor": "computer_use_browser_wasm_revision_create(d,",
+          "ast_type": "VariableDeclarator",
+          "symbol": "b",
+          "line": 5433,
+          "source_start_utf16": 733942,
+          "source_end_utf16": 734030,
+          "source_start_byte": 733942,
+          "source_end_byte": 734030,
+          "scope_sha256": "9fc10f963bcfac06fff3ca13fb7e8db76d6a6c350ba12313140f4b9d44115e95"
+        }
+      ]
+    }
+  ]
+}

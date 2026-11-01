@@ -1,0 +1,119 @@
+{
+  "boundary": "Real BrowserService.action/control/_action and observation.target; mocked CDP responses, click, observation, persistence, state.",
+  "production_browser_or_model_invoked": false,
+  "transfers": [
+    {
+      "case": "Page.getFrameTree",
+      "verified": true,
+      "events": [
+        {
+          "event": "transfer_requested",
+          "owner": "user",
+          "generation": 1,
+          "transfer_completed": false
+        },
+        {
+          "event": "mock_browser_click",
+          "owner_at_dispatch": "user",
+          "generation_at_dispatch": 1,
+          "transferring_at_dispatch": true
+        }
+      ],
+      "interpretation": "Current service lock defines an already-started atomic action; transfer response waits for it. Not a click after completed transfer."
+    },
+    {
+      "case": "DOM.getDocument",
+      "verified": true,
+      "events": [
+        {
+          "event": "transfer_requested",
+          "owner": "user",
+          "generation": 1,
+          "transfer_completed": false
+        },
+        {
+          "event": "mock_browser_click",
+          "owner_at_dispatch": "user",
+          "generation_at_dispatch": 1,
+          "transferring_at_dispatch": true
+        }
+      ],
+      "interpretation": "Current service lock defines an already-started atomic action; transfer response waits for it. Not a click after completed transfer."
+    }
+  ],
+  "waits": [
+    {
+      "condition_timeout_ms": 1,
+      "mock_evaluate_delay_ms": 80,
+      "mock_post_observation_delay_ms": 0,
+      "elapsed_ms": 81,
+      "success": false,
+      "verified": true,
+      "interpretation": "timeout_ms bounds condition polling softly; it is not a per-CDP or whole-action hard deadline."
+    },
+    {
+      "condition_timeout_ms": 1,
+      "mock_evaluate_delay_ms": 0,
+      "mock_post_observation_delay_ms": 80,
+      "elapsed_ms": 81,
+      "success": true,
+      "verified": true,
+      "interpretation": "timeout_ms bounds condition polling softly; it is not a per-CDP or whole-action hard deadline."
+    }
+  ],
+  "findings": [
+    {
+      "id": "A-control-boundary",
+      "classification": "reproduced design boundary, optional strengthening",
+      "source": [
+        "src/deepseek_tui/browser/service.py:633",
+        "src/deepseek_tui/browser/service.py:645",
+        "src/deepseek_tui/browser/service.py:650",
+        "src/deepseek_tui/browser/service.py:680",
+        "src/deepseek_tui/browser/service.py:968",
+        "src/deepseek_tui/browser/service.py:977",
+        "src/deepseek_tui/server/threads/manager.py:4678",
+        "src/deepseek_tui/engine/pause.py:1"
+      ],
+      "observed": "In both mocked boundaries, control(user) changes owner/generation before dispatch, then waits for run.lock. The current operation subsequently dispatches a mocked click while transfer is pending. No click is demonstrated after control() has completed.",
+      "interpretation": "The current lock entry is deliberately the atomic action boundary. RunPause also explicitly allows already-running tools to settle. This is not evidence that human ownership after completed transfer can be bypassed.",
+      "minimal_suggestion": "If takeover should suppress browser input that has not yet been dispatched, carry the captured generation into the dispatcher and check owner/transferring/generation at the first input boundary after target/nested resolution. Reject with execution=not_executed; let already-dispatched effects settle. A single pre-await check before asyncio.wait_for is weaker because task scheduling introduces a yield. Target preparation currently scrolls/focuses too; avoid promising that no page-side input can occur unless that preparation is also guarded.",
+      "acceptance": "Pause during the actual target/nested CDP await, request takeover, release the await; pending mutation dispatch count remains 0 and returned receipt is not_executed. Separate case requests takeover after dispatch: exactly one input settles and no retry occurs."
+    },
+    {
+      "id": "A-wait-budget",
+      "classification": "static + synthetic boundary confirmation",
+      "source": [
+        "src/deepseek_tui/browser/service.py:116",
+        "src/deepseek_tui/browser/service.py:645",
+        "src/deepseek_tui/browser/service.py:652",
+        "src/deepseek_tui/browser/service.py:680",
+        "src/deepseek_tui/browser/service.py:756",
+        "src/deepseek_tui/browser/service.py:771",
+        "src/deepseek_tui/browser/service.py:927",
+        "src/deepseek_tui/browser/service.py:948"
+      ],
+      "observed": "timeout_ms accepts 0..10000; wait maps 0 to 10000. Its deadline is checked only after awaited evaluate, and it does not include post-condition observation/page_state. A requested 1 ms takes about 81 ms with one mocked 80 ms CDP evaluation, or with immediate satisfaction and mocked 80 ms post-observation. The 35 s wait_for starts only around _action; target gets a separate 5 s bound and nested DOM resolution occurs outside the 35 s watchdog.",
+      "interpretation": "Condition deadline and transport/action watchdog are different budgets; increasing timeout_ms is not the main reliability fix. The nested-resolution path has no explicit enclosing service deadline; a lower CDP layer may still apply one, so do not claim unbounded systemwide waiting.",
+      "minimal_suggestion": "Use an explicit budget for target plus nested resolution, and pass remaining condition time to each CDP wait. Give post-observation a small separate budget and retain dispatch progress in the receipt. Document condition timeout separately from whole-operation watchdog.",
+      "acceptance": "A slow mocked CDP call cannot arbitrarily extend the condition budget; nested resolution resolves/rejects within a finite explicit budget; completed submission followed by observer timeout is never automatically replayed."
+    }
+  ],
+  "already_implemented": [
+    "ownership and queued-generation guard under run.lock",
+    "transfer flag prevents manual input during pending transfer",
+    "pause/generation gate blocks subsequent agent tools",
+    "takeover-return path obtains a fresh observation while user-owned",
+    "navigation/document identity checked before and after observe",
+    "latest observation, generation and document identity validated in target",
+    "wait is condition polling with finite intended deadline, not a fixed long sleep",
+    "post-observation exceptions retain the successful dispatch response",
+    "mutation interruption yields execution=unknown and asks to observe before retry"
+  ],
+  "challenge_stable_ax_ref": {
+    "conclusion": "Do not copy all refs into allegedly stable Codex AX indices.",
+    "evidence": "Codex report: AX revision/diff exists, but WASM index allocation was not decompiled; semantic snapshots and AX input have different namespaces. No general proof of indices stable across navigation, takeover or DOM replacement. Project already binds refs to the latest observation and document/generation.",
+    "adopt_instead": "Keep current invalidation contract. Add scoped observations / pagination and structured model-context projection first. If incremental observations are added, explicitly bind each delta to a base observation and document; retain IDs only for nodes whose identity is verified. Add semantic role/name + container/frame scope for resilience, separate from opaque ref identity.",
+    "scope": "These are design recommendations from shipped/local evidence, not a reverse-engineered stable AX allocation algorithm."
+  }
+}

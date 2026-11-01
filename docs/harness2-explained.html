@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harness² 通俗讲解 — 不改模型，改「外壳」</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1f2937;
+    --ink-soft: #4b5563;
+    --ink-faint: #9ca3af;
+    --line: #e5e7eb;
+    --blue: #2563eb;   --blue-bg: #eff6ff;
+    --green: #059669;  --green-bg: #ecfdf5;
+    --orange: #d97706; --orange-bg: #fffbeb;
+    --purple: #7c3aed; --purple-bg: #f5f3ff;
+    --red: #dc2626;    --red-bg: #fef2f2;
+    --teal: #0d9488;   --teal-bg: #f0fdfa;
+    --pink: #db2777;   --pink-bg: #fdf2f8;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.8; font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== 顶部 ===== */
+  header.hero {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    color: #fff; padding: 46px 24px 36px;
+  }
+  .hero-inner { max-width: 1040px; margin: 0 auto; }
+  .kicker {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 1.2px;
+    color: #93c5fd; text-transform: uppercase;
+  }
+  .hero h1 { font-size: 30px; font-weight: 700; letter-spacing: .3px; margin-top: 10px; }
+  .hero h1 .thin { color: #cbd5e1; font-weight: 400; }
+  .hero .desc { margin-top: 14px; color: #cbd5e1; font-size: 14.5px; max-width: 760px; }
+  .stats { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  .stat {
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14);
+    border-radius: 8px; padding: 8px 14px; font-size: 12.5px; color: #cbd5e1;
+  }
+  .stat b { font-size: 16px; font-weight: 700; color: #fff; margin-right: 5px; }
+
+  /* ===== 导航 ===== */
+  nav.toc {
+    position: sticky; top: 0; z-index: 50; background: rgba(255,255,255,.94);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+    overflow-x: auto; white-space: nowrap;
+  }
+  nav.toc .inner { max-width: 1040px; margin: 0 auto; padding: 0 16px; display: flex; gap: 2px; }
+  nav.toc a {
+    display: inline-block; padding: 11px 12px; font-size: 13px; color: var(--ink-soft);
+    text-decoration: none; border-bottom: 2px solid transparent; flex-shrink: 0;
+  }
+  nav.toc a:hover { color: var(--blue); border-bottom-color: var(--blue); }
+
+  /* ===== 布局 ===== */
+  main { max-width: 1040px; margin: 0 auto; padding: 30px 20px 90px; }
+  section { margin-top: 48px; scroll-margin-top: 64px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; }
+  .sec-num {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 700; color: #fff;
+    background: var(--blue); border-radius: 6px; padding: 2px 9px; flex-shrink: 0;
+  }
+  .sec-head h2 { font-size: 21px; font-weight: 700; letter-spacing: .2px; }
+  .sec-sub { color: var(--ink-faint); font-size: 13px; margin: 6px 0 18px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 24px; margin-top: 16px;
+  }
+  .card > :first-child { margin-top: 0; }
+  .card > :last-child { margin-bottom: 0; }
+  h3 { font-size: 16px; font-weight: 700; margin: 22px 0 8px; }
+  h4 { font-size: 14px; font-weight: 700; margin: 16px 0 6px; color: var(--ink-soft); }
+  p { margin: 10px 0; color: var(--ink-soft); }
+  p strong, li strong { color: var(--ink); }
+  ul, ol { margin: 10px 0 10px 22px; color: var(--ink-soft); }
+  li { margin: 6px 0; }
+  code {
+    font-family: var(--mono); font-size: 12.5px; background: #f3f4f6;
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: #374151;
+  }
+  pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7; background: #0f172a;
+    color: #e2e8f0; border-radius: 10px; padding: 16px 18px; overflow-x: auto; margin: 14px 0;
+  }
+  pre code { background: none; border: 0; padding: 0; color: inherit; }
+  pre .c { color: #94a3b8; }
+
+  /* ===== 高亮块 ===== */
+  .callout {
+    border-left: 3px solid var(--blue); background: var(--blue-bg);
+    border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 16px 0; font-size: 14px;
+  }
+  .callout.warn { border-left-color: var(--orange); background: var(--orange-bg); }
+  .callout.good { border-left-color: var(--green); background: var(--green-bg); }
+  .callout.red  { border-left-color: var(--red); background: var(--red-bg); }
+  .callout p { color: var(--ink); margin: 4px 0; }
+  .callout .label { font-weight: 700; font-size: 12px; letter-spacing: .5px; display: block; margin-bottom: 4px; }
+
+  /* ===== 60 秒版 ===== */
+  .tldr { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .tldr .item {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px;
+  }
+  .tldr .item .n {
+    font-family: var(--mono); font-size: 12px; color: var(--blue); font-weight: 700;
+  }
+  .tldr .item p { margin: 6px 0 0; font-size: 14px; }
+
+  /* ===== 类比表 ===== */
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--ink-faint); font-weight: 600; letter-spacing: .4px;
+       background: #fafafa; border-bottom: 1px solid var(--line); }
+  td { color: var(--ink-soft); }
+  td:first-child { color: var(--ink); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+
+  /* ===== 八组件 ===== */
+  .grid8 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+  .comp {
+    background: #fff; border: 1px solid var(--line); border-top: 3px solid var(--blue);
+    border-radius: 10px; padding: 14px 15px;
+  }
+  .comp .cno { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .comp .name { font-size: 13.5px; font-weight: 700; margin: 2px 0 4px; }
+  .comp .file { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); overflow-wrap: anywhere; }
+  .comp .what { font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; line-height: 1.6; }
+  .tag {
+    display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 20px;
+    margin-top: 8px; font-weight: 600;
+  }
+  .tag.on  { background: var(--red-bg); color: var(--red); }
+  .tag.dem { background: var(--green-bg); color: var(--green); }
+  .tag.loop{ background: var(--purple-bg); color: var(--purple); }
+  .comp.c1,.comp.c2,.comp.c3,.comp.c4 { border-top-color: var(--orange); }
+  .comp.c5,.comp.c6 { border-top-color: var(--green); }
+  .comp.c7 { border-top-color: var(--blue); }
+  .comp.c8 { border-top-color: var(--purple); }
+
+  /* ===== 流程 ===== */
+  .flow { display: flex; align-items: stretch; gap: 8px; margin: 20px 0 8px; flex-wrap: wrap; }
+  .step {
+    flex: 1 1 130px; background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; position: relative;
+  }
+  .step .sn { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .step .st { font-size: 13.5px; font-weight: 700; margin: 2px 0 4px; }
+  .step .sd { font-size: 12px; color: var(--ink-soft); line-height: 1.55; }
+  .arrow { display: flex; align-items: center; color: var(--ink-faint); font-size: 16px; }
+  .flow-note { font-size: 12px; color: var(--ink-faint); margin-top: 4px; }
+
+  /* ===== 预算条 ===== */
+  .budget { margin: 16px 0 4px; }
+  .brow { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 12.5px; }
+  .brow .bl { width: 150px; flex-shrink: 0; color: var(--ink-soft); }
+  .bar { height: 22px; border-radius: 5px; display: flex; align-items: center;
+         padding: 0 8px; color: #fff; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .b1 { background: #94a3b8; }
+  .b2 { background: #60a5fa; }
+  .b3 { background: #2563eb; }
+  .b4 { background: #7c3aed; }
+  .b5 { background: #0d9488; }
+  .brow .bv { color: var(--ink-faint); font-family: var(--mono); font-size: 11.5px; }
+
+  /* ===== 代码地图 ===== */
+  .map td:first-child { font-family: var(--mono); font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .map td:last-child { color: var(--ink-soft); }
+
+  /* ===== 借鉴卡片 ===== */
+  .takeaway { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 12px 0; background: #fff; }
+  .takeaway .th { display: flex; align-items: baseline; gap: 10px; }
+  .takeaway .tn { font-family: var(--mono); font-size: 12px; color: #fff; background: var(--teal);
+                  border-radius: 5px; padding: 1px 8px; }
+  .takeaway h4 { margin: 0; font-size: 14.5px; color: var(--ink); }
+  .takeaway p { font-size: 13.5px; margin: 8px 0 0; }
+  .takeaway .use { font-size: 12.5px; color: var(--teal); margin-top: 6px; }
+
+  /* ===== 词典 ===== */
+  dl.gloss { margin-top: 12px; }
+  dl.gloss dt { font-weight: 700; font-size: 13.5px; margin-top: 14px; }
+  dl.gloss dd { font-size: 13.5px; color: var(--ink-soft); margin: 3px 0 0 0; }
+  dl.gloss dt code { font-size: 12px; }
+
+  footer {
+    max-width: 1040px; margin: 0 auto; padding: 24px 20px 60px;
+    border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 12.5px;
+  }
+  footer p { color: var(--ink-faint); font-size: 12.5px; }
+
+  @media (max-width: 860px) {
+    .grid8 { grid-template-columns: repeat(2, 1fr); }
+    .tldr { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 24px; }
+    .brow .bl { width: 110px; }
+  }
+  @media (max-width: 560px) {
+    .grid8 { grid-template-columns: 1fr; }
+    .flow { flex-direction: column; }
+    .arrow { justify-content: center; transform: rotate(90deg); }
+    table { font-size: 12.5px; }
+    th, td { padding: 8px; }
+  }
+  @media print {
+    nav.toc { display: none; }
+    body { background: #fff; }
+    .card, .step, .comp { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <div class="kicker">google-research / harness2 · 图解笔记</div>
+    <h1>不改模型，改「外壳」<span class="thin">— Harness² 通俗讲解</span></h1>
+    <p class="desc">
+      这是一份尽量说人话的解读：先讲它到底在解决什么问题，再拆开八个部件、两层递归和预算账本，
+      最后给出「如果你要抄，抄哪几处」的清单。不需要读过论文也能看懂。
+    </p>
+    <div class="stats">
+      <div class="stat"><b>2</b>层递归</div>
+      <div class="stat"><b>8</b>个可改部件</div>
+      <div class="stat"><b>4k + 3k</b>预算恒等式</div>
+      <div class="stat"><b>3</b>个职业基准</div>
+      <div class="stat"><b>0</b>运行时依赖</div>
+    </div>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="inner">
+    <a href="#tldr">60 秒版</a>
+    <a href="#what">什么是 harness</a>
+    <a href="#why">它要解决什么</a>
+    <a href="#how">三步改进法</a>
+    <a href="#parts">八个部件</a>
+    <a href="#two">两层递归</a>
+    <a href="#budget">4k 与 3k</a>
+    <a href="#design">三个关键设计</a>
+    <a href="#evidence">证据在磁盘上</a>
+    <a href="#code">代码地图</a>
+    <a href="#stack">技术栈</a>
+    <a href="#learn">能学到什么</a>
+    <a href="#limits">局限</a>
+    <a href="#glossary">小词典</a>
+  </div>
+</nav>
+
+<main>
+
+<!-- ============ 0 ============ -->
+<section id="tldr">
+  <div class="sec-head"><span class="sec-num">00</span><h2>60 秒版</h2></div>
+  <p class="sec-sub">如果只读一段，读这里。</p>
+
+  <div class="tldr">
+    <div class="item">
+      <div class="n">01</div>
+      <p><strong>模型不变，外壳可变。</strong> 同一个模型，换个系统提示、工具说明、技能和脚本，
+      干活的水平可以差出一大截。这层「外壳」就叫 harness。</p>
+    </div>
+    <div class="item">
+      <div class="n">02</div>
+      <p><strong>它让 AI 自己改这层外壳。</strong> 不是训练模型，而是让一个「改进者」读执行记录、
+      改配置文件，然后真跑一遍看效果。</p>
+    </div>
+    <div class="item">
+      <div class="n">03</div>
+      <p><strong>没有标准答案也能改。</strong> 靠的是「对比」：同一道题，两种外壳各跑一次，
+      看行为差在哪，再把有效的部分合起来。</p>
+    </div>
+    <div class="item">
+      <div class="n">04</div>
+      <p><strong>经验会攒起来。</strong> 每个领域一个经验库，后来的任务先读前面的教训，
+      避免每次从零开始。</p>
+    </div>
+  </div>
+
+  <div class="callout good">
+    <span class="label">一句话类比</span>
+    <p>模型是厨师，harness 是厨房：灶台怎么摆、菜谱写多细、有没有料理机、助手怎么分工。
+    厨师的厨艺（权重）没变，但换一套厨房，出菜的速度和成品可以完全不同。</p>
+  </div>
+</section>
+
+<!-- ============ 1 ============ -->
+<section id="what">
+  <div class="sec-head"><span class="sec-num">01</span><h2>什么是 harness（外壳）</h2></div>
+  <p class="sec-sub">先把这个词落地，后面全都好懂。</p>
+
+  <div class="card">
+    <p>论文里的定义是：<strong>harness 是模型之外、让它能作为 agent 行动的那一整套系统</strong>——
+    提示词、工具、记忆、技能、编排方式，等等。模型负责「想」，harness 负责「怎么想、能用什么、做完怎么检查」。</p>
+
+    <p>作者把它拆成八个可编辑部件。这个拆法很实用，因为它对应的是八种<strong>不同成本、不同作用范围</strong>的杠杆：</p>
+
+    <table>
+      <thead><tr><th>现实里的东西</th><th>在这个框架里</th></tr></thead>
+      <tbody>
+        <tr><td>厨师</td><td>模型（权重固定，全程不训练）</td></tr>
+        <tr><td>厨房布局、菜谱、工具、备菜助手</td><td>harness 的八个部件</td></tr>
+        <tr><td>「同一厨师，换厨房，出品不一样」</td><td>同一模型换 harness，基准分数明显变化</td></tr>
+        <tr><td>「试做一小份，尝味道再定」</td><td>Probe：把候选 harness 真跑一遍</td></tr>
+        <tr><td>「匿名试吃，只看成品」</td><td>盲选：候选编号打乱，只看交付物</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="why">
+  <div class="sec-head"><span class="sec-num">02</span><h2>它要解决的两个真问题</h2></div>
+  <p class="sec-sub">为什么不能「人工调提示词」或者「用分数自动优化」？</p>
+
+  <div class="card">
+    <h3>难点一：开放世界里没有标准答案</h3>
+    <p>传统自动优化需要一个「打分器」告诉你这次改得对不对。但真实工作任务（写法律备忘录、做财务报表、
+    整理会议材料）往往没有即时、可靠的标准答案。等你拿到分数，任务已经做完了。</p>
+    <p>更麻烦的是：<strong>如果让模型自己猜「评分标准想要什么」，它会开始讨好评分器，而不是把活干好。</strong>
+    所以这套框架从头到尾都在刻意屏蔽评分信息（后面会讲它怎么防泄漏）。</p>
+
+    <h3>难点二：改出来的东西很容易「只对这一道题有用」</h3>
+    <p>针对某个任务硬编码一堆事实和步骤，下一次换个任务就废了，甚至有害。
+    所以它把「流程性改进」和「领域知识」分开提案，并且要求经验必须能<strong>迁移</strong>——
+    写成「什么情况下该做什么操作」，而不是「这次的数据是这样」。</p>
+
+    <div class="callout warn">
+      <span class="label">关键取舍</span>
+      <p>它不追求「一次改到最优」，而追求「每一步都有证据、可回退、可复现」。
+      所以你会看到大量看起来啰嗦的校验、账本和隔离设计——那些不是官僚，是让自动改进不出事故的护栏。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="how">
+  <div class="sec-head"><span class="sec-num">03</span><h2>核心方法：提案 → 试跑 → 组合</h2></div>
+  <p class="sec-sub">Propose–Probe–Compose，三步一个循环。</p>
+
+  <div class="flow">
+    <div class="step">
+      <div class="sn">STEP 1</div>
+      <div class="st">Propose 提案</div>
+      <div class="sd">改进者读任务、完整执行轨迹、当前 harness，提出一版修改（只写改动的文件）。</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="sn">STEP 2</div>
+      <div class="st">Probe 试跑</div>
+      <div class="sd">把改后的 harness 真正装上去跑同一道题，拿到一条新的执行轨迹和成品。</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="sn">STEP 3</div>
+      <div class="st">Compose 组合</div>
+      <div class="sd">对比「基准 vs 候选」的行为差异，把被证据支持的部分合成最终版。</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="sn">STEP 4</div>
+      <div class="st">Select 盲选</div>
+      <div class="sd">多个终版匿名化，只按交付物质量挑一个，交给下游。</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="sn">STEP 5</div>
+      <div class="st">Reflect 反思</div>
+      <div class="sd">把「哪个改动真的起了作用」写成一条可复用经验，存进领域库。</div>
+    </div>
+  </div>
+  <p class="flow-note">注意：每一步都不看分数。判断依据是「执行过程哪里不一样了」。</p>
+
+  <div class="card">
+    <h3>用仓库自带的 demo 举例（这个例子是真的能跑）</h3>
+    <p>demo 的任务很朴素：把账本 CSV 里的金额求和。基准 harness 里有个脚本
+    <code>scripts/summarize.py</code>，写的是「只累加正数」——于是它漏掉了所有负数（支出）。</p>
+    <ol>
+      <li><strong>Propose：</strong>改进者读轨迹，发现结果和账本对不上，提出删掉 <code>if amount &gt; 0</code> 这个过滤。</li>
+      <li><strong>Probe：</strong>改后的脚本真跑一遍，输出变成 <code>Total: 85.15</code>（100.25 − 20.10 + 5.00）。</li>
+      <li><strong>Compose：</strong>对比两条轨迹，差异明确指向那一行过滤，于是保留这个改动。</li>
+      <li><strong>Reflect：</strong>写进经验库：「当账本同时包含借贷/正负金额时，求和不要过滤符号。」
+      下次遇到同类账本，后来的任务一开始就能读到这条。</li>
+    </ol>
+    <p>整个过程没有评分器，也没有 ground truth，只有「执行结果和源材料对不对得上」。</p>
+
+    <div class="callout">
+      <span class="label">为什么叫「对比式」改进</span>
+      <p>它不问「这版好不好」，而问「这版和基准比，哪个行为变了、变好了还是变坏了」。
+      前者需要分数，后者只需要两条轨迹。这是整篇论文最核心的一招。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="parts">
+  <div class="sec-head"><span class="sec-num">04</span><h2>八个部件：八种杠杆，成本完全不同</h2></div>
+  <p class="sec-sub">记住一句话：常驻的贵，按需的便宜，循环内的最难被忽略。</p>
+
+  <div class="grid8">
+    <div class="comp c1">
+      <div class="cno">c1</div><div class="name">系统提示</div>
+      <div class="file">systemprompt.md</div>
+      <div class="what">角色、目标、工作流程。相当于上岗前的岗位说明。</div>
+      <span class="tag on">每轮都在</span>
+    </div>
+    <div class="comp c2">
+      <div class="cno">c2</div><div class="name">护栏</div>
+      <div class="file">guardrails.md</div>
+      <div class="what">长期有效的红线与规则。相当于贴在墙上的注意事项。</div>
+      <span class="tag on">每轮都在</span>
+    </div>
+    <div class="comp c3">
+      <div class="cno">c3</div><div class="name">长期记忆</div>
+      <div class="file">LongTermMEMORY.md</div>
+      <div class="what">本领域稳定成立的事实。相当于老员工的便签本。</div>
+      <span class="tag on">每轮都在</span>
+    </div>
+    <div class="comp c4">
+      <div class="cno">c4</div><div class="name">工具说明</div>
+      <div class="file">tool_descriptions/…</div>
+      <div class="what">工具怎么用、什么时候用、有什么坑。</div>
+      <span class="tag on">每轮都在</span>
+    </div>
+    <div class="comp c5">
+      <div class="cno">c5</div><div class="name">子 agent</div>
+      <div class="file">sub_agents/&lt;名&gt;/AGENT.md</div>
+      <div class="what">独立上下文的助手：只带任务说明进去，只交结论出来。</div>
+      <span class="tag dem">按需调用</span>
+    </div>
+    <div class="comp c6">
+      <div class="cno">c6</div><div class="name">技能</div>
+      <div class="file">skills/&lt;名&gt;/SKILL.md</div>
+      <div class="what">可复用的操作手册，触发时才加载。</div>
+      <span class="tag dem">按需加载</span>
+    </div>
+    <div class="comp c7">
+      <div class="cno">c7</div><div class="name">脚本</div>
+      <div class="file">scripts/&lt;名&gt;.py</div>
+      <div class="what">确定性的小工具：算数、格式转换、机械检查。</div>
+      <span class="tag dem">按需执行</span>
+    </div>
+    <div class="comp c8">
+      <div class="cno">c8</div><div class="name">插件 / 钩子</div>
+      <div class="file">plugin/*.ts<br>.codex/hooks.json</div>
+      <div class="what">在工具循环内部生效：拦一道、改一下、自动检查一次。</div>
+      <span class="tag loop">循环内生效</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>为什么要分这么细？因为「贵」和「有效」经常是反的</h3>
+    <table>
+      <thead><tr><th>形式</th><th>成本</th><th>什么时候划算</th><th>常见坑</th></tr></thead>
+      <tbody>
+        <tr><td>常驻文本</td><td>每次运行都占上下文，还要和模型自己的输出预算抢</td><td>一条对所有任务都成立的短规则</td><td>越写越长，最后模型没预算干活了</td></tr>
+        <tr><td>技能</td><td>没触发就零成本</td><td>有明确触发条件的一套流程</td><td><strong>没在常驻文本里点名，就永远不会被打开</strong></td></tr>
+        <tr><td>脚本</td><td>只在实际调用时花时间</td><td>重复、确定、容易算错的操作</td><td>引用了却没一起交付，整份提案作废</td></tr>
+        <tr><td>子 agent</td><td>一次额外的模型调用</td><td>输入很大、结论很短的有界调查</td><td>输入大、输出也大，纯亏</td></tr>
+        <tr><td>插件 / 钩子</td><td>不占提示预算</td><td>「模型可以跳过」的机械性检查</td><td>两种执行器格式不同，写错就静默失效</td></tr>
+      </tbody>
+    </table>
+    <p>这套框架的提示词里有一句很狠的话：<strong>能做成技能/脚本的，就不要写成常驻散文。</strong>
+    因为常驻散文是「每次都付钱」，而技能是「用到才付钱」。</p>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="two">
+  <div class="sec-head"><span class="sec-num">05</span><h2>两层递归：当场改进 + 长期攒经验</h2></div>
+  <p class="sec-sub">「递归」在这里不是自己调用自己，而是「改进这件事本身也被改进了」。</p>
+
+  <div class="card">
+    <h3>第一层：任务级递归（把当前这道题做好）</h3>
+    <p>两种放大方式，对应两个参数 <code>--mode</code>：</p>
+    <table>
+      <thead><tr><th>模式</th><th>怎么跑</th><th>适合</th><th>直觉</th></tr></thead>
+      <tbody>
+        <tr><td><code>parallel</code>（并行）</td>
+          <td>先跑 k 次基准，再让 k 个「流程编辑」和 k 个「领域编辑」各自提案并试跑，
+          最后用同一批证据组合出 k 个终版</td>
+          <td>想「广撒网」，一次看多个方向</td>
+          <td>同时开 k 口锅试菜</td></tr>
+        <tr><td><code>sequential</code>（串行）</td>
+          <td>跑 k 轮：每轮在上一轮定稿的 harness 上再改一版，证据一路累积</td>
+          <td>想「往深里磨」</td>
+          <td>同一口锅，一轮轮调味</td></tr>
+      </tbody>
+    </table>
+    <p>两种模式共享同一批基准执行——所以「基准长什么样」这个参照系是一致的，比较才有意义。</p>
+
+    <h3>第二层：harnessing 级递归（让下次更聪明）</h3>
+    <p>每个任务结束后，反思阶段会产出两样东西：</p>
+    <ul>
+      <li><strong>一份「每个改动到底起了什么作用」的表格</strong>，判定只有四种：
+        <code>helped</code>（有用）、<code>hurt</code>（有害）、
+        <code>no observed effect</code>（没看出效果）、<code>confounded</code>（混杂，说不清）。</li>
+      <li><strong>至多一条可迁移经验</strong>，格式固定为
+        <code>cue / lesson / evidence / confidence</code>——什么情况下、做什么操作、凭什么这么说、有多确信。</li>
+    </ul>
+    <p>这些条目按「领域」存进经验库：每个领域一个目录，只装同领域的条目，任务按顺序执行、只能读更早的条目。
+    这样「检索」不需要向量库——<strong>目录结构本身就是检索</strong>。</p>
+
+    <div class="callout good">
+      <span class="label">一个很克制的设计</span>
+      <p>反思提示里明确说：如果证据只支持「混杂」，就写 <code>confounded</code>；
+      如果实在没有可复用的执行对比，就写 <code>NO_ENTRY</code> 交白卷。
+      <strong>宁可这条经验不写，也不许编一个归因</strong>——因为一条假经验会污染之后所有任务。</p>
+    </div>
+
+    <div class="callout warn">
+      <span class="label">读论文时容易误会的一点</span>
+      <p>论文说「更新一个持续改进的 harness」。落到代码里，这一层其实是
+      <strong>「按领域持久化的经验库 + 固定提示包」</strong>，而不是让模型改写自己的提示词。
+      自动化程度没有字面上那么高，但也因此更可控。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="budget">
+  <div class="sec-head"><span class="sec-num">06</span><h2>4k 和 3k：一笔算得清的账</h2></div>
+  <p class="sec-sub">k 是「任务级递归预算」，也就是你愿意为一道题试错几次。</p>
+
+  <div class="card">
+    <p>一个任务恰好花掉 <strong>4k 次真实执行</strong>和 <strong>3k 次改进会话</strong>。拆开看：</p>
+
+    <div class="budget">
+      <div class="brow"><div class="bl">基准执行</div><div class="bar b1" style="width:25%">k 次</div><div class="bv">base1 … basek</div></div>
+      <div class="brow"><div class="bl">流程候选探针</div><div class="bar b2" style="width:25%">k 次</div><div class="bv">inv1 … invk</div></div>
+      <div class="brow"><div class="bl">领域候选探针</div><div class="bar b2" style="width:25%">k 次</div><div class="bv">dom1 … domk</div></div>
+      <div class="brow"><div class="bl">终版执行</div><div class="bar b3" style="width:25%">k 次</div><div class="bv">agg1 … aggk（或 c1 … ck）</div></div>
+      <div class="brow"><div class="bl" style="font-weight:600;color:var(--ink)">合计 rollout</div><div class="bar b4" style="width:100%">4k 次</div><div class="bv"></div></div>
+    </div>
+
+    <div class="budget" style="margin-top:24px">
+      <div class="brow"><div class="bl">INV 提案会话</div><div class="bar b2" style="width:33%">k 次</div><div class="bv">管「怎么干活」</div></div>
+      <div class="brow"><div class="bl">DOM 提案会话</div><div class="bar b5" style="width:33%">k 次</div><div class="bv">管「这行懂什么」</div></div>
+      <div class="brow"><div class="bl">组合会话</div><div class="bar b3" style="width:33%">k 次</div><div class="bv">合成 + 写决策说明</div></div>
+      <div class="brow"><div class="bl" style="font-weight:600;color:var(--ink)">合计 session</div><div class="bar b4" style="width:99%">3k 次</div><div class="bv"></div></div>
+    </div>
+
+    <table style="margin-top:22px">
+      <thead><tr><th>k</th><th>真实执行</th><th>改进会话</th><th>什么时候用</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>4 次</td><td>3 次（1 INV + 1 DOM + 1 组合）</td><td>最便宜的验证，先看方向对不对</td></tr>
+        <tr><td>3</td><td>12 次</td><td>9 次</td><td>并行看多个方向，或串行磨三轮</td></tr>
+        <tr><td>5</td><td>20 次</td><td>15 次</td><td>论文里「加预算继续涨」的那一段</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <span class="label">为什么要做成恒等式</span>
+      <p>代码里有个 <code>Ledger</code>，每跑一次就记一笔，最后断言「正好 4k / 正好 3k，且没有重复标签」。
+      超出、少跑、两个阶段偷偷用了同一个 run id——都会直接报错。
+      <strong>成本可核对，实验才可复现</strong>，而不是日志里数一数。</p>
+      <p>小细节：k=1 时只有一个终版，没有可选的，所以<strong>跳过选择器会话</strong>，省一次调用。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="design">
+  <div class="sec-head"><span class="sec-num">07</span><h2>三个「看不见但关键」的设计</h2></div>
+  <p class="sec-sub">这三点决定了它是实验框架，而不是一个会烧钱的玩具。</p>
+
+  <div class="card">
+    <h3>设计一：盲选——候选匿名，只看成品</h3>
+    <p>多个终版会被随机编号成 A、B、C…（种子由「任务 + k + 模式」哈希而来，重跑结果一致），
+    选择器<strong>看不到每个候选是用哪版 harness 跑出来的</strong>，只能打开交付物本身做判断。</p>
+    <p>更狠的是：提示里明确说「选原版 harness 的产物是完全合理且预期的结果」，
+    并且候选里可能就混着基准版。这样就避免了「越复杂越容易被选中」的偏见。</p>
+    <p>选择器罢工了怎么办？回退到一个「有交付物的基准版」，而不是随便挑一个——保证流程不中断，也不假装成功。</p>
+
+    <h3>设计二：判分隔离——先选，再判，判不出来不算 0 分</h3>
+    <ul>
+      <li><strong>顺序隔离：</strong>选择提交之后才调用 benchmark 的判分器。改进过程从头到尾拿不到分数。</li>
+      <li><strong>失败语义：</strong>判分器返回空表示「没判成」，记为<strong>未评分</strong>，绝不缓存成 0 分。
+      否则一次网络抖动就会永久拉低平均分。</li>
+      <li><strong>泄漏绊线：</strong>上下文里只要出现 <code>pass_rate</code>、<code>deterministic_eval_summary</code>
+      这类判分器输出，程序直接抛异常，并在报错里写「这是泄漏，不是误报，去找那条读文件的路径」。</li>
+      <li><strong>只给文件名：</strong>某个基准的交付物目录里混着判分器输出，于是干脆只告诉改进者「产出了哪些文件」，
+      不给内容——并附一段说明，解释这是故意的。</li>
+    </ul>
+
+    <h3>设计三：校验闸门——先检查，再花钱</h3>
+    <p>提案在被拿去跑 rollout 之前，必须先过一遍静态检查。任何一条不过，<strong>整份提案作废</strong>，
+    错误原文回灌给模型重试一次；再不过就回退基准版。检查项都很具体：</p>
+    <table>
+      <thead><tr><th>检查</th><th>不通俗的后果</th><th>通俗解释</th></tr></thead>
+      <tbody>
+        <tr><td>常驻文本字符上限</td><td>提示太长，模型没预算输出，跑一半就停</td><td>说明书别写到没地方干活</td></tr>
+        <tr><td>技能必须有 <code>description</code></td><td>技能被加载器静默丢弃</td><td>抽屉里的手册没贴标签，等于没有</td></tr>
+        <tr><td>技能必须被常驻文本点名</td><td>永远不会被触发</td><td>买了工具，但没告诉人它在哪</td></tr>
+        <tr><td>引用的脚本必须存在</td><td>运行时找不到文件</td><td>菜谱写「用料理机」，但料理机没买</td></tr>
+        <tr><td>Python 必须能编译</td><td>一执行就语法错误</td><td>先通电试一下，别到客人面前才炸</td></tr>
+        <tr><td>钩子 schema 必须匹配</td><td>格式错了就静默不触发</td><td>门禁装反了，看起来有，其实不拦</td></tr>
+        <tr><td>常驻文本不能有 Jinja 花括号</td><td>模板渲染失败，任务开跑前就死</td><td>别在填空题里再挖空</td></tr>
+      </tbody>
+    </table>
+    <p>还有一个「自动修复」的小设计：如果技能忘了被点名，系统会在不超过字符上限的前提下，
+    自动补一行触发句——能救就救，救不了才判死。</p>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="evidence">
+  <div class="sec-head"><span class="sec-num">08</span><h2>证据放在磁盘上，提示只是一个指针</h2></div>
+  <p class="sec-sub">这条设计简单，但解决了一个大坑。</p>
+
+  <div class="card">
+    <p>改进者每次拿到的不是一个塞满轨迹的超长提示，而是一个目录 + 一句话「去读」：</p>
+<pre><code>context/
+  task.md                  <span class="c"># 任务原文（不含评分标准）</span>
+  source/                  <span class="c"># 任务素材</span>
+  rollouts/base1.md        <span class="c"># 完整执行轨迹，不截断</span>
+  deliverables/base1/      <span class="c"># 成品，按判分器同款方式转成文本</span>
+  harness/                 <span class="c"># 你正在编辑的这棵树</span>
+  library/INDEX.md         <span class="c"># 同领域的历史经验</span>
+  pool/                    <span class="c"># 候选 harness + 它的轨迹（组合/选择阶段）</span>
+MISSION.md                 <span class="c"># 你要做什么</span></code></pre>
+
+    <p>好处有三个：</p>
+    <ul>
+      <li><strong>不截断。</strong> 轨迹该多长就多长。截断会制造「假缺陷」——模型看到一个被切掉的输出，
+      会以为 agent 失败了，然后去修一个不存在的问题。</li>
+      <li><strong>可导航。</strong> 模型可以 grep、可以只看某一段，而不是被动接收一大坨文本。</li>
+      <li><strong>可审计。</strong> 每次调用用了哪些证据，目录原样留在磁盘上，事后能复盘。</li>
+    </ul>
+
+    <div class="callout">
+      <span class="label">配套的一条小规矩</span>
+      <p>交付物是用「判分器读它的同一种方式」转成文本的——比如一个没缓存计算结果的 Excel 公式，
+      在判分器眼里就是空单元格。所以模型看到的，就是评分时真正看到的东西。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="code">
+  <div class="sec-head"><span class="sec-num">09</span><h2>代码地图：想读源码从哪下手</h2></div>
+  <p class="sec-sub">仓库约 1.27 万行 Python（不含 third_party）。真正的方法逻辑只有 core/ 那几千行。</p>
+
+  <div class="card">
+    <table class="map">
+      <thead><tr><th>路径</th><th>干什么（人话）</th></tr></thead>
+      <tbody>
+        <tr><td>core/recursion.py</td><td>两种递归的调度器：谁先跑、跑几次、什么时候并发、失败怎么回退</td></tr>
+        <tr><td>core/tree.py</td><td>把 harness 当成「文件树」来读、校验、写、diff；八部件的规则都在这里</td></tr>
+        <tr><td>core/context.py</td><td>把证据铺到磁盘上；顺便当防泄漏安检门</td></tr>
+        <tr><td>core/selection.py</td><td>匿名盲选 + 事后反思，产出经验条目</td></tr>
+        <tr><td>core/library.py</td><td>按领域存经验：完整 harness + 为什么选它 + 一条教训</td></tr>
+        <tr><td>core/ledger.py</td><td>记账本：4k / 3k 的恒等式断言</td></tr>
+        <tr><td>core/spec.py</td><td>「一个 benchmark 必须提供什么」的接口清单</td></tr>
+        <tr><td>core/prompts.py</td><td>所有提示词模板（1100 多行，方法论的真正载体）</td></tr>
+        <tr><td>core/schedule.py</td><td>任务流排序、领域并发、断点续跑</td></tr>
+        <tr><td>substrate/opencode.py</td><td>OpenCode 执行器：装文件、起进程、解析事件流</td></tr>
+        <tr><td>substrate/codex.py</td><td>Codex 执行器：同一套接口，不同的目录结构与钩子格式</td></tr>
+        <tr><td>benchmarks/*.py</td><td>三个基准的适配器，每个约千行——所有脏活都关在这里</td></tr>
+        <tr><td>demo.py</td><td>200 行的确定性替身：不需要任何模型凭证就能跑通全流程</td></tr>
+        <tr><td>tests/test_workflow.py</td><td>端到端测试：断言预算 4k/3k、断言最终答案正确</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout good">
+      <span class="label">读源码的建议顺序</span>
+      <p>先读 <code>core/spec.py</code>（搞清楚边界）→ <code>core/recursion.py</code>（搞清楚流程）→
+      <code>core/tree.py</code>（搞清楚「一个 harness 长什么样」）→ <code>demo.py</code>（看一个最小闭环）。
+      提示词部分不用通读，挑 <code>propose</code>、<code>select</code>、<code>experience</code> 三段看即可。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="stack">
+  <div class="sec-head"><span class="sec-num">10</span><h2>技术栈：轻得有点意外</h2></div>
+  <p class="sec-sub">没有 LangChain，没有向量库，没有 agent SDK。</p>
+
+  <div class="card">
+    <table>
+      <thead><tr><th>层</th><th>选择</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>语言</td><td>Python 3.12–3.13</td><td>仅支持 POSIX（macOS / Linux），不支持 Windows</td></tr>
+        <tr><td>运行时依赖</td><td><strong>零</strong></td><td><code>dependencies = []</code>；Excel/PPT 渲染、代理桥接是可选 extra</td></tr>
+        <tr><td>模型调用</td><td>起 CLI 子进程</td><td>OpenCode（bun 跑上游 TS 源码）或 Claude Code CLI；读 stdout / <code>output/answer.md</code></td></tr>
+        <tr><td>模型服务</td><td>Vertex AI</td><td>Gemini / Claude，走 ADC 认证</td></tr>
+        <tr><td>执行器抽象</td><td>SurfaceSpec + 子进程契约</td><td>换框架 = 换一份数据 + 一个解析器，不写子类</td></tr>
+        <tr><td>基准</td><td>LAB / JobBench / WorkBuddy</td><td>WorkBuddy 需要 Docker；LAB 需要 Pandoc + Poppler</td></tr>
+        <tr><td>测试</td><td>unittest + mock</td><td>确定性 demo 覆盖全流程，不需要模型</td></tr>
+        <tr><td>工具链</td><td>uv / ruff / setuptools</td><td>三个命令行入口：<code>harness2</code>、<code>-judge</code>、<code>-report</code></td></tr>
+      </tbody>
+    </table>
+
+    <p>「零运行时依赖」不是炫技，是为了让这套东西在任何一台机器上都能跑起来：
+    它本质上是一个<strong>编排器</strong>，把「准备目录 → 起进程 → 收结果 → 校验 → 记账」这几件事做扎实，
+    智能全部外包给外部 CLI。这也意味着它对执行器的错误非常敏感，所以解析层写得格外小心。</p>
+  </div>
+</section>
+
+<!-- ============ 11 ============ -->
+<section id="learn">
+  <div class="sec-head"><span class="sec-num">11</span><h2>你能从它身上抄走什么</h2></div>
+  <p class="sec-sub">按「投入产出比」排序，每条都给了落地方式。</p>
+
+  <div class="takeaway">
+    <div class="th"><span class="tn">01</span><h4>把配置当成「可校验的树」，而不是一坨文本</h4></div>
+    <p>八部件 = 八个路径规则 + 一组校验器。路径、上限、frontmatter 要求全是数据，
+    同一套逻辑同时服务 OpenCode 和 Codex。</p>
+    <p class="use">→ 给你团队的 Claude Code / Codex 配置写一个 linter，先解决「写了但不生效」这类隐性浪费。</p>
+  </div>
+
+  <div class="takeaway">
+    <div class="th"><span class="tn">02</span><h4>用「对比」代替「打分」来驱动改进</h4></div>
+    <p>同一道题跑两版，比较轨迹差异，而不是等一个评分。适合任何「没有即时反馈但有可观察行为」的系统。</p>
+    <p class="use">→ 做 A/B 提示词时，别只看最终答案，把两条执行轨迹 diff 出来看行为变化。</p>
+  </div>
+
+  <div class="takeaway">
+    <div class="th"><span class="tn">03</span><h4>把检查放在花钱之前</h4></div>
+    <p>静态校验能挡掉大部分「看起来对、其实不会生效」的改动：未点名技能、悬空脚本、语法错误、schema 不符。</p>
+    <p class="use">→ 任何 agent 产出配置的流水线，都值得加一道「能加载吗 / 能编译吗 / 引用都存在吗」的闸门。</p>
+  </div>
+
+  <div class="takeaway">
+    <div class="th"><span class="tn">04</span><h4>证据落盘，提示只做索引</h4></div>
+    <p>不要让模型「读一大段被截断的日志」，让它自己去目录里找。截断不仅丢信息，还会制造假故障。</p>
+    <p class="use">→ 把长上下文任务改成「工作目录 + 一段导航说明」，通常比调 prompt 更有效。</p>
+  </div>
+
+  <div class="takeaway">
+    <div class="th"><span class="tn">05</span><h4>把预算写成断言</h4></div>
+    <p>「4k 次执行、3k 次会话、不许重复标签」——这让「实验跑完了」变成机器可验证的事实。</p>
+    <p class="use">→ 给批量实验加一个账本，记录每个阶段实际调用次数，和预期对不上就报错。</p>
+  </div>
+
+  <div class="takeaway">
+    <div class="th"><span class="tn">06</span><h4>用确定性替身测试整条流水线</h4></div>
+    <p>200 行 demo：真跑 Python、真走预算、真做选择，但不调用任何模型。测试因此便宜、稳定、可 CI。</p>
+    <p class="use">→ 把「智能」抽成一个可替换接口，用脚本化实现覆盖调度、重试、回退、记账这些真正容易出错的地方。</p>
+  </div>
+
+  <div class="callout warn">
+    <span class="label">如果只抄一件事</span>
+    <p>抄「<strong>校验闸门 + 证据落盘 + 盲选隔离</strong>」这三件套。
+    它们不是论文的创新点，却是让自动改进从「demo 很酷」变成「敢天天跑」的东西。</p>
+  </div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section id="limits">
+  <div class="sec-head"><span class="sec-num">12</span><h2>老实说，它的局限</h2></div>
+  <p class="sec-sub">避免把它当成开箱即用的产品。</p>
+
+  <div class="card">
+    <ul>
+      <li><strong>安装门槛不低。</strong> 要 Python 3.12、Node 20+、gcloud、Docker；
+      LAB 还要 Pandoc 和 Poppler；还要克隆并给四个上游仓库打补丁。</li>
+      <li><strong>跑起来很贵。</strong> 一个任务至少 4 次真实执行 + 3 次改进会话；
+      LAB 全量有 1143 个任务，官方建议先用 <code>--max-tasks 1</code> 试水。</li>
+      <li><strong>默认不限制网络。</strong> README 自己承认：有一次 Codex 运行主动下载了它这道题的评分标准。
+      要拿它做评测，必须自己在网络层封掉 Hugging Face、GitHub 等出口，否则数字没有意义。</li>
+      <li><strong>研究代码的形态。</strong> 三个基准适配器各约千行，<code>third_party/</code> 里全是上游补丁；
+      真正可复用的是 <code>core/</code>。</li>
+      <li><strong>经验库不是魔法。</strong> 它靠目录做检索、靠一条 cue 触发，条目多了会变吵；
+      论文也没有声称它能无限累积。</li>
+      <li><strong>只是「外壳」的优化。</strong> 模型本身的能力上限没变；任务太难以至于基础能力不够时，改外壳救不回来。</li>
+    </ul>
+
+    <div class="callout red">
+      <span class="label">一句提醒</span>
+      <p>仓库是 Apache-2.0，但 <code>third_party/</code> 里的基准和数据集各有各的许可证，
+      其中 WorkBuddy 的上游协议还带地域限制。商用前逐一看清楚。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 13 ============ -->
+<section id="glossary">
+  <div class="sec-head"><span class="sec-num">13</span><h2>小词典</h2></div>
+  <p class="sec-sub">读论文或源码时卡住的词，回来查这里。</p>
+
+  <div class="card">
+    <dl class="gloss">
+      <dt>Harness（外壳）</dt>
+      <dd>模型之外让它能干活的一整套配置：提示、工具、记忆、技能、脚本、编排。</dd>
+
+      <dt>Rollout（一次执行）</dt>
+      <dd>把某版 harness 装上去，完整跑一道题，产出一条轨迹和一份成品。</dd>
+
+      <dt>Probe（探针）</dt>
+      <dd>专门为了「看看这版改动会怎样」而跑的那次 rollout，是改进的证据来源。</dd>
+
+      <dt>Propose–Probe–Compose</dt>
+      <dd>提案 → 试跑 → 组合。整篇论文的方法主干。</dd>
+
+      <dt>INV / DOM</dt>
+      <dd>两个提案维度：INV 管「怎么干活」（流程、工具、重试、预算），DOM 管「这行懂什么」（领域规则、交付物结构）。分开是为了避免两类改动互相掩盖。</dd>
+
+      <dt>Ground truth / Rubric</dt>
+      <dd>标准答案 / 评分细则。这套框架刻意不让改进者看到它们。</dd>
+
+      <dt>Blind selection（盲选）</dt>
+      <dd>候选匿名打乱，只看成品不看来源，避免「复杂即优秀」的偏见。</dd>
+
+      <dt>Surface（可编辑面）</dt>
+      <dd>哪些文件允许改、改完必须满足什么规则。它是数据，不是代码分支。</dd>
+
+      <dt>Always-on（常驻）</dt>
+      <dd>每次运行都进上下文的文本。贵，所以只放「对所有任务都成立」的短规则。</dd>
+
+      <dt>Substrate（执行器）</dt>
+      <dd>真正跑 agent 的那个框架，比如 OpenCode 或 Codex。换它不该影响方法层。</dd>
+
+      <dt>Adapter（适配器）</dt>
+      <dd>把某个 benchmark 的任务、执行、轨迹、判分翻译成框架能懂的接口。</dd>
+
+      <dt>confounded（混杂）</dt>
+      <dd>一次改了好几个部件，说不清是哪个起了作用。反思阶段允许、而且鼓励诚实标注。</dd>
+    </dl>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p>基于 <code>google-research/harness2</code> 的 README、arXiv:2610.14224 摘要与源码整理 ·
+  本地源码在 <code>scratch/harness2</code>，可对照阅读 ·
+  页面为单文件，无外部依赖，可直接分享或打印。</p>
+</footer>
+
+</body>
+</html>

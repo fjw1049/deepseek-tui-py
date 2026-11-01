@@ -1,0 +1,11 @@
+{
+  "boundary": "Real project_result; synthetic observation and 6000-character budget",
+  "input_option_value_chars": 7000,
+  "projected_element": {
+    "ref": "e0",
+    "role": "select",
+    "name": "Choice"
+  },
+  "context_truncated": true,
+  "interpretation": "Fallback retains ref/role/name but drops options and their continuation; generic truncation alone does not identify what detail to fetch."
+}

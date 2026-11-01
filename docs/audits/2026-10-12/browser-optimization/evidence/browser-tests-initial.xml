@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="1" tests="133" time="73.897" timestamp="2026-10-12T22:31:53.960888+08:00" hostname="192.168.0.101"><testcase classname="tests.test_browser_chromium" name="test_visible_text_refs_and_real_interactions" time="1.512" /><testcase classname="tests.test_browser_chromium" name="test_stale_ambiguous_changed_and_obscured_targets_are_not_clicked" time="0.669" /><testcase classname="tests.test_browser_chromium" name="test_wait_checks_current_condition_including_hidden" time="2.632" /><testcase classname="tests.test_browser_chromium" name="test_shadow_and_same_origin_frame_targets" time="1.013" /><testcase classname="tests.test_browser_chromium" name="test_coordinate_click_requires_current_capture" time="0.695" /><testcase classname="tests.test_browser_chromium" name="test_real_engine_observes_clicks_and_returns_answer" time="1.095" /><testcase classname="tests.test_browser_chromium" name="test_wait_text_is_scoped_to_selector" time="1.613" /><testcase classname="tests.test_browser_chromium" name="test_element_names_exclude_private_and_hidden_descendants" time="0.652" /><testcase classname="tests.test_browser_chromium" name="test_contenteditable_variants_can_be_filled[]" time="0.837" /><testcase classname="tests.test_browser_chromium" name="test_contenteditable_variants_can_be_filled[=&quot;&quot;]" time="0.834" /><testcase classname="tests.test_browser_chromium" name="test_contenteditable_variants_can_be_filled[=true]" time="0.854" /><testcase classname="tests.test_browser_chromium" name="test_contenteditable_variants_can_be_filled[=plaintext-only]" time="0.856" /><testcase classname="tests.test_browser_chromium" name="test_nested_scroll_invalidates_coordinate_capture[frame]" time="0.716" /><testcase classname="tests.test_browser_chromium" name="test_nested_scroll_invalidates_coordinate_capture[shadow]" time="0.708" /><testcase classname="tests.test_browser_chromium" name="test_nested_scroll_invalidates_coordinate_capture[element]" time="0.708" /><testcase classname="tests.test_browser_chromium" name="test_frame_viewport_scroll_invalidates_coordinate_capture" time="0.686" /><testcase classname="tests.test_browser_chromium" name="test_harness_rejects_wrong_controls_without_click" time="0.665" /><testcase classname="tests.test_browser_chromium" name="test_harness_verifies_states_and_chords" time="1.041" /><testcase classname="tests.test_browser_chromium" name="test_harness_continues_long_pages_and_checks_full_scope" time="0.858" /><testcase classname="tests.test_browser_chromium" name="test_harness_scrolls_target_and_only_requested_axis" time="1.337" /><testcase classname="tests.test_browser_chromium" name="test_recording_failure_preserves_completed_click" time="0.846" /><testcase classname="tests.test_browser_chromium" name="test_replay_uses_guarded_fill_and_validates_target" time="0.847" /><testcase classname="tests.test_browser_chromium" name="test_popup_snapshot_and_dead_session_are_visible_to_agent" time="0.860" /><testcase classname="tests.test_browser_chromium" name="test_scoped_cross_origin_frames_and_parent_overlay[127.0.0.1]" time="1.785" /><testcase classname="tests.test_browser_chromium" name="test_scoped_cross_origin_frames_and_parent_overlay[localhost]" time="1.790" /><testcase classname="tests.test_browser_chromium" name="test_async_form_rollback_is_not_reported_as_confirmed" time="0.866" /><testcase classname="tests.test_browser_chromium" name="test_full_page_and_crop_screenshots_preserve_coordinate_scope" time="0.774" /><testcase classname="tests.test_browser_chromium" name="test_dead_session_recovery_does_not_replay_completed_actions" time="1.489" /><testcase classname="tests.test_browser_chromium" name="test_direct_service_fill_cannot_click_submit_button" time="0.673" /><testcase classname="tests.test_browser_chromium" name="test_replay_rejects_changed_semantic_target" time="0.665" /><testcase classname="tests.test_browser_chromium" name="test_long_select_options_can_be_continued" time="0.841" /><testcase classname="tests.test_browser_chromium" name="test_contenteditable_multiline_fill_has_correct_postcondition" time="0.842" /><testcase classname="tests.test_browser_chromium" name="test_press_printable_key_inserts_once_with_native_events[a-a]" time="0.837" /><testcase classname="tests.test_browser_chromium" name="test_press_printable_key_inserts_once_with_native_events[Shift+a-A]" time="0.840" /><testcase classname="tests.test_browser_chromium" name="test_press_printable_key_inserts_once_with_native_events[Space- ]" time="0.837" /><testcase classname="tests.test_browser_chromium" name="test_press_printable_key_inserts_once_with_native_events[+-+]" time="0.849" /><testcase classname="tests.test_browser_chromium" name="test_press_printable_key_inserts_once_with_native_events[Shift+1-!]" time="0.837" /><testcase classname="tests.test_browser_chromium" name="test_press_rejects_target_that_cannot_gain_focus" time="0.652" /><testcase classname="tests.test_browser_chromium" name="test_shadow_label_uses_its_own_tree_and_guards_semantic_changes" time="0.661" /><testcase classname="tests.test_browser_chromium" name="test_shadow_path_replay_never_fills_similar_parent_target[False]" time="0.850" /><testcase classname="tests.test_browser_chromium" name="test_shadow_path_replay_never_fills_similar_parent_target[True]" time="0.656" /><testcase classname="tests.test_browser_chromium" name="test_scoped_shadow_observation_can_continue_large_tree" time="0.655" /><testcase classname="tests.test_browser_chromium" name="test_field_input_does_not_edit_previous_field_when_click_cannot_focus[fill]" time="1.675" /><testcase classname="tests.test_browser_chromium" name="test_field_input_does_not_edit_previous_field_when_click_cannot_focus[type]" time="1.692" /><testcase classname="tests.test_browser_chromium" name="test_transformed_same_origin_frame_is_rejected_before_click" time="0.661" /><testcase classname="tests.test_browser_chromium" name="test_printable_press_respects_cancelled_browser_default" time="0.836" /><testcase classname="tests.test_browser_chromium" name="test_fill_balances_shortcut_keys_before_replacing_text" time="0.845" /><testcase classname="tests.test_browser_chromium" name="test_public_shadow_workflow_replay_completes_with_guarded_target" time="1.219" /><testcase classname="tests.test_browser_chromium" name="test_extra_modifiers_do_not_trigger_select_all_editing_command[Ctrl+Alt+a]" time="0.842" /><testcase classname="tests.test_browser_chromium" name="test_extra_modifiers_do_not_trigger_select_all_editing_command[Ctrl+Shift+a]" time="0.836" /><testcase classname="tests.test_browser_chromium" name="test_recorded_shadow_input_and_click_replay_in_the_original_tree[False]" time="1.410"><failure message="RuntimeError: coroutine raised StopIteration">chrome = (&lt;deepseek_tui.browser.service.BrowserService object at 0x10a2480e0&gt;, BrowserRun(thread_id='t', directory=PosixPath('/... None, 'scope_shadow_path': [], 'frame_offset': 0, 'next_frame_offset': None}, healthy=True, observation_context=None))
+late_shadow = False
+
+    @pytest.mark.parametrize("late_shadow", [False, True])
+    async def test_recorded_shadow_input_and_click_replay_in_the_original_tree(chrome, late_shadow):
+        from deepseek_tui.browser.workflows import (
+            finish_recording, read_workflow, start_recording, start_replay,
+        )
+    
+        service, run = chrome
+        client = run.session._internal.client
+        setup = """document.body.innerHTML=
+          '&lt;input id=q aria-label=Draft value=parent&gt;&lt;div id=host&gt;&lt;/div&gt;';
+          const root=document.querySelector('#host').attachShadow({mode:'open'});
+          root.innerHTML='&lt;input id=q aria-label=Draft value=child&gt;&lt;button id=save&gt;Save&lt;/button&gt;';
+          root.querySelector('#save').onclick=()=&gt;window.saved=root.querySelector('#q').value;
+          window.saved='';true"""
+        if not late_shadow:
+            await evaluate(client, setup)
+        await service.control("t", "user")
+        await start_recording(service, "t")
+        if late_shadow:
+            await evaluate(client, setup)
+        observation = (await service.action("t", BrowserAction(action="observe"), actor="user"))["observation"]
+        result = await service.action("t", BrowserAction(action="fill",
+            observation_id=observation["observation_id"], ref=ref(observation, "Draft"), text="parent"), actor="user")
+        observation = result["observation"]
+        shadow = next(e for e in observation["elements"] if e["name"] == "Draft" and not e.get("selector"))
+        await service.action("t", BrowserAction(action="fill", observation_id=observation["observation_id"],
+            ref=shadow["ref"], text="PRIVATE_RECORDED_DRAFT"), actor="user")
+        box = await evaluate(client, "(()=&gt;{const r=document.querySelector('#host').shadowRoot"
+            ".querySelector('#save').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()")
+        for kind in ("mousePressed", "mouseReleased"):
+            await client.send("Input.dispatchMouseEvent", {"type":kind, **box,
+                                                           "button":"left", "clickCount":1})
+        await asyncio.sleep(0.35)
+        finished = await finish_recording(run)
+        doc = read_workflow(service, "t", finished["recordingId"])
+&gt;       fill = next(step for step in doc.steps if step.kind == "fill" and (step.target or {}).get("shadowPath"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_browser_chromium.py:1125: StopIteration
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;Coroutine test_recorded_shadow_input_and_click_replay_in_the_original_tree[False]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:469: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:716: in inner
+    runner.run(coro, context=context)
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;_UnixSelectorEventLoop running=False closed=False debug=False&gt;
+future = &lt;Task finished name='Task-3186' coro=&lt;test_recorded_shadow_input_and_click_replay_in_the_original_tree() done, defined...top/deepseek-tui-py-main/tests/test_browser_chromium.py:1090&gt; exception=RuntimeError('coroutine raised StopIteration')&gt;
+
+    def run_until_complete(self, future):
+        """Run until the Future is done.
+    
+        If the argument is a coroutine, it is wrapped in a Task.
+    
+        WARNING: It would be disastrous to call run_until_complete()
+        with the same coroutine twice -- it would wrap it in two
+        different Tasks and that can't be good.
+    
+        Return the Future's result, or raise its exception.
+        """
+        self._check_closed()
+        self._check_running()
+    
+        new_task = not futures.isfuture(future)
+        future = tasks.ensure_future(future, loop=self)
+        if new_task:
+            # An exception is raised if the future didn't complete, so there
+            # is no need to log the "destroy pending task" message
+            future._log_destroy_pending = False
+    
+        future.add_done_callback(_run_until_complete_cb)
+        try:
+            self.run_forever()
+        except:
+            if new_task and future.done() and not future.cancelled():
+                # The coroutine raised a BaseException. Consume the exception
+                # to not log a warning, the caller doesn't have access to the
+                # local task.
+                future.exception()
+            raise
+        finally:
+            future.remove_done_callback(_run_until_complete_cb)
+        if not future.done():
+            raise RuntimeError('Event loop stopped before Future completed.')
+    
+&gt;       return future.result()
+               ^^^^^^^^^^^^^^^
+E       RuntimeError: coroutine raised StopIteration
+
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: RuntimeError</failure></testcase><testcase classname="tests.test_browser_chromium" name="test_recorded_shadow_input_and_click_replay_in_the_original_tree[True]" time="1.393"><failure message="RuntimeError: coroutine raised StopIteration">chrome = (&lt;deepseek_tui.browser.service.BrowserService object at 0x10964fb90&gt;, BrowserRun(thread_id='t', directory=PosixPath('/... None, 'scope_shadow_path': [], 'frame_offset': 0, 'next_frame_offset': None}, healthy=True, observation_context=None))
+late_shadow = True
+
+    @pytest.mark.parametrize("late_shadow", [False, True])
+    async def test_recorded_shadow_input_and_click_replay_in_the_original_tree(chrome, late_shadow):
+        from deepseek_tui.browser.workflows import (
+            finish_recording, read_workflow, start_recording, start_replay,
+        )
+    
+        service, run = chrome
+        client = run.session._internal.client
+        setup = """document.body.innerHTML=
+          '&lt;input id=q aria-label=Draft value=parent&gt;&lt;div id=host&gt;&lt;/div&gt;';
+          const root=document.querySelector('#host').attachShadow({mode:'open'});
+          root.innerHTML='&lt;input id=q aria-label=Draft value=child&gt;&lt;button id=save&gt;Save&lt;/button&gt;';
+          root.querySelector('#save').onclick=()=&gt;window.saved=root.querySelector('#q').value;
+          window.saved='';true"""
+        if not late_shadow:
+            await evaluate(client, setup)
+        await service.control("t", "user")
+        await start_recording(service, "t")
+        if late_shadow:
+            await evaluate(client, setup)
+        observation = (await service.action("t", BrowserAction(action="observe"), actor="user"))["observation"]
+        result = await service.action("t", BrowserAction(action="fill",
+            observation_id=observation["observation_id"], ref=ref(observation, "Draft"), text="parent"), actor="user")
+        observation = result["observation"]
+        shadow = next(e for e in observation["elements"] if e["name"] == "Draft" and not e.get("selector"))
+        await service.action("t", BrowserAction(action="fill", observation_id=observation["observation_id"],
+            ref=shadow["ref"], text="PRIVATE_RECORDED_DRAFT"), actor="user")
+        box = await evaluate(client, "(()=&gt;{const r=document.querySelector('#host').shadowRoot"
+            ".querySelector('#save').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()")
+        for kind in ("mousePressed", "mouseReleased"):
+            await client.send("Input.dispatchMouseEvent", {"type":kind, **box,
+                                                           "button":"left", "clickCount":1})
+        await asyncio.sleep(0.35)
+        finished = await finish_recording(run)
+        doc = read_workflow(service, "t", finished["recordingId"])
+&gt;       fill = next(step for step in doc.steps if step.kind == "fill" and (step.target or {}).get("shadowPath"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_browser_chromium.py:1125: StopIteration
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;Coroutine test_recorded_shadow_input_and_click_replay_in_the_original_tree[True]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:469: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:716: in inner
+    runner.run(coro, context=context)
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;_UnixSelectorEventLoop running=False closed=False debug=False&gt;
+future = &lt;Task finished name='Task-3293' coro=&lt;test_recorded_shadow_input_and_click_replay_in_the_original_tree() done, defined...top/deepseek-tui-py-main/tests/test_browser_chromium.py:1090&gt; exception=RuntimeError('coroutine raised StopIteration')&gt;
+
+    def run_until_complete(self, future):
+        """Run until the Future is done.
+    
+        If the argument is a coroutine, it is wrapped in a Task.
+    
+        WARNING: It would be disastrous to call run_until_complete()
+        with the same coroutine twice -- it would wrap it in two
+        different Tasks and that can't be good.
+    
+        Return the Future's result, or raise its exception.
+        """
+        self._check_closed()
+        self._check_running()
+    
+        new_task = not futures.isfuture(future)
+        future = tasks.ensure_future(future, loop=self)
+        if new_task:
+            # An exception is raised if the future didn't complete, so there
+            # is no need to log the "destroy pending task" message
+            future._log_destroy_pending = False
+    
+        future.add_done_callback(_run_until_complete_cb)
+        try:
+            self.run_forever()
+        except:
+            if new_task and future.done() and not future.cancelled():
+                # The coroutine raised a BaseException. Consume the exception
+                # to not log a warning, the caller doesn't have access to the
+                # local task.
+                future.exception()
+            raise
+        finally:
+            future.remove_done_callback(_run_until_complete_cb)
+        if not future.done():
+            raise RuntimeError('Event loop stopped before Future completed.')
+    
+&gt;       return future.result()
+               ^^^^^^^^^^^^^^^
+E       RuntimeError: coroutine raised StopIteration
+
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: RuntimeError</failure></testcase><testcase classname="tests.test_browser_chromium" name="test_stopping_recording_flushes_the_last_input_without_waiting" time="0.678"><failure message="assert False&#10; +  where False = any(&lt;generator object test_stopping_recording_flushes_the_last_input_without_waiting.&lt;locals&gt;.&lt;genexpr&gt; at 0x10a49dd80&gt;)">chrome = (&lt;deepseek_tui.browser.service.BrowserService object at 0x10a3ae8a0&gt;, BrowserRun(thread_id='t', directory=PosixPath('/...Delivery fixture', 'active': True}], assistance=None, latest_observation=None, healthy=True, observation_context=None))
+
+    async def test_stopping_recording_flushes_the_last_input_without_waiting(chrome):
+        from deepseek_tui.browser.workflows import finish_recording, read_workflow, start_recording
+    
+        service, run = chrome
+        await service.control("t", "user")
+        started = await start_recording(service, "t")
+        await evaluate(run.session._internal.client, "document.querySelector('#q').focus();true")
+        await run.session._internal.client.send("Input.insertText", {"text":"PRIVATE_FINAL_INPUT"})
+        await finish_recording(run)
+        doc = read_workflow(service, "t", started["recordingId"])
+&gt;       assert any(step.kind == "fill" for step in doc.steps)
+E       assert False
+E        +  where False = any(&lt;generator object test_stopping_recording_flushes_the_last_input_without_waiting.&lt;locals&gt;.&lt;genexpr&gt; at 0x10a49dd80&gt;)
+
+tests/test_browser_chromium.py:1147: AssertionError</failure></testcase><testcase classname="tests.test_browser_chromium" name="test_recording_starts_on_the_current_tab" time="1.068" /><testcase classname="tests.test_browser_shared_input" name="test_input_ownership_generation_and_private_text" time="0.002" /><testcase classname="tests.test_browser_shared_input" name="test_manual_key_and_text_events_do_not_duplicate_printable_input" time="0.001" /><testcase classname="tests.test_browser_shared_input" name="test_shortcuts_never_emit_printable_text[Ctrl+a]" time="0.001" /><testcase classname="tests.test_browser_shared_input" name="test_shortcuts_never_emit_printable_text[Meta+A]" time="0.000" /><testcase classname="tests.test_browser_shared_input" name="test_shortcuts_never_emit_printable_text[Ctrl++]" time="0.000" /><testcase classname="tests.test_browser_shared_input" name="test_shortcuts_never_emit_printable_text[Alt+Shift+1]" time="0.000" /><testcase classname="tests.test_browser_shared_input" name="test_transfer_waits_for_atomic_action_and_discards_queued_input" time="0.001" /><testcase classname="tests.test_browser_shared_input" name="test_resize_pointer_and_key_dispatch" time="0.001" /><testcase classname="tests.test_browser_shared_input" name="test_cut_requires_the_selection_already_copied_and_video_keeps_dimensions" time="0.001" /><testcase classname="tests.test_browser_shared_input" name="test_real_shared_browser_handoff_and_direct_input" time="1.284" /><testcase classname="tests.test_browser_shared_input" name="test_element_pick_is_fenced_and_does_not_click_or_log_content" time="0.002" /><testcase classname="tests.test_browser_shared_input" name="test_real_picker_and_devtools_share_current_tab" time="0.477" /><testcase classname="tests.test_browser_shared_input" name="test_manual_input_capture_failure_does_not_report_input_failure" time="0.002" /><testcase classname="tests.test_browser_module" name="test_action_evidence_and_recording_module" time="0.082" /><testcase classname="tests.test_browser_module" name="test_frame_reports_current_page_and_export_preserves_assertions" time="0.005" /><testcase classname="tests.test_browser_module" name="test_export_does_not_claim_business_success_for_actions_only" time="0.004" /><testcase classname="tests.test_browser_module" name="test_video_records_between_actions_and_close_finalizes" time="0.004"><skipped type="pytest.skip" message="FFmpeg is required for video encoding">/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_module.py:133: FFmpeg is required for video encoding</skipped></testcase><testcase classname="tests.test_browser_module" name="test_takeover_discards_waiting_agent_action_and_stop_cleans_up" time="0.004" /><testcase classname="tests.test_browser_module" name="test_failed_actions_and_recording_preserve_evidence" time="0.023" /><testcase classname="tests.test_browser_module" name="test_text_check_waits_for_dynamic_content_and_captures_failure" time="0.207" /><testcase classname="tests.test_browser_module" name="test_stop_at_frame_limit_returns_the_saved_animation" time="0.446" /><testcase classname="tests.test_browser_module" name="test_skill_form_actions_are_idempotent_and_use_the_owned_session" time="0.005" /><testcase classname="tests.test_browser_module" name="test_replay_resolves_moved_demo_and_rejects_other_local_files" time="0.001" /><testcase classname="tests.test_browser_module" name="test_workflow_preflight_and_takeover" time="0.087" /><testcase classname="tests.test_browser_module" name="test_workflow_rejects_invalid_later_input_before_taking_control[press-None-UnsupportedKey-Unsupported]" time="0.004" /><testcase classname="tests.test_browser_module" name="test_workflow_rejects_invalid_later_input_before_taking_control[set_checked-maybe-None-Checkbox]" time="0.003" /><testcase classname="tests.test_browser_module" name="test_workflow_rejects_invalid_later_input_before_taking_control[set_checked-{{confirmation}}-None-Missing]" time="0.004" /><testcase classname="tests.test_browser_module" name="test_profile_preferences_require_closed_session_and_survive_restart" time="0.003" /><testcase classname="tests.test_browser_module" name="test_recover_restarts_after_disconnect" time="0.005" /><testcase classname="tests.test_browser_module" name="test_invalid_actions[value0]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_invalid_actions[value1]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_invalid_actions[value2]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_invalid_actions[value3]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_invalid_actions[value4]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_invalid_actions[value5]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_invalid_actions[value6]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_tool_uses_thread_session_and_scoped_approval" time="0.004" /><testcase classname="tests.test_browser_module" name="test_real_octop_demo" time="8.158" /><testcase classname="tests.test_browser_module" name="test_real_record_replay_and_persistent_profile" time="5.494" /><testcase classname="tests.test_browser_module" name="test_status_without_start_and_during_takeover" time="0.005" /><testcase classname="tests.test_browser_module" name="test_browser_requires_grounded_targets[switch_tab]" time="0.001" /><testcase classname="tests.test_browser_module" name="test_browser_requires_grounded_targets[hover]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_browser_requires_grounded_targets[wait]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_navigation_wait_and_tabs_use_owned_session" time="0.008" /><testcase classname="tests.test_browser_module" name="test_screenshot_and_failure_evidence_respect_model_capability[False]" time="0.006" /><testcase classname="tests.test_browser_module" name="test_screenshot_and_failure_evidence_respect_model_capability[True]" time="0.008" /><testcase classname="tests.test_browser_module" name="test_unknown_model_keeps_evidence_without_injecting_images" time="0.005" /><testcase classname="tests.test_browser_module" name="test_scoped_assertion_does_not_accept_missing_region" time="0.004" /><testcase classname="tests.test_browser_module" name="test_real_browser_tabs_wait_and_focused_unicode_input" time="1.973" /><testcase classname="tests.test_browser_module" name="test_image_attachment_error_does_not_reverse_success" time="0.007" /><testcase classname="tests.test_browser_module" name="test_missing_browser_dependency_reports_actual_runtime" time="0.001" /><testcase classname="tests.test_browser_module" name="test_real_new_tab_cold_start" time="0.708" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[open]" time="0.001" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[new_tab]" time="0.001" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[switch_tab]" time="0.001" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[back]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[forward]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[reload]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[hover]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[scroll]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_navigation_and_inspection_do_not_prompt_for_approval[screenshot]" time="0.000" /><testcase classname="tests.test_browser_module" name="test_reading_does_not_invalidate_approval_scope" time="0.005" /><testcase classname="tests.test_browser_module" name="test_replay_evidence_failure_preserves_success" time="0.004" /><testcase classname="tests.test_browser_extensions" name="test_cancel_before_installer_starts_updates_status" time="0.001" /><testcase classname="tests.test_browser_extensions" name="test_installer_reports_terminal_status_and_bounds_log[True]" time="0.001" /><testcase classname="tests.test_browser_extensions" name="test_installer_reports_terminal_status_and_bounds_log[False]" time="0.001" /><testcase classname="tests.test_browser_extensions" name="test_cancel_install_kills_owned_process_group" time="0.001" /><testcase classname="tests.test_browser_extensions" name="test_skill_preview_install_discovery_and_no_overwrite" time="0.025" /><testcase classname="tests.contract.test_browser" name="test_browser_routes_require_auth_and_existing_thread" time="0.089" /><testcase classname="tests.contract.test_browser" name="test_shared_viewport_routes_validate_auth_and_input" time="0.047" /><testcase classname="tests.contract.test_browser" name="test_takeover_resumes_existing_turn_only_after_fresh_observation" time="0.050" /><testcase classname="tests.contract.test_browser" name="test_returning_browser_without_active_turn_does_not_start_task" time="0.065" /><testcase classname="tests.contract.test_browser" name="test_real_browser_takeover_observes_manual_change_before_resuming" time="0.921" /><testcase classname="tests.contract.test_browser" name="test_browser_assistance_routes_pause_and_resume_original_task" time="0.056" /><testcase classname="tests.contract.test_browser" name="test_model_assistance_call_reaches_ui_and_returns_evidence" time="0.070" /><testcase classname="tests.contract.test_browser" name="test_ui_actions_require_current_generation" time="0.047" /><testcase classname="tests.contract.test_browser" name="test_permanent_thread_deletion_closes_browser" time="0.047" /><testcase classname="tests.contract.test_browser" name="test_recovery_keeps_original_task_paused_and_assistance_pending" time="0.069" /><testcase classname="tests.contract.test_browser" name="test_large_handoff_observation_remains_valid_json" time="0.046" /></testsuite></testsuites>

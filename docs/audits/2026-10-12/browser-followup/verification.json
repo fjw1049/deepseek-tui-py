@@ -1,0 +1,81 @@
+{
+  "captured_at_utc": "2026-10-11T16:43:48.466240+00:00",
+  "client_date": "2026-10-12",
+  "scope": "Read-only working-tree review; only audit documents/probes written. No business implementation edits, paid language models, external websites, or existing login sessions.",
+  "source_sha256": {
+    "src/deepseek_tui/browser/service.py": "d213ae3db3dd22268dfa7c9ff9848c7847ccec7390b3e46caad82aa445f8481c",
+    "src/deepseek_tui/browser/observation.py": "d78cbe6b91aaf0e00d63d5b68bfeaa7ead774c2e33bf255103715b8c7990384b",
+    "src/deepseek_tui/browser/context.py": "110d852041b6aa1b1d9e3ae2b783f4a71f8344a2c07eecb8762991b23360fb90",
+    "src/deepseek_tui/browser/frames.py": "b4163c338090a4f6429170f752bbe05ec62f8363e19dde1274911ed15b454791",
+    "src/deepseek_tui/browser/input.py": "5d98bd4a2fa8e39596cb5ae3cfa73bb422ebf91904f328e74a7161daffd6b25b",
+    "src/deepseek_tui/browser/workflows.py": "f57f0e9eb6ef9799d1b39cdd418c1a178124fec7dde4cf40f2ca94fb91bc9d5b",
+    "src/deepseek_tui/engine/context.py": "a0e5b4ab9fde2e18157d2be8d3add81baf362e70ca5784c3e521089192c451de",
+    "src/deepseek_tui/tools/browser.py": "c3034a28ec429f1c11c9cfeb87bc4f652f9a7257d7812c4416825cee13dc92f8",
+    "src/deepseek_tui/tools/registry.py": "672290885fe6c779971e51829882e6b6b003f0855681716c96a25297a0874f55",
+    "src/deepseek_tui/server/browser_routes.py": "2d59121befc3cc7dac5d10a9a8d1579ff62b37dbcdc64af3b9a74ce0a034eb8c",
+    "src/deepseek_tui/server/threads/manager.py": "69d6f6881d1ba3668cb3e458c446a6d68cf88bcb013558b24465fdc2807bb95a",
+    "src/deepseek_tui/client/media.py": "6767ea839a84f53112c55bd7b67294fe770a4e0c62f07435c805821871315617",
+    "src/deepseek_tui/prompts/browser.md": "59fd54f64456e14dbb9a274ccfd4557b46dd7d0385b6cdfbad8ac9e9b7a87619",
+    "packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx": "2fe8ad1c7375ad69b959a7164b1371b676e9d74fe9653b6f6379d3b2a711fb22",
+    "packages/workbench/src/renderer/src/components/BrowserWorkspace.test.ts": "120d54dff14384e4ad14dd1a9027ac8c9302727ba6b25c47d38fcb23e9e42dc2"
+  },
+  "test_runs": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_browser_context.py tests/test_browser_observation.py tests/engine/test_browser_primary_loop.py tests/test_browser_assistance.py",
+      "result": "30 passed in 1.06s",
+      "boundary": "Synthetic/mock and real Python contract tests"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_browser_module.py tests/test_browser_shared_input.py tests/contract/test_browser.py tests/test_browser_extensions.py",
+      "result": "63 passed, 8 skipped in 1.85s",
+      "boundary": "Selected module/contract checks; skipped checks are not passes"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 DEEPSEEK_BROWSER_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_browser_chromium.py docs/audits/2026-10-12/browser-followup/probe_test.py",
+      "result": "35 passed in 40.03s",
+      "boundary": "32 existing real Chrome/local fixture tests and 3 new probes. New probe passes confirm boundary gaps, not safety. Local browser execution received approval."
+    },
+    {
+      "command": "./node_modules/.bin/vitest run src/renderer/src/components/BrowserWorkspace.test.ts",
+      "working_directory": "packages/workbench",
+      "result": "17 passed; duration 664ms",
+      "boundary": "Mocked renderer tests, not a live Electron/UI/vision session"
+    }
+  ],
+  "counts": {
+    "existing_checks_passed": 142,
+    "existing_checks_skipped": 8,
+    "new_boundary_probes_confirmed": 3,
+    "production_natural_language_tasks_tested": 0
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "priority": "P1",
+      "source": "src/deepseek_tui/browser/observation.py:134",
+      "evidence": "main-world-ref.json",
+      "type": "real Chrome target redirection; original counter 0, alternate counter 1"
+    },
+    {
+      "id": "F2",
+      "priority": "P2",
+      "source": "src/deepseek_tui/browser/service.py:1081",
+      "evidence": "delayed-rollback.json",
+      "type": "real Chrome confirmation scope boundary; confirmed at 172ms, reverted at 900ms. Instant field equality is not asynchronous business acceptance."
+    },
+    {
+      "id": "F3",
+      "priority": "P2",
+      "source": "src/deepseek_tui/browser/context.py:94",
+      "evidence": "oversized-detail.json",
+      "type": "synthetic projection fallback removes options and explicit detail continuation"
+    }
+  ],
+  "artifact_sha256": {
+    "main-world-ref.json": "be4f5b12e2e581d3b70b07254e40fdecafb1013f21adfb065b0096d6dc80125a",
+    "probe_test.py": "864ead4394241654bf2c2bd9060e79731a2a9eb9c220e81c5c240bc9b64fadf5",
+    "oversized-detail.json": "c13a937203f23e2c9e5b1fffe09641ea67b6556c0ed887ba2bc2f3be268527ee",
+    "delayed-rollback.json": "ebb8f90c0b108944ff8ec510bd84a02f95dfa5ce7d9be812b9063010bb4d9ce8",
+    "REVIEW.md": "39fc15d375ffc91ff14e5ca5373085e5f2b74806c9c3d1347bdb89b1bbfa8700"
+  }
+}

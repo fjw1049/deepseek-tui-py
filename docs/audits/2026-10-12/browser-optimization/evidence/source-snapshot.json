@@ -1,0 +1,171 @@
+{
+  "captured_at": "2026-10-12T22:44:57.448888+08:00",
+  "scope": "Current browser chain and connected model/UI/record/replay modules; working tree changes retained. Source changed concurrently during review, results carry their own snapshots.",
+  "files": [
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/packages/workbench/package.json",
+      "sha256": "cc5d7cb487c81604055a21d324fff57e71567b38ff0f142ab6ed0e617fd72e00",
+      "bytes": 3605
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/packages/workbench/src/renderer/src/components/BrowserViewport.tsx",
+      "sha256": "e609f5f0ddb39e7025f02d19a70c83c0546066c9af5cdef7fbd0b9b0b6ea9bb2",
+      "bytes": 8058
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/packages/workbench/src/renderer/src/components/BrowserWorkspace.tsx",
+      "sha256": "2fe8ad1c7375ad69b959a7164b1371b676e9d74fe9653b6f6379d3b2a711fb22",
+      "bytes": 30615
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/packages/workbench/src/renderer/src/components/DevBrowserPanel.tsx",
+      "sha256": "96137d6edc94aa3c4ce33bbc3c24b25044d4c0cff8e198dadee7fadba92e3417",
+      "bytes": 52150
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/pyproject.toml",
+      "sha256": "14f759bac9de532623b62f29717e9f171212a7690da4bd5bb8af4e52adbda4b5",
+      "bytes": 2387
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/__init__.py",
+      "sha256": "c79b6b36b82ab07289635aad875ea8e7ab17bb0d04a1c3a7b7b9f4dc438755e4",
+      "bytes": 67
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/browser_demo.html",
+      "sha256": "68c9fdcf3a5af6e3294a244e62e72df15f2e6ceda61045f4f452f7e5c249e4e8",
+      "bytes": 1982
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/context.py",
+      "sha256": "110d852041b6aa1b1d9e3ae2b783f4a71f8344a2c07eecb8762991b23360fb90",
+      "bytes": 4839
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/frames.py",
+      "sha256": "c621ec6938464c814b2bc17855c945146b0a3d3159bd8c7d96075b36e366d012",
+      "bytes": 11799
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/input.py",
+      "sha256": "a6eff9005d21757c21ecdbf440bb97122e4c5151037c751bbf62c36c807caef6",
+      "bytes": 8914
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/install.py",
+      "sha256": "ea2f48fbad90a78f4d80793740d0a2293badfb912cdfd0c6c1afecbfd5131407",
+      "bytes": 3736
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+      "sha256": "73f80729c6dc70b79b8551a528e49c37341d10a6a17838cc7b953cc73f11335b",
+      "bytes": 21025
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/picker.py",
+      "sha256": "3ac086472a4c0a3bfa5f1da53688f6f9c662622763d6717daa3c3f5ca82c6000",
+      "bytes": 2561
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/recording.js",
+      "sha256": "be4565cc305c8c071b125770ca59b1fed4c3f1dbd54b8e8f09df0de5c0a6a558",
+      "bytes": 8525
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/recording.py",
+      "sha256": "3cf693a9b95ba1ee817aa58103a2494eb481429ef7fd071393bdf98cf9b8e107",
+      "bytes": 10290
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+      "sha256": "4c0968df0f2d7c57e3c14a51f06054edb9a732304ce8b035c309214e8c3080e0",
+      "bytes": 64802
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/skills.py",
+      "sha256": "98614928327233c02a24ed3c2510372cafe826e82af618da103fc325f22c4432",
+      "bytes": 6450
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/video.py",
+      "sha256": "b1996fc679373c7fa9725e5ececb69490f155fa791eb909337310b56c3c02f90",
+      "bytes": 3198
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/workflows.py",
+      "sha256": "a97791c5de402b40b7d9937f953842e8c36edbc982e6da8656e1a177fdd5cc99",
+      "bytes": 13958
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/client/media.py",
+      "sha256": "6767ea839a84f53112c55bd7b67294fe770a4e0c62f07435c805821871315617",
+      "bytes": 10278
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/context.py",
+      "sha256": "a0e5b4ab9fde2e18157d2be8d3add81baf362e70ca5784c3e521089192c451de",
+      "bytes": 43928
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/orchestrator/core.py",
+      "sha256": "04b9b0588efae0fdc67fdd7a0cf7e091583d737a97859c1a15046ca5f223f83b",
+      "bytes": 171020
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/orchestrator/tooling.py",
+      "sha256": "240f2ded02b8d3fe06bc2f6779dfe326d071b6f94dcae344e4c9597e9a7df0d5",
+      "bytes": 60455
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/pause.py",
+      "sha256": "29c5c1bd92b8a8993667c22adb9f03e026b0b80ec6bfe9c557e690b752c9fd2d",
+      "bytes": 3565
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/tool_dedup.py",
+      "sha256": "c34c7344d7c5af236fb3775a42f377763ad06b968bdd803659ad4119697cc217",
+      "bytes": 6885
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/prompts/browser.md",
+      "sha256": "59fd54f64456e14dbb9a274ccfd4557b46dd7d0385b6cdfbad8ac9e9b7a87619",
+      "bytes": 11029
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/browser_routes.py",
+      "sha256": "2d59121befc3cc7dac5d10a9a8d1579ff62b37dbcdc64af3b9a74ce0a034eb8c",
+      "bytes": 10173
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/threads/manager.py",
+      "sha256": "69d6f6881d1ba3668cb3e458c446a6d68cf88bcb013558b24465fdc2807bb95a",
+      "bytes": 316204
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/approval.py",
+      "sha256": "854625986344f0606528844a545762898c7d3dd3645cae4efe191ba15634849f",
+      "bytes": 31561
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/browser.py",
+      "sha256": "5d8a9c8dd9fdfa6476836ac00f2abf7c3716aa81bd7001ad65523305a5c2372a",
+      "bytes": 10951
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/registry.py",
+      "sha256": "672290885fe6c779971e51829882e6b6b003f0855681716c96a25297a0874f55",
+      "bytes": 30815
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/runtime.py",
+      "sha256": "b376533a04a791a63cdc26148f8371051b982a2b75b6006fc0d6908b53120016",
+      "bytes": 23062
+    },
+    {
+      "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_chromium.py",
+      "sha256": "6e5098edcec76efec4f3aab770e1b63c2c341f3593345dc78699eac6d51e6e09",
+      "bytes": 51889
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "case": "status_without_observation",
+    "evidence_level": "synthetic-current-implementation",
+    "budget_chars": 6000,
+    "output_chars": 23991,
+    "valid_json": true,
+    "exceeds_budget": true,
+    "observation_id": null
+  },
+  {
+    "case": "schema_valid_deep_shadow_scope",
+    "evidence_level": "synthetic-current-implementation",
+    "budget_chars": 6000,
+    "output_chars": 16295,
+    "valid_json": true,
+    "exceeds_budget": true,
+    "observation_id": "obs-current"
+  }
+]

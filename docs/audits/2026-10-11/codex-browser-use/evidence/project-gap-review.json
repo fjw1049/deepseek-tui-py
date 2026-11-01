@@ -1,0 +1,484 @@
+{
+  "review_date": "2026-10-11",
+  "scope": "只读审查当前工作区实际源码，不依据历史 handoff；未修改仓库文件。此报告是项目事实和修复建议，Codex 分发代码的比较结论由父代理补充。",
+  "verification": {
+    "tests": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m pytest -q -p no:cacheprovider --basetemp=/private/tmp/rea-review/project-gap-tests tests/test_browser_observation.py tests/engine/test_browser_primary_loop.py tests/test_browser_assistance.py",
+    "result": "20 passed in 0.86s",
+    "real_chrome": "本审查未运行真实 Chrome；已阅读现有真实 Chrome 测试定义，不能把测试定义视为本次执行证据。",
+    "probes": [
+      "最终保存探针精确使用8000字符正文：120控件，53886字符原始响应→10106字符投影，obs_current保留，但中间e60/Control060丢失；250控件94706→10106，中间e125丢失。",
+      "最终保存探针使用16000字符正文及250控件：145706字符原始响应，经真实apply_spillover/context函数投影为33197字符；obs_current和e125完全消失，保留重读完整输出文件的路径。",
+      "真实BrowserService.action加mock目标/CDP/session：target解析到#nested-list / x80,y650，但实际session.scroll只收到direction=down,amount=300，receipt.execution=executed。",
+      "真实已安装Octop.scroll加mock CDP client：direction=right,amount=300派发x400,y300,deltaX300,deltaY-300。"
+    ],
+    "probe_file": "/private/tmp/rea-review/project-gap-probe.py",
+    "probe_result": "/private/tmp/rea-review/project-gap-probe-output/result.json",
+    "probe_command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python /private/tmp/rea-review/project-gap-probe.py --repo /Users/fjw/Desktop/deepseek-tui-py-main",
+    "probe_boundaries": "输出测试使用合成observation，调用真实spillover/context函数，未调用真实模型。scroll服务测试调用真实BrowserService.action，target/CDP/session被mock；Octop测试调用真实已安装scroll函数，但CDP client被mock，未启动Chrome。"
+  },
+  "already_implemented": [
+    {
+      "fact": "最新观察绑定 tab/document/control generation；不复用旧 refs；缺失或失效目标拒绝派发并提供新观察。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 158,
+          "note": "observe 的一致性检测和 identity 输出"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 184,
+          "note": "target 身份校验"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 582,
+          "note": "拒绝动作收据和刷新观察"
+        }
+      ]
+    },
+    {
+      "fact": "目标唯一性、可见性、语义变化、disabled、遮挡和同源父 frame 叠层校验已经存在。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 232,
+          "note": "目标校验至272行"
+        }
+      ]
+    },
+    {
+      "fact": "开放 shadow DOM 和同源 frame 已遍历，嵌套目标经真实节点和 ref cache 操作；不能称 frame/shadow 完全缺失。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 94,
+          "note": "遍历 shadowRoot / contentDocument"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 650,
+          "note": "nested DOM.requestNode 和精确目标映射"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_chromium.py",
+          "line": 186,
+          "note": "定义了真实 shadow/same-origin frame 点击测试"
+        }
+      ]
+    },
+    {
+      "fact": "动作后自动观察；成功派发与任务效果区分；断连后的改变型动作记为 unknown，提示先观察而非盲重试。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 679,
+          "note": "异常收据逻辑"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 927,
+          "note": "自动观察与 execution/effect 收据"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/prompts/browser.md",
+          "line": 128,
+          "note": "恢复及禁止重复潜在已完成变更"
+        }
+      ]
+    },
+    {
+      "fact": "有条件等待、文本范围等待和 hidden 消失等待，默认10秒，不依赖固定 sleep 作为完成证据。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 755,
+          "note": "条件轮询"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_chromium.py",
+          "line": 295,
+          "note": "定义了范围等待与歧义拒绝测试"
+        }
+      ]
+    },
+    {
+      "fact": "接管 generation fencing、排队动作废弃、原任务暂停/恢复、新观察、录屏停录都已实现。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 633,
+          "note": "动作所有权/代际检查"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 960,
+          "note": "转移控制并停止录屏"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/threads/manager.py",
+          "line": 4658,
+          "note": "接管原任务和新证据恢复"
+        }
+      ]
+    },
+    {
+      "fact": "协助由主模型判断；结构化 assistance 调用暂停原任务；页面文本不会被运行时硬编码判定 CAPTCHA/login。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/threads/manager.py",
+          "line": 4515,
+          "note": "协助请求与暂停"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/threads/manager.py",
+          "line": 4564,
+          "note": "用户响应和恢复"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/engine/test_browser_primary_loop.py",
+          "line": 37,
+          "note": "主模型答案不被第二判定器改写"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_assistance.py",
+          "line": 146,
+          "note": "页面证据本身不自动触发帮助"
+        }
+      ]
+    },
+    {
+      "fact": "有 tabs/new/switch/close/history；每 chat 独立浏览器 profile/端口，默认没有用户常用 Chrome 登录状态。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 262,
+          "note": "新 profile/port"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 720,
+          "note": "标签和历史动作"
+        }
+      ]
+    },
+    {
+      "fact": "截图原生图像按模型能力附加；未知能力保留证据但不注入；支持显式配置视觉辅助模型投影。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/browser.py",
+          "line": 125,
+          "note": "能力判断和附件"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/client/media.py",
+          "line": 90,
+          "note": "native vision / helper 路由"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/client/media.py",
+          "line": 226,
+          "note": "辅助观察注明不是文本模型直接看见"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "G1",
+      "priority": "P1",
+      "kind": "已复现缺陷",
+      "title": "通用输出压缩破坏可操作 observation",
+      "problem": "observe响应在content内再序列化一次observation，然后observation字段重复完整对象。工具入境通用头尾截断不理解浏览器结构；合成120控件/8000字符正文的真实context函数投影将53886字符裁为10106，中间refs/name消失，最新observation_id仍保留。更大的观察先经apply_spillover超过100KiB只留前32KiB；250控件/16000字符正文的真实函数管线将145706裁为33197，连observation_id也丢失。metadata保留完整browser对象，但普通投影不识别它。未调用真实模型或证明真实用户任务已失败；这些是对应触发规模的可复现接口缺陷。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 881,
+          "note": "content = json.dumps(observation)"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 952,
+          "note": "response 添加完整 observation"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/orchestrator/tooling.py",
+          "line": 466,
+          "note": "插入模型前压缩"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/context.py",
+          "line": 29,
+          "note": "12k/40k 硬限制与900/10000片段"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/context.py",
+          "line": 268,
+          "note": "头尾字符串压缩"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/context.py",
+          "line": 86,
+          "note": "metadata summary 不识别 browser 结构"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/runtime.py",
+          "line": 442,
+          "note": "100KiB阈值、32KiB前缀spillover；apply_spillover:537-571"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/orchestrator/tooling.py",
+          "line": 465,
+          "note": "先spillover后context压缩"
+        }
+      ],
+      "recommendation": "先删除observe的重复JSON内容，再在任何通用spillover/compaction之前为browser_use增加结构化投影：receipt、observation_id、tab/document/generation必须保留，以及选定范围的完整元素；截断正文或分页，不按字节切浏览器JSON。",
+      "acceptance": "120/250控件，选择中间控件的主模型轮次真实收到相应 ref、name、obs_id 并可安全操作；上下文压力上升时仍成立。"
+    },
+    {
+      "id": "G2",
+      "priority": "P1",
+      "kind": "已复现缺陷",
+      "title": "scroll 忽略目标，横向滚动还额外向上滚",
+      "problem": "target 校验可能返回目标 selector/x/y，但派发只传 direction/amount。安装的 Octop 固定在400,300发滚轮；右/左滚动都会 deltaY=-amount。嵌套列表、侧栏、iframe内滚动会错位，横向滚动还改变纵向位置；目前 receipt 仍显示 executed。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 674,
+          "note": "目标解析返回 selector/x/y"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 845,
+          "note": "s.scroll 不传目标"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/.venv/lib/python3.12/site-packages/octop_browser/actions/interact.py",
+          "line": 120,
+          "note": "所有非down方向 deltaY=-amount"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/.venv/lib/python3.12/site-packages/octop_browser/actions/interact.py",
+          "line": 124,
+          "note": "固定400,300发wheel"
+        }
+      ],
+      "recommendation": "在项目适配层直接派发 CDP wheel，使用经验证目标的屏幕坐标，并让水平/垂直轴互斥；保留全页滚动的明确默认点。无需修改第三方包或引入新框架。",
+      "acceptance": "局部滚动只改变目标容器；right/left 的 deltaY=0，up/down 的 deltaX=0；frame/shadow滚动有真实Chrome回归。"
+    },
+    {
+      "id": "G3",
+      "priority": "P1",
+      "kind": "静态审计风险，未做恶意页实测",
+      "title": "观察表和校验逻辑存放在网页 main world，网页可篡改",
+      "problem": "Runtime.evaluate 没有 executionContextId/isolated world；观察状态、refs Map、name/visible函数和MutationObserver直接放在window.__deepseekObservation / window.__deepseekPageRevision，目标窗口也可访问它们。页面可覆盖状态或函数，让本来用于拒绝失效/改变目标的检查失去可信性。这是保护当前设计的信任边界问题，不等于已证明用户数据已泄露。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 38,
+          "note": "window可访问的revision"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 106,
+          "note": "refs及可替换函数放window"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 136,
+          "note": "默认Runtime.evaluate执行上下文"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 216,
+          "note": "读取可篡改window状态校验"
+        }
+      ],
+      "recommendation": "把观察采集及ref表移入受控 isolated world；必要时服务端绑定 backendNodeId/document/frame与观察ID。不要让网页可替换的全局状态充当安全校验源。",
+      "acceptance": "页面覆盖同名全局、更改其refs/name/observer不能让旧目标点击到另一个节点；文档失效和遮挡校验仍能拒绝。"
+    },
+    {
+      "id": "G4",
+      "priority": "P2",
+      "kind": "能力边界",
+      "title": "跨源 frame/关闭 shadow 缺少语义观察；嵌套元素 box 无坐标来源",
+      "problem": "open shadow和同源frame已经支持，但contentDocument读取遇跨源只发Unreadable frame。关闭shadowRoot不可见。box使用每个元素本地getBoundingClientRect，没有frame路径/坐标系标识，所有elements却共享顶层viewport；需避免模型把frame-local box当顶层截图坐标。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 83,
+          "note": "本地bounding rect"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 94,
+          "note": "只走可访问shadowRoot/contentDocument"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 110,
+          "note": "单个顶层viewport"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/tests/test_browser_chromium.py",
+          "line": 25,
+          "note": "测试frame是同源srcdoc"
+        }
+      ],
+      "recommendation": "若真实任务需要嵌入支付/登录等跨源frame，增加frame execution context/session路由和frame路径；至少给box标注coordinate_space及frame来源。关闭shadow可先保留截图/接管明确边界。",
+      "acceptance": "两个origin的本地frame fixture可以读控件、点击并验证；嵌套box不得被误认顶层坐标。"
+    },
+    {
+      "id": "G5",
+      "priority": "P2",
+      "kind": "效果验证能力不足",
+      "title": "缺少安全字段/状态断言，无法只用DOM验证fill/type",
+      "problem": "文本采集排除input/textarea/contenteditable以避免泄露草稿和秘密，此保护已经存在。结果只输出checked/selected_text等少量状态，fill/type只是CDP派发成功；check_text/wait均为字符串子串条件。没有非秘密字段的expected-value比较或具体值/属性/计数断言，React受控字段拒收、校验器改值等只能凭视觉或后续业务反馈发现。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 27,
+          "note": "排除输入值和editable文本"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 85,
+          "note": "元素状态输出"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 783,
+          "note": "fill派发并报告Filled field"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 847,
+          "note": "仅check_text子串断言"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 933,
+          "note": "fill效果诚实标unchecked"
+        }
+      ],
+      "recommendation": "增加精确目标的安全expected-value/checked/selected状态比较，只回传matches及必要原因；密码/OTP保持禁止，用户草稿不向模型输出。无需给每次动作强行设业务完成或新增第二判定模型。",
+      "acceptance": "字段拒绝输入/格式化/只读、选项不存在、自定义checkbox有有意义的验证结果；任何验证不会回传密码或用户未授权草稿。"
+    },
+    {
+      "id": "G6",
+      "priority": "P2",
+      "kind": "定位/观察能力边界",
+      "title": "范围定位仅顶层CSS；输出缺少结构和可推导scope",
+      "problem": "ref路线有效，但observe selector、wait/check_text selector、无ref的target selector都在顶层document.querySelectorAll查询，不能范围选择shadow/frame；元素只给role/name/ref/box，没有父行/表格/列表语义、DOM selector或frame路径。大量重复“编辑/删除”按钮的精确目标理解困难；interactive/full只有120/250硬限制和一个truncated布尔值，不能继续读取遗漏控件。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 64,
+          "note": "顶层selector scope"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 85,
+          "note": "平铺元素字段"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 110,
+          "note": "文本16k及控件硬截断"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 118,
+          "note": "check/wait selector顶层"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 234,
+          "note": "target selector顶层"
+        }
+      ],
+      "recommendation": "优先提供结构化附近上下文/所属行及基于ref的observe/check范围，让模型不用猜未见CSS；超过预算时支持指定ref区域或可继续读取的窗口。跨frame/shadow与G4统一实现，避免两套定位。",
+      "acceptance": "重复按钮不靠数组第一个命中；用户指定记录的父行上下文能区分；第251控件可以通过受控范围观察触达。"
+    },
+    {
+      "id": "G7",
+      "priority": "P2",
+      "kind": "提示与运行时矛盾/成本",
+      "title": "每个填表动作强制full观察，prompt却指导不要每字段full读取",
+      "problem": "OBSERVE_AFTER包含所有目标动作；每次fill/type/select/press/scroll后无条件observe(full=True)。browser.md却说稳定输入无需每字段full观察。反复完整扫描/正文回传增加延迟和上下文压力，再放大G1的截断问题。COLLECT虽然元素输出有限，仍遍历所有DOM并存所有可见元素的scroll快照。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 37,
+          "note": "OBSERVE_AFTER全动作集合"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 927,
+          "note": "所有动作后full=True"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/prompts/browser.md",
+          "line": 41,
+          "note": "最便宜充分检查及稳定字段建议"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/observation.py",
+          "line": 73,
+          "note": "整页扫描及每元素scroll快照"
+        }
+      ],
+      "recommendation": "先修G1；动作后仍保留最新身份和状态收据，但稳定输入可做目标局部读取/轻量变化摘要，导航、明显变化、用户返回控制时再完整观察。保持一次原子动作一个可用后观察ID的约束。",
+      "acceptance": "6字段复杂表单不产生6次完整正文回传；DOM突变、导航、目标失效时仍刷新并拒绝旧目标。"
+    },
+    {
+      "id": "G8",
+      "priority": "P2",
+      "kind": "产品策略选择",
+      "title": "审批粒度可能造成连续重复提示",
+      "problem": "除status/tabs/observe/check_text/wait/request_assistance外全部REQUIRED，包括open/screenshot/scroll；审批key还包含全部参数及directory:generation:revision，后者每动作甚至observe都递增。on-request策略下每个新观察/操作很难复用“会话允许”。这与任务级授权体验有关，不能简单取消外部提交保护。",
+      "sources": [
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/browser.py",
+          "line": 89,
+          "note": "按action审批"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 385,
+          "note": "scope含revision"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/browser/service.py",
+          "line": 707,
+          "note": "每操作递增revision"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/engine/orchestrator/tooling.py",
+          "line": 914,
+          "note": "key包装scope和全部参数"
+        },
+        {
+          "path": "/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/approval.py",
+          "line": 185,
+          "note": "hash完整payload"
+        }
+      ],
+      "recommendation": "依据现有trust mode定义浏览器任务的授权scope，并分开导航/观察辅助与外部状态改变；scope需明确account/origin/operation boundary，接管和范围变化失效。用户已授权任务内的可逆步骤尽量不重复问。",
+      "acceptance": "已授权普通浏览任务不会每个滚动/截图再问；账户/目标/提交影响变更仍走有效审批，拒绝无法改道绕过。"
+    }
+  ],
+  "suggested_order": [
+    "G1：先保证主模型能收到完整可操作的观察",
+    "G2：修复错误滚动，加入两个最小回归",
+    "G3：隔离观察状态，做恶意网页篡改测试",
+    "G5/G6：用ref范围及安全字段断言补任务级证据",
+    "按实际站点需要落实G4；最后处理G7性能和G8审批体验"
+  ],
+  "do_not_recommend": [
+    "不要替换已经可用的主模型/工具循环为额外LLM判定器。",
+    "不要把动作success直接解释为业务完成；当前effect=unchecked契约是正确方向。",
+    "不要声称当前完全没有frame/shadow、接管、截图vision或重试控制；这些已实现。",
+    "不要为追求“整个Codex复现”加入无实际任务证据的大框架。"
+  ]
+}

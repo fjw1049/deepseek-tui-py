@@ -1,0 +1,317 @@
+{
+  "fixture_version": 1,
+  "source": "current_workspace",
+  "behavior": [
+    {
+      "language": "en",
+      "variant": 0,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.665896007907577,
+      "input_p95_ms": 16.792000009445474,
+      "projection_chars": 1253,
+      "projection_utf8_bytes": 1253,
+      "projection_token_estimate": 375,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": []
+    },
+    {
+      "language": "zh",
+      "variant": 1,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.625562493572943,
+      "input_p95_ms": 17.038958001649007,
+      "projection_chars": 1223,
+      "projection_utf8_bytes": 1243,
+      "projection_token_estimate": 374,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": []
+    },
+    {
+      "language": "en",
+      "variant": 2,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "benchmark draft"
+        }
+      },
+      "input_p50_ms": 16.652958511258475,
+      "input_p95_ms": 16.743042011512443,
+      "projection_chars": 1253,
+      "projection_utf8_bytes": 1253,
+      "projection_token_estimate": 379,
+      "token_estimator": "o200k_base_or_char_fallback",
+      "stages": []
+    }
+  ],
+  "real_model": [
+    {
+      "language": "en",
+      "variant": 0,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "模型验收"
+        }
+      },
+      "model": "deepseek-v4-pro",
+      "rounds": 6,
+      "usage": [
+        {
+          "input_tokens": 4678,
+          "output_tokens": 63,
+          "cache_creation_input_tokens": 4678,
+          "cache_read_input_tokens": 0,
+          "reasoning_tokens": 17,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 4949,
+          "output_tokens": 75,
+          "cache_creation_input_tokens": 341,
+          "cache_read_input_tokens": 4608,
+          "reasoning_tokens": 11,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 5767,
+          "output_tokens": 222,
+          "cache_creation_input_tokens": 903,
+          "cache_read_input_tokens": 4864,
+          "reasoning_tokens": 108,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 6822,
+          "output_tokens": 145,
+          "cache_creation_input_tokens": 1062,
+          "cache_read_input_tokens": 5760,
+          "reasoning_tokens": 47,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 7862,
+          "output_tokens": 396,
+          "cache_creation_input_tokens": 1078,
+          "cache_read_input_tokens": 6784,
+          "reasoning_tokens": 333,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 9075,
+          "output_tokens": 299,
+          "cache_creation_input_tokens": 883,
+          "cache_read_input_tokens": 8192,
+          "reasoning_tokens": 189,
+          "input_tokens_include_cache": true
+        }
+      ],
+      "model_seconds": [
+        1.5879787080048118,
+        1.1034778750035912,
+        1.7002947499859147,
+        1.674501750007039,
+        4.3520850840141065,
+        3.334413417003816
+      ],
+      "total_seconds": 14.343002167006489,
+      "error": null,
+      "answer": "I've completed the task. Here's what I did and verified:\n\n1. **Changed Record A's Draft** to `模型验收` by filling the `#draftA` field.\n2. **Saved once** by clicking Record A's Save button.\n3. **Verified in the page**: Record A now shows `Saved A: 模型验收`, confirming the saved content is exactly `模型验收`.\n\nRecord B was left untouched — it still shows only its `Draft` field and `Save` button with no saved value.",
+      "wrong_record_mutations": 0,
+      "duplicate_mutations": 0,
+      "assistance_requested": false,
+      "success_claim_requires_review": false,
+      "stages": []
+    },
+    {
+      "language": "zh",
+      "variant": 1,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "模型验收"
+        }
+      },
+      "model": "deepseek-v4-pro",
+      "rounds": 6,
+      "usage": [
+        {
+          "input_tokens": 4682,
+          "output_tokens": 58,
+          "cache_creation_input_tokens": 74,
+          "cache_read_input_tokens": 4608,
+          "reasoning_tokens": 12,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 4948,
+          "output_tokens": 47,
+          "cache_creation_input_tokens": 340,
+          "cache_read_input_tokens": 4608,
+          "reasoning_tokens": 0,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 5725,
+          "output_tokens": 231,
+          "cache_creation_input_tokens": 861,
+          "cache_read_input_tokens": 4864,
+          "reasoning_tokens": 115,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 6774,
+          "output_tokens": 121,
+          "cache_creation_input_tokens": 1142,
+          "cache_read_input_tokens": 5632,
+          "reasoning_tokens": 26,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 7771,
+          "output_tokens": 300,
+          "cache_creation_input_tokens": 987,
+          "cache_read_input_tokens": 6784,
+          "reasoning_tokens": 237,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 8881,
+          "output_tokens": 303,
+          "cache_creation_input_tokens": 1201,
+          "cache_read_input_tokens": 7680,
+          "reasoning_tokens": 208,
+          "input_tokens_include_cache": true
+        }
+      ],
+      "model_seconds": [
+        1.111396958003752,
+        1.323422625020612,
+        2.1843883330002427,
+        1.3966469169827178,
+        3.1290696669893805,
+        3.4812728749820963
+      ],
+      "total_seconds": 13.047599792014807,
+      "error": null,
+      "answer": "已完成。\n\n- 我把记录 A 的草稿输入框（`#draftA`）改为“模型验收”。\n- 只点击了一次记录 A 对应的“保存”按钮。\n- 保存后页面显示“已保存 A: 模型验收”，说明记录 A 的已保存内容已核对无误。\n- 全程未修改记录 B（`#draftB`），页面也没有出现记录 B 的已保存内容变化。",
+      "wrong_record_mutations": 0,
+      "duplicate_mutations": 0,
+      "assistance_requested": false,
+      "success_claim_requires_review": false,
+      "stages": []
+    },
+    {
+      "language": "en",
+      "variant": 2,
+      "completed": true,
+      "truth": {
+        "saves": {
+          "A": 1,
+          "B": 0
+        },
+        "values": {
+          "A": "模型验收"
+        }
+      },
+      "model": "deepseek-v4-pro",
+      "rounds": 6,
+      "usage": [
+        {
+          "input_tokens": 4678,
+          "output_tokens": 58,
+          "cache_creation_input_tokens": 70,
+          "cache_read_input_tokens": 4608,
+          "reasoning_tokens": 12,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 4944,
+          "output_tokens": 47,
+          "cache_creation_input_tokens": 336,
+          "cache_read_input_tokens": 4608,
+          "reasoning_tokens": 0,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 5743,
+          "output_tokens": 211,
+          "cache_creation_input_tokens": 879,
+          "cache_read_input_tokens": 4864,
+          "reasoning_tokens": 93,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 6804,
+          "output_tokens": 154,
+          "cache_creation_input_tokens": 1172,
+          "cache_read_input_tokens": 5632,
+          "reasoning_tokens": 52,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 7867,
+          "output_tokens": 402,
+          "cache_creation_input_tokens": 1083,
+          "cache_read_input_tokens": 6784,
+          "reasoning_tokens": 339,
+          "input_tokens_include_cache": true
+        },
+        {
+          "input_tokens": 9091,
+          "output_tokens": 265,
+          "cache_creation_input_tokens": 899,
+          "cache_read_input_tokens": 8192,
+          "reasoning_tokens": 168,
+          "input_tokens_include_cache": true
+        }
+      ],
+      "model_seconds": [
+        1.2539485419983976,
+        1.0401972499967087,
+        2.1598143329902086,
+        2.473826542001916,
+        4.230176916986238,
+        3.118149624991929
+      ],
+      "total_seconds": 14.749779417004902,
+      "error": null,
+      "answer": "已完成任务。\n\n操作过程：\n1. 在 Record A 的 Draft 输入框（`#draftA`）填入「模型验收」。\n2. 点击 Record A 的 Save 按钮保存一次。\n3. 保存后页面出现「Saved A: 模型验收」，确认 Record A 中的已保存内容为「模型验收」。\n\nRecord B 未做任何修改，页面中没有出现 Record B 的保存内容，保持原样。",
+      "wrong_record_mutations": 0,
+      "duplicate_mutations": 0,
+      "assistance_requested": false,
+      "success_claim_requires_review": false,
+      "stages": []
+    }
+  ]
+}

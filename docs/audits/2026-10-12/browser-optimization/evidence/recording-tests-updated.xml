@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="4" time="8.576" timestamp="2026-10-12T22:39:06.739612+08:00" hostname="192.168.0.101"><testcase classname="tests.test_browser_chromium" name="test_recorded_shadow_input_and_click_replay_in_the_original_tree[False]" time="3.449"><failure message="AssertionError: Replay target must have one current, matching, observable element&#10;assert 'failed' == 'passed'&#10;  &#10;  - passed&#10;  + failed">chrome = (&lt;deepseek_tui.browser.service.BrowserService object at 0x10ab94440&gt;, BrowserRun(thread_id='t', directory=PosixPath('/...ope_shadow_path': ['div#host'], 'frame_offset': 0, 'next_frame_offset': None}, healthy=True, observation_context=None))
+late_shadow = False
+
+    @pytest.mark.parametrize("late_shadow", [False, True])
+    async def test_recorded_shadow_input_and_click_replay_in_the_original_tree(chrome, late_shadow):
+        from deepseek_tui.browser.workflows import (
+            finish_recording,
+            read_workflow,
+            recording_store,
+            start_recording,
+            start_replay,
+        )
+    
+        service, run = chrome
+        client = run.session._internal.client
+        setup = """document.body.innerHTML=
+          '&lt;input id=q aria-label=Draft value=parent&gt;&lt;div id=host&gt;&lt;/div&gt;';
+          const root=document.querySelector('#host').attachShadow({mode:'open'});
+          root.innerHTML='&lt;input id=q aria-label=Draft value=child&gt;&lt;button id=save&gt;Save&lt;/button&gt;';
+          root.querySelector('#save').onclick=()=&gt;window.saved=root.querySelector('#q').value;
+          window.saved='';true"""
+        if not late_shadow:
+            await evaluate(client, setup)
+        await service.control("t", "user")
+        await start_recording(service, "t")
+        if late_shadow:
+            await evaluate(client, setup)
+        observation = (await service.action("t", BrowserAction(action="observe"), actor="user"))[
+            "observation"
+        ]
+        result = await service.action(
+            "t",
+            BrowserAction(
+                action="fill",
+                observation_id=observation["observation_id"],
+                ref=ref(observation, "Draft"),
+                text="parent",
+            ),
+            actor="user",
+        )
+        observation = result["observation"]
+        shadow = next(
+            e for e in observation["elements"] if e["name"] == "Draft" and not e.get("selector")
+        )
+        await service.action(
+            "t",
+            BrowserAction(
+                action="fill",
+                observation_id=observation["observation_id"],
+                ref=shadow["ref"],
+                text="PRIVATE_RECORDED_DRAFT",
+            ),
+            actor="user",
+        )
+        box = await evaluate(
+            client,
+            "(()=&gt;{const r=document.querySelector('#host').shadowRoot"
+            ".querySelector('#save').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()",
+        )
+        for kind in ("mousePressed", "mouseReleased"):
+            await client.send(
+                "Input.dispatchMouseEvent", {"type": kind, **box, "button": "left", "clickCount": 1}
+            )
+        await asyncio.sleep(0.35)
+        finished = await finish_recording(run)
+        doc = read_workflow(service, "t", finished["recordingId"])
+        fill = next(
+            step for step in doc.steps if step.kind == "fill" and (step.target or {}).get("shadowPath")
+        )
+        click = next(step for step in doc.steps if step.kind == "click"
+                     and (step.target or {}).get("name") == "Save")
+        assert fill.target["shadowPath"] == click.target["shadowPath"] == ["div#host"]
+        assert doc.steps.index(fill) &lt; doc.steps.index(click)
+        assert "PRIVATE_RECORDED_DRAFT" not in str(
+            recording_store(service, "t").read_events(finished["recordingId"]))
+        await evaluate(
+            client,
+            "document.querySelector('#host').shadowRoot.querySelector('#q').value='child';window.saved=''",
+        )
+        await start_replay(
+            service, "t", finished["recordingId"], {item["name"]: "replayed" for item in doc.inputs}
+        )
+        await asyncio.wait_for(run.demo_task, timeout=15)
+&gt;       assert run.demo_status == "passed", run.error
+E       AssertionError: Replay target must have one current, matching, observable element
+E       assert 'failed' == 'passed'
+E         
+E         - passed
+E         + failed
+
+tests/test_browser_chromium.py:1170: AssertionError</failure></testcase><testcase classname="tests.test_browser_chromium" name="test_recorded_shadow_input_and_click_replay_in_the_original_tree[True]" time="3.318"><failure message="AssertionError: Replay target must have one current, matching, observable element&#10;assert 'failed' == 'passed'&#10;  &#10;  - passed&#10;  + failed">chrome = (&lt;deepseek_tui.browser.service.BrowserService object at 0x10ad588c0&gt;, BrowserRun(thread_id='t', directory=PosixPath('/...ope_shadow_path': ['div#host'], 'frame_offset': 0, 'next_frame_offset': None}, healthy=True, observation_context=None))
+late_shadow = True
+
+    @pytest.mark.parametrize("late_shadow", [False, True])
+    async def test_recorded_shadow_input_and_click_replay_in_the_original_tree(chrome, late_shadow):
+        from deepseek_tui.browser.workflows import (
+            finish_recording,
+            read_workflow,
+            recording_store,
+            start_recording,
+            start_replay,
+        )
+    
+        service, run = chrome
+        client = run.session._internal.client
+        setup = """document.body.innerHTML=
+          '&lt;input id=q aria-label=Draft value=parent&gt;&lt;div id=host&gt;&lt;/div&gt;';
+          const root=document.querySelector('#host').attachShadow({mode:'open'});
+          root.innerHTML='&lt;input id=q aria-label=Draft value=child&gt;&lt;button id=save&gt;Save&lt;/button&gt;';
+          root.querySelector('#save').onclick=()=&gt;window.saved=root.querySelector('#q').value;
+          window.saved='';true"""
+        if not late_shadow:
+            await evaluate(client, setup)
+        await service.control("t", "user")
+        await start_recording(service, "t")
+        if late_shadow:
+            await evaluate(client, setup)
+        observation = (await service.action("t", BrowserAction(action="observe"), actor="user"))[
+            "observation"
+        ]
+        result = await service.action(
+            "t",
+            BrowserAction(
+                action="fill",
+                observation_id=observation["observation_id"],
+                ref=ref(observation, "Draft"),
+                text="parent",
+            ),
+            actor="user",
+        )
+        observation = result["observation"]
+        shadow = next(
+            e for e in observation["elements"] if e["name"] == "Draft" and not e.get("selector")
+        )
+        await service.action(
+            "t",
+            BrowserAction(
+                action="fill",
+                observation_id=observation["observation_id"],
+                ref=shadow["ref"],
+                text="PRIVATE_RECORDED_DRAFT",
+            ),
+            actor="user",
+        )
+        box = await evaluate(
+            client,
+            "(()=&gt;{const r=document.querySelector('#host').shadowRoot"
+            ".querySelector('#save').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()",
+        )
+        for kind in ("mousePressed", "mouseReleased"):
+            await client.send(
+                "Input.dispatchMouseEvent", {"type": kind, **box, "button": "left", "clickCount": 1}
+            )
+        await asyncio.sleep(0.35)
+        finished = await finish_recording(run)
+        doc = read_workflow(service, "t", finished["recordingId"])
+        fill = next(
+            step for step in doc.steps if step.kind == "fill" and (step.target or {}).get("shadowPath")
+        )
+        click = next(step for step in doc.steps if step.kind == "click"
+                     and (step.target or {}).get("name") == "Save")
+        assert fill.target["shadowPath"] == click.target["shadowPath"] == ["div#host"]
+        assert doc.steps.index(fill) &lt; doc.steps.index(click)
+        assert "PRIVATE_RECORDED_DRAFT" not in str(
+            recording_store(service, "t").read_events(finished["recordingId"]))
+        await evaluate(
+            client,
+            "document.querySelector('#host').shadowRoot.querySelector('#q').value='child';window.saved=''",
+        )
+        await start_replay(
+            service, "t", finished["recordingId"], {item["name"]: "replayed" for item in doc.inputs}
+        )
+        await asyncio.wait_for(run.demo_task, timeout=15)
+&gt;       assert run.demo_status == "passed", run.error
+E       AssertionError: Replay target must have one current, matching, observable element
+E       assert 'failed' == 'passed'
+E         
+E         - passed
+E         + failed
+
+tests/test_browser_chromium.py:1170: AssertionError</failure></testcase><testcase classname="tests.test_browser_chromium" name="test_stopping_recording_flushes_the_last_input_without_waiting" time="0.667" /><testcase classname="tests.test_browser_chromium" name="test_recording_starts_on_the_current_tab" time="1.059" /></testsuite></testsuites>
