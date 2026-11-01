@@ -226,7 +226,9 @@ class NativeBrowserEvents:
 
     async def _reset_console(self, client):
         async with self.console_lock:
-            if client in self.console_clients:
+            # Workbench connections share one debugger session, where disabling Runtime also
+            # removes the recorder's binding and every later step is lost without a trace.
+            if client in self.console_clients and not self.run.recorder:
                 for domain in ("Runtime", "Log"):
                     try:
                         await client.send(domain + ".disable")

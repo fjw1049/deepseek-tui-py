@@ -130,6 +130,8 @@ class BrowserAction(BaseModel):
     _action_id: str | None = PrivateAttr(default=None)
     _deadline: float | None = PrivateAttr(default=None)
     _dispatched: bool = PrivateAttr(default=False)
+    # Where in a target a replayed click lands, as fractions of its size; default the centre.
+    _hit: tuple[float, float] | None = PrivateAttr(default=None)
     operation_id: str | None = Field(default=None, min_length=1, max_length=200)
     action: Literal[
         "status",
@@ -2527,7 +2529,10 @@ class BrowserService:
             await run.observation_context.focus_parent()
         if bound:
             resolved = await self._dispatch_guard(run, action)
-            action = action.model_copy(update={"x": resolved["x"], "y": resolved["y"]})
+            x, y = action._hit or (.5, .5)
+            action = action.model_copy(update={
+                "x": resolved["x"] + (x - .5) * resolved["width"],
+                "y": resolved["y"] + (y - .5) * resolved["height"]})
         client = run.observation_context if action.frame_id else run.session._internal.client
         try:
             run.last_dispatch_id = action._action_id

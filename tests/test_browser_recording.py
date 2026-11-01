@@ -1,5 +1,6 @@
 """Recording compilation must preserve scopes and distinct masked edits."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -485,7 +486,8 @@ async def test_replay_adopts_only_an_unambiguous_fresh_ordinary_tab(opened, popu
     tabs = [{"tab_id": "user", "url": url, "active": True},
             {"tab_id": "fresh", "url": url, "popup": popup},
             {"tab_id": "another", "url": url}]
-    run = SimpleNamespace(thread_id="t", generation=2, replay_tabs={}, tabs=tabs)
+    run = SimpleNamespace(thread_id="t", generation=2, replay_tabs={}, tabs=tabs,
+                          upload_root=None)
     service = SimpleNamespace(_refresh_tabs=AsyncMock(return_value=tabs),
                               action=AsyncMock(return_value={"success": True}))
     step = SimpleNamespace(kind="new_tab", url=url, target={"tabAlias": "child"})
@@ -558,3 +560,281 @@ async def test_concurrent_page_discovery_installs_one_recorder_per_tab(tmp_path,
     await asyncio.gather(recorder._attach_known_targets(), recorder._attach_known_targets())
     assert installed == ["new-tab"]
     assert list(recorder._clients) == ["new-tab"]
+
+
+FIELD = {"tag": "input", "type": "text", "role": "textbox", "id": "q", "nameAttr": "q",
+         "selectorCandidates": ['[id="q"]']}
+ROW = {"tag": "div", "name": "First row", "clickable": True,
+       "selectorCandidates": ["div#root > div:nth-of-type(2)"]}
+
+
+def _edit(seq, revision, target=FIELD):
+    return _page_event(seq, "input", target=target, value="{{sensitive_value}}", redacted=True,
+                       inputRevision=revision)
+
+
+def _compile(*events):
+    return ScopedSemanticProcessor(
+        "rec_test", [_page_event(1, "recorder_installed"), *events]).process()
+
+
+def test_typing_one_value_is_one_step_with_one_parameter():
+    doc = _compile(_edit(2, 1), _edit(3, 2), _edit(4, 3))
+    assert [step.kind for step in doc.steps] == ["open", "fill"]
+    assert [item["name"] for item in doc.inputs] == ["q"]
+
+
+def test_a_recreated_field_or_an_action_between_edits_keeps_both():
+    assert len(_compile(_edit(2, 1), _edit(3, 1)).inputs) == 2
+    button = {"tag": "button", "role": "button", "id": "go", "selectorCandidates": ['[id="go"]']}
+    doc = _compile(_edit(2, 1), _page_event(3, "click", target=button, detail=1), _edit(4, 2))
+    assert [step.kind for step in doc.steps] == ["open", "fill", "click", "fill"]
+
+
+def test_live_search_urls_are_the_fill_not_steps_of_their_own():
+    doc = _compile(
+        _edit(2, 1),
+        _page_event(3, "navigation", urlAfter="https://shop.example/login?q=a",
+                    withinDocument=True),
+        _edit(4, 2),
+        _page_event(5, "navigation", urlAfter="https://shop.example/login?q=ab",
+                    withinDocument=True),
+    )
+    assert [step.kind for step in doc.steps] == ["open", "fill"]
+
+
+def test_enter_and_the_click_it_causes_are_one_step():
+    button = {"tag": "button", "role": "button", "id": "go", "selectorCandidates": ['[id="go"]']}
+    doc = _compile(
+        _page_event(2, "keydown", key="Enter", target=FIELD),
+        _page_event(3, "click", target=button, detail=0),
+    )
+    assert [step.kind for step in doc.steps] == ["open", "press"]
+
+
+def test_a_real_click_after_enter_is_kept():
+    button = {"tag": "button", "role": "button", "id": "go", "selectorCandidates": ['[id="go"]']}
+    doc = _compile(
+        _page_event(2, "keydown", key="Enter", target=FIELD),
+        _page_event(3, "click", target=button, detail=1),
+    )
+    assert [step.kind for step in doc.steps] == ["open", "press", "click"]
+
+
+def test_clickable_rows_stay_and_stray_page_clicks_do_not():
+    doc = _compile(
+        _page_event(2, "click", target=ROW, detail=1),
+        _page_event(3, "click", target={**ROW, "clickable": False}, detail=1),
+    )
+    assert [step.kind for step in doc.steps] == ["open", "click"]
+    assert doc.steps[1].target["selectorCandidates"] == ROW["selectorCandidates"]
+    assert doc.steps[1].target["tabAlias"] == "main" and doc.steps[1].id == "step_002"
+
+
+def test_going_back_to_the_start_page_is_a_step_and_not_the_end_check():
+    from deepseek_tui.browser.workflows import compile_workflow
+
+    start, other = "https://shop.example/login", "https://shop.example/account"
+    link = {"tag": "a", "role": "link", "id": "a", "selectorCandidates": ['[id="a"]']}
+    doc = _compile(
+        _page_event(2, "click", target=link, detail=1),
+        _page_event(3, "navigation", urlAfter=other),
+        _page_event(4, "navigation", urlAfter=start),
+    )
+    assert [(step.kind, step.url) for step in doc.steps[1:]] == [("click", None), ("open", start)]
+    assert doc.steps[1].expect["urlContains"] == "/account" and not doc.verification
+    compile_workflow(doc, {})
+
+
+def test_a_click_that_lands_on_the_start_page_is_only_that_click():
+    start, other = "https://shop.example/login", "https://shop.example/account"
+    link = {"tag": "a", "role": "link", "id": "a", "selectorCandidates": ['[id="a"]']}
+    doc = _compile(
+        _page_event(2, "navigation", urlAfter=other),
+        _page_event(3, "click", target=link, detail=1),
+        _page_event(4, "navigation", urlAfter=start),
+    )
+    assert [step.kind for step in doc.steps] == ["open", "navigate", "click"]
+
+
+def test_recorded_navigation_expectations_compile():
+    from deepseek_tui.browser.workflows import compile_workflow
+
+    link = {"tag": "a", "role": "link", "id": "a", "selectorCandidates": ['[id="a"]']}
+    for url in ("https://shop.example/account", "https://shop.example/"):
+        doc = _compile(_page_event(2, "click", target=link, detail=1),
+                       _page_event(3, "navigation", urlAfter=url))
+        assert doc.steps[1].expect["urlAfter"] == url
+        compile_workflow(doc, {})
+
+
+def test_unknown_step_expectations_are_still_refused():
+    from deepseek_tui.browser.workflows import compile_workflow
+
+    link = {"tag": "a", "role": "link", "id": "a", "selectorCandidates": ['[id="a"]']}
+    doc = _compile(_page_event(2, "click", target=link, detail=1))
+    doc.steps[1].expect = {"status": "200"}
+    with pytest.raises(ValueError, match="Unsupported recorded step expectation"):
+        compile_workflow(doc, {})
+
+
+@pytest.mark.parametrize(("recording", "disabled"), [(True, []), (False, ["Runtime", "Log"])])
+async def test_a_navigation_keeps_the_runtime_a_recording_shares(tmp_path, recording, disabled):
+    from unittest.mock import Mock
+
+    from deepseek_tui.browser.native import NativeBrowserEvents
+
+    run = SimpleNamespace(thread_id="t", recorder=object() if recording else None)
+    events = NativeBrowserEvents(run, SimpleNamespace(
+        artifact_root=tmp_path, _saved_state=lambda _thread: {}))
+    client = Mock(send=AsyncMock())
+    events.console_clients.add(client)
+    events.console.append({"seq": 1, "client": client})
+    await events._reset_console(client)
+    assert [call.args[0].split(".")[0] for call in client.send.await_args_list] == disabled
+    assert (client in events.console_clients) is recording and events.console == []
+
+
+PANEL = {"tag": "div", "id": "list", "selectorCandidates": ['[id="list"]', "div#list"]}
+PAGE = {"tag": "html", "id": "", "selectorCandidates": ["html:nth-of-type(1)"]}
+
+
+def _scroll(seq, y, target=PANEL):
+    return _page_event(seq, "scroll", target=target, scroll={"x": 0, "y": y})
+
+
+def test_one_gesture_is_one_scroll_step_naming_its_container():
+    from deepseek_tui.browser.workflows import compile_workflow
+
+    doc = _compile(_scroll(2, 300), _scroll(3, 900))
+    assert [(step.kind, step.value) for step in doc.steps] == [
+        ("open", None), ("scroll_to", "0.000,900.000")]
+    assert doc.steps[1].target["selectorCandidates"] == PANEL["selectorCandidates"]
+    compile_workflow(doc, {})
+
+
+def test_scrolls_of_different_containers_or_around_a_click_stay_apart():
+    button = {"tag": "button", "role": "button", "id": "go", "selectorCandidates": ['[id="go"]']}
+    apart = _compile(_scroll(2, 300), _scroll(3, 40, PAGE))
+    assert [step.description for step in apart.steps[1:]] == ["Scroll a panel", "Scroll the page"]
+    doc = _compile(_scroll(2, 300), _page_event(3, "click", target=button, detail=1),
+                   _scroll(4, 600))
+    assert [step.kind for step in doc.steps] == ["open", "scroll_to", "click", "scroll_to"]
+
+
+@pytest.mark.parametrize("value", ["", "0", "x,y", "1,2,3"])
+def test_scroll_steps_need_a_position(value):
+    from deepseek_tui.browser.workflows import compile_workflow
+
+    doc = _compile(_scroll(2, 300))
+    doc.steps[1].value = value
+    with pytest.raises(ValueError, match="x,y position"):
+        compile_workflow(doc, {})
+
+
+def _scrolling_service(positions, *, confirmed=True, container=True):
+    """Observations report the next position; each wheel returns its receipt."""
+    actions = []
+
+    async def action(_thread, browser_action, **_kwargs):
+        actions.append(browser_action)
+        if browser_action.action == "scroll":
+            effect = "confirmed" if confirmed else "not_confirmed"
+            return {"success": True, "receipt": {"effect": effect}}
+        position = {"scroll_x": 0, "scroll_y": positions.pop(0)}
+        return {"observation": {"observation_id": "o", "viewport": position, "scroll_containers":
+                                [{"ref": "c0", "viewport": position}] if container else []}}
+
+    return SimpleNamespace(action=action), actions
+
+
+async def test_replay_scrolls_a_panel_past_the_wheel_limit_until_it_arrives():
+    from deepseek_tui.browser.workflows import _scroll_to
+
+    service, actions = _scrolling_service([0, 1200, 2000])
+    step = SimpleNamespace(value="0,2000", target=PANEL)
+    result = await _scroll_to(service, SimpleNamespace(thread_id="t"), step, 3, "", [])
+    wheels = [item for item in actions if item.action == "scroll"]
+    assert result["success"] and [(w.ref, w.amount) for w in wheels] == [("c0", 1200), ("c0", 800)]
+
+
+async def test_replay_scrolls_the_page_up_without_a_container():
+    from deepseek_tui.browser.workflows import _scroll_to
+
+    service, actions = _scrolling_service([500, 0])
+    step = SimpleNamespace(value="0,0", target=PAGE)
+    await _scroll_to(service, SimpleNamespace(thread_id="t"), step, 3, "", [])
+    wheel = next(item for item in actions if item.action == "scroll")
+    assert (wheel.ref, wheel.direction, wheel.amount) == (None, "up", 500)
+
+
+async def test_shorter_content_ends_the_scroll_without_failing_the_workflow():
+    from deepseek_tui.browser.workflows import _scroll_to
+
+    service, actions = _scrolling_service([100], confirmed=False)
+    step = SimpleNamespace(value="0,5000", target=PANEL)
+    result = await _scroll_to(service, SimpleNamespace(thread_id="t"), step, 3, "", [])
+    assert result["success"] and len([a for a in actions if a.action == "scroll"]) == 1
+
+
+async def test_a_missing_panel_is_a_mismatch_not_a_silent_skip():
+    from deepseek_tui.browser.workflows import _scroll_to
+
+    service, _ = _scrolling_service([0, 0], container=False)
+    step = SimpleNamespace(value="0,300", target=PANEL)
+    with pytest.raises(ValueError, match="Replay target must"):
+        await _scroll_to(service, SimpleNamespace(thread_id="t"), step, 3, "", [])
+
+
+def test_the_recorder_context_is_the_one_it_reports_from(tmp_path):
+    from deepseek_tui.browser.recording import WorkbenchRecordSession
+
+    session = WorkbenchRecordSession.__new__(WorkbenchRecordSession)
+    session.active, session.nonce, session.worlds = True, "nonce", {}
+    client = object()
+
+    def report(kind, nonce="nonce"):
+        session._note_world({"__client": client, "executionContextId": 7, "payload": json.dumps(
+            {"nonce": nonce, "event": {"kind": kind}})})
+
+    report("click")
+    report("recorder_installed", nonce="forged")
+    assert session.worlds == {}
+    report("recorder_installed")
+    assert session.worlds == {id(client): 7}
+
+
+@pytest.mark.parametrize(("alive", "context"), [
+    ({"result": {"value": True}}, 7),  # A page with cross-origin frames: the name would miss.
+    ({"result": {"value": False}}, 3),
+    (RuntimeError("Cannot find context"), 3),  # Restored from the back/forward cache.
+])
+async def test_the_reported_world_is_used_while_the_recorder_is_there(alive, context):
+    from deepseek_tui.browser.recording import WorkbenchRecordSession
+
+    async def send(method, _params=None):
+        if method == "Runtime.evaluate":
+            if isinstance(alive, Exception):
+                raise alive
+            return alive
+        return {"frameTree": {"frame": {"id": "main"}}, "executionContextId": 3}
+
+    session = WorkbenchRecordSession.__new__(WorkbenchRecordSession)
+    client = SimpleNamespace(send=send)
+    session.worlds = {id(client): 7}
+    assert (await session._world(client)).context_id == context
+
+
+def test_a_click_inside_a_card_keeps_where_it_landed():
+    card = {**ROW, "hit": {"x": .9, "y": .1}}
+    doc = _compile(_page_event(2, "click", target=card, detail=1),
+                   _page_event(3, "click", target={**ROW, "hit": {"x": .2, "y": .5}}, detail=1))
+    assert [step.target["hit"]["x"] for step in doc.steps[1:]] == [.9, .2]
+
+
+def test_a_named_card_clicked_at_a_point_is_one_step():
+    card = {"tag": "div", "name": "Card", "id": "card", "clickable": True,
+            "selectorCandidates": ['[id="card"]'], "hit": {"x": .9, "y": .1}}
+    doc = _compile(_page_event(2, "click", target=card, detail=1))
+    assert [step.kind for step in doc.steps] == ["open", "click"]
+

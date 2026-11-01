@@ -38,7 +38,7 @@ async function harness(useDownloadPreferences = false) {
       return { target: sid ? attached.get(sid) : 'root' }
     })
   })
-  const guest = Object.assign(new EventEmitter(), { debugger: debug, id: 2, isDestroyed: () => false,
+  const guest = Object.assign(new EventEmitter(), { debugger: debug, id: 2, isDestroyed: () => false, reload: vi.fn(), reloadIgnoringCache: vi.fn(),
     getType: () => 'webview', hostWebContents: { id: 1 }, session: mocks.partition, getURL: () => 'http://example.test', getTitle: () => 'Test' })
   mocks.guests.set(2, guest)
   let token = ''
@@ -84,6 +84,17 @@ it('checks nested commands and still supports legitimate child and grandchild se
     expect((await nested(95, 'Browser.close')).error.message).toContain('not available')
     expect(h.debug.sendCommand.mock.calls.some(([method, params]) => method === 'Target.attachToTarget' && params?.targetId === 'host')).toBe(false)
     expect(h.debug.sendCommand.mock.calls.some(([method]) => method === 'Target.sendMessageToTarget')).toBe(false)
+  } finally { h.socket.close() }
+})
+
+it('reloads the tab itself, because Chromium would reload the app window around it', async () => {
+  const h = await harness()
+  try {
+    await h.send('Page.reload', { ignoreCache: false })
+    await h.send('Page.reload', { ignoreCache: true })
+    expect(h.guest.reload).toHaveBeenCalledTimes(1)
+    expect(h.guest.reloadIgnoringCache).toHaveBeenCalledTimes(1)
+    expect(h.debug.sendCommand).not.toHaveBeenCalledWith('Page.reload', expect.anything(), undefined)
   } finally { h.socket.close() }
 })
 

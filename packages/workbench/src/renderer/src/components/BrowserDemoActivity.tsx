@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, MousePointerClick, LoaderCircle, Square, TriangleAlert, X } from 'lucide-react'
 
-export type DemoStep = { kind: string; description?: string; url?: string | null; target?: { name?: string; text?: string } | null; value?: string | null; key?: string | null }
+export type DemoStep = { kind: string; description?: string; url?: string | null; target?: { name?: string; text?: string; tag?: string } | null; value?: string | null; key?: string | null }
 /** A finished demonstration waiting for the user: check its steps, then add it to the chat. */
 export type DemoReview = { id: string; count: number; message: string; open: boolean; steps?: DemoStep[] | null; stepsError?: boolean }
 /** Why a demonstration could not start, or could not be saved. */
@@ -16,12 +16,12 @@ export function describeDemoStep(step: DemoStep, t: (key: string, options?: Reco
   if (step.kind === 'open' || step.kind === 'navigate') return t('browserDemoStepOpen', { target: page })
   if (step.kind === 'new_tab') return t('browserDemoStepTab', { target: page })
   if (step.kind === 'press') return t('browserDemoStepPress', { target: step.key ?? value })
+  if (step.kind === 'scroll_to') return t(step.target?.tag === 'html' || step.target?.tag === 'body' ? 'browserDemoStepScrollPage' : 'browserDemoStepScrollPanel')
   if (!label) return step.kind === 'click' ? t('browserDemoStepUnnamed') : step.description ?? step.kind
   if (step.kind === 'click') return t('browserDemoStepClick', { target: label })
   if (step.kind === 'fill') return t('browserDemoStepFill', { target: label, value })
   if (step.kind === 'select') return t('browserDemoStepSelect', { target: label, value })
   if (step.kind === 'set_checked') return t(value === 'false' ? 'browserDemoStepUncheck' : 'browserDemoStepCheck', { target: label })
-  if (step.kind === 'scroll_to') return t('browserDemoStepScroll', { target: label })
   return step.description ?? step.kind
 }
 

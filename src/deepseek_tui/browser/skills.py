@@ -30,7 +30,7 @@ def _recorded_data(service: BrowserService, thread_id: str, recording_id: str) -
     """A complete recording as shareable reference data, free of local paths and examples."""
     doc = read_workflow(service, thread_id, recording_id)
     assert_capture_complete(service, thread_id, recording_id)
-    supported = {"open", "navigate", "new_tab", "switch_tab", "click", "fill", "select", "set_checked", "press", "upload", "handle_dialog"}
+    supported = {"open", "navigate", "new_tab", "switch_tab", "click", "fill", "select", "set_checked", "press", "upload", "handle_dialog", "scroll_to"}
     if not doc.steps or any(step.kind not in supported for step in doc.steps):
         raise ValueError("Record a supported workflow before generating a skill")
     for step in doc.steps:
@@ -81,7 +81,9 @@ def preview_skill(
         "- `select`: `select` with an observed `selector` or `ref`, "
         "and `text` as the option value.\n"
         "- `set_checked`: `set_checked` with `selector` and boolean `checked`.\n"
-        "- `click` / `press`: matching action with the target or `key`.\n\n"
+        "- `click` / `press`: matching action with the target or `key`.\n"
+        "- `scroll_to`: `scroll` the recorded container until the `x,y` in `value`, or until "
+        "the content ends; lists may load more as they scroll.\n\n"
         "Use `observe` after opening a page and whenever it changes. Confirm that recorded "
         "targets are current. Pass the latest `observation_id` with each interaction; "
         "consume the fresh observation returned after every action. Execute one state-changing "

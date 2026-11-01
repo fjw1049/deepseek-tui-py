@@ -403,6 +403,12 @@ export function createBrowserBridge(deps: Deps) {
       if (method === 'Browser.setDownloadBehavior' && !sessionId) return downloadBehavior(params)
       if (method.startsWith('Browser.') && !ALLOWED_BROWSER_METHODS.has(method)) throw new Error(`${method} is not available for Workbench tabs`)
       if (method === 'Page.captureScreenshot' && !sessionId) return screenshot(params)
+      // Chromium reloads a guest's embedder instead of the guest, which here is the whole app.
+      if (method === 'Page.reload') {
+        if (params.ignoreCache) guest.reloadIgnoringCache()
+        else guest.reload()
+        return {}
+      }
       return debug.sendCommand(method, params, sessionId)
     }
 

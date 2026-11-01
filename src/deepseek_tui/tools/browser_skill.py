@@ -199,6 +199,7 @@ async def _run_site(input_data: dict[str, Any], context: ToolContext) -> dict[st
         browser, str(thread_id), StepsDocument.model_validate(data),
         {str(key): str(value) for key, value in inputs.items()},
         secrets=secrets, from_step=str(input_data.get("from_step") or ""),
+        local_root=context.working_directory,
     )
 
 

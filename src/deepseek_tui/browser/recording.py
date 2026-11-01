@@ -19,7 +19,13 @@ from octop_browser.record.models import (
 )
 from octop_browser.record.privacy import is_sensitive_target, redact_url
 from octop_browser.record.recorder import RecordSession
-from octop_browser.record.semantic import SemanticProcessor, _stable_input_name
+from octop_browser.record.semantic import (
+    SemanticProcessor,
+    _compact_target,
+    _is_low_signal_result_click,
+    _name,
+    _stable_input_name,
+)
 
 from deepseek_tui.browser.frames import FrameContext, discover_frames
 from deepseek_tui.browser.observation import (
@@ -34,6 +40,34 @@ from deepseek_tui.browser.observation import (
 )
 
 RECORDER_WORLD = "deepseek-recorder"
+# Reported alongside the user's actions without changing what those actions mean.
+PASSIVE_EVENTS = {"recorder_installed", "page_opened", "scroll"}
+
+
+def _same_element(before, after):
+    first, second = before.get("target") or {}, after.get("target") or {}
+    return all(first.get(key) == second.get(key)
+               for key in ("selectorCandidates", "framePath", "shadowPath"))
+
+
+def _same_edit(before, after):
+    """The recorder's revisions prove one live field; it splits one edit at every keystroke."""
+    revision = before.get("inputRevision")
+    return (isinstance(revision, int) and (after.get("inputRevision") or 0) > revision
+            and _same_element(before, after))
+
+
+def _standalone(event):
+    """Compiled here rather than by Octop, which leaves these events out."""
+    if event.get("kind") == "click":
+        # Octop reads a div without its own selector as a stray click on page content,
+        # which also describes every card and list row a script makes clickable.
+        target = event.get("target") or {}
+        return bool(target.get("hit")) or (
+            bool(target.get("clickable")) and _is_low_signal_result_click(event))
+    if event.get("kind") == "scroll":
+        return bool(event.get("target"))  # Octop keeps only the page offset, not the panel.
+    return event.get("kind") in {"native_dialog", "returned_to_start"}
 
 
 class ScopedSemanticProcessor(SemanticProcessor):
@@ -43,14 +77,49 @@ class ScopedSemanticProcessor(SemanticProcessor):
             event for event in events if id(event) in useful or event.get("kind") == "native_dialog"
         ]
 
+    def _user_actions(self, events, start_url):
+        """One copied event per thing the user did, out of what the page reported."""
+        kept, urls = [], {}
+        for original in events:
+            event, kind = dict(original), original.get("kind")
+            last = next((e for e in reversed(kept) if e.get("kind") not in PASSIVE_EVENTS), {})
+            same_tab = last.get("targetId") == event.get("targetId")
+            if kind == "navigation":
+                tab, url = event.get("targetId"), event.get("urlAfter")
+                # Octop skips every visit to the start URL. Reached by a click, the click is
+                # the step; back or a typed address has none, so it needs one of its own.
+                returned = (url == start_url and urls.get(tab, start_url) != start_url
+                            and not (same_tab and last.get("kind") in {"click", "keydown"}))
+                urls[tab] = url
+                # Filling the field repeats the URL a live search keeps in step with it.
+                if event.get("withinDocument") and same_tab and (
+                    last.get("kind") in {"input", "change"}
+                ):
+                    continue
+                if returned:
+                    event["kind"] = "returned_to_start"
+            elif (kind == "click" and event.get("detail") == 0 and same_tab
+                  and (last.get("kind"), last.get("key")) == ("keydown", "Enter")):
+                continue  # Enter clicks the default button itself; replay presses Enter.
+            elif (kind in {"input", "change"} and same_tab and last.get("kind") == kind
+                  and _same_edit(last, event)):
+                kept[next(i for i, e in enumerate(kept) if e is last)] = event
+                continue
+            elif (kind == "scroll" and kept and kept[-1].get("kind") == "scroll"
+                  and kept[-1].get("targetId") == event.get("targetId")
+                  and _same_element(kept[-1], event)):
+                kept[-1] = event  # Where one gesture stopped, not each pause along the way.
+                continue
+            kept.append(event)
+        return kept
+
     def _build_steps(self, events, start_url):
         # Octop compares IDs/names across trees. Compile contiguous scopes separately
         # so a shadow input cannot consume a same-named input in the parent page.
         blocks, block, scope = [], [], None
-        for original in events:
-            event = dict(original)
+        for event in self._user_actions(events, start_url):
             target = event.get("target") or {}
-            if event.get("kind") == "native_dialog":
+            if _standalone(event):
                 if block:
                     blocks.append(block)
                 blocks.append([event])
@@ -109,9 +178,40 @@ class ScopedSemanticProcessor(SemanticProcessor):
                         )
                     )
                 active_tab = tab
-            compiled = super()._build_steps(block, start_url)
+            compiled = super()._build_steps([e for e in block if not _standalone(e)], start_url)
             for event in block:
-                if event.get("kind") == "native_dialog":
+                if event.get("kind") == "click" and _standalone(event):
+                    compiled.append(
+                        SemanticStep(
+                            id="pending",
+                            kind="click",
+                            target=_compact_target(event["target"], tab or ""),
+                            description="Click " + (_name(event["target"]) or "element"),
+                        )
+                    )
+                elif event.get("kind") == "scroll" and _standalone(event):
+                    whole_page = event["target"].get("tag") in {"html", "body"}
+                    compiled.append(
+                        SemanticStep(
+                            id="pending",
+                            kind="scroll_to",
+                            target=_compact_target(event["target"], tab or ""),
+                            value=f"{event['scroll']['x']:.3f},{event['scroll']['y']:.3f}",
+                            description="Scroll the page" if whole_page else "Scroll a panel",
+                        )
+                    )
+                elif event.get("kind") == "returned_to_start":
+                    compiled.append(
+                        SemanticStep(
+                            id="pending",
+                            # Octop folds a navigate into the click before it as that click's
+                            # result; this one is the user's own step.
+                            kind="open",
+                            url=event["urlAfter"],
+                            description="Return to " + event["urlAfter"],
+                        )
+                    )
+                elif event.get("kind") == "native_dialog":
                     compiled.append(
                         SemanticStep(
                             id="pending",
@@ -149,7 +249,7 @@ class ScopedSemanticProcessor(SemanticProcessor):
                     None,
                 )
                 if original:
-                    for key in ("framePath", "shadowPath", "scope"):
+                    for key in ("framePath", "shadowPath", "scope", "hit"):
                         if key in original:
                             step.target[key] = original[key]
                     if original.get("type") == "file" and step.kind == "fill":
@@ -158,13 +258,25 @@ class ScopedSemanticProcessor(SemanticProcessor):
                     step.target["frameUrl"] = frame_url
             if index and compiled and compiled[0].kind == "open":
                 compiled.pop(0)
-            # Interactions scroll their own target into view; a recorded page offset
-            # is not a replayable step and would block the whole workflow.
-            compiled = [step for step in compiled if step.kind not in {"new_tab", "scroll_to"}]
+            # Octop's own scroll steps name no element to scroll, so they cannot be replayed.
+            compiled = [step for step in compiled if step.kind != "new_tab" and not (
+                step.kind == "scroll_to" and not (step.target or {}).get("selectorCandidates"))]
             steps.extend(compiled)
         for index, step in enumerate(steps, 1):
             step.id = f"step_{index:03d}"
         return steps
+
+    def _coalesce_scrolls(self, steps):
+        return steps  # Octop would merge scrolls of different panels into the last one.
+
+    def _verification(self, steps):
+        # A URL reached midway proves nothing about where the workflow ends.
+        for step in reversed(steps):
+            if step.kind in {"open", "navigate", "new_tab", "switch_tab"}:
+                return []
+            if step.expect and step.expect.get("urlContains"):
+                return [{"type": "url_contains", "value": step.expect["urlContains"]}]
+        return []
 
     def _infer_variables(self, steps):
         # Every value is masked, so Octop would name them all "sensitive_value";
@@ -223,6 +335,8 @@ class WorkbenchRecordSession(RecordSession):
         self.initial_tabs = set()
         # Tabs the recorder could not attach to yet, with the reason shown to the user.
         self.tab_errors = {}
+        # Each tab's current recorder context, by client, as the recorder itself reports it.
+        self.worlds = {}
 
     def _append(self, event):
         event = dict(event)
@@ -245,10 +359,17 @@ class WorkbenchRecordSession(RecordSession):
             self._warn("Recording event exceeded the capture size limit")
             return
         try:
+            self._note_world(params)
             super()._on_binding_called(params)
         except Exception:
             with suppress(Exception):
                 self._warn("Recording event could not be stored")
+
+    def _note_world(self, params):
+        payload = json.loads(str(params.get("payload", "")))
+        if (self.active and payload.get("nonce") == self.nonce and params.get("__client")
+                and payload.get("event", {}).get("kind") == "recorder_installed"):
+            self.worlds[id(params["__client"])] = params.get("executionContextId")
 
     def _rate_limit_ok(self):
         allowed = super()._rate_limit_ok()
@@ -313,11 +434,24 @@ class WorkbenchRecordSession(RecordSession):
                 await self._world(client),
                 "(()=>{globalThis.__deepseekRecorder?.flush();return true})()",
             )
-        self._on_frame_navigated({"frame": {"url": url}}, target_id)
+        if self.active and url:
+            self._append({"kind": "navigation", "targetId": target_id, "urlAfter": url,
+                          "ts": datetime.now(timezone.utc).isoformat(), "withinDocument": True})
 
     async def _world(self, client):
-        """The top document's recorder world; the same name always yields the same context."""
+        """The top document's recorder world.
+
+        Asking for it by name can miss: on a page with cross-origin frames, Workbench's
+        Chromium answers with a new, empty world. The context the recorder reported from
+        can be stale instead, as a page restored from the back/forward cache reports nothing.
+        """
         frame = (await client.send("Page.getFrameTree"))["frameTree"]["frame"]["id"]
+        context = self.worlds.get(id(client))
+        if context is not None:
+            reported = DocumentContext(client, (frame, ""), context)
+            with suppress(Exception):
+                if await evaluate(reported, "!!globalThis.__deepseekRecorder"):
+                    return reported
         world = await client.send(
             "Page.createIsolatedWorld", {"frameId": frame, "worldName": RECORDER_WORLD}
         )
@@ -509,7 +643,6 @@ class WorkbenchRecordSession(RecordSession):
         for client in clients:
             if id(client) not in self.scripts:
                 continue
-            # The same world name yields the current document's world, even after a navigation.
             ready = await evaluate(
                 await self._world(client),
                 "(()=>{const r=globalThis.__deepseekRecorder;return document.readyState!=='loading'"

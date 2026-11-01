@@ -19,6 +19,10 @@ from deepseek_tui.browser.service import (
 )
 
 
+# Each attempt moves at most BrowserAction.amount, the wheel's largest step.
+SCROLL_ATTEMPTS = 20
+
+
 def recording_store(service: BrowserService, thread_id: str):
     from octop_browser.record.settings import RecordReplaySettings
     from octop_browser.record.store import RecordingStore
@@ -111,8 +115,8 @@ async def finish_recording(run: BrowserRun) -> dict[str, Any]:
         await recorder.close()
 
 
-def _url(url: str) -> str:
-    BrowserAction(action="open", url=url)
+def _url(url: str, local_root: Path | None = None) -> str:
+    BrowserAction.model_validate({"action": "open", "url": url}, context={"local_root": local_root})
     return url
 
 
@@ -121,7 +125,8 @@ async def start_replay(
 ) -> dict[str, Any]:
     doc = read_workflow(service, thread_id, recording_id)
     assert_capture_complete(service, thread_id, recording_id)
-    doc = compile_workflow(doc, inputs)
+    current = service.runs.get(thread_id)
+    doc = compile_workflow(doc, inputs, current.upload_root if current else None)
     run = await service.ensure(thread_id)
     async with run.lock:
         if run.unresolved:
@@ -180,7 +185,7 @@ def _selectors(target):
     return selectors
 
 
-def compile_workflow(doc, inputs):
+def compile_workflow(doc, inputs, local_root: Path | None = None):
     """Freeze and validate all static inputs before acquiring browser control."""
     def substitute(value):
         if isinstance(value, str):
@@ -201,7 +206,7 @@ def compile_workflow(doc, inputs):
     doc = type(doc).model_validate(data)
     if not doc.steps or len(doc.steps) > 200:
         raise ValueError("Workflow must contain 1–200 steps")
-    supported = {"open", "navigate", "new_tab", "switch_tab", "click", "fill", "press", "set_checked", "select", "upload", "handle_dialog"}
+    supported = {"open", "navigate", "new_tab", "switch_tab", "click", "fill", "press", "set_checked", "select", "upload", "handle_dialog", "scroll_to"}
     aliases = {"main"}
     for step in doc.steps:
         if step.kind not in supported:
@@ -224,11 +229,14 @@ def compile_workflow(doc, inputs):
             selectors = _selectors(target)
             step.value = step.value or ""
             if step.kind in {"open", "navigate", "new_tab"}:
-                step.url = _url(step.url or "")
+                step.url = _url(step.url or "", local_root)
             elif step.kind == "switch_tab":
                 BrowserAction(action="switch_tab", tab_id=alias)
             elif step.kind == "handle_dialog":
                 BrowserAction(action="handle_dialog", dialog_id="current", accept=target.get("accept"), text=step.value)
+            elif step.kind == "scroll_to":
+                if not selectors or not re.fullmatch(r"-?\d+(\.\d+)?,-?\d+(\.\d+)?", step.value):
+                    raise ValueError("Scroll step requires a container and an x,y position")
             else:
                 if not selectors and (step.kind != "press" or target):
                     raise ValueError("Replay target requires a selector candidate")
@@ -252,9 +260,11 @@ def compile_workflow(doc, inputs):
                     checked=(step.value == "true") if step.kind == "set_checked" else None,
                 )
             if step.expect:
-                if set(step.expect) != {"urlContains"}:
+                # urlAfter is the address seen while recording; replay checks only urlContains.
+                if not set(step.expect) <= {"urlContains", "urlAfter"}:
                     raise ValueError("Unsupported recorded step expectation")
-                BrowserAction(action="wait", url_contains=step.expect["urlContains"])
+                if "urlContains" in step.expect:
+                    BrowserAction(action="wait", url_contains=step.expect["urlContains"])
         except ValidationError as exc:
             # Pydantic's default rendering includes the actual (potentially private) input.
             errors = exc.errors(include_input=False, include_url=False)
@@ -302,6 +312,49 @@ def compile_workflow(doc, inputs):
     return doc
 
 
+async def _scroll_to(service: BrowserService, run: BrowserRun, step: Any, generation: int,
+                     frame_id: str, shadow_path: list) -> dict[str, Any]:
+    """Wheel the recorded container toward its position; a list may load more on the way.
+
+    The position is a goal, not a claim: a shorter page today only ends the scroll early.
+    """
+    x, y = (float(part) for part in step.value.split(","))
+    target = step.target or {}
+    scope = {"action": "observe", "level": "full", "generation": generation, "frame_id": frame_id}
+
+    async def locate() -> tuple[dict[str, Any], dict[str, Any], str | None]:
+        if target.get("tag") in {"html", "body"}:
+            seen = await service.action(run.thread_id, BrowserAction(**scope))
+            return seen["observation"], seen["observation"]["viewport"], None
+        for selector in _selectors(target):
+            try:
+                observation = (await service.action(run.thread_id, BrowserAction(
+                    **scope, selector=selector, shadow_path=shadow_path)))["observation"]
+            except RuntimeError:
+                continue
+            containers = observation.get("scroll_containers") or []
+            if containers:
+                return observation, containers[0]["viewport"], containers[0]["ref"]
+        raise ValueError("Replay target must have one current, matching, observable element")
+
+    for _ in range(SCROLL_ATTEMPTS):
+        observation, position, ref = await locate()
+        down, right = y - position["scroll_y"], x - position["scroll_x"]
+        if max(abs(down), abs(right)) <= 2:
+            break
+        vertical = abs(down) >= abs(right)
+        distance = down if vertical else right
+        moved = await service.action(run.thread_id, BrowserAction(
+            action="scroll", ref=ref, frame_id=frame_id, generation=generation,
+            observation_id=observation["observation_id"], amount=min(abs(round(distance)), 1200),
+            direction=("down" if distance > 0 else "up") if vertical
+            else ("right" if distance > 0 else "left"),
+        ), require_observation=True)
+        if moved["receipt"].get("effect") != "confirmed":
+            break  # At the end of the content.
+    return {"success": True, "content": "Recorded scroll finished"}
+
+
 async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dict[str, str] | None,
                 opened_tabs: list[str] | tuple[str, ...] = ()):
     generation = run.generation
@@ -339,14 +392,21 @@ async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dic
                 if result["success"]:
                     run.replay_tabs[alias] = tab_id
                 return result
-        action = BrowserAction(action="new_tab" if step.kind == "new_tab" else "open",
-                               url=_url(step.url or ""), generation=generation)
+        action = BrowserAction.model_validate(
+            {"action": "new_tab" if step.kind == "new_tab" else "open", "url": step.url or "",
+             "generation": generation}, context={"local_root": run.upload_root})
         result = await service.action(run.thread_id, action)
         if result["success"]:
             tab = next((tab["tab_id"] for tab in run.tabs if tab.get("active")), None)
             if tab:
                 run.replay_tabs[alias] = tab
         return result
+    chooser = run.native_events.chooser if run.native_events else None
+    if step.kind == "upload" and chooser:
+        # The recorded click opened this chooser; its hidden input has nothing to observe.
+        return await service.action(run.thread_id, BrowserAction(
+            action="upload", chooser_id=chooser["id"], files=json.loads(step.value or "[]"),
+            generation=generation))
     target = step.target or {}
     frame_path, shadow_path = validate_scope(target)
     frame_id = ""
@@ -357,6 +417,8 @@ async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dic
             if run.owner != "agent" or run.generation != generation:
                 raise ValueError("Browser control changed")
             frame_id = await resolve_frame_path(run.session._internal.client, frame_path)
+    if step.kind == "scroll_to":
+        return await _scroll_to(service, run, step, generation, frame_id, shadow_path)
     selector = None
     selectors = _selectors(target)
     observation = None
@@ -424,10 +486,11 @@ async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dic
     value = step.value or ""
     if inputs is not None:
         value = re.sub(r"\{\{([^{}]+)\}\}", lambda m: inputs[m[1]], value)
+    hit = target.get("hit")
     action = BrowserAction(
         action=step.kind,
-        selector=None if shadow_path or frame_id else selector,
-        ref=observation["elements"][0]["ref"] if shadow_path or frame_id else None,
+        selector=None if shadow_path or frame_id or hit else selector,
+        ref=observation["elements"][0]["ref"] if shadow_path or frame_id or hit else None,
         frame_id=frame_id,
         observation_id=observation["observation_id"],
         generation=generation,
@@ -438,6 +501,8 @@ async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dic
     )
     if step.kind == "set_checked" and value not in {"true", "false"}:
         raise ValueError("Checkbox state must be true or false")
+    if hit:
+        action._hit = (min(1, max(0, float(hit["x"]))), min(1, max(0, float(hit["y"]))))
     return await service.action(run.thread_id, action, require_observation=True)
 
 
@@ -541,6 +606,7 @@ async def run_trace(
     *,
     secrets: set[str],
     from_step: str = "",
+    local_root: Path | None = None,
 ) -> dict[str, Any]:
     """Run a recorded site example for the agent until a step needs someone else.
 
@@ -558,7 +624,7 @@ async def run_trace(
         elif step.kind == "handle_dialog":
             step.value = ""
     placeholders = {name: "{{" + name + "}}" for name in secrets}
-    doc = compile_workflow(doc, {**inputs, **placeholders})
+    doc = compile_workflow(doc, {**inputs, **placeholders}, local_root)
     ids = [step.id for step in doc.steps]
     if from_step and from_step not in ids:
         raise ValueError("Unknown step to resume from")
@@ -566,6 +632,7 @@ async def run_trace(
     run = await service.ensure(thread_id)
     if run.owner != "agent":
         raise ValueError("The user controls this browser; wait until control is returned")
+    run.upload_root = local_root or run.upload_root
     if not start:
         run.replay_tabs.clear()
     completed: list[str] = []

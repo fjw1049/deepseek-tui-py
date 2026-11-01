@@ -319,7 +319,7 @@ async def test_console_navigation_disables_capture_and_clears_old_messages(tmp_p
         def on(self, event, callback):
             callbacks[event] = callback
     client = Client()
-    run = SimpleNamespace(thread_id="navigation", native=False, generation=0, observation_context=None,
+    run = SimpleNamespace(thread_id="navigation", native=False, generation=0, observation_context=None, recorder=None,
                           session=SimpleNamespace(_internal=SimpleNamespace(client=client)))
     native = NativeBrowserEvents(run, BrowserService(tmp_path))
     await native.install(client)
