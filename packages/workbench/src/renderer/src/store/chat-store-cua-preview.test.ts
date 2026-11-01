@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const provider = vi.hoisted(() => ({ interruptTurn: vi.fn() }))
 vi.mock('../agent/registry', () => ({ getProvider: () => provider }))
 import { useChatStore } from './chat-store'
-import { noteCuaCallStarted, useCuaPreviewStore } from './cua-preview-store'
+import { noteCuaCallStarted, noteCuaTurnEnded, useCuaPreviewStore } from './cua-preview-store'
 
 const initial = useChatStore.getState()
 const start = { itemId: 'i', summary: 'cua_js', status: 'running', toolName: 'cua_js' } as const
@@ -21,6 +21,23 @@ it('Stop ends the preview even though no completion event arrives', async () => 
   await useChatStore.getState().interrupt()
   expect(useChatStore.getState().currentTurnId).toBeNull()
   expect(useCuaPreviewStore.getState().sessions.a).toMatchObject({ phase: 'ended', outcome: 'stopped' })
+})
+
+it('a finished turn without a task status does not read as stopped', () => {
+  noteCuaTurnEnded('a', 'ended')
+  useChatStore.setState({ currentTurnId: null })
+  expect(useCuaPreviewStore.getState().sessions.a).toMatchObject({ phase: 'ended', outcome: 'ended' })
+})
+
+it('recovery that finds the turn already over does not read as stopped', () => {
+  useChatStore.setState({ busy: false, currentTurnId: null })
+  expect(useCuaPreviewStore.getState().sessions.a).toMatchObject({ phase: 'ended', outcome: 'ended' })
+})
+
+it('the turn id clearing never overrides the real outcome', () => {
+  noteCuaTurnEnded('a', 'completed')
+  useChatStore.setState({ currentTurnId: null })
+  expect(useCuaPreviewStore.getState().sessions.a?.outcome).toBe('completed')
 })
 
 it('switching threads leaves the running task preview alone', () => {

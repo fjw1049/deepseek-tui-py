@@ -79,7 +79,7 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
       const target = await record({ action: name, observe: true }, () => original.apply(this, args));
       // Only a tab that exists can take Playwright input outside the wrappers.
       if (name !== 'getApp') globalThis.__deepseekTabs = true;
-      return wrap(target);
+      return (globalThis.__deepseekTarget = wrap(target));
     };
   }
   globalThis.__deepseekPlaywrightTraced = true;
@@ -104,6 +104,12 @@ const OPEN_APP = `async name => {
     return await cua.getApp(found[0].id);
   }
 }`;
+
+// What the panel shows when it cannot capture the window itself, as REPL expressions: the
+// last target observed, and the last one code reached. Host-written and read-only, and the
+// result goes to the panel only, so this is not model-visible CUA work.
+let observedTarget = 'undefined';
+let previewTarget = 'undefined';
 
 // Host calls that print nothing still return an empty text block; never pass those on.
 const printed = result => (result.content ?? []).filter(b => b.type !== 'text' || b.text.trim());
@@ -163,6 +169,7 @@ async function handle(request) {
           // Bind once per REPL: binding already prints the full tree, so rebinding on every
           // observation would send it twice. A reset REPL loses the cache with its bindings.
           const slot = `globalThis.__deepseekObservations[${JSON.stringify(JSON.stringify(target))}]`;
+          observedTarget = previewTarget = slot;
           const first = await client.call('js', {
             code: `globalThis.__deepseekObservations ??= {};\nif (!${slot}) ${slot} = await (${entry});`,
           }, { ...context, toolCallId: `${context.toolCallId}:bind` });
@@ -191,6 +198,7 @@ async function handle(request) {
           const install = await client.call('js', { code: TRACE_INSTALL },
             { ...context, toolCallId: `${context.toolCallId}:trace` });
           result = await client.call(request.name, request.arguments, context);
+          previewTarget = `(globalThis.__deepseekTarget ?? ${observedTarget})`;
           if (!controller.signal.aborted) {
             const read = await client.call('js', { code: TRACE_READ },
               { ...context, toolCallId: `${context.toolCallId}:trace` });
@@ -204,6 +212,12 @@ async function handle(request) {
         }
         return { ...result, instructions: client.instructions, tools: client.publicTools() };
       } finally { calls.delete(request.id); }
+    }
+    case 'preview': {
+      if (!client) throw new Error('Not connected');
+      const code = `await ${previewTarget}?.getScreenshot();`;
+      const result = await client.call('js', { code }, request.context);
+      return { image: (result.content ?? []).find(block => block.type === 'image') ?? null };
     }
     case 'interrupt':
       for (const controller of calls.values()) controller.abort();

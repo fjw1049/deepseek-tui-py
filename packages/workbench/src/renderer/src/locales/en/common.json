@@ -2691,7 +2691,6 @@
   "cuaPreviewDismiss": "Close",
   "cuaPreviewCollapse": "Collapse viewer",
   "cuaPreviewDisabled": "Preview off",
-  "cuaPreviewAmbiguous": "Multiple windows; showing screenshots",
   "computerUseApprovedAppsHint": "Always allow keeps access until you revoke it. Chrome website permissions are managed separately.",
   "computerUseAddApp": "Add app",
   "computerUseClosePicker": "Close",

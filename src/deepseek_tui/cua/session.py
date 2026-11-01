@@ -130,6 +130,7 @@ class CuaSession:
         self.human_ready = False
         self.human_reason: str | None = None
         self.human_request_id: str | None = None
+        self.human_since: float | None = None
         self.waiting = False
         self.last_surface: dict[str, str] | None = None
         self.last_activity = 0.0
@@ -204,6 +205,7 @@ class CuaSession:
                 self.lease.describe("user", self.lease.owner)
             await self.close()
             self.human_ready = True
+            self.human_since = time.time()
             self.control_revision += 1
         except BaseException:
             # A call still running holds self.lock and the lease; its own cleanup
@@ -219,6 +221,7 @@ class CuaSession:
         self.human_ready = False
         self.human_reason = None
         self.human_request_id = None
+        self.human_since = None
         self.control_revision += 1
 
     def release_human(self) -> None:
@@ -588,6 +591,22 @@ class CuaSession:
                     finally:
                         await self.close()
                 raise
+
+    async def preview_frame(self) -> dict[str, Any] | None:
+        """The operated target as it is now, for the panel only; skipped while a call runs."""
+        if (self.lock.locked() or self.human_reserved or self.turn_id is None or not self._bound
+                or self.process is None or self.broken):
+            return None
+        async with self.lock:
+            try:
+                result = await self._request("preview", timeout=5, context={
+                    "sessionId": self.session_id,
+                    "turnId": self.runtime_turn_id,
+                    "toolCallId": "preview-" + uuid.uuid4().hex,
+                })
+            except ToolError:
+                return None
+        return result.get("image")
 
     async def end_turn(self, *, interrupted: bool = False) -> None:
         async with self._end_lock:

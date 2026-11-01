@@ -11,9 +11,11 @@ let state: CuaWindowStreamState
 let frame: (() => void) | undefined
 let stops: Record<string, ReturnType<typeof vi.fn>>
 let failA: boolean
+let renders = 0
 const canvasRef = { current: null as HTMLCanvasElement | null }
 function Probe({ appId, enabled = true }: { appId: string | null; enabled?: boolean }) {
   state = useCuaWindowStream({ canvasRef, appId, revision: 1, enabled })
+  renders += 1
   return null
 }
 const render = (appId: string | null, enabled = true) => act(async () => {
@@ -101,21 +103,62 @@ it('retries a failed capture after permission recheck without replaying a deskto
 })
 
 
-it('stops and clears a live window when the same app becomes ambiguous', async () => {
+it('stops a live window the app lost, but holds its last frame on screen', async () => {
   await render('A')
   await act(async () => frame!())
   expect(state.hasFrame).toBe(true)
-  vi.mocked(window.dsGui.resolveCuaPreviewWindow).mockResolvedValue({ status: 'ambiguous', appName: 'A' })
+  vi.mocked(window.dsGui.resolveCuaPreviewWindow).mockResolvedValue({ status: 'no-window', appName: 'A' })
   await act(async () => window.dispatchEvent(new Event('cua-permission-recheck')))
   expect(stops.A).toHaveBeenCalledOnce()
-  expect(state).toMatchObject({ status: 'ambiguous', hasFrame: false })
-  expect(canvasRef.current!.getContext('2d')!.clearRect).toHaveBeenCalled()
+  expect(state).toMatchObject({ status: 'no-window', hasFrame: true })
+  expect(state.lostAt).not.toBeNull()
+  expect(canvasRef.current!.getContext('2d')!.clearRect).not.toHaveBeenCalled()
   expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1)
+})
+
+it('rides out one missing lookup and a failed lookup without touching the capture', async () => {
+  vi.useFakeTimers()
+  const lookup = vi.mocked(window.dsGui.resolveCuaPreviewWindow)
+  await render('A')
+  await act(async () => { await vi.advanceTimersByTimeAsync(100); frame!() })
+  lookup.mockResolvedValue({ status: 'no-window' })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+  lookup.mockResolvedValue({ status: 'ok', sourceId: 'A', appName: 'A' })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+  lookup.mockResolvedValue({ status: 'lookup-failed' })
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+  expect(stops.A).not.toHaveBeenCalled()
+  expect(state).toMatchObject({ status: 'ok', hasFrame: true, appName: 'A' })
+})
+
+it('keeps the old frame up while the capture moves to another window', async () => {
+  vi.useFakeTimers()
+  const lookup = vi.mocked(window.dsGui.resolveCuaPreviewWindow)
+  await render('A')
+  await act(async () => { await vi.advanceTimersByTimeAsync(100); frame!() })
+  lookup.mockResolvedValue({ status: 'ok', sourceId: 'B' })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+  expect(stops.A).toHaveBeenCalledOnce()
+  expect(state.hasFrame).toBe(true)
+})
+
+it('does not wake React for every frame', async () => {
+  let now = 1000
+  vi.mocked(performance.now).mockImplementation(() => (now += 100))
+  await render('A')
+  await act(async () => frame!())
+  expect(state.hasFrame).toBe(true)
+  const drawn = vi.mocked(canvasRef.current!.getContext('2d')!.drawImage)
+  const before = renders
+  const frames = drawn.mock.calls.length
+  await act(async () => { frame!(); frame!(); frame!() })
+  expect(drawn.mock.calls.length).toBe(frames + 3)
+  expect(renders).toBe(before)
 })
 
 
 it('does not erase a task screenshot when no live window was captured', async () => {
-  vi.mocked(window.dsGui.resolveCuaPreviewWindow).mockResolvedValue({ status: 'ambiguous', appName: 'A' })
+  vi.mocked(window.dsGui.resolveCuaPreviewWindow).mockResolvedValue({ status: 'no-window', appName: 'A' })
   await render('A')
   expect(canvasRef.current!.getContext('2d')!.clearRect).not.toHaveBeenCalled()
   expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled()
@@ -133,7 +176,29 @@ it('recovers when a window appears after the initial recheck', async () => {
   await act(async () => frame!())
   expect(state).toMatchObject({ status: 'ok', hasFrame: true })
   await act(async () => { await vi.advanceTimersByTimeAsync(4500) })
-  expect(lookup).toHaveBeenCalledTimes(3)
+  // Still watching the window, without ever restarting its capture.
+  expect(lookup).toHaveBeenCalledTimes(6)
+  expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce()
+})
+
+it('follows a new front window with no tool call finishing', async () => {
+  vi.useFakeTimers()
+  const lookup = vi.mocked(window.dsGui.resolveCuaPreviewWindow)
+  await render('A')
+  await act(async () => frame!())
+  lookup.mockResolvedValue({ status: 'ok', sourceId: 'B' })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+  expect(stops.A).toHaveBeenCalledOnce()
+  expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
+})
+
+it('waits for a slow lookup instead of superseding it', async () => {
+  vi.useFakeTimers()
+  const lookup = vi.mocked(window.dsGui.resolveCuaPreviewWindow)
+  lookup.mockReturnValue(new Promise(() => {}))
+  await render('A')
+  await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+  expect(lookup).toHaveBeenCalledOnce()
 })
 
 it('cancels missing-window rechecks when the preview stops', async () => {

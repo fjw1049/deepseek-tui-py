@@ -1,6 +1,6 @@
 import { loadSettingsSnapshot } from '../lib/settings-snapshot'
 import { revealBrowserForTool } from '../lib/browser-activity'
-import { cuaEventFromMailbox, noteCuaCallFinished, noteCuaCallStarted, noteCuaTurnEnded } from './cua-preview-store'
+import { cuaEventFromMailbox, noteCuaCallFinished, noteCuaCallStarted, noteCuaTurnEnded, refreshCuaPreview } from './cua-preview-store'
 import { create, useStore, type StoreApi } from 'zustand'
 import { createContext, useContext } from 'react'
 import type {
@@ -817,6 +817,12 @@ function armBusyWatchdog(
       const p = getProvider(s.providerId)
       if (typeof p.isThreadTurnActive !== 'function') return false
       return p.isThreadTurnActive(s.activeThreadId)
+    },
+    isWaitingOnHuman: async () => {
+      const s = get()
+      const p = getProvider(s.providerId)
+      if (!s.activeThreadId || !p.getThreadPauseState) return false
+      return (await p.getThreadPauseState(s.activeThreadId)).humanControl
     }
   })
 }
@@ -1022,7 +1028,8 @@ function buildThreadEventSink(
       if (get().activeThreadId === threadId) {
         revealBrowserForTool(threadId, get().currentTurnId, ev.toolName, ev.status)
       }
-      noteCuaCallStarted(threadId, get().currentTurnId, ev)
+      // A turn the host starts itself (a goal continuation) has no user message to name it.
+      noteCuaCallStarted(threadId, get().currentTurnId ?? ev.turnId ?? null, ev)
       noteCuaCallFinished(threadId, ev)
       emitPetEvent(threadId,
         ev.status === 'running'
@@ -1221,6 +1228,7 @@ function buildThreadEventSink(
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
       emitPetEvent(threadId, { type: 'user_input_waiting', itemId: req.itemId })
+      refreshCuaPreview(threadId)
       set((s) => {
         if (s.blocks.some((b) => b.kind === 'user_input' && b.requestId === req.requestId)) {
           return {}
@@ -1247,6 +1255,7 @@ function buildThreadEventSink(
     },
     onUserInputStatus: (ev) => {
       resetBusyRecoveryAttempts()
+      refreshCuaPreview(threadId)
       emitPetEvent(threadId, {
         type: 'user_input_resolved',
         itemId: ev.itemId,
@@ -1396,7 +1405,7 @@ function buildThreadEventSink(
     onSubagentMailbox: (ev: SubagentMailboxPayload) => {
       const cuaStep = cuaEventFromMailbox(ev.message)
       if (cuaStep) {
-        noteCuaCallStarted(threadId, get().currentTurnId, cuaStep)
+        noteCuaCallStarted(threadId, get().currentTurnId ?? ev.turnId ?? null, cuaStep)
         noteCuaCallFinished(threadId, cuaStep)
       }
       // Lifecycle lives in `kind`; `status` only carries progress narration.
@@ -4035,6 +4044,7 @@ const store = create<ChatState>((set, get) => ({
       if (get().activeThreadId !== activeThreadId ||
           (get().currentTurnId && get().currentTurnId !== currentTurnId)) return
       clearBusyWatchdog()
+      noteCuaTurnEnded(activeThreadId, 'stopped')
       set((s) => settleInterrupted(s))
     } catch (e) {
       if (get().activeThreadId !== activeThreadId ||
@@ -4079,12 +4089,13 @@ if (options.appView) {
     } })
   }
 }
-// Every way a viewed turn stops (completion, Stop, recovery) clears its turn id;
-// Stop does so without a completion event, so the preview ends on this edge.
+// Every way a viewed turn stops (completion, Stop, recovery) clears its turn id, not
+// always with a completion event, so the preview ends on this edge. This edge cannot
+// tell how it ended: interrupt() records a Stop itself.
 const unsubscribeCuaPreview = store.subscribe((state, previous) => {
   if (previous.currentTurnId && !state.currentTurnId && state.activeThreadId &&
       state.activeThreadId === previous.activeThreadId) {
-    noteCuaTurnEnded(state.activeThreadId, 'stopped')
+    noteCuaTurnEnded(state.activeThreadId)
   }
 })
 const unsubscribeQueue = store.subscribe((state, previous) => {

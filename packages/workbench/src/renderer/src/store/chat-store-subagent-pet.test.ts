@@ -11,6 +11,7 @@ const provider = vi.hoisted(() => ({
 }))
 vi.mock('../agent/registry', () => ({ getProvider: () => provider }))
 import { createChatSessionStore } from './chat-store'
+import { useCuaPreviewStore } from './cua-preview-store'
 
 const sessions: ReturnType<typeof createChatSessionStore>[] = []
 
@@ -47,4 +48,24 @@ it('drives pet subagent activity from mailbox lifecycle kinds, not progress text
     { type: 'subagent_started', itemId: 'subagent-agent_a', agentType: 'explore' },
     { type: 'subagent_completed', itemId: 'subagent-agent_a', status: 'failed' }
   ])
+})
+
+it('arms the computer-use card for a turn the host started itself', async () => {
+  const session = createChatSessionStore()
+  sessions.push(session)
+  session.store.setState({ runtimeConnection: 'ready', warmActiveThread: async () => {} })
+  await session.store.getState().selectThread('t1')
+  const sink = provider.subscribeThreadEvents.mock.calls[0][2] as ThreadEventSink
+  // A goal continuation has no user message, so the store never learns its turn id.
+  session.store.setState({ currentTurnId: null })
+  sink.onTool?.({ turnId: 'hidden', itemId: 'call', summary: 'cua_js', status: 'running', toolName: 'cua_js' })
+  expect(useCuaPreviewStore.getState().sessions.t1).toMatchObject({ phase: 'armed', turnId: 'hidden' })
+  sink.onTool?.({ turnId: 'hidden', itemId: 'call', summary: 'cua_js', status: 'success',
+    meta: { tool_name: 'cua_js', cua_surface: { kind: 'app', app_id: 'com.apple.mail' } } })
+  expect(useCuaPreviewStore.getState().sessions.t1?.appId).toBe('com.apple.mail')
+
+  useCuaPreviewStore.setState({ sessions: {} })
+  sink.onSubagentMailbox?.({ seq: 1, turnId: 'hidden', message: {
+    kind: 'tool_call_started', agent_id: 'agent_a', tool_name: 'cua_observe' } })
+  expect(useCuaPreviewStore.getState().sessions.t1?.turnId).toBe('hidden')
 })

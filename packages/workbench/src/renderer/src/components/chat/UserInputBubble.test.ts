@@ -55,8 +55,9 @@ it('renders context separately and respects closed choices for any question ID',
     expect(host.querySelector('input')).toBeNull()
     const submit = [...host.querySelectorAll('button')].find(b => b.textContent === 'userInputSubmit')!
     expect(submit.disabled).toBe(true)
+    // A lone closed question is answered by the choice itself, without a second click.
     await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent?.includes('PDF'))!.click())
-    await act(async () => submit.click())
+    expect(resolveUserInput).toHaveBeenCalledOnce()
     expect(resolveUserInput).toHaveBeenCalledWith('permission', {
       kind: 'submit', answers: [{ id: 'format', label: 'PDF', value: 'pdf' }]
     })

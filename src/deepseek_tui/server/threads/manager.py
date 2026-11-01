@@ -4851,6 +4851,14 @@ class RuntimeThreadManager:
             "available": session is not None,
         }
 
+    async def cua_preview_frame(self, thread_id: str) -> dict[str, Any] | None:
+        """The running task's current screen, for a panel that cannot capture it itself."""
+        state = self._active.get(thread_id)
+        sessions = self._cua_sessions(state)
+        if not sessions or state.active_turn is None:
+            return None
+        return await max(sessions, key=lambda item: item.last_activity).preview_frame()
+
     def note_cua_app_raised(self, thread_id: str) -> dict[str, Any]:
         """The user raised the bound app from the panel: no takeover, but stale observation."""
         state = self._active.get(thread_id)
@@ -4864,14 +4872,24 @@ class RuntimeThreadManager:
         reviewed_call_id: str | None = None,
     ) -> dict[str, Any]:
         """Transfer the desktop only after native input has stopped."""
-        from deepseek_tui.cua.tools import HANDOFF_NOTICE
+        from deepseek_tui.cua.tools import handoff_notice
         from deepseek_tui.tools.registry import ToolError
 
         state = self._active.get(thread_id)
         session = getattr(state.engine, "_cua_session", None) if state else None
         if session is None:
             raise ValueError("The computer-use task has ended")
+        stopping = (owner == "stopped" and state.active_turn is not None
+                    and state.active_turn.turn_id == turn_id)
+        if stopping:
+            # Before the lock: a transfer in progress holds it, and this is what ends it.
+            await state.handle.cancel("user_cancelled")
         async with session.control_lock:
+            if stopping:
+                await session.close()
+                session.release_human()
+                state.handle.pause.resume()
+                return self.cua_task_state(thread_id)
             sessions = self._cua_sessions(state)
             snapshot = self.cua_task_state(thread_id)
             uncertain = next((item for item in sessions if item.unresolved), None)
@@ -4919,12 +4937,8 @@ class RuntimeThreadManager:
                     if not resolved:
                         raise ValueError("The assistance request changed. Refresh and try again.")
                     return self.cua_task_state(thread_id)
-                session.release_human()
-                state.handle.resume_context = HANDOFF_NOTICE
-                state.handle.pause.resume()
-            elif owner == "stopped":
-                await state.handle.cancel("user_cancelled")
-                await session.close()
+                state.handle.resume_context = await handoff_notice(
+                    session.human_since, snapshot["surface"])
                 session.release_human()
                 state.handle.pause.resume()
             else:

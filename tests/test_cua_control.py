@@ -262,3 +262,102 @@ async def test_raising_the_app_flags_the_task_without_taking_control(desktop):
         assert session.outside_change == ''
     finally:
         await session.close()
+
+
+async def test_resume_tells_the_model_what_the_host_knows_about_the_desktop(desktop, monkeypatch):
+    from deepseek_tui.cua import apps
+
+    monkeypatch.setattr(apps, 'on_screen_apps', lambda: ['com.apple.mail', 'com.apple.finder'])
+    manager, state, session = desktop
+    session.last_surface = {'kind': 'app', 'app_id': 'com.apple.TextEdit'}
+    try:
+        result = await manager.control_cua('thread', 'user', 0, 'turn')
+        assert session.human_since is not None
+        await manager.control_cua('thread', 'assistant', result['revision'], 'turn')
+        context = state.handle.resume_context
+        assert 'The user held the desktop for 0s and may have changed anything' in context
+        assert 'Your last target was com.apple.TextEdit.' in context
+        assert 'front to back: com.apple.mail, com.apple.finder.' in context
+        assert 'Use cua_observe before' in context
+        assert session.human_since is None
+    finally:
+        session.release_human()
+        await session.close()
+
+
+async def test_resume_notice_stands_without_desktop_facts(monkeypatch):
+    from deepseek_tui.cua import apps
+    from deepseek_tui.cua.tools import HANDOFF_NOTICE, handoff_notice
+
+    monkeypatch.setattr(apps, 'on_screen_apps', lambda: [])
+    notice = await handoff_notice(None, {'kind': 'browser'})
+    assert notice == ('[The user held the desktop and may have changed anything on it, including '
+                      'which app or window is in front. Your last target was the browser.]\n'
+                      + HANDOFF_NOTICE)
+
+
+def test_on_screen_apps_leaves_out_apps_computer_use_cannot_reach(monkeypatch):
+    from deepseek_tui.cua import apps
+
+    monkeypatch.setattr(apps.sys, 'platform', 'darwin')
+    listed = '["com.xingyuzhong.deepseekgui", "com.apple.mail", "com.apple.Terminal"]'
+    monkeypatch.setattr(apps.subprocess, 'run',
+                        lambda *a, **k: SimpleNamespace(returncode=0, stdout=listed))
+    assert apps.on_screen_apps() == ['com.apple.mail']
+
+
+async def test_stop_ends_a_transfer_that_is_still_waiting_for_the_desktop(desktop, tmp_path):
+    manager, state, session = desktop
+    other = DesktopLease()
+    await other.acquire(timeout=0.1)
+    try:
+        transfer = asyncio.create_task(manager.control_cua('thread', 'user', 0, 'turn'))
+        await asyncio.sleep(0.05)
+        assert session.human_reserved and session.control_lock.locked()
+
+        async def cancel(reason):
+            state.handle.cancel_event.set()
+            transfer.cancel()
+
+        state.handle.cancel = cancel
+        result = await asyncio.wait_for(manager.control_cua('thread', 'stopped', 0, 'turn'), 2)
+        assert result['owner'] == 'idle' and not session.human_reserved
+        assert not state.handle.pause.paused
+        await asyncio.gather(transfer, return_exceptions=True)
+    finally:
+        other.release()
+        session.release_human()
+        await session.close()
+
+
+async def test_preview_frame_is_only_taken_between_calls_of_a_live_task(desktop):
+    _, _, session = desktop
+    session.process = SimpleNamespace(returncode=None)
+    session._bound = True
+    session.turn_id, session.runtime_turn_id = 'turn', 'turn:cua:1'
+    session._request = AsyncMock(return_value={'image': {'data': 'AA=='}})
+    assert await session.preview_frame() == {'data': 'AA=='}
+    assert session._request.await_args.args == ('preview',)
+
+    async with session.lock:
+        assert await session.preview_frame() is None
+    session.human_reserved = True
+    assert await session.preview_frame() is None
+    session.human_reserved = False
+    session.turn_id = None
+    assert await session.preview_frame() is None
+    session.turn_id = 'turn'
+    session._request.side_effect = ToolError('CUA preview timed out')
+    assert await session.preview_frame() is None
+    session.process = None
+
+
+async def test_panel_frame_comes_from_the_session_that_acted_last(desktop):
+    manager, state, session = desktop
+    child = SimpleNamespace(last_activity=9, preview_frame=AsyncMock(return_value={'data': 'child'}))
+    session.last_activity = 1
+    state.engine.tool_context = SimpleNamespace(
+        subagent_manager=SimpleNamespace(cua_sessions={'a': child}))
+    assert await manager.cua_preview_frame('thread') == {'data': 'child'}
+    state.active_turn = None
+    assert await manager.cua_preview_frame('thread') is None

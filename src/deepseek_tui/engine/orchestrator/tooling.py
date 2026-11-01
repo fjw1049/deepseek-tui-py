@@ -1362,7 +1362,11 @@ class ToolExecutionMixin:
         """Hand the desktop to the user for one step, then require a fresh observation."""
         import json
 
-        from deepseek_tui.cua.tools import desktop_action_question, desktop_action_result
+        from deepseek_tui.cua.tools import (
+            desktop_action_question,
+            desktop_action_result,
+            handoff_notice,
+        )
 
         reason = input_data.get("reason")
         if not isinstance(reason, str) or not reason.strip():
@@ -1380,14 +1384,17 @@ class ToolExecutionMixin:
             response = await self._await_user_input_raw(
                 tool_call_id, [question], purpose="desktop_action"
             )
+            if response is None:
+                return ToolResult(
+                    content="Desktop assistance cancelled (turn cancelled)", success=False
+                )
+            notice = await handoff_notice(session.human_since, session.last_surface)
         finally:
             session.release_human()
-        if response is None:
-            return ToolResult(
-                content="Desktop assistance cancelled (turn cancelled)", success=False
-            )
         return ToolResult(
-            content=json.dumps(desktop_action_result(question, response), ensure_ascii=False),
+            content=json.dumps(
+                desktop_action_result(question, response, notice), ensure_ascii=False
+            ),
             success=True,
         )
 

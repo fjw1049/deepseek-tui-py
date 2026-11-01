@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { AppWindow, ArrowUpRight, CheckCircle2, ChevronDown, CircleAlert, Eye, Monitor, X } from 'lucide-react'
@@ -116,17 +116,36 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     }
   }, [compactRail, slot, peeking, height, collapse])
   const [permissionFor, setPermissionFor] = useState<string | null>(null)
-  // An ended card may close once nothing on it still needs the user's review.
-  const [reviewPending, setReviewPending] = useState(true)
+  // An ended card may close once nothing on it still needs the user's review. Null until
+  // the host answers for this thread: not closable yet, but nothing to alarm about either.
+  const [reviewState, setReviewPending] = useState<boolean | null>(null)
+  const reviewPending = reviewState === true
+  const reviewOpen = reviewState !== false
+  const hasSession = !!threadId && !!session
+  useEffect(() => setReviewPending(null), [threadId])
+  // Read once per task: turning the preview off applies from the next task. Nothing is
+  // captured or fetched until the setting is known to allow it.
+  const [allowed, setAllowed] = useState<boolean | null>(null)
   useEffect(() => {
-    if (session?.phase !== 'ended' || reviewPending) return
+    if (!hasSession) return
+    let cancelled = false
+    window.dsGui.getSettings().then(
+      (settings) => { if (!cancelled) setAllowed(settings.cuaWindowPreview !== false) },
+      () => { if (!cancelled) setAllowed(false) }
+    )
+    return () => { cancelled = true }
+  }, [hasSession, permissionKey])
+  useEffect(() => {
+    if (session?.phase !== 'ended' || reviewOpen) return
     const timer = window.setTimeout(() => { setAnimate(true); collapse() }, 1400)
     return () => window.clearTimeout(timer)
-  }, [session?.phase, permissionKey, reviewPending, collapse])
+  }, [session?.phase, permissionKey, reviewOpen, collapse])
   useEffect(() => {
     if (!expanded) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && permissionFor !== permissionKey) { setAnimate(false); collapse() }
+      // Escape while typing, or already spent on a menu, belongs to that control.
+      const typing = event.target instanceof Element && event.target.closest('input, textarea, [contenteditable="true"]')
+      if (event.key === 'Escape' && !event.defaultPrevented && !typing && permissionFor !== permissionKey) { setAnimate(false); collapse() }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -143,6 +162,20 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
       }).catch(() => { /* Live tool events can still arm the preview. */ })
     return () => { cancelled = true }
   }, [threadId])
+  // One mount for the whole task: changing place moves this node, so the capture, the
+  // canvas and the control state are not rebuilt when the sidebar opens or narrows.
+  const cardHost = useMemo(() => {
+    const element = document.createElement('div')
+    element.style.display = 'contents'
+    return element
+  }, [])
+  const [conversationSlot, setConversationSlot] = useState<HTMLDivElement | null>(null)
+  const cardParent = !threadId || !session ? null : compactRail ? document.body : slotUsable ? slot : conversationSlot
+  useLayoutEffect(() => {
+    if (!cardParent) cardHost.remove()
+    else if (cardHost.parentElement !== cardParent) cardParent.append(cardHost)
+  }, [cardHost, cardParent])
+  useEffect(() => () => cardHost.remove(), [cardHost])
   if (!threadId || !session) return null
   const card = <section ref={cardRef} hidden={compactRail && !peeking} aria-label={t('cuaPreviewRegion')} data-cua-preview={threadId}
     style={{ height, ...(compactRail ? anchor : {}) }}
@@ -151,35 +184,35 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     }`}>
     <div ref={contentRef} className="max-h-[calc(100vh-7rem)] overflow-y-auto">
     <CuaPreviewSessionView key={`${threadId}:${session.turnId ?? ''}:${session.surface ?? ''}:${session.appId ?? ''}`}
-      threadId={threadId} session={session} expanded={expanded}
+      threadId={threadId} session={session} expanded={expanded} allowed={allowed}
       autoPreview={collapsedFor !== permissionKey} onFrameReady={onFrameReady} reviewPending={reviewPending}
       onExpand={() => { setAnimate(true); setExpandedFor(permissionKey) }} onCollapse={() => { setAnimate(true); collapse() }}
       onPermissionRequired={requestPermission} onOpenPermissions={() => setPermissionFor(permissionKey)}
-      onDismiss={session.phase === 'ended' && !reviewPending ? () => dismissEndedCuaPreview(threadId) : undefined} />
+      onDismiss={session.phase === 'ended' && !reviewOpen ? () => dismissEndedCuaPreview(threadId) : undefined} />
     <CuaControlBar key={threadId} threadId={threadId} compact onReviewPending={setReviewPending} />
     </div>
   </section>
   // The fallback belongs to the conversation layout, never to the whole window.
   // A fullscreen sidebar hides it with the conversation instead of being covered.
   return <>
+    {createPortal(card, cardHost)}
     {compactRail && slot ? <>
       {createPortal(<button type="button" className="ds-operation-dock-rail__btn relative"
         aria-label={t('cuaPreviewShow')} title={t('cuaPreviewShow')} aria-expanded={peeking}
         onClick={() => { setAnimate(true); peeking ? collapse() : setPeekFor(permissionKey) }}>
         <Monitor className="h-4 w-4" aria-hidden />
         {(session.phase !== 'ended' || reviewPending) && <span aria-hidden
-          className={`absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ${reviewPending ? 'bg-amber-500' : 'bg-emerald-500'}`} />}
+          className={`absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ${reviewPending || session.control ? 'bg-amber-500' : 'bg-emerald-500'}`} />}
       </button>, slot)}
-      {createPortal(card, document.body)}
-    </> : slotUsable && slot ? createPortal(card, slot) : <div
+    </> : slotUsable ? null : <div ref={setConversationSlot}
       className="ds-no-drag mx-3 mb-3 flex max-h-[45vh] min-w-0 shrink-0 justify-end overflow-y-auto"
-      data-cua-conversation-preview>{card}</div>}
+      data-cua-conversation-preview />}
     {permissionFor === permissionKey && <CuaPermissionsDialog onClose={() => setPermissionFor(null)} />}
   </>
 }
 
-function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady, reviewPending }: {
-  autoPreview: boolean; onFrameReady: () => void; reviewPending: boolean
+function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady, reviewPending }: {
+  autoPreview: boolean; onFrameReady: () => void; reviewPending: boolean; allowed: boolean | null
   expanded: boolean; onExpand: () => void; onCollapse: () => void; onDismiss?: () => void
   threadId: string; session: CuaPreviewSession; onPermissionRequired: () => void; onOpenPermissions: () => void
 }): ReactElement | null {
@@ -212,17 +245,6 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
   }, [])
   const canvasRef = useMemo(() => ({ current: canvas }), [canvas])
   const { phase } = session
-  // Read once per task: turning the preview off applies from the next task. Nothing is
-  // captured or fetched until the setting is known to allow it.
-  const [allowed, setAllowed] = useState<boolean | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    window.dsGui.getSettings().then(
-      (settings) => { if (!cancelled) setAllowed(settings.cuaWindowPreview !== false) },
-      () => { if (!cancelled) setAllowed(false) }
-    )
-    return () => { cancelled = true }
-  }, [])
   const shown = allowed === true
   const streaming = (expanded || autoPreview) && allowed === true && (phase === 'armed' || phase === 'live')
 
@@ -236,23 +258,25 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
     revision: session.revision,
     enabled: streaming
   })
-  // Stop capture after a manual collapse; retain the latest frame.
-  const useStill = shown && !live.hasFrame
+  // Stop capture after a manual collapse; retain the latest frame. A screenshot only
+  // replaces a held live frame when it is newer than the moment the stream lost its window.
+  const useStill = shown && (!live.hasFrame || (live.lostAt !== null && (session.capturedAt ?? 0) > live.lostAt))
   const still = useCuaStillFrame({
-    canvasRef, still: session.still, enabled: useStill
+    canvasRef, still: session.still, enabled: useStill, refresh: session.revision,
+    currentPath: streaming ? `/v1/threads/${encodeURIComponent(threadId)}/cua/frame` : null
   })
 
-  const hasFrame = live.hasFrame || still.status === 'ready'
+  const hasFrame = live.hasFrame || still.frameSize !== null
   useEffect(() => {
     if (shown && hasFrame && (phase === 'armed' || phase === 'live')) onFrameReady()
   }, [shown, hasFrame, phase, onFrameReady])
   useEffect(() => {
     canvas.style.visibility = shown && hasFrame ? 'visible' : 'hidden'
   }, [canvas, shown, hasFrame])
-  const frameSize = useStill && still.status === 'ready' ? still.frameSize : live.frameSize ?? still.frameSize
+  const frameSize = useStill ? still.frameSize ?? live.frameSize : live.frameSize ?? still.frameSize
 
   // Capture problems are explained only inside the viewer.
-  const problem = live.status === 'permission' || live.status === 'failed' || live.status === 'no-window' || live.status === 'ambiguous' || live.status === 'lookup-failed' ? live.status : null
+  const problem = live.status === 'permission' || live.status === 'failed' || live.status === 'no-window' || live.status === 'lookup-failed' ? live.status : null
   useEffect(() => {
     if (!expanded || !shown || session.surface !== 'app' || phase === 'ended' || window.dsGui.platform !== 'darwin' || typeof window.dsGui.getCuaScreenPermission !== 'function') return
     let cancelled = false
@@ -274,7 +298,12 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
   const appName = live.appName ?? t(session.surface === 'browser' ? 'cuaPreviewBrowser' : 'cuaPreviewComputer')
   const status = phase === 'ended'
     ? t(reviewPending ? 'cuaControlUnknown' : session.outcome === 'stopped' ? 'cuaPreviewStopped' : session.outcome === 'failed' ? 'cuaPreviewIncomplete' : session.outcome === 'completed' ? 'cuaPreviewDone' : 'cuaPreviewEnded')
-    : t('cuaPreviewWorking', { app: appName })
+    : session.control === 'user' ? t('cuaControlHuman')
+      : session.control === 'paused' ? t('cuaControlPaused')
+        : t('cuaPreviewWorking', { app: appName })
+  // The step the assistant named is what the person is watching for. The control bar
+  // right below says who holds the desktop, so the card does not say it a second time.
+  const step = phase !== 'ended' ? session.label : null
   const attachCanvas = (element: HTMLDivElement | null): void => {
     if (element && canvas.parentElement !== element) element.prepend(canvas)
   }
@@ -301,6 +330,7 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
           <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="truncate">{t('cuaPreviewOpenAppFailedShort')}</span>
         </span>}
+        {!openAppFailed && step && <span title={step} className="block truncate text-ds-muted">{step}</span>}
       </div>
       {hasFrame && <span className="shrink-0 text-ds-muted">{live.hasFrame && streaming && live.status === 'ok'
         ? t('cuaPreviewLive') : t('cuaPreviewLastFrame')}</span>}
@@ -310,17 +340,17 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
       </button>
     </div> : null}
     {expanded ? <>
-      {shown && hasFrame && <div ref={attachCanvas} className="relative w-full bg-ds-subtle"
+      {shown && hasFrame && <div ref={attachCanvas} className="relative max-h-[45vh] w-full bg-ds-subtle"
         style={{ aspectRatio: frameSize ? `${frameSize.width} / ${frameSize.height}` : `${FALLBACK_ASPECT}` }} />}
       {(!shown || !hasFrame || problem) && <div role="status" className="space-y-2 bg-ds-subtle px-3 py-4 text-xs text-ds-muted">
         <p>{allowed === false ? t('cuaPreviewDisabled')
           : problem === 'permission' ? t('cuaPreviewPermission')
-            : problem === 'ambiguous' ? t('cuaPreviewAmbiguous')
             : problem === 'lookup-failed' ? t('cuaPreviewLookupFailed')
             : problem === 'no-window' ? t('cuaPreviewNoWindow')
               : problem === 'failed' || still.status === 'error' ? t('cuaPreviewFailed')
                 : phase === 'ended' ? t('cuaPreviewNoRecordedFrame')
-                  : live.status === 'unsupported' ? t('cuaPreviewUnsupported') : t('cuaPreviewWaitingFrame')}</p>
+                  : session.surface === 'browser' ? t('cuaPreviewNoFrame')
+                    : live.status === 'unsupported' ? t('cuaPreviewUnsupported') : t('cuaPreviewWaitingFrame')}</p>
         {problem && shown && hasFrame && <p>{t('cuaPreviewStillFallback')}</p>}
         {problem && problem !== 'permission' && shown && streaming && <button type="button"
           onClick={() => window.dispatchEvent(new Event('cua-preview-recheck'))}
@@ -336,7 +366,7 @@ function CuaPreviewSessionView({ threadId, session, expanded, onExpand, onCollap
           {!shown || !hasFrame ? placeholder : null}
         </div>
         {outcomeIcon}
-        <span title={phase === 'ended' ? status : session.label ?? status} className="min-w-0 truncate text-xs leading-relaxed">{status}</span>
+        <span title={step ?? status} className="min-w-0 truncate text-xs leading-relaxed">{step ?? status}</span>
         <Eye className="ml-auto h-4 w-4 shrink-0 text-ds-muted" aria-hidden />
       </button>
       {onDismiss ? <button type="button" onClick={onDismiss} aria-label={t('cuaPreviewDismiss')} title={t('cuaPreviewDismiss')}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { SquareGrid } from './SquareGrid'
@@ -12,6 +13,8 @@ const SURFACE_ACTIVITY: ReadonlyArray<[string, TurnActivityKind]> = [
   ['cua_observe', 'Desktop']
 ]
 
+const HUMAN_GATES = new Set<ChatBlock['kind']>(['approval', 'elevation', 'user_input', 'evolution'])
+
 /** Inputs are projections of runtime events, independent of disclosure/content layout. */
 export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUser = false }: {
   active: boolean
@@ -21,8 +24,7 @@ export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUse
 }): TurnActivityKind | null {
   if (!active) return null
   if (awaitingBrowserUser || blocks.some((block) =>
-    (block.kind === 'approval' || block.kind === 'elevation' || block.kind === 'user_input' ||
-      block.kind === 'evolution') && block.status === 'pending')) return 'User'
+    HUMAN_GATES.has(block.kind) && (block as { status?: string }).status === 'pending')) return 'User'
   if (stream === 'thinking') return 'Thinking'
   if (stream === 'responding') return 'Responding'
   const latest = blocks.at(-1)
@@ -33,14 +35,17 @@ export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUse
   for (const [toolName, activity] of SURFACE_ACTIVITY) {
     if (running.some((block) => block.kind === 'tool' && block.meta?.tool_name === toolName)) return activity
   }
-  return running.length ? 'Tool' : 'Waiting'
+  if (running.length) return 'Tool'
+  // Desktop work is one step after another; "waiting" between them only reads as flicker.
+  const work = blocks.filter((block) => !HUMAN_GATES.has(block.kind)).at(-1)
+  return work?.kind === 'tool' && String(work.meta?.tool_name).startsWith('cua_') ? 'Desktop' : 'Waiting'
 }
 
-/** The running desktop call's own step title, so a long task shows which step it is on. */
+/** The latest desktop call's own step title, so a long task shows which step it is on. */
 export function resolveTurnActivityStep(blocks: ChatBlock[]): string | null {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
-    if (block.kind !== 'tool' || block.status !== 'running' || block.meta?.tool_name !== 'cua_js') continue
+    if (block.kind !== 'tool' || block.meta?.tool_name !== 'cua_js') continue
     const input = block.meta.tool_input
     const title = input && typeof input === 'object' ? (input as { title?: unknown }).title : undefined
     return typeof title === 'string' && title.trim() ? title.trim() : null
@@ -48,11 +53,29 @@ export function resolveTurnActivityStep(blocks: ChatBlock[]): string | null {
   return null
 }
 
-export function TurnActivity({ activity, step = null }: {
+/** Long enough to cover the gap between two model stream segments, too short to notice. */
+const WAITING_SETTLE_MS = 400
+
+/** "Waiting" between two states that follow each other at once only reads as a flicker. */
+function useSettledActivity(activity: TurnActivityKind | null): TurnActivityKind | null {
+  const [settled, setSettled] = useState(activity)
+  useEffect(() => {
+    if (activity !== 'Waiting' || settled === null) {
+      setSettled(activity)
+      return
+    }
+    const timer = setTimeout(() => setSettled(activity), WAITING_SETTLE_MS)
+    return () => clearTimeout(timer)
+  }, [activity, settled])
+  return activity === null ? null : settled
+}
+
+export function TurnActivity({ activity: latest, step = null }: {
   activity: TurnActivityKind | null
   step?: string | null
 }): React.ReactElement | null {
   const { t } = useTranslation('common')
+  const activity = useSettledActivity(latest)
   if (!activity) return null
   return <div role="status" aria-live="polite" aria-atomic="true" data-turn-activity={activity}
     className="flex items-center gap-2 py-1 text-[13px] leading-5 text-ds-faint">

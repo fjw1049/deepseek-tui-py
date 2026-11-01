@@ -517,3 +517,22 @@ it.each(['completed', 'partial', 'blocked'] as const)('preserves task outcome %s
     await vi.waitFor(() => expect(sink.onTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', taskStatus })))
   } finally { controller.abort(); await subscription }
 })
+
+describe('getThreadPauseState', () => {
+  const read = (body: unknown) => {
+    const runtimeRequest = vi.fn().mockResolvedValue({ ok: true, status: 200, body: JSON.stringify(body) })
+    vi.stubGlobal('window', { dsGui: { runtimeRequest } })
+    return { result: new DeepseekRuntimeProvider().getThreadPauseState('thr/1'), runtimeRequest }
+  }
+
+  it('reads the turn pause, so a desktop takeover counts as well as a browser one', async () => {
+    const { result, runtimeRequest } = read({ paused: true, turn_id: 'turn', owner: 'user' })
+    await expect(result).resolves.toEqual({ paused: true, turnId: 'turn', humanControl: true })
+    expect(runtimeRequest).toHaveBeenCalledWith('/v1/threads/thr%2F1/cua', 'GET')
+  })
+
+  it('treats a handoff the assistant asked for as human control, not a pause', async () => {
+    await expect(read({ paused: false, turn_id: 'turn', owner: 'user' }).result)
+      .resolves.toEqual({ paused: false, turnId: 'turn', humanControl: true })
+  })
+})

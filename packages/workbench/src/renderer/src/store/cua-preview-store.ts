@@ -15,6 +15,8 @@ import type { SubagentMailboxPayload, ToolEventPayload } from '../agent/types'
  */
 export type CuaPreviewOutcome = 'ended' | 'completed' | 'stopped' | 'failed'
 
+export type CuaPreviewControl = 'user' | 'paused'
+
 export type CuaPreviewPhase = 'armed' | 'live' | 'hidden-for-task' | 'ended'
 
 /** A screenshot a computer-use call recorded; served by `/v1/cua/frames`. */
@@ -33,6 +35,8 @@ export type CuaPreviewSession = {
   revision: number
   outcome?: CuaPreviewOutcome
   capturedAt?: number
+  /** The task is held for the person: they have the desktop, or it sits paused. */
+  control?: CuaPreviewControl
 }
 
 export type CuaPreviewPosition = { x: number; y: number }
@@ -152,8 +156,19 @@ export function noteCuaTurnEnded(threadId: string, outcome: CuaPreviewOutcome = 
   update(threadId, (session) => {
     const phase = phaseOnTurnEnd(session?.phase)
     if (!session || phase === undefined) return undefined
-    return { ...session, phase, outcome: session.outcome && session.outcome !== 'ended' ? session.outcome : outcome }
+    return { ...session, phase, control: undefined,
+      outcome: session.outcome && session.outcome !== 'ended' ? session.outcome : outcome }
   })
+}
+
+/** Something changed outside a computer-use call; re-read control and the window now. */
+export function refreshCuaPreview(threadId: string): void {
+  update(threadId, (session) => session && { ...session, revision: session.revision + 1 })
+}
+
+/** The control bar polls the host; everything else that shows control reads it here. */
+export function noteCuaControl(threadId: string, control: CuaPreviewControl | undefined): void {
+  update(threadId, (session) => !session || session.control === control ? session : { ...session, control })
 }
 
 type MailboxMessage = SubagentMailboxPayload['message']

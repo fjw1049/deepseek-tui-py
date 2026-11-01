@@ -6,9 +6,9 @@ import type { CuaPreviewWindowResult } from '../../shared/ds-gui-api'
 /**
  * Finds the window the computer-use preview should show for one app.
  *
- * The runtime names the app it touched (bundle id) but not its window, so this picks
- * the app's only normal on-screen window. Only that one window is ever offered
- * for capture: an app without a capturable window yields no source, never the desktop.
+ * The runtime names the app it touched (bundle id) but not its window, and its state
+ * covers the app's front window, so this picks that one. Only that one window is ever
+ * offered for capture: an app without a capturable window yields no source, never the desktop.
  */
 
 const BUNDLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/
@@ -55,12 +55,12 @@ function run(argv) {
 export type AppWindow = { id: number; layer: number; alpha: number; width: number; height: number }
 type AppWindows = { name: string; path: string; windows: AppWindow[] }
 
-/** Never guess which of an app's windows belongs to the task. */
+/** Windows arrive front to back; ones fading in or out stay listed at near-zero alpha. */
 export function pickPreviewWindow(windows: AppWindow[]): number | null {
-  const candidates = windows.filter(
-    (w) => w.layer === 0 && w.alpha > 0 && w.width >= MIN_WINDOW_SIDE && w.height >= MIN_WINDOW_SIDE
+  const front = windows.find(
+    (w) => w.layer === 0 && w.alpha >= 0.5 && w.width >= MIN_WINDOW_SIDE && w.height >= MIN_WINDOW_SIDE
   )
-  return candidates.length === 1 ? candidates[0].id : null
+  return front?.id ?? null
 }
 
 function listAppWindows(bundleId: string): Promise<AppWindows | null> {
@@ -105,7 +105,7 @@ export async function resolveCuaPreviewWindow(bundleId: string): Promise<CuaPrev
   if (access === 'denied' || access === 'restricted') return { status: 'permission', ...identity }
   if (!found) return { status: 'lookup-failed', ...identity }
   const windowId = pickPreviewWindow(found.windows)
-  if (windowId === null) return { status: found?.windows.some(w => w.layer === 0 && w.alpha > 0 && w.width >= MIN_WINDOW_SIDE && w.height >= MIN_WINDOW_SIDE) ? 'ambiguous' : 'no-window', ...identity }
+  if (windowId === null) return { status: 'no-window', ...identity }
   // Every call re-checks the window; only a different window needs the capturer's list.
   if (listed?.windowId === windowId) return { status: 'ok', sourceId: listed.sourceId, windowId, ...identity }
   // Capture accepts only a source id the capturer itself lists; listing also raises the

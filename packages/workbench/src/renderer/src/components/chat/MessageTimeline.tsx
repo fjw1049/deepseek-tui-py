@@ -7,6 +7,7 @@ import {
   type TurnActivityKind
 } from './TurnActivity'
 import { useBrowserAssistanceStore } from '../../store/browser-assistance-store'
+import { useCuaPreviewStore } from '../../store/cua-preview-store'
 import { copyText } from '../../lib/copy-text'
 import { ConversationScope, useConversationScope } from './conversation-scope'
 import { hasPendingToolGate, lookupPendingToolGate } from '../../lib/tool-gate'
@@ -317,6 +318,8 @@ export function MessageTimeline({
   const selectedThreadId = useChatStore((s) => s.activeThreadId)
   const awaitingBrowserUser = useBrowserAssistanceStore((s) =>
     s.items.some((item) => item.thread_id === activeThreadId))
+  const awaitingDesktopUser = useCuaPreviewStore((s) =>
+    !!activeThreadId && !!s.sessions[activeThreadId]?.control)
   const currentTurnId = useChatStore((s) => s.currentTurnId)
   const lastCompletedTurnId = useChatStore((s) => s.lastCompletedTurnId)
   const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
@@ -835,7 +838,7 @@ export function MessageTimeline({
               isProcessing={processing}
               activity={isLatestTurn ? resolveTurnActivity({
                 active: processing, blocks: turn.blocks,
-                stream: liveActivity, awaitingBrowserUser
+                stream: liveActivity, awaitingBrowserUser: awaitingBrowserUser || awaitingDesktopUser
               }) : null}
               liveReasoning={isLatestTurn ? liveReasoning : ''}
               live={isLatestTurn ? live : ''}
@@ -891,7 +894,7 @@ export function MessageTimeline({
             turn={{ blocks: [] }}
             isProcessing={busy}
             activity={resolveTurnActivity({ active: busy && selectedThreadId === activeThreadId,
-              blocks: [], stream: liveActivity, awaitingBrowserUser })}
+              blocks: [], stream: liveActivity, awaitingBrowserUser: awaitingBrowserUser || awaitingDesktopUser })}
             liveReasoning={liveReasoning}
             live={live}
             htmlPreviewAction={htmlPreviewAction}
@@ -1254,6 +1257,8 @@ function MessageTurn({
               {b.text}
             </div>
           ))}
+          {/* A retry notice mid-task is a turn of its own, and the task is still running. */}
+          <TurnActivity activity={activity} />
         </div>
       ) : (
         <>

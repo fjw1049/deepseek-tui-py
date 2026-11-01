@@ -1387,11 +1387,13 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     return { turnId: body.turn.id, threadId: body.thread.id, userMessageItemId: userItemId }
   }
 
-  async getThreadPauseState(threadId: string): Promise<{ paused: boolean; turnId: string | null }> {
-    const r = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/browser`, 'GET')
+  async getThreadPauseState(threadId: string): Promise<{ paused: boolean; turnId: string | null; humanControl: boolean }> {
+    // The computer-use state reports the turn's own pause, so it covers a browser takeover too.
+    const r = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/cua`, 'GET')
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to read task state'))
-    const state = JSON.parse(r.body) as { task_paused?: boolean; task_turn_id?: string }
-    return { paused: state.task_paused === true, turnId: state.task_turn_id ?? null }
+    const state = JSON.parse(r.body) as { paused?: boolean; turn_id?: string | null; owner?: string }
+    const paused = state.paused === true
+    return { paused, turnId: state.turn_id ?? null, humanControl: paused || state.owner === 'user' }
   }
 
   async steerUserMessage(threadId: string, turnId: string, text: string): Promise<void> {
@@ -1794,6 +1796,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
               const row = data as {
                 seq?: number
                 event?: string
+                turn_id?: string | null
                 payload?: Record<string, unknown>
               }
               const eventSeq = typeof row.seq === 'number' ? row.seq : undefined
@@ -1861,8 +1864,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     toolName: tool?.name,
                     toolKind: toToolKind(it.kind),
                     filePath: deriveFilePath(it),
+                    // Named from the start: the item's metadata only gains it on completion,
+                    // and every surface that reads it would first show a generic tool.
                     meta: metaWithToolInput(
-                      it.metadata as Record<string, unknown> | undefined,
+                      { ...(it.metadata as Record<string, unknown> | undefined), ...(tool?.name ? { tool_name: tool.name } : {}) },
                       tool?.input
                     )
                   })
@@ -2236,6 +2241,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 if (message && typeof message.agent_id === 'string') {
                   sink.onSubagentMailbox({
                     seq,
+                    turnId: row.turn_id ?? undefined,
                     message: message as SubagentMailboxPayload['message']
                   })
                 }

@@ -165,10 +165,13 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
     autoAdvance = true
   ): void => {
     if (submitting || inFlight.current) return
-    setAnswers((prev) => ({
-      ...prev,
-      [q.id]: { id: q.id, label, value }
-    }))
+    const picked = { id: q.id, label, value }
+    setAnswers((prev) => ({ ...prev, [q.id]: picked }))
+    // A lone closed question, like a permission: the choice is the answer.
+    if (total === 1 && q.allow_custom === false && label !== USER_INPUT_OTHER_LABEL) {
+      send([picked])
+      return
+    }
     if (!autoAdvance || label === USER_INPUT_OTHER_LABEL || clampedStep >= total - 1) {
       clearAutoAdvance()
       return
@@ -181,15 +184,17 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
 
   const canSubmit = block.questions.every(isAnswered)
 
-  const submit = (): void => {
-    if (!canSubmit || submitting || inFlight.current) return
+  const send = (chosen: UserInputAnswer[]): void => {
     inFlight.current = true
     clearAutoAdvance()
     setSubmitting(true)
-    void resolveUserInput(block.id, {
-      kind: 'submit',
-      answers: block.questions.map((q) => answers[q.id]).filter(Boolean)
-    }).finally(() => { inFlight.current = false; setSubmitting(false) })
+    void resolveUserInput(block.id, { kind: 'submit', answers: chosen })
+      .finally(() => { inFlight.current = false; setSubmitting(false) })
+  }
+
+  const submit = (): void => {
+    if (!canSubmit || submitting || inFlight.current) return
+    send(block.questions.map((q) => answers[q.id]).filter(Boolean))
   }
 
   const cancel = (): void => {

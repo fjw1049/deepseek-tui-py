@@ -760,7 +760,8 @@ router_mcp = APIRouter(prefix="/v1")
 async def cua_thread_state(request: Request, thread_id: str) -> dict[str, Any]:
     mgr = manager(request)
     try:
-        mgr.store.load_thread(thread_id)
+        # Polled every second by the operation panel: never on the event loop.
+        await asyncio.to_thread(mgr.store.load_thread, thread_id)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         raise api_error(404, "Thread not found") from exc
     return mgr.cua_task_state(thread_id)
@@ -783,6 +784,16 @@ async def cua_thread_control(request: Request, thread_id: str) -> dict[str, Any]
         return await manager(request).control_cua(thread_id, owner, revision, turn_id, reviewed)
     except (ValueError, ToolError, TimeoutError) as exc:
         raise api_error(409, str(exc) or "Desktop transfer timed out; task remains paused") from exc
+
+
+@router_mcp.get("/threads/{thread_id}/cua/frame")
+async def cua_current_frame(request: Request, thread_id: str) -> dict[str, Any]:
+    import base64
+
+    image = await manager(request).cua_preview_frame(thread_id)
+    if not isinstance(image, dict) or not isinstance(image.get("data"), str):
+        raise api_error(404, "No current frame", error="cua_frame_unavailable")
+    return await asyncio.to_thread(_frame_payload, base64.b64decode(image["data"]))
 
 
 @router_mcp.post("/threads/{thread_id}/cua/raised")
@@ -975,17 +986,22 @@ _ASSET_ID = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _preview_frame(asset_id: str) -> dict[str, Any]:
-    import base64
     import hashlib
-    import io
-
-    from PIL import Image
 
     from deepseek_tui.config.paths import user_media_dir
 
     data = (user_media_dir() / asset_id).read_bytes()
     if hashlib.sha256(data).hexdigest() != asset_id:
         raise ValueError("stored screenshot failed its integrity check")
+    return _frame_payload(data)
+
+
+def _frame_payload(data: bytes) -> dict[str, Any]:
+    import base64
+    import io
+
+    from PIL import Image
+
     with Image.open(io.BytesIO(data)) as image:
         frame = image.convert("RGB")
     frame.thumbnail((_PREVIEW_FRAME_SIDE, _PREVIEW_FRAME_SIDE))

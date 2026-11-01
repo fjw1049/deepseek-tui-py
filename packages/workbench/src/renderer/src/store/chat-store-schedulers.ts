@@ -23,6 +23,8 @@ type BusyWatchdogOptions = {
    * when the runtime itself says no turn is active.
    */
   isTurnStillActive?: () => Promise<boolean>
+  /** A person holding the task explains a silent stream; that is not a stall to recover from. */
+  isWaitingOnHuman?: () => Promise<boolean>
 }
 
 type TurnCompletionPollOptions = {
@@ -62,45 +64,61 @@ function armBusyWatchdog(
   options: BusyWatchdogOptions
 ): void {
   clearBusyWatchdog()
-  busyWatchdogTimer = setTimeout(() => {
-    const state = get()
-    if (!state.busy) return
-    busyRecoveryAttempts += 1
-    if (busyRecoveryAttempts <= options.maxAttempts && state.activeThreadId) {
-      void state.recoverActiveTurn()
-      return
-    }
-    const giveUp = (): void => {
-      if (!get().busy) return
-      set((snapshot) => {
-        const base: Partial<ChatState> = {
-          ...options.finalizeBusyState(snapshot),
-          busy: false,
-          currentTurnId: null,
-          error: options.busyTimeoutMessage()
-        }
-        return options.flushLiveBlocks(snapshot, base)
+  const timer = setTimeout(() => {
+    if (!get().busy) return
+    void (options.isWaitingOnHuman?.() ?? Promise.resolve(false))
+      .catch(() => false)
+      .then((waiting) => {
+        // Stream activity may have moved the deadline during the check.
+        if (busyWatchdogTimer !== timer || !get().busy) return
+        if (waiting) armBusyWatchdog(set, get, options)
+        else recoverBusyTurn(set, get, options)
       })
-    }
-    if (!options.isTurnStillActive) {
-      giveUp()
-      return
-    }
-    void options
-      .isTurnStillActive()
-      .then((active) => {
-        if (!get().busy) return
-        if (active) {
-          // Turn is alive on the runtime; the stream is just quiet. Reset
-          // the attempt budget and keep recovering instead of erroring out.
-          busyRecoveryAttempts = 0
-          void get().recoverActiveTurn()
-          return
-        }
-        giveUp()
-      })
-      .catch(giveUp)
   }, options.timeoutMs)
+  busyWatchdogTimer = timer
+}
+
+function recoverBusyTurn(
+  set: ChatStoreSet,
+  get: ChatStoreGet,
+  options: BusyWatchdogOptions
+): void {
+  const state = get()
+  busyRecoveryAttempts += 1
+  if (busyRecoveryAttempts <= options.maxAttempts && state.activeThreadId) {
+    void state.recoverActiveTurn()
+    return
+  }
+  const giveUp = (): void => {
+    if (!get().busy) return
+    set((snapshot) => {
+      const base: Partial<ChatState> = {
+        ...options.finalizeBusyState(snapshot),
+        busy: false,
+        currentTurnId: null,
+        error: options.busyTimeoutMessage()
+      }
+      return options.flushLiveBlocks(snapshot, base)
+    })
+  }
+  if (!options.isTurnStillActive) {
+    giveUp()
+    return
+  }
+  void options
+    .isTurnStillActive()
+    .then((active) => {
+      if (!get().busy) return
+      if (active) {
+        // Turn is alive on the runtime; the stream is just quiet. Reset
+        // the attempt budget and keep recovering instead of erroring out.
+        busyRecoveryAttempts = 0
+        void get().recoverActiveTurn()
+        return
+      }
+      giveUp()
+    })
+    .catch(giveUp)
 }
 
 function stopTurnCompletionPoll(): void {

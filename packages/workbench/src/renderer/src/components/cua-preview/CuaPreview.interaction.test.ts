@@ -6,32 +6,43 @@ import { CuaPreview, CuaPreviewRailSlot } from './CuaPreview'
 import { noteCuaTurnEnded, useCuaPreviewStore, type CuaPreviewSession } from '../../store/cua-preview-store'
 
 const t = (key: string) => key
-const capture = vi.hoisted(() => ({ enabled: false, hasFrame: false, status: 'permission', stillReady: false }))
+const capture = vi.hoisted(() => ({ enabled: false, hasFrame: false, status: 'permission', stillReady: false, stillLoading: false }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t }) }))
 vi.mock('./use-cua-window-stream', () => ({ useCuaWindowStream: (input: { enabled: boolean }) => {
   capture.enabled = input.enabled
   return { status: capture.hasFrame ? 'ok' : capture.status, hasFrame: capture.hasFrame, frameSize: null, appName: null, icon: null }
 } }))
-vi.mock('./use-cua-still-frame', () => ({ useCuaStillFrame: () => ({ status: capture.stillReady ? 'ready' : 'idle', frameSize: null }) }))
+vi.mock('./use-cua-still-frame', () => ({ useCuaStillFrame: () => ({
+  status: capture.stillLoading ? 'loading' : capture.stillReady ? 'ready' : 'idle',
+  frameSize: capture.stillReady ? { width: 1200, height: 800 } : null
+}) }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let root: ReturnType<typeof createRoot>
 let host: HTMLDivElement
 let request: ReturnType<typeof vi.fn>
 let session: CuaPreviewSession
+const resizeObservers = new Set<() => void>()
 const find = (text: string) => [...document.querySelectorAll('button')].find(button => button.textContent === text)!
 const expand = () => act(async () => { (document.querySelector('[aria-expanded="false"]') as HTMLElement).click() })
 const collapse = () => act(async () => { (document.querySelector('[aria-label="cuaPreviewCollapse"]') as HTMLElement).click() })
 
 beforeEach(async () => {
   vi.useFakeTimers()
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private readonly run: () => void) {}
+    observe() { resizeObservers.add(this.run) }
+    disconnect() { resizeObservers.delete(this.run) }
+  })
   capture.hasFrame = false
   capture.status = 'permission'
   capture.stillReady = false
+  capture.stillLoading = false
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   session = { phase: 'live', turnId: 'turn', appId: 'A', surface: 'app', label: 'Fill shipping address', still: null, revision: 0 }
   useCuaPreviewStore.setState({ sessions: { thread: session } })
   request = vi.fn(async (_path: string, method: string) => ({ ok: true, body: JSON.stringify({
-    used: true, active: true, available: true, turn_id: 'turn', revision: 1,
+    used: true, active: true, available: true, revision: 1,
+    turn_id: useCuaPreviewStore.getState().sessions.thread?.turnId ?? 'turn',
     owner: method === 'POST' ? 'user' : 'assistant', waiting: false, paused: false, unresolved: null
   }) }))
   Object.defineProperty(window, 'dsGui', { configurable: true, value: {
@@ -46,8 +57,8 @@ afterEach(async () => {
 
 it('waits for a frame while capturing and keeps controls after a manual collapse', async () => {
   expect(capture.enabled).toBe(true)
-  expect(document.body.textContent).toContain('cuaPreviewWorking')
-  expect(document.body.textContent).not.toContain('Fill shipping address')
+  // The assistant's own step, not a generic state, is what the card says.
+  expect(document.body.textContent).toContain('Fill shipping address')
   expect(document.querySelector('[title="Fill shipping address"]')).not.toBeNull()
   expect(document.body.textContent).not.toContain('cuaPreviewPermission')
   expect(document.body.textContent).not.toContain('cuaControlAgent')
@@ -55,7 +66,7 @@ it('waits for a frame while capturing and keeps controls after a manual collapse
   expect(takeover).toBeTruthy()
   await expand()
   expect(capture.enabled).toBe(true)
-  expect(document.body.textContent).not.toContain('cuaPreviewWorking')
+  expect(document.body.textContent).toContain('Fill shipping address')
   expect(document.body.textContent).toContain('cuaPreviewPermission')
   await collapse()
   expect(capture.enabled).toBe(false)
@@ -123,7 +134,8 @@ it('keeps controls available when preview is disabled', async () => {
   Object.defineProperty(window, 'dsGui', { configurable: true, value: {
     platform: 'darwin', getSettings: async () => ({ cuaWindowPreview: false }), runtimeRequest: request
   } })
-  await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, appId: 'disabled-target' } } }))
+  // Read once per task, so it takes the next task to see the change.
+  await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, turnId: 'disabled-task' } } }))
   await expand()
   expect(capture.enabled).toBe(false)
   expect(document.body.textContent).toContain('cuaPreviewDisabled')
@@ -191,11 +203,11 @@ it('expands inside the same rail slot instead of moving to a fixed overlay', asy
   await act(async () => root.render(createElement('div', null,
     createElement(CuaPreviewRailSlot), createElement(CuaPreview, { threadId: 'thread' }))))
   const card = document.querySelector('[data-cua-preview]')!
-  const parent = card.parentElement
-  expect(parent?.classList.contains('ds-cua-preview-slot')).toBe(true)
+  const parent = card.closest('.ds-cua-preview-slot')
+  expect(parent).not.toBeNull()
   await expand()
   expect(document.querySelector('[data-cua-preview]')).toBe(card)
-  expect(card.parentElement).toBe(parent)
+  expect(card.closest('.ds-cua-preview-slot')).toBe(parent)
   expect(card.classList.contains('fixed')).toBe(false)
   expect(card.classList.contains('w-full')).toBe(true)
   expect(card.classList.contains('max-w-80')).toBe(false)
@@ -346,4 +358,62 @@ it('explains the fallback screenshot and offers a preview-only retry', async () 
   expect(recheck).toHaveBeenCalledOnce()
   expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0)
   window.removeEventListener('cua-preview-recheck', recheck)
+})
+
+it('keeps the shown screenshot while the next one loads', async () => {
+  capture.status = 'unsupported'
+  capture.stillReady = true
+  await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, revision: 1 } } }))
+  capture.stillLoading = true
+  await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, revision: 2 } } }))
+  expect(document.body.textContent).not.toContain('cuaPreviewWaitingFrame')
+  expect(document.querySelector('canvas')?.style.visibility).toBe('visible')
+})
+
+it('says who holds the desktop instead of claiming the assistant is working', async () => {
+  const read = () => document.querySelector('[aria-expanded="false"]')?.getAttribute('aria-label')
+  expect(read()).toContain('cuaPreviewWorking')
+  await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, control: 'user' } } }))
+  expect(read()).toContain('cuaControlHuman')
+  await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, control: 'paused' } } }))
+  expect(read()).toContain('cuaControlPaused')
+})
+
+it('keeps the same card and canvas when the sidebar changes where it lives', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
+  Object.defineProperty(HTMLElement.prototype, 'offsetParent', { configurable: true, get: () => document.body })
+  try {
+    await act(async () => root.render(createElement('div', null,
+      createElement(CuaPreviewRailSlot), createElement(CuaPreview, { threadId: 'thread' }))))
+    const card = document.querySelector('[data-cua-preview]')!
+    const takeover = find('cuaControlTakeover')
+    expect(card.closest('.ds-cua-preview-slot')).not.toBeNull()
+    width.mockReturnValue(36)
+    await act(async () => { window.dispatchEvent(new Event('resize')); resizeObservers.forEach(run => run()) })
+    expect(document.querySelector('[data-cua-preview]')).toBe(card)
+    expect(card.closest('.ds-cua-preview-slot')).toBeNull()
+    expect(find('cuaControlTakeover')).toBe(takeover)
+    await act(async () => { takeover.click() })
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1)
+  } finally {
+    Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent')
+  }
+})
+
+it('leaves Escape to a text field being typed in', async () => {
+  await expand()
+  const field = document.body.appendChild(document.createElement('textarea'))
+  await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
+  field.remove()
+})
+
+it('does not alarm about a review before the host has answered', async () => {
+  let answer!: (value: unknown) => void
+  request.mockImplementation(() => new Promise(resolve => { answer = resolve }))
+  await act(async () => root.render(createElement(CuaPreview, { threadId: 'other' })))
+  await act(async () => useCuaPreviewStore.setState({ sessions: { other: { ...session, phase: 'ended', outcome: 'completed' } } }))
+  expect(document.body.textContent).not.toContain('cuaControlUnknown')
+  expect(document.querySelector('[aria-label="cuaPreviewDismiss"]')).toBeNull()
+  await act(async () => answer({ ok: true, body: JSON.stringify({ active: false, available: true, unresolved: null }) }))
 })

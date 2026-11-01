@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import plistlib
 import re
 import subprocess
@@ -89,6 +90,39 @@ function run(argv) {
     && w.kCGWindowAlpha >= 0.5 && w.kCGWindowBounds.Width >= 100
     && w.kCGWindowBounds.Height >= 100).length)
 }"""
+
+
+# Same reading of a window as above, across all apps, front to back.
+_FRONT_APPS = """ObjC.import('AppKit')
+ObjC.import('CoreGraphics')
+function run() {
+  const all = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(17, 0))) || []
+  const ids = []
+  for (const w of all) {
+    if (w.kCGWindowLayer !== 0 || w.kCGWindowAlpha < 0.5 || w.kCGWindowBounds.Width < 100
+        || w.kCGWindowBounds.Height < 100) continue
+    const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(w.kCGWindowOwnerPID)
+    const id = app.isNil() ? '' : ObjC.unwrap(app.bundleIdentifier) || ''
+    if (id && !ids.includes(id)) ids.push(id)
+  }
+  return JSON.stringify(ids)
+}"""
+
+
+def on_screen_apps(limit: int = 5) -> list[str]:
+    """Apps with a standard window on screen, front to back, without ones CUA can never use.
+
+    Resuming from a panel always leaves the Workbench in front, so that app is never listed.
+    """
+    if sys.platform != "darwin":
+        return []
+    try:
+        out = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", _FRONT_APPS],
+                             capture_output=True, text=True, timeout=3)
+        ids = json.loads(out.stdout) if out.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return []
+    return [app for app in ids if app.lower() not in BLOCKED][:limit]
 
 
 def open_window_count(bundle_id: str) -> int | None:

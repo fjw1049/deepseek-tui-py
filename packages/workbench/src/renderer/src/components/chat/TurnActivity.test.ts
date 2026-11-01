@@ -13,6 +13,13 @@ it('uses event states for waiting, model, tools and human gates, never history t
   expect(resolveTurnActivity({ ...base, blocks: [{ ...browser, meta: { tool_name: 'cua_js' } }] })).toBe('Desktop')
   expect(resolveTurnActivity({ ...base, blocks: [{ ...browser, meta: { tool_name: 'read_file' } }] })).toBe('Tool')
   expect(resolveTurnActivity({ ...base, blocks: [{ ...browser, status: 'success' }] })).toBe('Waiting')
+  // Between desktop steps the task is still on the desktop, until the model speaks.
+  const step: ChatBlock = { ...browser, status: 'success', meta: { tool_name: 'cua_js' } }
+  expect(resolveTurnActivity({ ...base, blocks: [step] })).toBe('Desktop')
+  expect(resolveTurnActivity({ ...base, blocks: [step], stream: 'thinking' })).toBe('Thinking')
+  expect(resolveTurnActivity({ ...base, blocks: [step], awaitingBrowserUser: true })).toBe('User')
+  const answered: ChatBlock = { kind: 'user_input', id: 'ok', requestId: 'r', questions: [], status: 'submitted' }
+  expect(resolveTurnActivity({ ...base, blocks: [step, answered] })).toBe('Desktop')
   expect(resolveTurnActivity({ ...base, blocks: [{ kind: 'reasoning', id: 'old', text: 'old' }] })).toBe('Waiting')
   expect(resolveTurnActivity({ ...base, stream: 'thinking', awaitingBrowserUser: true })).toBe('User')
   const question: ChatBlock = { kind: 'user_input', id: 'ask', requestId: 'r', questions: [], status: 'pending' }
@@ -37,7 +44,8 @@ it('names the running desktop step by the call\'s own title', () => {
     meta: { tool_name: tool, tool_input: { code: 'await app.click(75)', title } }
   })
   expect(resolveTurnActivityStep([call('running', '进入电视剧频道')])).toBe('进入电视剧频道')
-  expect(resolveTurnActivityStep([call('success', '进入电视剧频道')])).toBeNull()
+  // It stays named between steps, while the next one is being decided.
+  expect(resolveTurnActivityStep([call('success', '进入电视剧频道')])).toBe('进入电视剧频道')
   expect(resolveTurnActivityStep([call('running', '读取文件', 'read_file')])).toBeNull()
   expect(resolveTurnActivityStep([call('running', '  ')])).toBeNull()
 })

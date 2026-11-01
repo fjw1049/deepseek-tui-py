@@ -17,18 +17,18 @@ const { pickPreviewWindow, registerCuaWindowPreviewIpc, resolveCuaPreviewWindow 
 
 const window = (id: number, width = 1200, height = 800, layer = 0, alpha = 1) => ({ id, width, height, layer, alpha })
 
-it('captures only an unambiguous normal window of the app', () => {
+it('captures the front normal window of the app', () => {
   // CGWindowList order is front to back; strips, palettes and invisible windows are skipped.
   expect(pickPreviewWindow([
     window(1, 1512, 33),
     window(2, 64, 64, 3),
-    window(3, 900, 600, 0, 0),
+    window(3, 900, 600, 0, 0.1),
     window(4)
   ])).toBe(4)
   expect(pickPreviewWindow([window(1, 1512, 33)])).toBeNull()
   expect(pickPreviewWindow([])).toBeNull()
-  expect(pickPreviewWindow([window(4), window(5)])).toBeNull()
-  expect(pickPreviewWindow([window(5), window(4)])).toBeNull()
+  expect(pickPreviewWindow([window(4), window(5)])).toBe(4)
+  expect(pickPreviewWindow([window(5), window(4)])).toBe(5)
 })
 
 

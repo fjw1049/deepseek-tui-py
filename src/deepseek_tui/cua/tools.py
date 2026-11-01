@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import unicodedata
 from dataclasses import replace
 from typing import Any
@@ -40,6 +41,25 @@ HANDOFF_NOTICE = (
     "[CUA session reset for desktop handoff. Old JavaScript variables and element references "
     "are invalid. Use cua_observe before rebuilding bindings and acting.]"
 )
+
+
+async def handoff_notice(since: float | None, surface: dict[str, str] | None) -> str:
+    """The reset notice, plus what the host can say about the desktop the user just held.
+
+    The host never sees what the user did, so the model is told to expect anything.
+    """
+    from deepseek_tui.cua.apps import on_screen_apps
+
+    held = f" for {int(time.time() - since)}s" if since else ""
+    facts = [f"The user held the desktop{held} and may have changed anything on it, including "
+             "which app or window is in front."]
+    if surface:
+        facts.append(f"Your last target was {surface.get('app_id') or 'the browser'}.")
+    if apps := await asyncio.to_thread(on_screen_apps):
+        facts.append("Apps on screen now, front to back: " + ", ".join(apps) + ".")
+    return "[" + " ".join(facts) + "]\n" + HANDOFF_NOTICE
+
+
 # Runtime failures the host can name, from the runtime's numeric codes and its fixed messages.
 _RUNTIME_ERRORS = (
     ("stale_element", (), r"is an invalid element ID|element ID is no longer valid|"
@@ -136,7 +156,9 @@ def desktop_action_question(reason: str, locale: str | None) -> dict[str, Any]:
     }
 
 
-def desktop_action_result(question: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
+def desktop_action_result(
+    question: dict[str, Any], response: dict[str, Any], notice: str = HANDOFF_NOTICE,
+) -> dict[str, Any]:
     done, skip = (option["label"] for option in question["options"])
     choice, text = "dismissed", ""
     answers = response.get("answers") or []
@@ -164,7 +186,7 @@ def desktop_action_result(question: dict[str, Any], response: dict[str, Any]) ->
     return {
         "choice": choice,
         "user_text": text if choice == "information" else "",
-        "instructions": guidance + " " + HANDOFF_NOTICE,
+        "instructions": guidance + " " + notice,
     }
 
 

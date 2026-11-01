@@ -340,6 +340,7 @@ export type SubagentStepBlock = {
 
 export type SubagentMailboxPayload = {
   seq: number
+  turnId?: string
   message: {
     kind: string
     agent_id: string
@@ -488,7 +489,7 @@ export interface AgentProvider {
   }
   connect(options?: { light?: boolean }): Promise<void>
   isThreadTurnActive?(threadId: string): Promise<boolean>
-  getThreadPauseState?(threadId: string): Promise<{ paused: boolean; turnId: string | null }>
+  getThreadPauseState?(threadId: string): Promise<{ paused: boolean; turnId: string | null; humanControl: boolean }>
   warmThread?(threadId: string): Promise<void>
   listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]>
   createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string; envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>
