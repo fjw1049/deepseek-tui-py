@@ -497,7 +497,10 @@ describe('approval notification completion race', () => {
   })
 })
 
-it.each(['completed', 'partial', 'blocked'] as const)('preserves task outcome %s separately from turn completion', async (taskStatus) => {
+it.each([
+  ['completed', 'completed'], ['partial', 'partial'], ['blocked', 'blocked'],
+  ['completed_with_evidence', 'completed'], ['completed_unverified', 'completed']
+] as const)('reports task outcome %s separately from turn completion', async (taskStatus, shown) => {
   let deliver: (event: { streamId: string; data: unknown }) => void = () => {}
   const controller = new AbortController()
   const sink = { onSeq: vi.fn(), onDeltas: vi.fn(), onUserMessage: vi.fn(), onTool: vi.fn(),
@@ -514,7 +517,7 @@ it.each(['completed', 'partial', 'blocked'] as const)('preserves task outcome %s
   } })
   const subscription = new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 0, sink, controller.signal)
   try {
-    await vi.waitFor(() => expect(sink.onTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', taskStatus })))
+    await vi.waitFor(() => expect(sink.onTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', taskStatus: shown })))
   } finally { controller.abort(); await subscription }
 })
 

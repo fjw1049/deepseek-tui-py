@@ -548,7 +548,7 @@ class DeepSeekTUI(App[None]):
         return message
 
     def _read_runtime_thread(self, thread_id: str):
-        from deepseek_tui.server.threads import reconstruct_messages_from_turns
+        from deepseek_tui.server.threads import load_thread_messages
 
         store = self._get_thread_store()
         thread = store.load_thread(thread_id)
@@ -557,7 +557,7 @@ class DeepSeekTUI(App[None]):
             raise ValueError(f"Switch to provider {thread.provider} before loading this session")
         return (
             thread,
-            reconstruct_messages_from_turns(store, thread_id),
+            load_thread_messages(store, thread_id),
             store.list_turns_for_thread(thread_id),
         )
 
@@ -1017,6 +1017,8 @@ class DeepSeekTUI(App[None]):
                 self._turn_started_at = None
                 continue
             elif isinstance(event, TurnCompleteEvent):
+                if event.completion_note:
+                    transcript.add_notice(event.completion_note, severity="warning")
                 bg = event.running_subagents + event.running_tasks
                 if bg:
                     parts: list[str] = []

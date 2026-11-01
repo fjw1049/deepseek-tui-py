@@ -11,14 +11,8 @@ from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.todo import TodoItem
 
 
-def observe(service, call_id="test-1", *, success=True, mutates=False):
-    service.record_tool_result(
-        call_id,
-        "write_file" if mutates else "exec_shell",
-        {"command": "pytest"},
-        success=success,
-        mutates=mutates,
-    )
+def observe(service, *args, **kwargs):
+    service.record_work("exec_shell", {"command": "pytest"})
 
 
 async def complete(service, **extra):
@@ -33,34 +27,10 @@ async def complete(service, **extra):
         {
             "status": "complete",
             "reason": "All requested behavior verified",
-            "evidence": ["test-1"],
-            "audit": {"checks": [
-                {"requirement_id": item["id"], "explanation": "Verified current result",
-                 "evidence": extra.get("evidence", ["test-1"])}
-                for item in service.snapshot().requirements
-            ]},
             **extra,
         },
         context,
     )
-
-
-@pytest.mark.asyncio
-async def test_no_evidence_cannot_complete():
-    service = GoalService()
-    service.create("Fix tests")
-    result = await complete(service)
-    assert not result.success
-    assert service.snapshot().status is GoalStatus.ACTIVE
-
-
-@pytest.mark.asyncio
-async def test_failed_evidence_cannot_complete():
-    service = GoalService()
-    service.create("Fix tests")
-    observe(service, success=False)
-    assert not (await complete(service)).success
-    assert service.snapshot().status is GoalStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -75,26 +45,6 @@ async def test_open_goal_checklist_blocks_completion():
 
 
 @pytest.mark.asyncio
-async def test_edit_invalidates_previous_evidence():
-    service = GoalService()
-    service.create("Fix tests")
-    observe(service)
-    observe(service, "edit-1", mutates=True)
-    assert not (await complete(service)).success
-    observe(service, "test-2")
-    assert (await complete(service, evidence=["test-2"])).success
-
-
-@pytest.mark.asyncio
-async def test_new_failure_supersedes_earlier_pass():
-    service = GoalService()
-    service.create("Fix tests")
-    observe(service)
-    observe(service, "test-2", success=False)
-    assert not (await complete(service)).success
-
-
-@pytest.mark.asyncio
 async def test_completion_is_retained_and_restored():
     service = GoalService()
     service.create("Fix tests")
@@ -103,7 +53,6 @@ async def test_completion_is_retained_and_restored():
     restored = GoalService()
     restored.restore(service.dump().goal)
     assert restored.snapshot().status is GoalStatus.COMPLETE
-    assert restored.snapshot().completion_evidence == ("test-1",)
     assert not restored.peek_continuation().should_continue
 
 
@@ -127,28 +76,6 @@ def test_restore_preserves_checklist():
     restored = GoalService()
     restored.restore(service.dump().goal)
     assert list(restored.snapshot().checklist) == items
-
-
-@pytest.mark.asyncio
-async def test_restore_requires_fresh_verification():
-    service = GoalService()
-    service.create("Fix tests")
-    observe(service)
-    restored = GoalService()
-    restored.restore(service.dump().goal)
-    restored.resume()
-    assert not (await complete(restored)).success
-
-
-@pytest.mark.asyncio
-async def test_paused_goal_edits_invalidate_old_verification():
-    service = GoalService()
-    service.create("Fix tests")
-    observe(service)
-    service.pause()
-    observe(service, "edit", mutates=True)
-    service.resume()
-    assert not (await complete(service)).success
 
 
 @pytest.mark.asyncio
@@ -185,7 +112,7 @@ async def test_goal_turn_end_does_not_cancel_checklist(engine_ctx):
     assert todo.status == "in_progress"
 
 
-def test_user_can_reopen_complete_and_evidence_must_be_fresh(complete_goal):
+def test_user_can_reopen_complete(complete_goal):
     service = GoalService()
     service.create("Fix tests")
     observe(service)
@@ -193,7 +120,6 @@ def test_user_can_reopen_complete_and_evidence_must_be_fresh(complete_goal):
     snapshot, decision = service.reopen()
     assert snapshot.status is GoalStatus.ACTIVE
     assert decision.should_continue
-    assert not snapshot.evidence
 
 
 def test_budget_exhaustion_has_distinct_status():
@@ -220,17 +146,7 @@ def test_user_action_cancels_pending_queue_promotion(action, complete_goal):
 
 
 @pytest.mark.asyncio
-async def test_unfinished_background_result_is_not_evidence():
-    service = GoalService()
-    service.create("Run tests")
-    service.record_tool_result(
-        "test-1", "exec_shell", {"command": "pytest"}, success=True, finished=False
-    )
-    assert not (await complete(service)).success
-
-
-@pytest.mark.asyncio
-async def test_engine_records_real_verification_and_finishes(engine_ctx, tmp_path):
+async def test_engine_finishes_a_goal_on_the_models_word(engine_ctx, tmp_path):
     from deepseek_tui.protocol.responses import ToolCall
 
     engine, _ = engine_ctx
@@ -240,8 +156,6 @@ async def test_engine_records_real_verification_and_finishes(engine_ctx, tmp_pat
     await engine._execute_tool_calls(
         [ToolCall(id="inspect", name="read_file", arguments={"path": "report.txt"})]
     )
-    evidence = engine.goal_service.snapshot().evidence
-    assert evidence and evidence[0]["success"]
     await engine._execute_tool_calls(
         [
             ToolCall(
@@ -250,9 +164,6 @@ async def test_engine_records_real_verification_and_finishes(engine_ctx, tmp_pat
                 arguments={
                     "status": "complete",
                     "reason": "The report is present and inspected",
-                    "evidence": ["inspect"],
-                    "audit": {"checks": [{"requirement_id": "objective",
-                        "explanation": "Report contents inspected", "evidence": ["inspect"]}]},
                 },
             )
         ]

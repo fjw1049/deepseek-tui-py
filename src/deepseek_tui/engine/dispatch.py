@@ -55,9 +55,11 @@ def format_tool_error(err: Exception, tool_name: str) -> str:
     lower = msg.lower()
     if "invalid input" in lower:
         return f"Invalid input for tool '{tool_name}': {msg}"
+    if "invalid arguments" in lower:
+        return msg
     if "missing" in lower and "field" in lower:
         return f"Tool '{tool_name}' is missing a required field: {msg}"
-    if "path escape" in lower or "workspace" in lower:
+    if "path escape" in lower:
         return (
             f"Path escapes workspace: {msg}. "
             "Use a workspace-relative path or enable trust mode."

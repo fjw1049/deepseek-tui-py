@@ -20,7 +20,7 @@ const names = {
 const state = {cases:[], runs:[], defaults:{}, detail:null, detailData:null, refreshing:false, step:1, compareBase:null, compareParents:{}};
 const title = (c) => c?.title || names[c?.id] || c?.id || '';
 const caseTitle = (id) => title(state.cases.find(c => c.id === id) || {id});
-const target = (c) => !c.live ? 'offline' : c.runner === 'workspace_task' ? 'task' : c.runner === 'live_cache' ? 'cache' : 'decision';
+const target = (c) => !c.live ? 'offline' : ['workspace_task', 'product_session'].includes(c.runner) ? 'task' : c.runner === 'live_cache' ? 'cache' : 'decision';
 const targetLabels = {offline:'代码规则检查', decision:'模型决策测试', task:'文件任务测试', cache:'缓存测试'};
 const help = {
   offline:'检查固定的代码规则，不调用模型、不产生费用。可以发现规则被改坏，但不能说明真实任务成功率提高了。',

@@ -148,32 +148,6 @@ def test_the_stop_hook_gets_the_last_word() -> None:
     assert reminders.STOP_HOOK_BLOCK.priority == max(s.priority for s in tail)
 
 
-def test_the_general_re_anchor_yields_to_specific_alerts() -> None:
-    """Drift is a standing reminder, not a reaction — it must not sit
-    between a fresh diagnostic and the model's attention."""
-    assert (
-        reminders.LONG_SESSION_DRIFT.priority < reminders.LSP_DIAGNOSTICS.priority
-    )
-
-
-def test_the_turn_loop_appends_tail_reminders_in_declared_order() -> None:
-    """The declared priority is only worth something if the code follows it.
-
-    These two are appended back to back in `_run_conversation`, which is the
-    one place the relative order of two tail reminders is a live choice
-    rather than a consequence of when they fire.
-    """
-    from deepseek_tui.engine.orchestrator.core import Engine
-
-    source = inspect.getsource(Engine._run_conversation)
-    drift = source.index("_maybe_inject_long_session_reminder")
-    lsp = source.index("_flush_pending_lsp_diagnostics")
-    declared = (
-        reminders.LONG_SESSION_DRIFT.priority < reminders.LSP_DIAGNOSTICS.priority
-    )
-    assert (drift < lsp) is declared
-
-
 # --- no site bypasses the registry -----------------------------------------
 
 

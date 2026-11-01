@@ -771,12 +771,12 @@ async def test_desktop_lease_is_held_across_calls_and_wait_is_cancellable(tmp_pa
 async def test_busy_desktop_times_out_clearly_without_dropping_the_connection(
     installation, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(cua_session, "LEASE_WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(cua_session, "ACTION_LEASE_WAIT_SECONDS", 0.2)
     holder = CuaSession(installation, tmp_path, "holder")
     waiter = CuaSession(installation, tmp_path, "waiter")
     try:
         await holder.call("js", {"code": "holder"}, "turn-a", "a")
-        with pytest.raises(ToolError, match="in use by another computer-use task"):
+        with pytest.raises(ToolError, match="held by another computer-use task for \\d+s"):
             await asyncio.wait_for(waiter.call("js", {"code": "blocked"}, "turn-b", "b"), 2)
         assert waiter.process is not None and waiter.turn_id is None
         assert not waiter.reset_reason
@@ -1298,45 +1298,6 @@ async def test_large_runtime_text_blocks_are_remembered(session, tmp_path):
         await session.close()
 
 
-@pytest.mark.parametrize("failure", ["crash", "error"])
-async def test_uncertain_cua_requires_new_evidence_even_after_reset(session, tmp_path, failure):
-    from deepseek_tui.tools.task_delivery import FinishTaskTool, TaskDelivery
-
-    await session.connect()
-    delivery = TaskDelivery(active=True, evidence={"tool:before"})
-    context = ToolContext(tmp_path, metadata={
-        "cua_turn_id": "t", "cua_call_id": "failed", "task_delivery": delivery,
-    })
-    tool = CuaTool(session, session.descriptors[0])
-    args = dict(status="completed", answer="Saved", evidence=["tool:before"], remaining=[])
-    try:
-        try:
-            result = await tool.execute({"code": failure}, context)
-            assert not result.success
-        except ToolError:
-            assert failure == "crash"
-        with pytest.raises(ToolError, match="observation"):
-            await FinishTaskTool().execute(args, context)
-        session.reset_reason = ""
-        reset = CuaTool(session, session.descriptors[1])
-        reset_result = await reset.execute({}, context)
-        assert reset_result.metadata.get("task_evidence") is False
-        with pytest.raises(ToolError, match="observation"):
-            await FinishTaskTool().execute(args, context)
-        delivery.evidence.add("tool:verified-file")
-        with pytest.raises(ToolError, match="observation"):
-            await FinishTaskTool().execute({**args, "evidence": ["tool:verified-file"]}, context)
-        if session.unresolved:
-            await session.acknowledge(session.unresolved["call_id"])
-        result = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
-        delivery.remember_evidence("tool:observed", result.metadata)
-        result = await FinishTaskTool().execute({**args, "evidence": ["tool:observed"],
-            "verification": [{"claim": "Saved", "evidence": ["tool:observed"], "limitations": []}]}, context)
-        assert result.success
-    finally:
-        await session.close()
-
-
 async def test_runtime_cancel_closes_permission_event(installation, tmp_path):
     from deepseek_tui.engine.events import UserInputRequiredEvent, UserInputResolvedEvent
 
@@ -1439,25 +1400,6 @@ async def test_receipt_write_failure_still_closes_native_session(session, monkey
     assert session.process is None and session.lease.fd is None
 
 
-def test_finalization_keeps_the_observation_completion_requires():
-    from deepseek_tui.tools.task_delivery import TaskDelivery
-
-    catalog = [{"name": n} for n in ("finish_task", "cua_observe", "cua_js", "read_file")]
-    plain = TaskDelivery(active=True, stop_reminded=True)
-    assert [t["name"] for t in plain.tools(catalog)] == ["finish_task"]
-    assert not plain.allows("cua_observe")
-    used = TaskDelivery(active=True, stop_reminded=True, cua_used=True)
-    assert [t["name"] for t in used.tools(catalog)] == ["finish_task", "cua_observe"]
-    assert used.allows("cua_observe") and not used.allows("cua_js")
-    # One failed observation, one retry, then submission; non-CUA gets one round.
-    plain.finalization_rounds = used.finalization_rounds = 1
-    assert plain.finalization_exhausted() and not used.finalization_exhausted()
-    used.finalization_rounds = 2
-    assert not used.finalization_exhausted()
-    used.finalization_rounds = 3
-    assert used.finalization_exhausted()
-
-
 @pytest.mark.asyncio
 async def test_code_that_ends_by_reading_state_is_not_acting_blind(session, tmp_path):
     from deepseek_tui.engine.ui_progress import STALL_STREAK, UiProgress
@@ -1502,3 +1444,34 @@ async def test_multi_window_note_repeats_only_when_the_count_changes(session, tm
         assert notes == [True, False, False, True]
     finally:
         await session.close()
+
+
+async def test_a_person_taking_over_ends_a_tool_calls_wait_for_the_desktop(tmp_path):
+    holder = DesktopLease(tmp_path / "desktop.lock")
+    waiter = DesktopLease(tmp_path / "desktop.lock")
+    await holder.acquire(timeout=1)
+    reserved = False
+    task = asyncio.create_task(waiter.acquire(timeout=60, give_up=lambda: reserved))
+    try:
+        await asyncio.sleep(0.15)
+        assert not task.done()
+        reserved = True
+        await asyncio.wait_for(task, 1)
+        assert waiter.fd is None  # it stopped waiting without taking the lease
+    finally:
+        holder.release()
+
+
+async def test_busy_desktop_says_who_holds_it_and_makes_no_estimate(tmp_path):
+    holder = DesktopLease(tmp_path / "desktop.lock")
+    holder.owner = "thread-a"
+    await holder.acquire(timeout=1)
+    holder.describe("user", "thread-a")
+    try:
+        with pytest.raises(ToolError) as caught:
+            await DesktopLease(tmp_path / "desktop.lock").acquire(timeout=0.15)
+        message = str(caught.value)
+        assert "held by the user for 0s" in message
+        assert "nothing was executed" in message and "unknown" in message
+    finally:
+        holder.release()

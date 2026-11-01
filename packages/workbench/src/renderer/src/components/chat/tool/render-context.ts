@@ -241,9 +241,12 @@ export function describeToolCallTarget(
   const command = firstString(input, CMD_KEYS) || readMetaString(extras?.meta, 'command')
   const url = firstString(input, URL_KEYS)
 
-  if (extras?.toolKind === 'command_execution' && command) {
-    return summarizeProcessText(command, 72)
-  }
+  // The model's `description` is the user-facing step; approvals still show the command.
+  const commandLabel = command
+    ? firstString(input, ['description']) || summarizeProcessText(command, 72)
+    : ''
+
+  if (extras?.toolKind === 'command_execution' && command) return commandLabel
   if (toolName === 'list_dir') {
     const target = dir || path
     return target ? compactPath(target) : ''
@@ -270,7 +273,7 @@ export function describeToolCallTarget(
   if (toolName === 'web_search') return pattern || ''
   if (path) return compactPath(path)
   if (pattern || glob) return (pattern || glob)!
-  if (command) return summarizeProcessText(command, 72)
+  if (command) return commandLabel
 
   const generic = firstAnyString(input)
   if (generic) return summarizeProcessText(generic, 72)

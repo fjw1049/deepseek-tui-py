@@ -123,28 +123,26 @@ async def test_agent_spawn_returns_success_outside_goal_turn(
     assert len(events) == 1
     assert events[0].success
     assert events[0].metadata["status"]["kind"] == "running"
-    goal = engine.goal_service.snapshot()
-    assert goal is None or not goal.evidence
 
 
 @pytest.mark.parametrize(
-    "metadata,tool_success,success,finished",
+    "metadata,tool_success,finished",
     [
-        ({"status": {"kind": "running"}}, True, True, False),
-        ({"status": {"kind": "completed"}}, True, True, True),
-        ({"status": {"kind": "failed"}}, True, False, True),
-        ({"status": "running"}, True, True, False),
-        ({"status": "failed"}, True, False, True),
-        ({"status": "error"}, True, False, True),
-        ({"status": "cancelled"}, True, True, False),
-        ({"status": {"kind": "completed"}, "background": True}, True, True, False),
-        ({}, True, True, True),
-        ({"status": {"kind": "completed"}}, False, False, True),
+        ({"status": {"kind": "running"}}, True, False),
+        ({"status": {"kind": "completed"}}, True, True),
+        ({"status": {"kind": "failed"}}, True, True),
+        ({"status": "running"}, True, False),
+        ({"status": "failed"}, True, True),
+        ({"status": "error"}, True, True),
+        ({"status": "cancelled"}, True, False),
+        ({"status": {"kind": "completed"}, "background": True}, True, False),
+        ({}, True, True),
+        ({"status": {"kind": "completed"}}, False, True),
     ],
 )
 @pytest.mark.asyncio
-async def test_goal_tool_evidence_handles_subagent_and_process_status(
-    engine_ctx, monkeypatch, metadata, tool_success, success, finished
+async def test_goal_tracks_unfinished_subagent_and_process_work(
+    engine_ctx, monkeypatch, metadata, tool_success, finished
 ) -> None:
     engine, _ = engine_ctx
     goal = engine.goal_service.create("Inspect the result")
@@ -161,8 +159,5 @@ async def test_goal_tool_evidence_handles_subagent_and_process_status(
     ])
 
     assert results[0].content[0].is_error is not tool_success
-    evidence = engine.goal_service.snapshot().evidence
-    assert len(evidence) == 1
-    assert evidence[0]["tool_call_id"] == "collect"
-    assert evidence[0]["success"] is success
-    assert evidence[0]["finished"] is finished
+    # Background work still running keeps a goal from reading as stalled.
+    assert engine.goal_service._turn_pending_work is (not finished)

@@ -34,15 +34,13 @@ class GoalState:
     terminal_reason: str | None = None
     live_started_mono: float | None = None
     checklist: list[dict[str, str]] = field(default_factory=list)
-    evidence: list[dict[str, Any]] = field(default_factory=list)
+    # Display only: goals completed under the former audit keep their record.
     completion_evidence: tuple[str, ...] = ()
-    work_revision: int = 0
     last_progress_signature: str = ""
     stalled_turns: int = 0
     requirements: list[dict[str, str]] = field(default_factory=list)
     completion_audit: dict[str, Any] = field(default_factory=dict)
     queue_item_id: str | None = None
-    evidence_overflow: bool = False
 
     def live_wall_clock_ms(self, now_mono: float | None = None) -> int:
         extra = 0
@@ -78,12 +76,9 @@ class GoalState:
             ),
             terminal_reason=self.terminal_reason,
             checklist=tuple(dict(item) for item in self.checklist),
-            evidence=tuple(dict(item) for item in self.evidence),
             completion_evidence=self.completion_evidence,
-            work_revision=self.work_revision,
             requirements=tuple(dict(item) for item in self.requirements),
             completion_audit=deepcopy(self.completion_audit),
-            evidence_overflow=self.evidence_overflow,
         )
 
 

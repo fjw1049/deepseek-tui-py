@@ -466,8 +466,8 @@ def render_available_skills_context(
 
 """Startup hook removed.
 
-The only packaged skill is ``deepseek-tui-docs`` under
-``deepseek_tui/skills``, discovered via :func:`bundled_skills_dir`.
+Packaged skills live under ``deepseek_tui/skills``, discovered via
+:func:`bundled_skills_dir`.
 Older builds copied ``skill-creator`` / ``execution-router`` into
 ``~/.deepseek/skills``; that copy step is gone and leftover folders
 can be deleted like any user skill.

@@ -1,135 +1,22 @@
-"""Regression matrix for shell source-write hard deny / allowlist."""
+"""What shell commands may remove, and managed worktree git rules."""
 
 from __future__ import annotations
+
+import os
+import time
 
 import pytest
 
 from deepseek_tui.config.paths import user_worktrees_dir
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.shell import check_command_policy
+from deepseek_tui.workspace import shell_write_guard as guard
 from deepseek_tui.workspace.shell_write_guard import (
     check_managed_worktree_git,
-    check_shell_write,
+    existing_file_removals,
+    existing_files,
+    moved_sources,
 )
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "sed -i 's/foo/bar/' src/main.py",
-        "sed -i.bak 's/a/b/' packages/app/src/x.ts",
-        "sed -i'' -e 's/a/b/' src/main.py",
-        "perl -pi -e 's/a/b/' lib/foo.rb",
-        "perl -i -pe 's/a/b/' src/a.py",
-        "ruby -i -pe 'sub!' src/a.rb",
-        "echo hi > src/foo.py",
-        "echo hi >> src/foo.py",
-        "printf 'x' 1> src/out.ts",
-        "cat > src/foo.py <<'EOF'\nprint(1)\nEOF",
-        "cat <<EOF > src/foo.py\nx\nEOF",
-        "tee src/foo.py <<'EOF'\nx\nEOF",
-        "python3 -c \"open('src/a.py','w').write('x')\"",
-        'python3 -c \'Path("src/a.py").write_text("x")\'',
-        "node -e \"require('fs').writeFileSync('src/a.js','x')\"",
-        "cp scratch/x.py src/dest.py",
-        "mv scratch/x.py src/dest.py",
-        "mv src/a.py /tmp/out.py",
-        "rm src/foo.py",
-        "rm -f packages/workbench/src/a.ts",
-        "bash -c \"sed -i 's/a/b/' src/main.py\"",
-        "sh -c 'echo x > src/foo.py'",
-        "bash -c \"python3 -c \\\"open('src/a.py','w').write('x')\\\"\"",
-    ],
-)
-def test_denies_source_mutations(command: str) -> None:
-    v = check_shell_write(command)
-    assert not v.allowed, f"expected deny for: {command}"
-    assert "edit_file" in v.reason or "apply_patch" in v.reason or "write_file" in v.reason
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "pytest tests/ -q",
-        "python -m pytest",
-        "npm test",
-        "cat src/foo.py",
-        "rg TODO src/",
-        "ls src/",
-        "git status",
-        "git diff HEAD -- src/foo.py",
-        "echo hi > scratch/demo.py",
-        "cat > scratch/demo.py <<'EOF'\nprint(1)\nEOF",
-        "echo x > /tmp/out.txt",
-        "echo x > dist/bundle.js",
-        "echo x > build/out.txt",
-        "echo x > node_modules/.cache/x",
-        "cp src/a.py scratch/copy.py",
-        "mv scratch/a.py scratch/b.py",
-        "rm scratch/tmp.py",
-        "sed 's/a/b/' src/foo.py",  # no -i: stdout only
-        "python3 -c \"print(open('src/a.py').read())\"",
-        "bash -c 'pytest -q'",
-    ],
-)
-def test_allows_reads_and_allowlisted_writes(command: str) -> None:
-    v = check_shell_write(command)
-    assert v.allowed, f"expected allow for: {command} reason={v.reason}"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        # Later commands in a chain are not rm/cp/mv operands.
-        "rm -f shop.db && python3 add.py init",
-        "rm -rf /tmp/pf && python3 photoflow.py -C /tmp/pf init",
-        "rm -rf scratch __pycache__ && python3 clean_contacts.py contacts.csv",
-        # Redirections are not operands.
-        "mkdir -p scratch/t 2>/dev/null; rm -rf scratch/t 2>/dev/null; ls scratch",
-        "rm -f scratch/a.log > /dev/null 2>&1",
-        # The agent's own scratch directory, however it is spelled.
-        "rm -rf ./scratch",
-        "rm -rf scratch/",
-        # `./x` is the same path as `x`.
-        "rm -f ./shop.db",
-    ],
-)
-def test_rm_operands_stay_within_their_own_command(command: str) -> None:
-    v = check_shell_write(command)
-    assert v.allowed, f"expected allow for: {command} reason={v.reason}"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "ls && rm src/foo.py",
-        "rm -f out.db; rm src/foo.py",
-        "pytest -q || mv src/a.py /tmp/a.py",
-        "sudo rm src/foo.py",
-        "find . -name '*.orig' | xargs rm src/foo.py",
-        "rm -- src/foo.py",
-        "rm ./src/foo.py",
-        "rm ./main.py",
-    ],
-)
-def test_rm_in_any_chain_segment_is_still_checked(command: str) -> None:
-    v = check_shell_write(command)
-    assert not v.allowed, f"expected deny for: {command}"
-
-
-def test_fail_closed_python_write_without_extractable_path() -> None:
-    v = check_shell_write("python3 -c 'open(p,\"w\").write(\"x\")'")
-    assert not v.allowed
-
-
-def test_ruby_include_path_not_treated_as_inplace() -> None:
-    v = check_shell_write("ruby -Ilib -e 'puts 1'")
-    assert v.allowed
-
-
-def test_path_write_text_denied() -> None:
-    v = check_shell_write('python3 -c \'from pathlib import Path; Path("src/a.py").write_text("x")\'')
-    assert not v.allowed
 
 
 @pytest.mark.parametrize(
@@ -194,3 +81,93 @@ def test_shell_policy_applies_managed_worktree_git_guard() -> None:
     assert result is not None
     assert result.success is False
     assert result.metadata["managed_worktree_git_denied"] is True
+
+
+@pytest.fixture
+def workspace(tmp_path):
+    """Files on disk; each test dates the session start relative to them."""
+    (tmp_path / "old.txt").write_text("the user's")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "old.md").write_text("the user's")
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "out.bin").write_text("regenerable")
+    (tmp_path / "made.txt").write_text("the agent's")
+    return tmp_path
+
+
+def removed(root, command, started):
+    # Birth time cannot be set portably, so files are dated by moving the session start.
+    return [os.path.relpath(p, root) for p in existing_file_removals(
+        command, workspace=root, session_started_at=started)]
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("rm old.txt", ["old.txt"]),
+    ("rm -f old.txt", ["old.txt"]),
+    ("unlink old.txt", ["old.txt"]),
+    ("sudo rm old.txt", ["old.txt"]),
+    ("rm docs/old.md", ["docs/old.md"]),
+    ("rm -f old.txt && python3 add.py init", ["old.txt"]),
+    ("ls; rm old.txt", ["old.txt"]),
+    ("bash -c 'rm old.txt'", ["old.txt"]),
+    ('sh -c "rm old.txt"', ["old.txt"]),
+    ("rm -rf docs", ["docs"]),
+    ("mv old.txt /nonexistent/elsewhere/old.txt", ["old.txt"]),
+    ("cd docs && rm old.md", ["docs/old.md"]),
+    ("cd docs && cd .. && rm old.txt", ["old.txt"]),
+    ("cd docs && mv old.md /nonexistent/elsewhere/", ["docs/old.md"]),
+    ('cd "docs"; rm -f old.md', ["docs/old.md"]),
+    ('cd "$PWD" && rm -f old.txt', ["old.txt"]),
+    ('cd "$(pwd)" && rm -f old.txt', ["old.txt"]),
+    ("cd . && rm old.txt", ["old.txt"]),
+])
+def test_files_that_predate_the_session_are_reported(workspace, command, expected):
+    assert removed(workspace, command, started=time.time() + 5) == expected
+
+
+@pytest.mark.parametrize("command", [
+    "rm build/out.bin",              # regenerable output
+    "rm missing.txt",
+    "rm $TARGET",                    # unknown until the shell expands it
+    "rm /tmp/scratch-file",
+    "mv old.txt _to_delete/old.txt",  # the way out of a refusal must stay open
+    "mv old.txt docs/renamed.txt",
+    "cd docs && mv old.md ../renamed.md",
+    "cd $SOMEWHERE && rm old.txt",   # only the shell knows where that is
+    "cp old.txt copy.txt",
+    "sed -i 's/a/b/' old.txt",       # edits stay undoable through checkpoints
+    "echo hi > old.txt",
+    "python3 -c 'print(1)'",
+])
+def test_everything_else_is_left_alone(workspace, command):
+    assert removed(workspace, command, started=time.time() + 5) == []
+
+
+def test_files_the_session_created_are_its_to_remove(workspace):
+    assert removed(workspace, "rm made.txt", started=0) == []
+
+
+def test_a_wildcard_is_checked_file_by_file(workspace):
+    assert sorted(removed(workspace, "rm *.txt", started=time.time() + 5)) == ["made.txt", "old.txt"]
+    assert removed(workspace, "rm *.txt", started=0) == []
+
+
+def test_watched_files_skip_generated_trees_and_stay_bounded(workspace, monkeypatch):
+    (workspace / "node_modules").mkdir()
+    (workspace / "node_modules" / "dep.js").write_text("x")
+    found = existing_files(workspace, time.time() + 5)
+    assert str(workspace.resolve() / "old.txt") in found
+    assert not any("node_modules" in path for path in found)
+    monkeypatch.setattr(guard, "_MAX_WATCHED_FILES", 2)
+    assert len(existing_files(workspace, time.time() + 5)) == 2
+
+
+def test_files_made_this_session_are_not_watched(workspace):
+    assert existing_files(workspace, 0) == set()
+
+
+def test_moved_sources_are_expected_to_leave(workspace):
+    moved = moved_sources("mv old.txt docs/ && rm made.txt", workspace=workspace)
+    assert moved == {str(workspace.resolve() / "old.txt")}
+    moved = moved_sources("cd docs && mv old.md ../x.md", workspace=workspace)
+    assert moved == {str(workspace.resolve() / "docs" / "old.md")}

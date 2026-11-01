@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import ipaddress
 from typing import Any
-from urllib.parse import urlsplit
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from deepseek_tui.browser.sites import is_sensitive, site_of
 
@@ -70,6 +71,8 @@ _SHOWN_FILES = 5
 
 def origin_of(url: str) -> str | None:
     parts = urlsplit(url or "")
+    if parts.scheme == "file":
+        return "file://"  # Workspace pages share one approval, like a local server.
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         return None
     port = f":{parts.port}" if parts.port else ""
@@ -93,12 +96,24 @@ def is_private(host: str) -> bool:
     return bool(address and (address.is_private or address.is_link_local)) and not is_loopback(host)
 
 
+def local_page_allowed(url: str, root: Path | None) -> bool:
+    """A file:// page must resolve inside the task workspace; other schemes are not local."""
+    parts = urlsplit(url or "")
+    if parts.scheme != "file":
+        return True
+    if root is None or parts.netloc not in {"", "localhost"}:
+        return False
+    return Path(unquote(parts.path)).resolve().is_relative_to(Path(root).resolve())
+
+
 def navigation_needs_approval(input_data: dict[str, Any]) -> bool:
-    """Opening a site other than this computer's own servers asks the user first."""
+    """Opening a site other than this computer's own pages asks the user first."""
     if input_data.get("action") not in NAVIGATION_ACTIONS or not input_data.get("url"):
         return False
-    host = urlsplit(str(input_data["url"])).hostname or ""
-    return not is_loopback(host)
+    url = str(input_data["url"])
+    if url == "about:blank" or urlsplit(url).scheme == "file":
+        return False
+    return not is_loopback(urlsplit(url).hostname or "")
 
 
 def action_site(run: Any, arguments: dict[str, Any]) -> str | None:
@@ -138,12 +153,13 @@ def preview(run: Any, arguments: dict[str, Any], locale: str | None = "zh") -> d
     text = _TEXT[lang]
     action = str(arguments.get("action", ""))
     origin = action_site(run, arguments)
-    host = urlsplit(origin).hostname if origin else None
+    host = (urlsplit(origin).hostname or "file") if origin else None
     word = _ACTION_WORDS[lang].get(action, action)
     target = ""
     element = None
     observation = (run.latest_observation or {}) if run is not None else {}
-    if arguments.get("observation_id") == observation.get("observation_id"):
+    # An omitted observation_id means the latest observation.
+    if arguments.get("observation_id") in {None, "", observation.get("observation_id")}:
         element = next((e for e in observation.get("elements", []) if
                         (arguments.get("ref") and e.get("ref") == arguments["ref"]) or
                         (arguments.get("selector") and e.get("selector") == arguments["selector"])), None)

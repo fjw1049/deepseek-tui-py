@@ -678,6 +678,24 @@ def test_unknown_step_expectations_are_still_refused():
         compile_workflow(doc, {})
 
 
+def test_workspace_pages_compile_only_inside_the_given_workspace(tmp_path):
+    from deepseek_tui.browser.workflows import compile_workflow
+
+    page = tmp_path / "page.html"
+    doc = ScopedSemanticProcessor("rec_local", [
+        {"seq": 1, "kind": "recorder_installed", "targetId": "tab",
+         "page": {"url": page.as_uri()}},
+        {"seq": 2, "kind": "click", "targetId": "tab", "page": {"url": page.as_uri()}, "detail": 1,
+         "target": {"tag": "button", "role": "button", "id": "go",
+                    "selectorCandidates": ['[id="go"]']}},
+    ]).process()
+    assert compile_workflow(doc, {}, tmp_path).steps[0].url == page.as_uri()
+    with pytest.raises(ValueError, match="inside the workspace"):
+        compile_workflow(doc, {})
+    with pytest.raises(ValueError, match="inside the workspace"):
+        compile_workflow(doc, {}, tmp_path / "elsewhere")
+
+
 @pytest.mark.parametrize(("recording", "disabled"), [(True, []), (False, ["Runtime", "Log"])])
 async def test_a_navigation_keeps_the_runtime_a_recording_shares(tmp_path, recording, disabled):
     from unittest.mock import Mock

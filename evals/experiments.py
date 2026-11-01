@@ -2,8 +2,62 @@
 
 from __future__ import annotations
 
+import json
 import random
+from pathlib import Path
 from typing import Any
+
+METRICS = (
+    "task.pass_rate",
+    "task.honest_rate",
+    "task.overclaim_rate",
+    "session.answers_lost",
+    "session.harness_rounds",
+    "session.rounds",
+    "session.input_tokens",
+    "session.output_tokens",
+)
+
+
+def load_run(path: Path) -> dict[str, Any]:
+    """Read a run directory into the shape ``compare_runs`` takes."""
+    summary_path = path / "summary.json"
+    return {
+        "manifest": json.loads((path / "manifest.json").read_text(encoding="utf-8")),
+        "cases": [
+            json.loads(line)
+            for line in (path / "cases.jsonl").read_text(encoding="utf-8").splitlines()
+        ],
+        "status": "completed" if summary_path.is_file() else "running",
+        "metrics": (
+            json.loads(summary_path.read_text(encoding="utf-8"))["metrics"]
+            if summary_path.is_file()
+            else {}
+        ),
+    }
+
+
+def format_comparison(a: dict[str, Any], b: dict[str, Any]) -> str:
+    result = compare_runs(a, b)
+    lines = [f"结论：{result['conclusion']}"]
+    lines += [f"不可比较：{reason}" for reason in result["reasons"]]
+    if result["delta"] is not None:
+        lines.append(f"按场景等权的通过率变化：{result['delta']:+.3f}，区间 {result['interval']}")
+    lines.append(f"改善 {result['improved']} 个，退步 {result['regressed']} 个")
+    lines += [
+        f"  {row['case_id']}: {row['a']} -> {row['b']}"
+        for row in result["rows"]
+        if row["delta"]
+    ]
+    for name in METRICS:
+        left, right = a["metrics"].get(name), b["metrics"].get(name)
+        if left and right:
+            lines.append(
+                f"{name}: 均值 {left['mean']:.3f} -> {right['mean']:.3f}"
+                f"，p90 {left.get('p90', 0):.3f} -> {right.get('p90', 0):.3f}"
+            )
+    lines.append(result["note"])
+    return "\n".join(lines)
 
 
 def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
@@ -18,6 +72,7 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "max_output_tokens": "输出上限",
         "max_cost_usd": "费用上限",
         "timeout_seconds": "超时限制",
+        "judge_model": "评审模型",
         "retry_policy": "请求计数规则",
     }
     for key in ("dataset_hash", "grader_hash", "mode", "trials"):
@@ -28,6 +83,7 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "max_output_tokens",
         "max_cost_usd",
         "timeout_seconds",
+        "judge_model",
         "retry_policy",
     ):
         if ma.get("settings", {}).get(key) != mb.get("settings", {}).get(key):

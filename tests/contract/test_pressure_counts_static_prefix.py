@@ -154,7 +154,6 @@ def test_every_pressure_consumer_in_the_turn_loop_is_wired() -> None:
         "_maybe_advance_cycle",
         "_maybe_l0_prune_tool_results",
         "should_compact",
-        "_maybe_inject_long_session_reminder",
     )
     for name in consumers:
         call = re.search(rf"{name}\((.*?)\n\s*\)", source, re.DOTALL)
@@ -166,22 +165,3 @@ def test_every_pressure_consumer_in_the_turn_loop_is_wired() -> None:
             assert "real_input_estimate=" in args
 
 
-class _Stub(SessionMaintenanceMixin):
-    def __init__(self) -> None:
-        self.last_real_input_tokens = 0
-
-
-def test_long_session_reminder_sees_the_static_prefix() -> None:
-    """Same messages, same real tokens (none) — only the prefix differs."""
-    quiet: list[Message] = [Message.user("hi")]
-    _Stub()._maybe_inject_long_session_reminder(quiet, MODEL)
-    assert not [m for m in quiet if m.origin is MessageOrigin.SYSTEM_REMINDER]
-
-    loaded: list[Message] = [Message.user("hi")]
-    _Stub()._maybe_inject_long_session_reminder(
-        loaded,
-        MODEL,
-        system_prompt=_BIG_SYSTEM_PROMPT,
-        tools=_BIG_TOOLS,
-    )
-    assert [m for m in loaded if m.origin is MessageOrigin.SYSTEM_REMINDER]

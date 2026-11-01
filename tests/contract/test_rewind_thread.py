@@ -201,6 +201,7 @@ async def test_rewind_resyncs_warm_engine_session(runtime_app) -> None:
 
     class FakeEngine:
         tool_context = SimpleNamespace(path_grants=grants)
+        transcript = None
 
         async def prepare_session_rewind(self):
             assert manager.store.load_turn("turn_b") is not None

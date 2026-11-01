@@ -21,6 +21,8 @@ ApprovalCallback = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 MAX_FRAME = 48 * 1024 * 1024
 CONNECT_RETRY_SECONDS = 30
 LEASE_WAIT_SECONDS = 30
+# A tool call queues behind another task's turn; nobody is watching it wait.
+ACTION_LEASE_WAIT_SECONDS = 120
 LOCK_DIR = Path("/tmp")
 
 # Per installation in this process: the last runtime catalog, so later sessions
@@ -45,7 +47,9 @@ class DesktopLease:
         self.fd: int | None = None
         self.owner: str | None = None
 
-    async def acquire(self, timeout: float | None = None) -> None:
+    async def acquire(
+        self, timeout: float | None = None, *, give_up: Callable[[], bool] | None = None,
+    ) -> None:
         import fcntl
 
         if self.fd is not None:
@@ -63,20 +67,30 @@ class DesktopLease:
                     self.describe("assistant", self.owner)
                     return
                 except BlockingIOError:
+                    if give_up is not None and give_up():
+                        return
                     if deadline is not None and loop.time() >= deadline:
-                        raise ToolError(
-                            "The desktop is in use by another computer-use task (another "
-                            "conversation or sub-agent). Nothing was executed. Wait for that "
-                            "task to finish or ask the user to stop it, then retry."
-                        ) from None
+                        raise ToolError(self._busy_message(timeout)) from None
                     await asyncio.sleep(0.1)
         finally:
             if self.fd != fd:
                 os.close(fd)
 
+    def _busy_message(self, waited: float | None) -> str:
+        holder = self.holder() or {}
+        since = holder.get("since")
+        held = f" for {int(time.time() - since)}s" if isinstance(since, (int, float)) else ""
+        who = "the user" if holder.get("owner") == "user" else "another computer-use task"
+        return (
+            f"The desktop is in use, held by {who}{held}; waited {int(waited or 0)}s and nothing "
+            "was executed. How long it will take is unknown. Do other work and retry, or end "
+            "the turn and say the desktop step is still to do."
+        )
+
     def describe(self, owner: str, thread_id: str | None) -> None:
         if self.fd is not None:
-            data = json.dumps({"owner": owner, "thread_id": thread_id}).encode()
+            data = json.dumps(
+                {"owner": owner, "thread_id": thread_id, "since": time.time()}).encode()
             os.ftruncate(self.fd, 0)
             os.pwrite(self.fd, data, 0)
 
@@ -530,7 +544,9 @@ class CuaSession:
                 raise ToolError("Previous CUA turn has not been cleaned up")
             self.waiting = self.lease.fd is None
             try:
-                await self.lease.acquire(timeout=LEASE_WAIT_SECONDS)
+                # A person taking over must not sit behind this call's wait.
+                await self.lease.acquire(
+                    timeout=ACTION_LEASE_WAIT_SECONDS, give_up=lambda: self.human_reserved)
             finally:
                 self.waiting = False
             if self.human_reserved:

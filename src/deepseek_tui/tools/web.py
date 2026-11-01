@@ -191,7 +191,9 @@ class FetchUrlTool(ToolSpec):
                         final_url = str(response.url)
                         body_truncated = bool(response.extensions.get("body_truncated"))
                         if not response.is_success:
-                            detail = extract_error or f"HTTP {status_code}"
+                            detail = f"HTTP {status_code}"
+                            if extract_error:
+                                detail += f" (extractor: {extract_error})"
                             raise ToolError(f"fetch_url failed for {url}: {detail}")
                         content = response.text
                         backend = "httpx_fallback"

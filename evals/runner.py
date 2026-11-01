@@ -22,12 +22,16 @@ from deepseek_tui.tools.registry import build_default_registry
 from evals.graders import GRADERS, grade
 from evals.harness import HARNESSES, HarnessContext, run_harness
 from evals.harness.budget import BudgetExceeded
+from evals.harness.product import EnvironmentInvalid
 from evals.report import append_result, summarize, write_json
-from evals.schema import EvalCase, RunManifest, RunSummary, TrialResult
+from evals.rubric import CHECK_TYPES
+from evals.schema import EvalCase, EvalObservation, RunManifest, RunSummary, TrialResult
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SUITES_ROOT = Path(__file__).resolve().parent / "suites"
 DEFAULT_ARTIFACTS_ROOT = Path(__file__).resolve().parent / "artifacts"
+_EVALUATED_PATHS = ("src", "evals", "contracts", "pyproject.toml", "uv.lock")
+LIVE_RUNNERS = {"judge_probe", "live_decision", "live_cache", "product_session", "workspace_task"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +50,10 @@ class RunOptions:
     case_ids: tuple[str, ...] = ()
     label: str = ""
     prompt_suffix: str = ""
+    concurrency: int = 1
+    judge_provider: str | None = None
+    judge_model: str | None = None
+    max_input_tokens: int | None = None
 
 
 def load_cases(root: Path = DEFAULT_SUITES_ROOT) -> list[EvalCase]:
@@ -73,10 +81,16 @@ def validate_cases(cases: list[EvalCase], repo_root: Path = REPO_ROOT) -> list[s
             errors.append(f"{case.id}: unknown runner {case.runner!r}")
         if case.grader not in GRADERS:
             errors.append(f"{case.id}: unknown grader {case.grader!r}")
-        if case.live and case.runner not in {"live_decision", "live_cache", "workspace_task"}:
+        if case.live and case.runner not in LIVE_RUNNERS:
             errors.append(f"{case.id}: unsupported live runner {case.runner!r}")
-        if not case.live and case.runner in {"live_decision", "live_cache", "workspace_task"}:
+        if not case.live and case.runner in LIVE_RUNNERS:
             errors.append(f"{case.id}: live runner requires live=true")
+        if case.runner == "product_session":
+            if not case.expect.get("rubric") or not case.input.get("turns"):
+                errors.append(f"{case.id}: product session needs turns and a rubric")
+            for check in case.expect.get("checks", []):
+                if check.get("type") not in CHECK_TYPES or not check.get("name"):
+                    errors.append(f"{case.id}: invalid check {check!r}")
         for related in case.related_paths:
             if not (repo_root / related).exists():
                 errors.append(f"{case.id}: related path does not exist: {related}")
@@ -113,13 +127,15 @@ def _git_value(*args: str) -> str:
 
 
 def _dirty_state_hash() -> str:
-    """Hash every tracked diff plus every non-ignored untracked file."""
+    """Hash changes to what runs under evaluation; Workbench UI code is not exercised."""
     digest = hashlib.sha256()
-    digest.update(_git_bytes("diff", "--binary", "HEAD"))
+    digest.update(_git_bytes("diff", "--binary", "HEAD", "--", *_EVALUATED_PATHS))
     untracked = _git_bytes(
         "ls-files",
         "--others",
         "--exclude-standard",
+        "--",
+        *_EVALUATED_PATHS,
     ).decode(errors="replace")
     for relative in sorted(line for line in untracked.splitlines() if line):
         path = REPO_ROOT / relative
@@ -161,7 +177,11 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
         grader_hash=_hash_json(
             {
                 str(p.relative_to(REPO_ROOT)): p.read_text()
-                for p in sorted((REPO_ROOT / "evals" / "graders").glob("*.py"))
+                for p in [
+                    *sorted((REPO_ROOT / "evals" / "graders").glob("*.py")),
+                    REPO_ROOT / "evals" / "judge.py",
+                    REPO_ROOT / "evals" / "rubric.py",
+                ]
             }
         ),
         settings={
@@ -171,6 +191,8 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
             "max_output_tokens": options.max_output_tokens,
             "max_cost_usd": options.max_cost_usd,
             "timeout_seconds": options.timeout_seconds,
+            "judge_provider": options.judge_provider or options.provider,
+            "judge_model": options.judge_model or options.model,
             "retry_policy": "metered-attempts-v1",
             "expected_trials": sum(options.trials if c.live else 1 for c in cases),
         },
@@ -194,6 +216,8 @@ async def run_evaluations(
         raise ValueError("output-token and timeout budgets must be positive")
     if options.max_cost_usd is not None and options.max_cost_usd <= 0:
         raise ValueError("max_cost_usd must be positive")
+    if options.concurrency < 1:
+        raise ValueError("concurrency must be positive")
     selected = list(cases if cases is not None else load_cases())
     errors = validate_cases(selected)
     if errors:
@@ -229,148 +253,171 @@ async def run_evaluations(
         remaining_live_requests=options.max_live_requests,
         max_cost_usd=options.max_cost_usd,
         prompt_suffix=options.prompt_suffix,
+        judge_provider=options.judge_provider,
+        judge_model=options.judge_model,
+        max_input_tokens=options.max_input_tokens,
+        turn_timeout_seconds=options.timeout_seconds,
+        artifacts_dir=output,
     )
     results: list[TrialResult] = []
-    cancelled = False
-    try:
-        for case in selected:
-            repeat = options.trials if case.live else 1
-            for trial in range(1, repeat + 1):
-                if cancelled or (case.live and context.remaining_live_requests <= 0):
-                    result = TrialResult(
-                        case_id=case.id,
-                        suite=case.suite,
-                        risk=case.risk,
-                        source_file=case.source_file,
-                        tags=case.tags,
-                        related_paths=case.related_paths,
-                        trial=trial,
-                        status="skipped",
-                        duration_ms=0,
-                        error="用户已停止运行" if cancelled else "live request budget exhausted",
-                    )
-                    results.append(result)
-                    append_result(output / "cases.jsonl", result)
-                    continue
+    stop_reason: str | None = None
+    slots = asyncio.Semaphore(options.concurrency)
+
+    def trial_result(case: EvalCase, trial: int, **fields: Any) -> TrialResult:
+        return TrialResult(
+            case_id=case.id,
+            suite=case.suite,
+            risk=case.risk,
+            source_file=case.source_file,
+            tags=case.tags,
+            related_paths=case.related_paths,
+            trial=trial,
+            **fields,
+        )
+
+    def finish(result: TrialResult) -> None:
+        results.append(result)
+        append_result(output / "cases.jsonl", result)
+        if result.status in {"failed", "error"}:
+            write_json(
+                output / "failures" / f"{result.case_id}-trial-{result.trial}.json",
+                result.model_dump(mode="json"),
+            )
+
+    async def run_trial(case: EvalCase, trial: int) -> None:
+        nonlocal stop_reason
+        started = time.monotonic()
+        try:
+            async with slots:
+                if stop_reason or (case.live and context.remaining_live_requests <= 0):
+                    reason = stop_reason or "live request budget exhausted"
+                    finish(trial_result(case, trial, status="skipped", duration_ms=0, error=reason))
+                    return
                 if (
                     case.live
                     and options.max_cost_usd is not None
                     and context.cost_usd >= options.max_cost_usd
                 ):
-                    result = TrialResult(
-                        case_id=case.id,
-                        suite=case.suite,
-                        risk=case.risk,
-                        source_file=case.source_file,
-                        tags=case.tags,
-                        related_paths=case.related_paths,
-                        trial=trial,
-                        status="skipped",
-                        duration_ms=0,
-                        error="known USD cost budget exhausted",
+                    finish(
+                        trial_result(
+                            case,
+                            trial,
+                            status="skipped",
+                            duration_ms=0,
+                            error="known USD cost budget exhausted",
+                        )
                     )
-                    results.append(result)
-                    append_result(output / "cases.jsonl", result)
-                    continue
-
+                    return
                 started = time.monotonic()
-                before_requests = context.requests
-                before_metered = context.metered_requests
-                before_priced = context.priced_requests
-                before_cost = context.cost_usd
-                before_usage = dict(context.usage)
-                context.trace = []
+                before = context.fork()
+                trial_context = context.fork()
                 try:
+                    # A product session limits each turn itself and reports the
+                    # timeout as evidence; this limit would discard what it did.
                     observation = await asyncio.wait_for(
-                        run_harness(case, context),
-                        timeout=options.timeout_seconds,
+                        run_harness(case, trial_context),
+                        timeout=None if case.runner == "product_session"
+                        else options.timeout_seconds,
                     )
                     verdict = grade(case, observation)
                     status: Literal["passed", "failed"] = "passed" if verdict.passed else "failed"
-                    result = TrialResult(
-                        case_id=case.id,
-                        suite=case.suite,
-                        risk=case.risk,
-                        source_file=case.source_file,
-                        tags=case.tags,
-                        related_paths=case.related_paths,
-                        trial=trial,
+                    result = trial_result(
+                        case,
+                        trial,
                         status=status,
                         duration_ms=int((time.monotonic() - started) * 1000),
                         grade=verdict,
                         observation=observation,
                     )
-                except asyncio.CancelledError:
-                    cancelled = True
-                    result = TrialResult(
-                        case_id=case.id,
-                        suite=case.suite,
-                        risk=case.risk,
-                        source_file=case.source_file,
-                        tags=case.tags,
-                        related_paths=case.related_paths,
-                        trial=trial,
-                        status="skipped",
-                        duration_ms=int((time.monotonic() - started) * 1000),
-                        error="用户停止：当前试验已中断，不能作为成功结果",
-                    )
                 except BudgetExceeded as exc:
-                    result = TrialResult(
-                        case_id=case.id,
-                        suite=case.suite,
-                        risk=case.risk,
-                        source_file=case.source_file,
-                        tags=case.tags,
-                        related_paths=case.related_paths,
-                        trial=trial,
+                    result = trial_result(
+                        case,
+                        trial,
                         status="skipped",
                         duration_ms=int((time.monotonic() - started) * 1000),
                         error=str(exc),
                     )
+                except EnvironmentInvalid as exc:
+                    stop_reason = f"环境无效，已停止运行：{exc}"
+                    result = trial_result(
+                        case,
+                        trial,
+                        status="skipped",
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        error=stop_reason,
+                    )
                 except Exception as exc:  # noqa: BLE001 - one case must not abort the run
-                    result = TrialResult(
-                        case_id=case.id,
-                        suite=case.suite,
-                        risk=case.risk,
-                        source_file=case.source_file,
-                        tags=case.tags,
-                        related_paths=case.related_paths,
-                        trial=trial,
+                    result = trial_result(
+                        case,
+                        trial,
                         status="error",
                         duration_ms=int((time.monotonic() - started) * 1000),
                         error=f"{type(exc).__name__}: {exc}",
                     )
+                context.absorb(trial_context, before)
                 if case.live:
-                    from evals.schema import EvalObservation
-
                     if result.observation is None:
                         result.observation = EvalObservation()
-                    requests = context.requests - before_requests
-                    priced = context.priced_requests - before_priced
+                    requests = trial_context.requests - before.requests
+                    priced = trial_context.priced_requests - before.priced_requests
                     result.observation.usage = {
-                        key: value - before_usage.get(key, 0)
-                        for key, value in context.usage.items()
+                        key: value - before.usage.get(key, 0)
+                        for key, value in trial_context.usage.items()
                     }
+                    cost = trial_context.cost_usd - before.cost_usd
                     result.observation.usage.update(
                         {
                             "requests": requests,
-                            "metered_requests": context.metered_requests - before_metered,
+                            "metered_requests": trial_context.metered_requests
+                            - before.metered_requests,
                             "priced_requests": priced,
-                            "known_cost_usd": context.cost_usd - before_cost,
+                            "known_cost_usd": cost,
                         }
                     )
                     if requests > 0 and priced == requests:
-                        result.observation.usage["cost_usd"] = context.cost_usd - before_cost
-                    write_json(output / "traces" / f"{case.id}-trial-{trial}.json", context.trace)
-                    result.observation.data["trace_file"] = f"traces/{case.id}-trial-{trial}.json"
-                results.append(result)
-                append_result(output / "cases.jsonl", result)
-                if result.status in {"failed", "error"}:
+                        result.observation.usage["cost_usd"] = cost
                     write_json(
-                        output / "failures" / f"{case.id}-trial-{trial}.json",
-                        result.model_dump(mode="json"),
+                        output / "traces" / f"{case.id}-trial-{trial}.json", trial_context.trace
                     )
+                    result.observation.data["trace_file"] = f"traces/{case.id}-trial-{trial}.json"
+                finish(result)
+        except asyncio.CancelledError:
+            stop_reason = "用户已停止运行"
+            finish(
+                trial_result(
+                    case,
+                    trial,
+                    status="skipped",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    error="用户停止：当前试验已中断，不能作为成功结果",
+                )
+            )
+
+    planned = [
+        (case, trial)
+        for case in selected
+        for trial in range(1, (options.trials if case.live else 1) + 1)
+    ]
+    try:
+        # Exclusive cases hold one desktop, so nothing may run beside them.
+        await asyncio.gather(
+            *(run_trial(c, t) for c, t in planned if not c.input.get("exclusive"))
+        )
+        for case, trial in planned:
+            if case.input.get("exclusive"):
+                await run_trial(case, trial)
+    except asyncio.CancelledError:
+        # gather drops tasks it cancelled before their first step: account for them.
+        recorded = {(result.case_id, result.trial) for result in results}
+        for case, trial in planned:
+            if (case.id, trial) not in recorded:
+                finish(
+                    trial_result(
+                        case, trial, status="skipped", duration_ms=0, error="用户已停止运行"
+                    )
+                )
     finally:
+        await asyncio.shield(context.close())
         end_hash = _dirty_state_hash()
         manifest.settings["source_changed_during_run"] = end_hash != manifest.dirty_diff_hash
         manifest.settings["end_dirty_diff_hash"] = end_hash

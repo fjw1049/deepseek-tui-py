@@ -11,11 +11,13 @@ import shlex
 import signal
 import uuid
 from asyncio.subprocess import Process
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, NoReturn
 
 from deepseek_tui.tools.output_capture import OutputCapture, collect_process
 from deepseek_tui.tools.approval import Decision
+from deepseek_tui.engine import interventions
 from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.policy.env_filter import build_child_env
 from deepseek_tui.policy.sandbox import (
@@ -46,6 +48,25 @@ EXEC_DEFAULT_TIMEOUT_MS = 120_000
 EXEC_MAX_TIMEOUT_MS = 600_000
 
 
+_FOREGROUND_SLEEP = re.compile(r"^\s*sleep\s+(\d+(?:\.\d+)?)([smhd]?)\s*(?:$|&&|;)")
+_SLEEP_UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+# A short settle is harmless; this catches waiting by holding the turn.
+_MIN_BLOCKED_SLEEP_SECONDS = 5
+FOREGROUND_SLEEP_REFUSAL = (
+    "Foreground sleep is not allowed, so nothing ran. To wait for a background job use "
+    "task_output with process_id and block=true. To wait for a condition run "
+    "`until <check>; do sleep 1; done` with timeout_ms. If you are waiting on a person, "
+    "end the turn and say so."
+)
+
+
+def _is_foreground_sleep(command: str) -> bool:
+    match = _FOREGROUND_SLEEP.match(command)
+    return bool(match) and (
+        float(match.group(1)) * _SLEEP_UNIT_SECONDS[match.group(2)] >= _MIN_BLOCKED_SLEEP_SECONDS
+    )
+
+
 class ExecShellTool(ToolSpec):
     def name(self) -> str:
         return "exec_shell"
@@ -60,6 +81,8 @@ class ExecShellTool(ToolSpec):
             "To send input to a running background process, pass its "
             "'process_id' with 'input' (and/or close_stdin=true) instead of "
             "'command' — the two are mutually exclusive. "
+            "A leading sleep of 5s or more is refused; wait with task_output or an "
+            "until-loop. "
             "Foreground commands that exceed timeout_ms (default 120000, "
             "max 600000) keep running in the background and return a "
             "process_id; you are notified when they finish. Use "
@@ -67,8 +90,9 @@ class ExecShellTool(ToolSpec):
             "test suites. Do not use this to fetch a URL — "
             "use fetch_url instead; only shell out with curl/wget when fetch_url "
             "is unavailable or you need shell piping around the response. "
-            "Do not mutate source files via sed/python/heredoc — use edit_file "
-            "or write_file (scratch/, build outputs, and /tmp are allowed). "
+            "Prefer edit_file or write_file for files you are writing by hand. "
+            "Files you created this session are yours to delete; deleting older "
+            "files or moving them out of the workspace asks the user. "
             "Do not use grep/rg to search file contents, find/ls -R to "
             "locate files by name, or cat to read a file — use grep_files, "
             "file_search, and read_file respectively; exec_shell is for "
@@ -89,6 +113,14 @@ class ExecShellTool(ToolSpec):
                     "description": (
                         "Shell command to execute. Required unless "
                         "'process_id' is given (mutually exclusive)."
+                    ),
+                },
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "What this command does, in a few plain words in the "
+                        "user's language. Shown to the user in place of the "
+                        "command text while it runs."
                     ),
                 },
                 "background": {
@@ -153,7 +185,18 @@ class ExecShellTool(ToolSpec):
         from deepseek_tui.workspace.shell_mutation_watch import (
             capture_shell_snapshot, detect_shell_mutations,
         )
+        from deepseek_tui.workspace.shell_write_guard import existing_files, moved_sources
 
+        facts = context.metadata.get("turn_facts")
+        started = context.metadata.get("session_started_at")
+        command = input_data.get("command")
+        watching = facts is not None and started is not None and isinstance(command, str)
+        moved: set[str] = set()
+        if watching:
+            if facts.existing_files is None:
+                facts.existing_files = await asyncio.to_thread(
+                    existing_files, context.working_directory, started)
+            moved = moved_sources(command, workspace=context.working_directory)
         snapshot = None
         if context.on_file_mutation is not None:
             try:
@@ -163,6 +206,20 @@ class ExecShellTool(ToolSpec):
         result = None
         try:
             result = await self._execute(input_data, context)
+            if watching:
+                gone = await asyncio.to_thread(
+                    lambda: {p for p in facts.existing_files if not os.path.lexists(p)})
+                facts.existing_files -= gone
+                reported = sorted(gone - moved - facts.approved_removals)
+                if reported:
+                    shown = [os.path.relpath(p, context.working_directory) for p in reported]
+                    facts.gone_files.extend(shown)
+                    interventions.record(
+                        "guard", "existing_file_gone", outcome=f"reported={len(reported)}")
+                    result = replace(result, content=(
+                        f"{result.content}\nFiles from before this session are no longer at "
+                        f"their path: {', '.join(shown)}. Tell the user."
+                    ))
             return result
         finally:
             # This runs before the result event, including on failed/cancelled commands.
@@ -203,6 +260,9 @@ class ExecShellTool(ToolSpec):
         background = bool(input_data.get("background", False))
         use_pty = bool(input_data.get("pty", False))
         timeout_ms = _resolve_timeout_ms(input_data.get("timeout_ms"))
+        if not background and _is_foreground_sleep(command):
+            interventions.record("gate", "foreground_sleep", outcome="rejected")
+            return ToolResult(success=False, content=FOREGROUND_SLEEP_REFUSAL)
         logger.info(
             "exec_shell_start command=%r background=%s pty=%s timeout_ms=%d cwd=%s",
             command[:200],
@@ -216,26 +276,6 @@ class ExecShellTool(ToolSpec):
         refusal = check_command_policy(command, context)
         if refusal is not None:
             return refusal
-
-        from deepseek_tui.workspace.shell_write_guard import check_shell_write
-
-        write_guard = check_shell_write(
-            command, workspace=context.working_directory
-        )
-        if not write_guard.allowed:
-            logger.info(
-                "exec_shell_source_write_denied command=%r reason=%s",
-                command[:200],
-                write_guard.reason,
-            )
-            return ToolResult(
-                success=False,
-                content=write_guard.reason,
-                metadata={
-                    "shell_write_denied": True,
-                    "blocked_path": write_guard.blocked_path,
-                },
-            )
 
         if use_pty:
             return await _run_pty(

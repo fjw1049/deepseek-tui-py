@@ -5,200 +5,18 @@ from __future__ import annotations
 from deepseek_tui.engine.events import AgentRoundCompleteEvent
 from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.server.phase_bridge import (
-    NARRATION_TOOL_NAME,
     BatchKind,
-    NarrationPlan,
     Phase,
     ProcessIntent,
-    ReasoningSegment,
-    TurnNarrationState,
-    build_intent_bundle,
     build_process_intent,
-    classify_batch,
-    contains_tool_name,
     extract_anchors,
-    extract_tool_observations,
-    gate_decision,
-    narration_tool_schema,
-    plan_from_arguments,
-    render_plan,
     resolve_narration_locale,
     template_narration,
-    validate_plan,
 )
-
-
-def _segment(text: str = "x" * 220, item_id: str = "item_reason") -> ReasoningSegment:
-    return ReasoningSegment(item_id=item_id, text=text)
 
 
 def _tool(name: str = "read_file", **args: str) -> ToolCall:
     return ToolCall(id="tc1", name=name, arguments=dict(args) if args else {})
-
-
-def test_gate_skips_empty_tools() -> None:
-    state = TurnNarrationState()
-    assert gate_decision(
-        state=state,
-        segment=_segment(),
-        tool_calls=(),
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-    ) == "skip"
-
-
-def test_gate_skips_homogeneous_parallel_reads_without_phase_change() -> None:
-    state = TurnNarrationState(phase=Phase.LOCATE)
-    tools = (
-        _tool("read_file", path="a.py"),
-        _tool("read_file", path="b.py"),
-        _tool("read_file", path="c.py"),
-    )
-    assert classify_batch(tools) == BatchKind.EXPLORE_READ
-    assert gate_decision(
-        state=state,
-        segment=_segment(),
-        tool_calls=tools,
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-    ) == "skip"
-
-
-def test_gate_allows_explore_read_on_phase_transition() -> None:
-    state = TurnNarrationState(phase=Phase.EXPLORE)
-    tools = (
-        _tool("read_file", path="a.py"),
-        _tool("read_file", path="b.py"),
-    )
-    assert classify_batch(tools) == BatchKind.EXPLORE_READ
-    assert gate_decision(
-        state=state,
-        segment=_segment(),
-        tool_calls=tools,
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-    ) == "compute"
-
-
-def test_gate_compute_for_mutate_batch() -> None:
-    state = TurnNarrationState()
-    tools = (_tool("write_file", path="src/foo.py"),)
-    assert gate_decision(
-        state=state,
-        segment=_segment(),
-        tool_calls=tools,
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-    ) == "compute"
-
-
-def test_gate_respects_publish_cap() -> None:
-    state = TurnNarrationState(published_count=12)
-    assert gate_decision(
-        state=state,
-        segment=_segment(),
-        tool_calls=(_tool("write_file", path="x"),),
-        narrated_ids=set(),
-        min_chars=200,
-        has_tool_error=False,
-    ) == "skip"
-
-
-def test_validate_plan_rejects_tool_names() -> None:
-    plan = NarrationPlan(
-        publish=True,
-        phase="locate",
-        finding="接下来 read_file",
-        next_goal="验证 UI",
-    )
-    assert validate_plan(plan) is False
-    assert render_plan(plan) is None
-
-
-def test_render_plan_joins_finding_and_next_goal() -> None:
-    plan = NarrationPlan(
-        publish=True,
-        phase="locate",
-        finding="已确认服务端与前端 reasoning 切段时机不同",
-        next_goal="接下来核对 reload 路径是否一致",
-    )
-    text = render_plan(plan, locale="zh")
-    assert text is not None
-    assert "已确认" in text
-    assert "reload" in text
-    assert not contains_tool_name(text)
-
-
-def test_render_plan_keeps_a_finished_sentence_finished() -> None:
-    # A finding that already ends its sentence must not gain a comma after the
-    # full stop ("…。，接下来…").
-    zh = NarrationPlan(
-        publish=True,
-        phase="verify",
-        finding="已重新计算四份交付文件的校验值。",
-        next_goal="确认复算脚本是否被移动或删除",
-    )
-    assert render_plan(zh, locale="zh") == (
-        "已重新计算四份交付文件的校验值。确认复算脚本是否被移动或删除"
-    )
-    en = NarrationPlan(
-        publish=True,
-        phase="verify",
-        finding="Confirmed the router registers all endpoints.",
-        next_goal="Verify the handler chain next.",
-    )
-    assert render_plan(en, locale="en") == (
-        "Confirmed the router registers all endpoints. Verify the handler chain next."
-    )
-
-
-def test_render_plan_does_not_double_a_trailing_comma() -> None:
-    plan = NarrationPlan(
-        publish=True,
-        phase="locate",
-        finding="已确认切段时机不同，",
-        next_goal="接下来核对 reload 路径",
-    )
-    assert render_plan(plan, locale="zh") == "已确认切段时机不同，接下来核对 reload 路径"
-
-
-def test_validate_plan_accepts_any_language() -> None:
-    # Language/style belong to the narration model (locale is in the request);
-    # validation stays structural so any provider/language combination works.
-    plan = NarrationPlan(
-        publish=True,
-        phase="explore",
-        finding="Confirmed the router registers all endpoints.",
-        next_goal="Verify the handler chain next.",
-    )
-    assert validate_plan(plan, locale="zh") is True
-
-
-def test_narration_tool_schema_shape() -> None:
-    schema = narration_tool_schema()
-    assert schema["function"]["name"] == NARRATION_TOOL_NAME
-    params = schema["function"]["parameters"]
-    assert set(params["required"]) == {"publish", "finding"}
-    assert set(params["properties"]) == {"publish", "phase", "finding", "next_goal"}
-
-
-def test_plan_from_arguments_round_trip() -> None:
-    plan = plan_from_arguments(
-        {
-            "publish": True,
-            "phase": "verify",
-            "finding": "已确认修改生效",
-            "next_goal": "运行测试",
-        }
-    )
-    assert plan.publish is True
-    assert plan.phase == "verify"
-    assert plan.finding == "已确认修改生效"
-    assert plan.next_goal == "运行测试"
 
 
 def test_extract_anchors_from_structured_arguments() -> None:
@@ -233,28 +51,6 @@ def test_build_process_intent_metadata() -> None:
     assert meta["anchors"] == ["src/a.py", "src/b.py"]
 
 
-def test_extract_tool_observations_from_tool_summaries() -> None:
-    facts = extract_tool_observations(
-        ["read_file: src/deepseek_tui/server/threads.py\nclass RuntimeThreadManager"]
-    )
-    assert facts
-    assert "threads.py" in facts[0]
-
-
-def test_build_intent_bundle_uses_user_language_intent() -> None:
-    state = TurnNarrationState(phase=Phase.LOCATE)
-    bundle = build_intent_bundle(
-        user_goal="梳理架构",
-        state=state,
-        segment=_segment(),
-        tool_calls=(_tool("read_file", path="src/deepseek_tui/server/threads.py"),),
-        recent_tool_results=(),
-        locale="zh",
-    )
-    assert "threads.py" in bundle.next_intent
-    assert bundle.phase == "locate"
-
-
 def test_agent_round_complete_defaults_empty_tools() -> None:
     event = AgentRoundCompleteEvent(round_idx=0)
     assert event.tool_calls == ()
@@ -282,101 +78,14 @@ def test_template_narration_localizes_for_english() -> None:
     assert "Survey structure" in text
 
 
-def test_progress_observations_preserve_failures_and_do_not_call_them_facts() -> None:
-    from deepseek_tui.server.phase_bridge import _narration_prompts
-
-    state = TurnNarrationState(recent_updates=["已定位重复渲染，开始修复。"])
-    bundle = build_intent_bundle(
-        user_goal="解决重复显示", state=state, segment=_segment(""),
-        tool_calls=(_tool("exec_shell", command="test"),),
-        recent_tool_results=("[failed] exec_shell: 2 checks failed",), locale="zh",
-    )
-    user, system = _narration_prompts(bundle)
-    assert "[failed]" in user
-    assert "已确认事实" not in user
-    assert state.recent_updates[0] in user
-    assert "have NOT run" in system
-    assert "not that the problem is solved" in system
-
-
-def test_evidence_can_trigger_progress_without_private_reasoning() -> None:
-    assert gate_decision(
-        state=TurnNarrationState(), segment=_segment(""), tool_calls=(_tool(),),
-        narrated_ids=set(), min_chars=80, has_tool_error=False, has_evidence=True,
-    ) == "compute"
-
-
-def test_recovery_respects_the_same_update_interval() -> None:
-    import time
-    assert gate_decision(
-        state=TurnNarrationState(last_published_at=time.monotonic()),
-        segment=_segment(), tool_calls=(_tool(),), narrated_ids=set(),
-        min_chars=80, has_tool_error=True, has_evidence=True, min_interval_s=60,
-    ) == "skip"
-
-
-def test_same_phase_work_can_report_new_evidence_after_interval() -> None:
-    import time
-    assert gate_decision(
-        state=TurnNarrationState(phase=Phase.LOCATE, last_published_at=time.monotonic() - 61),
-        segment=_segment(), tool_calls=(_tool(),), narrated_ids=set(),
-        min_chars=80, has_tool_error=False, has_evidence=True, min_interval_s=60,
-    ) == "compute"
-
-
-def test_declined_publish_is_not_coerced_from_a_string() -> None:
-    assert not plan_from_arguments({"publish": "false", "finding": "nothing new"}).publish
-
-
-def test_declined_attempts_are_throttled_too() -> None:
-    import time
-    assert gate_decision(
-        state=TurnNarrationState(last_attempt_at=time.monotonic()), segment=_segment(),
-        tool_calls=(_tool(),), narrated_ids=set(), min_chars=80,
-        has_tool_error=False, has_evidence=True, min_interval_s=60,
-    ) == "skip"
-
-
-def test_primary_and_fallback_updates_share_context_but_only_fallback_uses_budget() -> None:
-    from deepseek_tui.server.phase_bridge import note_published
-    state = TurnNarrationState()
-    for i in range(4):
-        note_published(state, f"发现 {i}", batch=BatchKind.INSPECT, tool_calls=(), count=False)
-    assert state.published_count == 0
-    assert state.recent_updates == ["发现 1", "发现 2", "发现 3"]
-    note_published(state, "修复已验证", batch=BatchKind.INSPECT, tool_calls=())
-    assert state.published_count == 1
-    assert state.recent_updates[-1] == "修复已验证"
-
-
 def test_recovery_does_not_stick_after_successful_work() -> None:
     from deepseek_tui.server.phase_bridge import infer_next_phase
     assert infer_next_phase(Phase.RECOVER, BatchKind.INSPECT, has_tool_error=False) == Phase.LOCATE
 
 
-def test_duplicate_fallback_is_not_published_again() -> None:
-    import asyncio
-    from unittest.mock import AsyncMock, patch
 
-    from deepseek_tui.config.models import Config
-    from deepseek_tui.server.phase_bridge import compute_narration_display
 
-    config = Config()
-    config.ui.process_narration.model = "fixture"
-    plan = NarrationPlan(publish=True, phase="verify", finding="修复已验证", next_goal="")
-    with patch(
-        "deepseek_tui.server.phase_bridge.compute_narration_plan", AsyncMock(return_value=plan)
-    ):
-        result = asyncio.run(
-            compute_narration_display(
-                object(),
-                config,
-                user_goal="修复",  # type: ignore[arg-type]
-                state=TurnNarrationState(recent_updates=["修复已验证"]),
-                segment=_segment(),
-                tool_calls=(_tool(),),
-                recent_tool_results=("[success] verification passed",),
-                locale="zh",
-            )
-        )
-    assert result is None
+def test_a_config_file_from_before_narration_was_removed_still_loads():
+    from deepseek_tui.config.models import UiConfig
+
+    UiConfig.model_validate({"process_narration": {"enabled": True, "max_per_turn": 12}})

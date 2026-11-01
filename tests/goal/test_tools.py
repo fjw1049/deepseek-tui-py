@@ -28,11 +28,8 @@ def _context(service: GoalService, *, turn_id: str | None = None) -> ToolContext
 async def test_update_goal_complete_returns_wrap_up() -> None:
     service = GoalService()
     snapshot = service.create("Ship it")
-    service.record_tool_result("verify", "exec_shell", {"command": "pytest"}, success=True)
     result = await UpdateGoalTool().execute(
-        {"status": "complete", "reason": "done", "evidence": ["verify"],
-         "audit": {"checks": [{"requirement_id": "objective", "explanation": "Verified",
-                               "evidence": ["verify"]}]}},
+        {"status": "complete", "reason": "done"},
         _context(service, turn_id=snapshot.goal_id),
     )
     assert result.success

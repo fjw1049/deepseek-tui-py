@@ -644,6 +644,51 @@ def path_access_prompt(
     return PathAccessPrompt(request, pending, fingerprint)
 
 
+REMOVAL_DENIED = (
+    "Shell cannot remove files that predate this session without the user's approval: {paths}. "
+    "Nothing was run. Move them into _to_delete/ in the workspace with mv and tell the user "
+    "which files you moved, or leave them and say so."
+)
+
+
+@dataclass(slots=True)
+class RemovalPrompt:
+    request: ApprovalRequest
+    denial: str
+    paths: list[str]
+
+
+def removal_prompt(
+    tool: ToolSpec, input_data: dict[str, Any] | None, context: ToolContext, policy: str | None,
+) -> RemovalPrompt | None:
+    """Ask before a shell command deletes files the session did not create.
+
+    ``force_prompt``: auto-approve never rubber-stamps it, and a run nobody is
+    watching denies it, which is what sends the model to ``_to_delete/``.
+    """
+    from deepseek_tui.workspace.shell_write_guard import existing_file_removals
+
+    command = (input_data or {}).get("command")
+    if tool.name() != "exec_shell" or not isinstance(command, str):
+        return None
+    started = context.metadata.get("session_started_at")
+    if started is None:
+        return None
+    removed = existing_file_removals(
+        command, workspace=context.working_directory, session_started_at=started)
+    if not removed:
+        return None
+    paths = ", ".join(removed)
+    action = _gate_action(ApprovalRequirement.REQUIRED, policy)
+    request = build_approval_request(
+        tool.name(), [ToolCapability.EXECUTES_CODE],
+        reason=f"Delete or move out files that existed before this session: {paths}",
+        blocked_never=action is GateAction.BLOCK_NEVER,
+    )
+    request.force_prompt = True
+    return RemovalPrompt(request, REMOVAL_DENIED.format(paths=paths), removed)
+
+
 def approval_request_for_mcp(
     tool_name: str,
     policy: str | None,

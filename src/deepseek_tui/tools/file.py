@@ -196,6 +196,7 @@ class WriteFileTool(ToolSpec):
             "not discarded. Prefer this (or edit_file) for source changes — "
             "do not rewrite files via exec_shell. Use this only for new files "
             "or full rewrites; for partial changes use edit_file. "
+            "A successful result means the content is on disk; do not read it back to check. "
             "Paths are workspace-relative: path=\"notes.md\" lands at "
             "<workspace>/notes.md. Do not use ~/ or absolute paths outside "
             "the workspace — they are rejected."
@@ -291,6 +292,7 @@ class EditFileTool(ToolSpec):
             "session already read it and the file changed on disk, the edit "
             "is refused even when old_string still matches. "
             "Prefer this over sed/python via exec_shell for source edits. "
+            "A successful result means the change is on disk; do not read it back to check. "
             "For a brand-new file use write_file instead."
         )
 

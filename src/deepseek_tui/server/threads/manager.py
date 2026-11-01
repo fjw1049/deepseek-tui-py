@@ -10,7 +10,6 @@ import functools
 import logging
 import os
 import threading
-import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator
@@ -32,8 +31,10 @@ from deepseek_tui.server.metrics import (
     pop_turn_latency,
 )
 from deepseek_tui.config.models import Config
+from deepseek_tui.engine.completion import COMPLETION_NOTE_KEY
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
+    HarnessInterventionEvent,
     ModelRequestInterruptedEvent,
     ApprovalRequiredEvent,
     ElevationRequiredEvent,
@@ -62,17 +63,14 @@ from deepseek_tui.server.agent_segments import (
 from deepseek_tui.server.phase_bridge import (
     PROCESS_INTENT_METADATA_KEY,
     ProcessIntent,
-    ReasoningSegment,
     TurnNarrationState,
     build_process_intent,
     classify_batch,
-    compute_narration_display,
-    gate_decision,
     infer_next_phase,
-    note_published,
     resolve_narration_locale,
 )
 from deepseek_tui.engine.handle import EngineHandle
+from deepseek_tui.engine.transcript import Transcript
 from deepseek_tui.tools.subagent import MailboxMessage
 from deepseek_tui.utils import summarize_text
 
@@ -91,6 +89,8 @@ from deepseek_tui.server.threads.items import (
     automation_result_message,
     duration_ms,
     file_change_completion_detail,
+    load_thread_messages,
+    messages_from_transcript,
     reconstruct_messages_from_turn,
     reconstruct_messages_from_turns,
     task_tool_metadata_from_result,
@@ -187,9 +187,6 @@ def _recovery_token_matches(thread: ThreadRecord, token: str | None) -> bool:
     return shown_at.astimezone(timezone.utc) == thread.updated_at.astimezone(
         timezone.utc
     )
-
-# Upper bound on narration-service calls that word silent tool rounds within a
-# single turn; the neutral structured frame is always shown regardless.
 
 
 def _resolved_workspace_path(raw: str) -> Path:
@@ -2851,7 +2848,7 @@ class RuntimeThreadManager:
         if active_engine is not None:
             return await active_engine.context_breakdown_live(thread.model)
 
-        messages = reconstruct_messages_from_turns(self.store, thread_id)
+        messages = load_thread_messages(self.store, thread_id)
         workspace = _thread_cwd(thread)
         mode = (thread.mode or "agent").strip() or "agent"
         registry = build_default_registry(self.config, mode=mode)
@@ -3576,8 +3573,14 @@ class RuntimeThreadManager:
             # A warm engine still holds the dropped turns in session_messages;
             # replace them so regeneration truly starts from the rewound state.
             # (Unlike _sync_engine_session, an empty history must clear too.)
+            transcript = (
+                state.engine.transcript if state is not None
+                else Transcript(self.store.transcript_path(thread_id))
+            )
+            if transcript is not None:
+                transcript.rollback({t.id for t in remaining})
             if state is not None:
-                messages = reconstruct_messages_from_turns(self.store, thread_id)
+                messages = load_thread_messages(self.store, thread_id)
                 state.engine.sync_session(messages, model=thread.model)
                 state.handle.resume_context = None
             run = self.browser_service.runs.get(thread_id)
@@ -4457,6 +4460,7 @@ class RuntimeThreadManager:
         else:
             result = await engine._run_compaction(list(engine.session_messages))
             engine.session_messages[:] = result.messages
+            engine.record_transcript("sync", engine.session_messages)
             if result.success:
                 compaction_succeeded = True
                 summary_text = (
@@ -5047,10 +5051,13 @@ class RuntimeThreadManager:
             create_kwargs["tool_runtime"] = shared_runtime
         engine = await Engine.create(**create_kwargs)
         self._sync_trust_mode(engine, thread.trust_mode)
+        engine.transcript = Transcript(self.store.transcript_path(thread.id))
         self._sync_engine_session(engine, thread)
         result_ids = {item.id for item in automation_result_items(self.store, thread.id)}
         self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        if self.config.unattended:
+            engine.tool_context.metadata["unattended"] = True
         if engine.tool_context.subagent_manager is not None:
             engine.tool_context.subagent_manager.cua_owner_id = thread.id
         engine.tool_context.metadata["start_internal_turn"] = functools.partial(
@@ -5127,7 +5134,12 @@ class RuntimeThreadManager:
         state.automation_result_ids = {item.id for item in items}
 
     def _sync_engine_session(self, engine: Engine, thread: ThreadRecord) -> None:
-        """Hydrate Engine.session_messages from durable turn items."""
+        """Hydrate Engine.session_messages from the transcript or durable turn items."""
+        recorded = messages_from_transcript(self.store, thread.id)
+        if recorded is not None:
+            if recorded:
+                engine.sync_session(recorded, model=thread.model)
+            return
         messages = reconstruct_messages_from_turns(self.store, thread.id)
         if messages and thread.import_source:
             from deepseek_tui.protocol.messages import Message, MessageOrigin
@@ -5220,6 +5232,13 @@ class RuntimeThreadManager:
         if state is None:
             return
         thread = self.store.load_thread(thread_id)
+        recorded = messages_from_transcript(self.store, thread_id)
+        if recorded is not None:
+            state.engine.sync_session(recorded, model=thread.model)
+            state.automation_result_ids = {
+                item.id for item in automation_result_items(self.store, thread_id)
+            }
+            return
         reconstructed = reconstruct_messages_from_turns(self.store, thread_id)
 
         from deepseek_tui.engine.context_pressure import extract_compaction_bridge_text
@@ -5999,6 +6018,7 @@ class RuntimeThreadManager:
         if checkpoint_ready is not None and not checkpoint_ready.done():
             checkpoint_ready.set_result(None)
         turn_status = RuntimeTurnStatus.COMPLETED
+        completion_note: str | None = None
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
         first_response = asyncio.Event()
@@ -6012,47 +6032,18 @@ class RuntimeThreadManager:
         )
         tool_call_started_ms: dict[str, int] = {}
         approval_pending_ms: dict[str, int] = {}
-        last_completed_reasoning: ReasoningSegment | None = None
-        narrated_reasoning_ids: set[str] = set()
         narration_state = TurnNarrationState()
-        narration_compute_tasks: list[asyncio.Task[None]] = []
-        recent_tool_summaries: list[str] = []
         recent_tool_had_error = False
-        narration_revision = 0
         opening_shown = False
         opening_fallback_id: str | None = None
-        turn_input_summary = self.store.load_turn(turn_id).input_summary
-        narration_cfg = self.config.ui.process_narration
         narration_locale = resolve_narration_locale(
             config_locale=self.config.ui.locale,
         )
 
-        async def flush_narration_tasks(*, wait_remaining: bool = False) -> None:
-            nonlocal narration_compute_tasks
-            # Once the turn ends, its final answer supersedes pending progress.
-            if wait_remaining:
-                for task in narration_compute_tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*narration_compute_tasks, return_exceptions=True)
-                narration_compute_tasks = []
-                return
-            still: list[asyncio.Task[None]] = []
-            for task in narration_compute_tasks:
-                if not task.done():
-                    still.append(task)
-                    continue
-                if not task.cancelled():
-                    try:
-                        task.result()
-                    except Exception:
-                        logger.exception("progress generation failed turn=%s", turn_id)
-            narration_compute_tasks = still
-
-        async def finalize_open_reasoning() -> ReasoningSegment | None:
-            nonlocal current_reasoning_item_id, current_reasoning_text, last_completed_reasoning
+        async def finalize_open_reasoning() -> None:
+            nonlocal current_reasoning_item_id, current_reasoning_text
             if current_reasoning_item_id is None:
-                return last_completed_reasoning
+                return
             await flush_delta_batch()
             item = self.store.load_item(current_reasoning_item_id)
             item.status = TurnItemLifecycleStatus.COMPLETED
@@ -6067,14 +6058,8 @@ class RuntimeThreadManager:
                 "item.completed",
                 {"item": item.model_dump(mode="json")},
             )
-            segment = ReasoningSegment(
-                item_id=current_reasoning_item_id,
-                text=current_reasoning_text,
-            )
-            last_completed_reasoning = segment
             current_reasoning_item_id = None
             current_reasoning_text = ""
-            return segment
 
         async def finalize_open_message(
             *,
@@ -6120,8 +6105,7 @@ class RuntimeThreadManager:
             """Persist a pre-tool narration frame.
 
             ``text`` may be empty: the frame then carries only structured
-            fields (``source == "none"``). It remains invisible until the
-            narration service upserts useful wording.
+            fields (``source == "none"``).
             """
             cleaned = text.strip()
             now = datetime.now(timezone.utc)
@@ -6238,82 +6222,6 @@ class RuntimeThreadManager:
         async def persist_final_answer_message(*, text: str) -> None:
             await persist_agent_message(text=text, agent_segment=FINAL_ANSWER)
 
-        def schedule_intent_fill(
-            item_id: str,
-            intent: ProcessIntent,
-            segment: ReasoningSegment | None,
-            tool_calls: tuple,
-        ) -> bool:
-            """Fill a silent round only when there is new progress to explain."""
-            if not narration_cfg.enabled:
-                return False
-            if any(not task.done() for task in narration_compute_tasks):
-                return False
-            segment = segment or ReasoningSegment(item_id=item_id, text="")
-            if gate_decision(
-                state=narration_state,
-                segment=segment,
-                tool_calls=tool_calls,
-                narrated_ids=narrated_reasoning_ids,
-                min_chars=narration_cfg.min_chars,
-                has_tool_error=recent_tool_had_error,
-                max_published=narration_cfg.max_per_turn,
-                min_interval_s=narration_cfg.min_interval_s,
-                has_evidence=bool(recent_tool_summaries),
-            ) == "skip":
-                return False
-            narrated_reasoning_ids.add(segment.item_id)
-            narration_state.last_attempt_at = time.monotonic()
-            revision = narration_revision
-            recent = recent_tool_summaries[-narration_cfg.include_recent_tool_results :]
-
-            async def run_and_fill() -> None:
-                try:
-                    text = await self._compute_phase_bridge(
-                        thread_id=thread_id,
-                        user_prompt=turn_input_summary,
-                        state=narration_state,
-                        segment=segment,
-                        tool_calls=tool_calls,
-                        recent_tool_results=recent,
-                        locale=narration_locale,
-                    )
-                except Exception:
-                    logger.exception(
-                        "intent_fill compute failed turn=%s item=%s", turn_id, item_id
-                    )
-                    return
-                if not text or revision != narration_revision:
-                    return
-                item = self.store.load_item(item_id)
-                item.detail = text
-                item.summary = summarize_text(text, SUMMARY_LIMIT)
-                base_meta = item.metadata if isinstance(item.metadata, dict) else {}
-                item.metadata = {
-                    **base_meta,
-                    PROCESS_INTENT_METADATA_KEY: {
-                        **intent.to_metadata(),
-                        "source": "narration_service",
-                    },
-                }
-                item.ended_at = datetime.now(timezone.utc)
-                self.store.save_item(item)
-                note_published(
-                    narration_state, text, batch=classify_batch(tool_calls), tool_calls=tool_calls
-                )
-                await self._emit_event(
-                    thread_id,
-                    turn_id,
-                    item_id,
-                    "item.completed",
-                    {"item": item.model_dump(mode="json")},
-                )
-
-            narration_compute_tasks.append(
-                asyncio.create_task(run_and_fill(), name=f"intent-fill-{item_id}")
-            )
-            return True
-
         def note_tool_result_timing(tool_call_id: str) -> None:
             trace = get_turn_latency(turn_id)
             if trace is None:
@@ -6378,8 +6286,6 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, TextDeltaEvent):
-                if current_message_item_id is None:
-                    narration_revision += 1
                 first_response.set()
                 if current_reasoning_item_id is not None:
                     await finalize_open_reasoning()
@@ -6417,7 +6323,6 @@ class RuntimeThreadManager:
             elif isinstance(event, ThinkingDeltaEvent):
                 first_response.set()
                 if current_reasoning_item_id is None:
-                    last_completed_reasoning = None
                     await flush_delta_batch()
                     item_id = f"item_{uuid.uuid4().hex[:8]}"
                     now = datetime.now(timezone.utc)
@@ -6616,16 +6521,6 @@ class RuntimeThreadManager:
                     if task_refreshed:
                         item.metadata = {**item.metadata, **task_refreshed}
                     self.store.save_item(item)
-                    if item.summary:
-                        content = event.content or ""
-                        # Retain the result tail (test totals / exit details), not just its banner.
-                        excerpt = (content if len(content) <= 1000
-                                   else content[:650] + "\n…\n" + content[-350:])
-                        outcome = "success" if event.success else "failed"
-                        recent_tool_summaries.append(f"[{outcome}] {event.tool_name}: {excerpt}")
-                        keep = narration_cfg.include_recent_tool_results * 3
-                        if len(recent_tool_summaries) > keep:
-                            del recent_tool_summaries[:-keep]
                     # File tools report their mutation while executing. Publish
                     # that snapshot before item.completed so the live strip can
                     # switch sources without disappearing for one event frame.
@@ -6963,8 +6858,6 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, TurnCancelledEvent):
-                narration_revision += 1
-                await flush_narration_tasks(wait_remaining=True)
                 await flush_delta_batch()
                 if event.reason == "first_response_timeout":
                     trace = get_turn_latency(turn_id)
@@ -6992,25 +6885,36 @@ class RuntimeThreadManager:
                 )
                 break
 
+            elif isinstance(event, HarnessInterventionEvent):
+                await self._emit_event(
+                    thread_id,
+                    turn_id,
+                    None,
+                    "harness.intervention",
+                    {
+                        "kind": event.kind,
+                        "reason": event.reason,
+                        "outcome": event.outcome,
+                        "round_idx": event.round_idx,
+                        "tokens_affected": event.tokens_affected,
+                    },
+                )
+
             elif isinstance(event, ModelRequestInterruptedEvent):
                 await finalize_open_reasoning()
                 await finalize_open_message(
                     agent_segment=MID_TURN_PREFACE,
                     status=TurnItemLifecycleStatus.INTERRUPTED,
-                    extra_metadata={"interruption_reason": "human_takeover"},
+                    extra_metadata={"interruption_reason": event.reason},
                 )
 
             elif isinstance(event, AgentRoundCompleteEvent):
-                narration_revision += 1
-                # A new round supersedes wording about the preceding round.
-                await flush_narration_tasks(wait_remaining=True)
-                segment = await finalize_open_reasoning()
+                await finalize_open_reasoning()
                 if not event.tool_calls:
                     # Empty tool_calls is not turn-terminal: checklist gate,
                     # stop hooks, and subagent handoff may still continue.
                     # Keep this text as a provisional mid-turn preface; the
                     # true final_answer is assigned only when the turn ends.
-                    last_completed_reasoning = None
                     preface = (event.preface_text or "").strip()
                     if preface and current_message_item_id is not None:
                         await finalize_open_message(agent_segment=MID_TURN_PREFACE)
@@ -7022,8 +6926,7 @@ class RuntimeThreadManager:
                     # The model's own preface is passed through verbatim as the
                     # pre-tool storyline (no content vetting — wording quality
                     # is owned by the prompt, not runtime rules). A silent
-                    # round keeps an invisible frame for an optional progress update.
-                    segment = segment or last_completed_reasoning
+                    # round keeps an invisible frame for the step rail.
                     batch_kind = classify_batch(event.tool_calls)
                     intent_phase = infer_next_phase(
                         narration_state.phase,
@@ -7063,15 +6966,6 @@ class RuntimeThreadManager:
                             await tag_item_process_intent(round_preface_item_id, intent)
                         else:
                             await persist_round_intent(preface, intent)
-                        shown = preface
-                        if not shown and round_preface_item_id:
-                            shown_item = self.store.load_item(round_preface_item_id)
-                            shown = shown_item.detail or shown_item.summary or ""
-                        if shown.strip():
-                            note_published(
-                                narration_state, shown, batch=batch_kind,
-                                tool_calls=event.tool_calls, count=False,
-                            )
                     else:
                         intent = build_process_intent(
                             scope="pre_tool",
@@ -7080,23 +6974,17 @@ class RuntimeThreadManager:
                             tool_calls=event.tool_calls,
                             locale=narration_locale,
                         )
-                        frame_id = await persist_round_intent("", intent)
-                        schedule_intent_fill(
-                            frame_id, intent, segment, event.tool_calls
-                        )
+                        await persist_round_intent("", intent)
                     narration_state.phase = intent_phase
                     recent_tool_had_error = False
-                    last_completed_reasoning = None
                 round_preface_item_id = None
-                await flush_narration_tasks()
 
             elif isinstance(event, TurnCompleteEvent):
                 if event.task_outcome is not None:
                     task_turn = self.store.load_turn(turn_id)
                     task_turn.task_outcome = event.task_outcome
                     self.store.save_turn(task_turn)
-                narration_revision += 1
-                await flush_narration_tasks(wait_remaining=True)
+                completion_note = event.completion_note
                 await flush_delta_batch()
                 first_response.set()
                 thread_model = self.store.load_thread(thread_id).model or "deepseek-chat"
@@ -7187,8 +7075,6 @@ class RuntimeThreadManager:
             thread_id, turn_id, tool_items, turn_status
         )
 
-        narration_revision += 1
-        await flush_narration_tasks(wait_remaining=True)
 
         # Finalize any open reasoning item
         if current_reasoning_item_id is not None:
@@ -7239,6 +7125,8 @@ class RuntimeThreadManager:
                 )
                 if recovered_answer:
                     await persist_final_answer_message(text=recovered_answer)
+        if completion_note:
+            await self._attach_completion_note(thread_id, turn_id, completion_note)
 
         # Finalize the turn record
         await self._close_turn_record(
@@ -7252,46 +7140,6 @@ class RuntimeThreadManager:
         await self._maybe_continue_goal(thread_id)
 
     # --- helpers -------------------------------------------------------------
-
-    async def _compute_phase_bridge(
-        self,
-        *,
-        thread_id: str,
-        user_prompt: str,
-        state: TurnNarrationState,
-        segment: ReasoningSegment,
-        tool_calls: tuple,
-        recent_tool_results: list[str],
-        locale: str,
-    ) -> str | None:
-        from deepseek_tui.engine.usage_ledger import usage_source
-        from deepseek_tui.protocol.responses import ToolCall
-
-        thread = self.store.load_thread(thread_id)
-        client = self._get_llm_client(thread.provider)
-        narration_config = self._config_for_provider(thread.provider, thread.model)
-        async with self._active_lock:
-            active = self._active.get(thread_id)
-            if active is not None:
-                engine_client = getattr(active.engine, "client", None)
-                if engine_client is not None:
-                    client = engine_client
-                thread = self.store.load_thread(thread_id)
-                narration_config = self._config_for_provider(
-                    active.provider, thread.model
-                )
-        typed_calls: tuple[ToolCall, ...] = tool_calls
-        with usage_source("phase_bridge"):
-            return await compute_narration_display(
-                client,
-                narration_config,
-                user_goal=user_prompt,
-                state=state,
-                segment=segment,
-                tool_calls=typed_calls,
-                recent_tool_results=recent_tool_results,
-                locale=locale,
-            )
 
     async def _promote_last_provisional_message_to_final_answer(
         self, thread_id: str, turn_id: str
@@ -7334,6 +7182,33 @@ class RuntimeThreadManager:
             {"item": item.model_dump(mode="json")},
         )
         return True
+
+    async def _attach_completion_note(self, thread_id: str, turn_id: str, note: str) -> None:
+        """Show the harness's facts below the answer, marked so history can drop them."""
+        now = datetime.now(timezone.utc)
+        turn = self.store.load_turn(turn_id)
+        for item_id in reversed(turn.item_ids):
+            item = self.store.load_item(item_id)
+            metadata = item.metadata if isinstance(item.metadata, dict) else {}
+            text = (item.detail or item.summary or "").strip()
+            if (item.kind == TurnItemKind.AGENT_MESSAGE and text
+                    and PROCESS_INTENT_METADATA_KEY not in metadata):
+                break
+        else:
+            # A failed turn may have no answer at all; the facts still belong to the user.
+            item, text, metadata = TurnItemRecord(
+                id=f"item_{uuid.uuid4().hex[:8]}", turn_id=turn_id,
+                kind=TurnItemKind.AGENT_MESSAGE, status=TurnItemLifecycleStatus.COMPLETED,
+                summary=summarize_text(note, SUMMARY_LIMIT), started_at=now, ended_at=now,
+            ), "", {AGENT_SEGMENT_KEY: FINAL_ANSWER}
+            self.store.save_item(item)
+            self._attach_item_to_turn(turn_id, item.id)
+        item.detail = f"{text}\n\n{note}" if text else note
+        item.metadata = {**metadata, COMPLETION_NOTE_KEY: note}
+        self.store.save_item(item)
+        await self._emit_event(
+            thread_id, turn_id, item.id, "item.completed", {"item": item.model_dump(mode="json")},
+        )
 
     async def _recover_missing_final_answer(self, thread_id: str, turn_id: str) -> str | None:
         """Produce a safe final reply when a completed turn emitted none.

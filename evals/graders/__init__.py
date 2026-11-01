@@ -6,8 +6,8 @@ from collections.abc import Callable
 
 from evals.graders.authority import grade_authority
 from evals.graders.cache import grade_cache
-from evals.graders.completion import grade_completion
 from evals.graders.constraints import grade_constraints
+from evals.graders.rubric import grade_judge_probe, grade_rubric
 from evals.graders.tooling import grade_tooling
 from evals.graders.workspace import grade_workspace
 from evals.schema import EvalCase, EvalObservation, GradeResult
@@ -17,8 +17,9 @@ Grader = Callable[[EvalCase, EvalObservation], GradeResult]
 GRADERS: dict[str, Grader] = {
     "authority": grade_authority,
     "cache": grade_cache,
-    "completion": grade_completion,
     "constraints": grade_constraints,
+    "judge_agreement": grade_judge_probe,
+    "rubric": grade_rubric,
     "tooling": grade_tooling,
     "workspace": grade_workspace,
 }

@@ -10,7 +10,6 @@ from deepseek_tui.goal.queue import GoalQueue, item_from_dict
 from deepseek_tui.goal.state import GoalState, restore_pause
 from deepseek_tui.goal.types import (
     GoalBudgetLimits,
-    MAX_UNRESOLVED_FAILURES,
     GoalDump,
     GoalStatus,
 )
@@ -19,7 +18,6 @@ from deepseek_tui.goal.types import (
 def state_to_dict(state: GoalState) -> dict[str, Any]:
     return {
         "schema_version": 2,
-        "evidence_overflow": state.evidence_overflow,
         "queue_item_id": state.queue_item_id,
         "goal_id": state.goal_id,
         "objective": state.objective,
@@ -30,9 +28,7 @@ def state_to_dict(state: GoalState) -> dict[str, Any]:
         "wall_clock_ms": state.settle_clock().wall_clock_ms,
         "terminal_reason": state.terminal_reason,
         "checklist": [dict(item) for item in state.checklist],
-        "evidence": [dict(item) for item in state.evidence],
         "completion_evidence": list(state.completion_evidence),
-        "work_revision": state.work_revision,
         "last_progress_signature": state.last_progress_signature,
         "stalled_turns": state.stalled_turns,
         "requirements": [dict(item) for item in state.requirements],
@@ -70,7 +66,6 @@ def state_from_dict(data: dict[str, Any] | None) -> GoalState | None:
     goal_id = data.get("goal_id")
     state = GoalState(
         goal_id=str(goal_id) if goal_id else "restored",
-        evidence_overflow=data.get("evidence_overflow") is True,
         queue_item_id=data.get("queue_item_id") if isinstance(data.get("queue_item_id"), str) else None,
         objective=objective.strip(),
         completion_criterion=(
@@ -98,15 +93,10 @@ def state_from_dict(data: dict[str, Any] | None) -> GoalState | None:
             if isinstance(item, dict)
             and all(isinstance(item.get(k), str) for k in ("id", "content", "status"))
         ],
-        evidence=[dict(item) for item in _list(data.get("evidence")) if _valid_evidence(item)],
         completion_evidence=tuple(
             item for item in _list(data.get("completion_evidence")) if isinstance(item, str)
         ),
-        work_revision=_opt_int(data.get("work_revision")) or 0,
     )
-    if len(state.evidence) > MAX_UNRESOLVED_FAILURES + 80:
-        state.evidence = state.evidence[-(MAX_UNRESOLVED_FAILURES + 80):]
-        state.evidence_overflow = True
     state.requirements = [{"id": "objective", "content": state.objective}]
     if state.completion_criterion:
         state.requirements.append({"id": "criterion", "content": state.completion_criterion})
@@ -124,10 +114,6 @@ def state_from_dict(data: dict[str, Any] | None) -> GoalState | None:
     state.completion_audit = (
         deepcopy(data["completion_audit"]) if isinstance(data.get("completion_audit"), dict) else {}
     )
-    if state.status is not GoalStatus.COMPLETE:
-        # Files may have changed while the process was down; keep the history,
-        # but require fresh verification after restoring an unfinished goal.
-        state.work_revision += 1
     return restore_pause(state)
 
 
@@ -169,12 +155,3 @@ def _opt_int(value: object) -> int | None:
 
 def _list(value: object) -> list:
     return value if isinstance(value, list) else []
-
-
-def _valid_evidence(item: object) -> bool:
-    return (
-        isinstance(item, dict)
-        and all(isinstance(item.get(k), str) for k in ("tool_call_id", "signature", "tool"))
-        and all(isinstance(item.get(k), bool) for k in ("success", "finished", "verification"))
-        and type(item.get("revision")) is int
-    )

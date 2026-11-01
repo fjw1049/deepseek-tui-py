@@ -60,21 +60,20 @@ _PAUSED = (
     "\n\n<system-reminder>\n"
     "The last {streak} observations on this interface were unchanged. Further calls on it "
     "are paused until the person acts: hand them the step (request_user_input when "
-    "available), or stop and report the blocker and what remains (finish_task "
-    "partial/blocked when available).\n"
+    "available), or stop and report the blocker and what remains.\n"
     "</system-reminder>"
 )
 
 _BLOCKED = (
     "Not executed: the last {streak} observations on this interface were unchanged. "
     "Hand the step to the person (request_user_input when available), or stop and report "
-    "the blocker and what remains (finish_task partial/blocked when available)."
+    "the blocker and what remains."
 )
 
 _CUA_PAUSED = (
     "Further CUA code is paused because observations repeat or the expected change remains "
     "unverified. Use cua_observe to check for a real change; otherwise hand off or report "
-    "partial/blocked. Do not repeat the same action."
+    "state what remains. Do not repeat the same action."
 )
 
 _Thumb = Image.Image  # grayscale, THUMB_WIDTH wide: captures of one window at two scales match

@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from deepseek_tui.engine import interventions
 from deepseek_tui.protocol.messages import Message, MessageOrigin
 
 
@@ -67,8 +68,32 @@ class ReminderSpec:
     max_chars: int | None = None
 
 
-TASK_DELIVERY = ReminderSpec(
-    name="task_delivery",
+PENDING_STATE = ReminderSpec(
+    name="pending_state",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+)
+
+
+OUTPUT_TRUNCATED = ReminderSpec(
+    name="output_truncated",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+)
+
+
+ROUND_BUDGET = ReminderSpec(
+    name="round_budget",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+)
+
+
+SHORT_STOP = ReminderSpec(
+    name="short_stop",
     envelope=Envelope.ALERT,
     placement=Placement.TAIL,
     origin=MessageOrigin.SYSTEM_REMINDER,
@@ -119,16 +144,6 @@ APPROVED_PLAN = ReminderSpec(
     origin=MessageOrigin.SYSTEM_REMINDER,
     # Standing pointer after leaving plan mode; yields to live alerts.
     priority=12,
-)
-
-LONG_SESSION_DRIFT = ReminderSpec(
-    name="long_session_drift",
-    envelope=Envelope.ALERT,
-    placement=Placement.TAIL,
-    origin=MessageOrigin.SYSTEM_REMINDER,
-    # Furthest from the end of the tail block: a general re-anchor, not a
-    # reaction to anything that just happened.
-    priority=20,
 )
 
 CHECKLIST_INCOMPLETE_GATE = ReminderSpec(
@@ -286,7 +301,6 @@ REGISTRY: tuple[ReminderSpec, ...] = (
     GOAL_BLOCKED,
     GOAL_CANCELLED,
     GOAL_CONTINUATION,
-    LONG_SESSION_DRIFT,
     CHECKLIST_INCOMPLETE_GATE,
     LSP_DIAGNOSTICS,
     SUBAGENT_HANDOFF,
@@ -331,11 +345,15 @@ def render(spec: ReminderSpec, body: str) -> str:
     return _RenderedReminder(f"{open_tag}\n{text}\n{close_tag}")
 
 
-def reminder_message(spec: ReminderSpec, body: str) -> Message:
+def reminder_message(spec: ReminderSpec, body: str, *, reason: str | None = None) -> Message:
     """Build the injected message with envelope and provenance in one step.
 
     Doing these separately is what let four call sites wrap a reminder and
     forget to tag it, leaving the transcript unable to tell an injection from
-    something the human said.
+    something the human said. ``reason`` separates sites sharing one spec.
     """
-    return Message.user(render(spec, body), origin=spec.origin)
+    text = render(spec, body)
+    interventions.record(
+        "reminder", reason or spec.name, outcome="injected", tokens_affected=len(text) // 4
+    )
+    return Message.user(text, origin=spec.origin)

@@ -37,10 +37,31 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--case", action="append", default=[])
     run.add_argument("--label", default="")
     run.add_argument("--prompt-suffix", default="")
+    run.add_argument("--concurrency", type=int, default=1)
+    run.add_argument("--judge-provider")
+    run.add_argument("--judge-model")
+    run.add_argument("--max-input-tokens", type=int)
 
     compare = commands.add_parser("compare", help="compare summary against gates")
     compare.add_argument("baseline", type=Path)
     compare.add_argument("summary", type=Path)
+
+    runs = commands.add_parser("compare-runs", help="compare two finished runs case by case")
+    runs.add_argument("a", type=Path)
+    runs.add_argument("b", type=Path)
+
+    soak = commands.add_parser("soak-baseline", help="metrics from an archived thread store")
+    soak.add_argument("store", type=Path)
+    soak.add_argument("--output", type=Path, required=True)
+    soak.add_argument("--exclude", type=Path, help="JSON list of thread ids to leave out")
+
+    regrade = commands.add_parser("regrade", help="grade a finished run's sessions again")
+    regrade.add_argument("run", type=Path)
+    regrade.add_argument("--judge-provider")
+    regrade.add_argument("--judge-model")
+    regrade.add_argument("--max-live-requests", type=int, default=500)
+    regrade.add_argument("--reuse-judge", action="store_true",
+                         help="keep saved reviews; only the deterministic checks run again")
     return parser
 
 
@@ -77,11 +98,36 @@ def main(argv: list[str] | None = None) -> int:
         print("baseline gates passed")
         return 0
 
+    if args.command == "compare-runs":
+        from evals.experiments import format_comparison, load_run
+
+        print(format_comparison(load_run(args.a), load_run(args.b)))
+        return 0
+
+    if args.command == "soak-baseline":
+        from evals.regrade import soak_baseline
+
+        report = soak_baseline(args.store, args.output, args.exclude)
+        print(f"sessions={report['sessions']} report={args.output}")
+        return 0
+
+    if args.command == "regrade":
+        from evals.regrade import regrade
+
+        output, summary = asyncio.run(
+            regrade(args.run, args.judge_provider, args.judge_model, args.max_live_requests,
+                    reuse_judge=args.reuse_judge)
+        )
+        print(f"passed={summary.passed} failed={summary.failed} errors={summary.errors} "
+              f"artifacts={output}")
+        return 0
+
     if (
         args.trials < 1
         or args.max_live_requests < 0
         or args.max_output_tokens < 1
         or args.timeout <= 0
+        or args.concurrency < 1
         or (args.max_cost_usd is not None and args.max_cost_usd <= 0)
     ):
         print("invalid eval count, token, timeout, or cost budget")
@@ -101,6 +147,10 @@ def main(argv: list[str] | None = None) -> int:
         case_ids=tuple(args.case),
         label=args.label,
         prompt_suffix=args.prompt_suffix,
+        concurrency=args.concurrency,
+        judge_provider=args.judge_provider,
+        judge_model=args.judge_model,
+        max_input_tokens=args.max_input_tokens,
     )
     output, summary = asyncio.run(run_evaluations(options))
     print(

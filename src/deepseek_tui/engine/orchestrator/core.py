@@ -18,8 +18,10 @@ from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.cua.engine import CuaEngineMixin
+from deepseek_tui.engine import interventions
 from deepseek_tui.engine.capacity import (
     CompactionConfig,
+    _estimate_tokens_for_message,
     should_compact,
 )
 from deepseek_tui.engine.context import WorkingSet
@@ -34,6 +36,7 @@ from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
     EngineEvent,
     ErrorEvent,
+    HarnessInterventionEvent,
     ModelRequestInterruptedEvent,
     PluginMountEvent,
     SessionEndedEvent,
@@ -72,12 +75,14 @@ from deepseek_tui.engine.orchestrator.lifecycle import LifecycleLspMixin
 from deepseek_tui.engine.orchestrator.maintenance import SessionMaintenanceMixin
 from deepseek_tui.engine.orchestrator.tooling import ToolExecutionMixin
 from deepseek_tui.engine.prompts import (
+    UNATTENDED_PROMPT,
     build_system_prompt,
 )
 from deepseek_tui.engine.tools import (
     PLAN_MODE_TOOL_ALLOWLIST,
     build_model_tool_catalog,
 )
+from deepseek_tui.engine.transcript import RecordKind, Transcript
 from deepseek_tui.engine.turn import TurnLoop, TurnOutcomeStatus, TurnResult, prepare_turn_for_model
 from deepseek_tui.integrations.lsp import DiagnosticBlock
 from deepseek_tui.protocol.messages import Message, MessageOrigin, MessageRequest
@@ -94,7 +99,14 @@ logger = logging.getLogger(__name__)
 # Backstop for the checklist turn-end gate. Progress-based release already
 # bounds it in the normal case; this only catches a model that closes one item
 # and opens another every time it is blocked.
-_CHECKLIST_GATE_MAX_FIRES = 3
+_CHECKLIST_GATE_MAX_FIRES = 1
+# Consecutive rounds cut off at the output cap before the fragment is reported as it stands.
+_MAX_TRUNCATED_ROUNDS = 2
+_ROUND_BUDGET_NOTICE = 20
+# Below this after this much work, the stop is unfinished more often than it is a report:
+# 22 of 22 such stops in 345 measured turns had announced work and not done it.
+_SHORT_STOP_MIN_ROUNDS = 5
+_SHORT_STOP_MAX_CHARS = 200
 
 # Same backstop for turn_end ("Stop") hooks. Unlike the checklist gate there is
 # no progress signal to release on, so a hook that blocks unconditionally used
@@ -305,6 +317,10 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         self.reply_locale: str = "zh"
         self.compaction_config = compaction_config or CompactionConfig()
         self.session_messages: list[Message] = []
+        # Set by the runtime for durable threads; see engine.transcript.
+        self.transcript: Transcript | None = None
+        self._transient_reminder: Message | None = None
+        self._intervention_round = 0
         # The turn works on a separate list until it commits to session_messages.
         self._active_context_messages: list[Message] | None = None
         # Last rewrite-bridge text (for iterative re-compaction). The live
@@ -654,10 +670,37 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         """Replace in-memory chat history."""
         self.session_messages.clear()
         self.session_messages.extend(messages)
+        self.record_transcript("sync", self.session_messages)
         self.last_real_input_tokens = 0
         self.last_real_input_estimate = 0
         if model:
             self.default_model = model
+
+    def record_transcript(
+        self, kind: RecordKind, messages: list[Message], *, round_idx: int | None = None
+    ) -> None:
+        if self.transcript is None:
+            return
+        self.transcript.record(
+            kind,
+            messages,
+            # A sync happens between turns; the id left in metadata is the last turn's.
+            turn_id=None if kind == "sync"
+            else self.tool_context.metadata.get("turn_latency_turn_id"),
+            round_idx=round_idx,
+            transient=[i for i, m in enumerate(messages) if m is self._transient_reminder],
+        )
+
+    def _record_intervention(self, item: interventions.Intervention) -> None:
+        self.handle.try_emit(
+            HarnessInterventionEvent(
+                kind=item.kind,
+                reason=item.reason,
+                outcome=item.outcome,
+                round_idx=self._intervention_round,
+                tokens_affected=item.tokens_affected,
+            )
+        )
 
     def set_model_route(self, client: LLMClient, config: Any, model: str) -> None:
         """Apply a complete route for new work; running children keep their snapshot."""
@@ -1421,6 +1464,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             )
             engine._cycle_session_id = uuid.uuid4().hex
             engine._cycle_started_at = int(time.time())
+            engine.tool_context.metadata["session_started_at"] = time.time()
             engine.mode = mode
             engine._app_config = cfg
             engine.tool_context.metadata["task_config"] = cfg
@@ -1980,6 +2024,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         """
         from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
 
+        interventions.bind_sink(self._record_intervention)
+        self._intervention_round = 0
+
         if op.expected_goal_id is not None or op.internal_kind == GOAL_CONTINUATION_KIND:
             current_goal = self.goal_service.snapshot()
             if (not self.goal_service.peek_continuation(mode=self.mode).should_continue
@@ -2208,7 +2255,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         )
         self.tool_context.metadata[GOAL_TURN_ID_KEY] = None if snap is None else snap.goal_id
         self.tool_context.metadata["goal_control_epoch"] = self.goal_service.control_epoch
-        self.tool_context.metadata["goal_tool_starts"] = {}
         goal_reminder_message: Message | None = None
         goal_text = self.goal_service.reminder_text()
         if goal_text:
@@ -2223,6 +2269,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 spec = goal_reminders.GOAL_BLOCKED
             goal_reminder_message = goal_reminders.reminder_message(spec, goal_text)
             working_messages.append(goal_reminder_message)
+        self._transient_reminder = goal_reminder_message
         goal_deadline_task = asyncio.create_task(
             self._enforce_goal_wall_clock_deadline(), name="goal-wall-clock-deadline",
         )
@@ -2436,6 +2483,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     ]
                 else:
                     self.session_messages = persisted_messages
+                self.record_transcript("commit", self.session_messages)
             if not result.cancelled:
                 from deepseek_tui.state.session import clear_checkpoint
 
@@ -2501,6 +2549,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     running_subagents=running_subagents,
                     running_tasks=running_tasks,
                     task_outcome=result.task_outcome,
+                    completion_note=result.completion_note,
                 )
             )
             await self._finish_goal_turn(
@@ -2863,23 +2912,15 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             return False
         return not self._open_checklist_summary()
 
-    def _next_checklist_gate_summary(self, *, fired: int, last_open: str | None) -> str | None:
+    def _next_checklist_gate_summary(self, *, fired: int) -> str | None:
         """Open-item summary to block on, or ``None`` to let the turn end.
 
-        The gate re-fires only while blocking it moves the checklist forward:
-        *last_open* is the open set as of the previous block, so an unchanged
-        set means the last nudge produced nothing and the model's decision to
-        stop is honored. That keeps "unfinished work should continue" without
-        the livelock a fire-until-empty gate would have — the harness cannot
-        judge completion, only the model can, and one that will not reconcile
-        would otherwise spin to the round-trip limit.
+        One reminder per turn: the harness cannot judge completion, only the
+        model can, so a stop it repeats after facing the open items is honored.
         """
         if fired >= _CHECKLIST_GATE_MAX_FIRES:
             return None
-        open_summary = self._open_checklist_summary()
-        if not open_summary or open_summary == last_open:
-            return None
-        return open_summary
+        return self._open_checklist_summary() or None
 
     async def _emit_checklist_turn_end_reconcile(self) -> None:
         """Close leftover open checklist items before the turn goes idle.
@@ -3162,18 +3203,17 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             self.last_real_input_tokens = 0
             self.last_real_input_estimate = 0
         self._context_measurement_model = model
-        from deepseek_tui.tools.task_delivery import (
-            CUA_FINALIZATION_TIMEOUT_SECONDS, FINALIZATION_MAX_TOKENS, FINALIZATION_TIMEOUT_SECONDS,
-            TaskDelivery,
-        )
+        from deepseek_tui.engine.completion import TurnFacts
 
         # Per turn, never from the polled context estimate: it may start the runtime.
         await self._prepare_cua()
-        task_catalog = await self._get_tools_with_mcp()
+        tools = await self._get_tools_with_mcp()
         system_prompt += self._cua_prompt()
-        delivery = TaskDelivery(catalog={(t.get("function") or t)["name"] for t in task_catalog})
-        self.tool_context.metadata["task_delivery"] = delivery
-        tools = delivery.tools(task_catalog)
+        if self.tool_context.metadata.get("unattended"):
+            system_prompt += UNATTENDED_PROMPT
+        facts = TurnFacts()
+        self.tool_context.metadata["turn_facts"] = facts
+        interventions.bind_sink(self._record_intervention)
         # Execute calls against the exact catalog attached to their request;
         # background MCP discovery must not change eligibility after sampling.
         self._active_api_tools = tools
@@ -3208,44 +3248,38 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         # tool → the stop was premature, keep working. The gate never judges
         # whether the work is done — see _next_checklist_gate_summary.
         checklist_gate_fires = 0
-        checklist_gate_last_open: str | None = None
+        truncated_rounds = 0
         held_stop_result: TurnResult | None = None
         result = TurnResult(assistant_message=None)
-        async def incomplete_delivery(reason: str) -> TurnResult:
-            from deepseek_tui.engine.events import TextDeltaEvent
 
-            zh = str(getattr(self, "reply_locale", "")).startswith("zh")
-            attempted = (delivery.attempted_answer or "").strip()
-            if attempted:
-                # Deliver what the model wrote, marked unverified; replacing it
-                # would hide all the work behind a stock sentence.
-                answer = attempted + (
-                    "\n\n注：操作后的最终核验没有完成，以上结论未经确认。" if zh else
-                    "\n\nNote: final verification did not complete; "
-                    "the result above was not verified."
-                )
-            else:
-                answer = (
-                    "操作后的最终核验未完成，暂时无法确认任务已完成。" if zh else
-                    "Final verification did not complete; task completion was not verified."
-                )
-            delivery.outcome = {"status": "partial", "answer": answer,
-                                "evidence": sorted(delivery.evidence), "remaining": [reason]}
-            message = Message.assistant(answer)
-            messages.append(message)
-            await self.handle.emit(TextDeltaEvent(text=answer))
-            return TurnResult(assistant_message=message, task_outcome=delivery.outcome,
-                              tool_round_count=tool_round_count)
+        def closing_facts(*problems: str) -> dict[str, Any]:
+            # Facts for the note below the answer; the answer itself stays the model's.
+            pending = facts.pending(self.tool_context.metadata)
+            locale = str(getattr(self, "reply_locale", "") or "zh")
+            return {
+                "tool_round_count": tool_round_count,
+                "task_outcome": facts.outcome(pending, list(problems), locale),
+                "completion_note": facts.note(pending, list(problems), locale),
+            }
+
+        async def discard_streamed_round(
+            calls: list[ToolCall], reason: str, event_reason: str = "human_takeover",
+        ) -> None:
+            # Settle UI fragments/tool cards; nothing from this request may run or stand.
+            await self.handle.emit(ModelRequestInterruptedEvent(reason=event_reason))
+            for call in calls:
+                await self.handle.emit(ToolResultEvent(
+                    tool_call_id=call.id, tool_name=call.name, success=False,
+                    content=f"Not executed: {reason}.", metadata={"not_executed": True},
+                ))
 
         round_idx = -1
-        while (round_idx < self.max_tool_round_trips or delivery.outcome is not None
-               or delivery.stop_reminded):
+        while round_idx < self.max_tool_round_trips:
             round_idx += 1
+            self._intervention_round = round_idx
             await self.handle.pause.wait(self.handle.cancel_event)
             if self.handle.resume_context is not None:
-                delivery.outcome = delivery.attempted_answer = None
-                delivery.stop_reminded = delivery.continue_nudged = False
-                delivery.finalization_rounds = 0
+                facts.pending_reminded = False
                 self._ui_progress.reset()  # the person changed what the screen shows
                 from deepseek_tui.engine import reminders
 
@@ -3253,8 +3287,16 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     reminders.HUMAN_RESUME, self.handle.resume_context,
                 ))
                 self.handle.resume_context = None
-            tools = delivery.tools(task_catalog)
-            self._active_api_tools = tools
+            if round_idx == self.max_tool_round_trips - _ROUND_BUDGET_NOTICE:
+                # The limit ends a turn mid-sentence, so say so while there is room to report.
+                from deepseek_tui.engine import reminders
+
+                messages.append(reminders.reminder_message(
+                    reminders.ROUND_BUDGET,
+                    f"{_ROUND_BUDGET_NOTICE} tool rounds left in this turn; at the limit it "
+                    "stops where it is. If the work will not fit, save what you have and tell "
+                    "the user what is done, what is not, and what you would try next.",
+                ))
             model_generation = self.handle.pause.generation
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
@@ -3268,14 +3310,10 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             # Drain steer messages — mid-turn user input
             # 这是中途转向机制
             for steer_text in self.handle.drain_steers():
-                delivery.outcome = None
                 steer_text = steer_text.strip()
                 if not steer_text:
                     continue
-                # The user changed direction; an earlier answer may no longer fit.
-                delivery.attempted_answer = None
-                delivery.stop_reminded = delivery.continue_nudged = False
-                delivery.finalization_rounds = 0
+                facts.pending_reminded = False
                 self._ui_progress.reset()  # the person may have changed what the screen shows
                 # Honor @plugin: mount/unmount in steers (same as primary send).
                 pre_mount_steer = steer_text
@@ -3308,6 +3346,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 self.working_set.observe_references(processed.references)
 
             # L0: prune old tool bodies at ≥50% (deterministic, no LLM).
+            self._fold_browser_observations(messages)
             self._maybe_l0_prune_tool_results(
                 messages, model, system_prompt=system_prompt, tools=tools
             )
@@ -3321,10 +3360,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 tools=tools,
                 model_config=getattr(self, "_app_config", None),
             )
-            if (delivery.stop_reminded and delivery.finalization_exhausted()
-                    and delivery.outcome is None):
-                return await incomplete_delivery("Structured finalization was not supplied or accepted.")
-            if should_trigger and not delivery.stop_reminded:
+            if should_trigger:
                 from deepseek_tui.config.providers import max_output_tokens_for_model
 
                 logger.info(
@@ -3341,7 +3377,16 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 if compact_result is None:
                     round_idx -= 1
                     continue
+                reclaimed = sum(map(_estimate_tokens_for_message, messages)) - sum(
+                    map(_estimate_tokens_for_message, compact_result.messages)
+                )
                 messages[:] = compact_result.messages
+                interventions.record(
+                    "compaction",
+                    "pressure",
+                    outcome="compacted" if compact_result.success else "failed",
+                    tokens_affected=reclaimed,
+                )
                 logger.info(
                     "compact_done after_count=%d bridge_attached=%s success=%s",
                     len(messages),
@@ -3360,30 +3405,20 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     )
             elif self._compact_cooldown_rounds > 0:
                 self._compact_cooldown_rounds -= 1
-            # Long-session drift reminder — after compaction so a rewrite
-            # doesn't immediately archive a freshly injected copy.
-            self._maybe_inject_long_session_reminder(
-                messages, model, system_prompt=system_prompt, tools=tools
-            )
-
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
             self._flush_pending_lsp_diagnostics(messages)
             # tool_choice is resolved in turn_loop (auto by default; bare
             # string "required" only when config.strict_tool_mode is set).
-            tools = delivery.tools(task_catalog)
-            self._active_api_tools = tools
             request = MessageRequest(
                 model=model,
                 messages=messages,
                 system_prompt=system_prompt,
                 tools=tools,
-                max_tokens=min(max_tokens or FINALIZATION_MAX_TOKENS, FINALIZATION_MAX_TOKENS)
-                if delivery.stop_reminded else max_tokens,
+                max_tokens=max_tokens,
                 temperature=self.default_temperature,
                 top_p=self.default_top_p,
-                reasoning_effort="off" if delivery.stop_reminded else (
-                    reasoning_effort or self.default_reasoning_effort),
+                reasoning_effort=reasoning_effort or self.default_reasoning_effort,
                 extra_body=dict(self.default_extra_body),
             )
             from deepseek_tui.engine.context_pressure import estimate_request_tokens
@@ -3413,49 +3448,27 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     calls.append(event.tool_call)
                 await self.handle.emit(event)
 
-            if delivery.outcome is not None:
-                result = TurnResult(assistant_message=Message.assistant(delivery.outcome["answer"]))
-                from deepseek_tui.engine.events import TextDeltaEvent
-
-                await self.handle.emit(TextDeltaEvent(text=delivery.outcome["answer"]))
-            else:
-                self.turn_loop.locale = str(getattr(self, "reply_locale", "") or "zh")
-                with usage_source("agent_round"):
-                    # 跑一轮 LLM 流式调用，result(TurnResult) 含本轮产出与状态：
-                    # assistant_message=回复 / tool_calls=待调工具(空=结束) / usage=token用量
-                    # cancelled=是否取消 / outcome=成功或失败类型 / error_message=错误描述
-                    sample = self.handle.pause.model_request(
-                        partial(
-                            self.turn_loop.run,
-                            request,
-                            emit_model_event,
-                            self.handle.cancel_event,
-                            tools=tools,
-                            latency_turn_id=latency_turn_id,
-                            round_idx=round_idx,
-                        ),
+            self.record_transcript("request", messages, round_idx=round_idx)
+            self.turn_loop.locale = str(getattr(self, "reply_locale", "") or "zh")
+            with usage_source("agent_round"):
+                # 跑一轮 LLM 流式调用，result(TurnResult) 含本轮产出与状态：
+                # assistant_message=回复 / tool_calls=待调工具(空=结束) / usage=token用量
+                # cancelled=是否取消 / outcome=成功或失败类型 / error_message=错误描述
+                result = await self.handle.pause.model_request(
+                    partial(
+                        self.turn_loop.run,
+                        request,
+                        emit_model_event,
                         self.handle.cancel_event,
-                    )
-                    if delivery.stop_reminded:
-                        delivery.finalization_rounds += 1
-                        try:
-                            result = await asyncio.wait_for(sample, (
-                                CUA_FINALIZATION_TIMEOUT_SECONDS if delivery.cua_used
-                                else FINALIZATION_TIMEOUT_SECONDS))
-                        except TimeoutError:
-                            await self.handle.emit(ModelRequestInterruptedEvent())
-                            return await incomplete_delivery("Result finalization timed out.")
-                    else:
-                        result = await sample
+                        tools=tools,
+                        latency_turn_id=latency_turn_id,
+                        round_idx=round_idx,
+                    ),
+                    self.handle.cancel_event,
+                )
             if result is None or model_generation != self.handle.pause.generation:
-                # Settle UI fragments/tool cards without completing the logical turn.
-                await self.handle.emit(ModelRequestInterruptedEvent())
-                for call in streamed_calls:
-                    await self.handle.emit(ToolResultEvent(
-                        tool_call_id=call.id, tool_name=call.name, success=False,
-                        content="Not executed: model request interrupted by human takeover.",
-                        metadata={"not_executed": True},
-                    ))
+                await discard_streamed_round(
+                    streamed_calls, "model request interrupted by human takeover")
                 # Never execute a plan or accept a final answer from before takeover.
                 round_idx -= 1
                 result = TurnResult(assistant_message=None)
@@ -3492,6 +3505,35 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                         cache_miss,
                         cache_hit / (cache_hit + cache_miss),
                     )
+            if result.truncated and not result.cancelled:
+                # The same request hits the same cap at the same place, so the fragment
+                # (often half a write_file call) is dropped and the round redone smaller.
+                truncated_rounds += 1
+                logger.warning("output_truncated round=%d streak=%d", round_idx, truncated_rounds)
+                if truncated_rounds >= _MAX_TRUNCATED_ROUNDS:
+                    from dataclasses import replace
+
+                    if result.assistant_message is not None:
+                        messages.append(result.assistant_message)
+                    await discard_streamed_round(
+                        streamed_calls, "output cap reached", "output_truncated")
+                    return replace(
+                        result, tool_calls=[], outcome=TurnOutcomeStatus.FAILED,
+                        error_message="Model output was cut off at the output cap",
+                        **closing_facts("Model output was cut off at the output cap"),
+                    )
+                await discard_streamed_round(
+                    streamed_calls, "output cap reached", "output_truncated")
+                from deepseek_tui.engine import reminders
+
+                messages.append(reminders.reminder_message(
+                    reminders.OUTPUT_TRUNCATED,
+                    "Your previous response was cut off at the output cap, so it was discarded "
+                    "and none of it ran. Redo it in smaller steps: split a long file across "
+                    "several tool calls, and keep prose short.",
+                ))
+                continue
+            truncated_rounds = 0
             if not result.cancelled:
                 from deepseek_tui.server.agent_segments import assistant_thinking_text
 
@@ -3519,26 +3561,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     tool_calls=[],
                     tool_round_count=tool_round_count,
                 )
-            if delivery.active and result.error_message and not result.tool_calls:
-                from dataclasses import replace
-                from deepseek_tui.engine.events import TextDeltaEvent
-
-                answer = (
-                    "界面任务尚未完成。模型请求失败，无法继续核验和整理结果。"
-                    "已执行的操作及回执保留在本次记录中；恢复后需要重新观察界面再继续。"
-                    if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                    "The UI task is incomplete because the model request failed. "
-                    "Operations and receipts remain in this turn's history. "
-                    "Observe the interface again before continuing."
-                )
-                outcome = {"status": "blocked", "answer": answer,
-                           "evidence": sorted(delivery.evidence),
-                           "remaining": [result.error_message]}
-                message = Message.assistant(answer)
-                messages.append(message)
-                await self.handle.emit(TextDeltaEvent(text=answer))
-                return replace(result, assistant_message=message, task_outcome=outcome,
-                               tool_round_count=tool_round_count)
             if not result.tool_calls:
                 if self.handle.pause.paused or model_generation != self.handle.pause.generation:
                     round_idx -= 1
@@ -3561,50 +3583,46 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 if self.handle.has_pending_steers():
                     logger.info("turn_end_deferred_pending_steer")
                     continue
-                if delivery.active and delivery.outcome is None and not result.error_message:
-                    # Keep the last round for finalization.
-                    if not delivery.continue_nudged and round_idx + 1 < self.max_tool_round_trips:
-                        delivery.continue_nudged = True
-                        from deepseek_tui.engine import reminders
+                pending = facts.pending(self.tool_context.metadata)
+                if (pending and not facts.pending_reminded and not result.error_message
+                        and round_idx < self.max_tool_round_trips):
+                    # Once only: the model may handle it or report it, then the turn ends.
+                    facts.pending_reminded = True
+                    from deepseek_tui.engine import reminders
 
-                        messages.append(reminders.reminder_message(
-                            reminders.TASK_DELIVERY,
-                            "This round ended without a tool call while the task is still open. "
-                            "If you announced a next step, take it now with the tool call. If the "
-                            "task is finished or cannot progress, call finish_task."
-                        ))
-                        logger.info("task_delivery_continue_nudged")
-                        continue
-                    if not delivery.stop_reminded and round_idx < self.max_tool_round_trips:
-                        delivery.stop_reminded = True
-                        from deepseek_tui.engine import reminders
+                    messages.append(reminders.reminder_message(
+                        reminders.PENDING_STATE,
+                        "Still open at your stop: " + ", ".join(pending) + ". Resolve them "
+                        "if you can; otherwise tell the user what remains. Your work so far "
+                        "stands, and you may end the turn after this.",
+                    ))
+                    logger.info("pending_state_reminded pending=%s", pending)
+                    continue
+                stop_text = result.assistant_message.text_content() if result.assistant_message else ""
+                if (tool_round_count >= _SHORT_STOP_MIN_ROUNDS
+                        and len(stop_text.strip()) < _SHORT_STOP_MAX_CHARS
+                        and not facts.short_stop_checked and not result.error_message
+                        and round_idx < self.max_tool_round_trips):
+                    # The length is a fact; whether the work is done is the model's call.
+                    facts.short_stop_checked = True
+                    from deepseek_tui.engine import reminders
 
-                        messages.append(reminders.reminder_message(
-                            reminders.TASK_DELIVERY,
-                            "Finalization only: call finish_task once using evidence already collected. "
-                            "Do not perform more work or request additional tools. If the goal is not "
-                            "verified, use partial or blocked and state the remaining work. "
-                            "Do not invent results or treat opening a page/login as task completion."
-                            + (" cua_observe stays available only for the fresh observation "
-                               "finish_task requires after computer use."
-                               if delivery.cua_used else "")
-                        ))
-                        logger.info("task_delivery_stop_deferred")
-                        continue
-                    result = await incomplete_delivery("Structured task delivery was not supplied.")
+                    messages.append(reminders.reminder_message(
+                        reminders.SHORT_STOP,
+                        "That message is brief for a turn with this much work. If the request "
+                        "is not finished, or the message announces a next step, carry on now "
+                        "with tool calls. If it is finished, give the user the report: what "
+                        "was done, what was checked, what is left.",
+                    ))
+                    logger.info("short_stop_reminded rounds=%d", tool_round_count)
+                    continue
                 # Checklist turn-end gate: if the model is about to stop with
                 # open checklist items, hold this stop and inject a reminder
-                # that makes it face each one. Re-fires while the model keeps
-                # making progress, so a genuine "I'm done / won't do the rest"
-                # costs one extra round instead of looping.
-                gate_summary = self._next_checklist_gate_summary(
-                    fired=checklist_gate_fires,
-                    last_open=checklist_gate_last_open,
-                )
-                if gate_summary is not None and delivery.outcome is None:
-                    delivery.outcome = None
+                # that makes it face each one, once, so a genuine "I'm done /
+                # won't do the rest" costs one extra round instead of looping.
+                gate_summary = self._next_checklist_gate_summary(fired=checklist_gate_fires)
+                if gate_summary is not None:
                     checklist_gate_fires += 1
-                    checklist_gate_last_open = gate_summary
                     if _assistant_preface_text(result.assistant_message):
                         held_stop_result = result
                     from deepseek_tui.engine import reminders
@@ -3645,9 +3663,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
 
                     stop_decision = aggregate_hook_decision(stop_results)
                     if stop_decision.blocked:
-                        delivery.outcome = None
-                        delivery.stop_reminded = delivery.continue_nudged = False
-                        delivery.finalization_rounds = 0
                         stop_hook_active = True
                         stop_hook_fires += 1
                         reason = stop_decision.reason or "A Stop hook blocked ending the turn."
@@ -3669,18 +3684,10 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 if self.handle.pause.paused or model_generation != self.handle.pause.generation:
                     round_idx -= 1
                     continue
-                if delivery.active:
-                    logger.info("task_delivery_end status=%s",
-                                (delivery.outcome or {}).get("status", "error"))
-                return replace(result, tool_round_count=tool_round_count,
-                               task_outcome=delivery.outcome)
+                problems = [result.error_message] if result.error_message else []
+                return replace(result, **closing_facts(*problems))
 
             tool_round_count += 1
-            if not delivery.stop_reminded:
-                # The model acted after its nudge: a later announce-only stop gets its own
-                # nudge. Models that announce a step and take it in the next round would
-                # otherwise reach finalization with that step undone.
-                delivery.continue_nudged = False
 
             messages.append(self._build_tool_use_message(result.tool_calls))
             from deepseek_tui.server.metrics import now_ms as latency_now_ms
@@ -3724,7 +3731,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 consecutive_tool_error_steps = 0
 
             if self._accept_held_stop_after_tools(
-                held=held_stop_result is not None and not delivery.active,
+                held=held_stop_result is not None,
                 tool_calls=result.tool_calls,
                 tool_errors=tool_errors,
             ):
@@ -3732,7 +3739,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 from dataclasses import replace
 
                 assert held_stop_result is not None
-                return replace(held_stop_result, tool_round_count=tool_round_count)
+                return replace(held_stop_result, **closing_facts())
             if not self._is_checklist_batch(result.tool_calls):
                 held_stop_result = None
 
@@ -3753,25 +3760,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 retryable=False,
             )
         )
-        limit_answer = None
-        if delivery.active:
-            text = ("任务因工具调用轮数达到上限而停止，尚未完成核验。"
-                    "继续前请检查已收集的结果和未确认的操作。"
-                    if str(getattr(self, "reply_locale", "")).startswith("zh") else
-                    "Task stopped at the tool round-trip limit. Completion was not verified; "
-                    "inspect the collected results and unresolved operations before continuing.")
-            limit_answer = Message.assistant(text)
-            messages.append(limit_answer)
-            from deepseek_tui.engine.events import TextDeltaEvent
-
-            await self.handle.emit(TextDeltaEvent(text=text))
         return TurnResult(
-            assistant_message=limit_answer if delivery.active else result.assistant_message,
+            assistant_message=result.assistant_message,
             usage=result.usage,
             tool_calls=[],
-            task_outcome=({"status": "partial", "remaining": ["Tool round-trip limit exceeded"]}
-                          if delivery.active else None),
             outcome=TurnOutcomeStatus.FAILED,
             error_message="Tool round-trip limit exceeded",
-            tool_round_count=tool_round_count,
+            **closing_facts("Tool round-trip limit exceeded"),
         )

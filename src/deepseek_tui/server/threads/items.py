@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from deepseek_tui.engine.completion import without_completion_note
 from deepseek_tui.server.threads.models import (
     TurnItemKind,
     TurnItemLifecycleStatus,
@@ -132,6 +133,9 @@ def reconstruct_messages_from_turn(
             if isinstance(intent, dict) and intent.get("source") in UI_ONLY_MESSAGE_SOURCES:
                 # Written for the timeline by the narration service or a runtime
                 # template; the model never said it.
+                continue
+            text = without_completion_note(text, meta)
+            if not text:
                 continue
             messages.append(
                 Message(role=Role.ASSISTANT, content=[TextBlock(text=text)])
@@ -269,6 +273,44 @@ def reconstruct_messages_from_turns(
         else:
             messages.extend(turn_msgs)
     return messages
+
+
+def messages_from_transcript(store: RuntimeThreadStore, thread_id: str) -> list | None:
+    """The transcript's history plus whatever the store holds beyond it.
+
+    None means the log cannot speak for this thread: it is absent, names a turn
+    the store no longer has, or holds only a sync from before it covered turns.
+    """
+    from deepseek_tui.engine.transcript import read_transcript
+
+    state = read_transcript(store.transcript_path(thread_id))
+    if state is None or not state.turn_ids:
+        return None
+    turns = store.list_turns_for_thread(thread_id)
+    if not {turn.id for turn in turns}.issuperset(state.turn_ids):
+        return None
+    last = max(
+        (index for index, turn in enumerate(turns) if turn.id in state.turn_ids), default=-1
+    )
+    messages = state.messages()
+    # Turns the Engine never sent to a model: cancelled before the first request,
+    # or written while no engine held this thread.
+    for turn in turns[last + 1 :]:
+        if _turn_has_compaction_snapshot(store, turn):
+            return None
+        messages.extend(reconstruct_messages_from_turn(store, turn))
+    seen = {message.text_content() for message in messages}
+    for item in automation_result_items(store, thread_id):
+        pending = automation_result_message(item)
+        if pending.text_content() not in seen:
+            messages.append(pending)
+    return messages
+
+
+def load_thread_messages(store: RuntimeThreadStore, thread_id: str) -> list:
+    """Model history for a thread: the transcript, else a rebuild from items."""
+    messages = messages_from_transcript(store, thread_id)
+    return reconstruct_messages_from_turns(store, thread_id) if messages is None else messages
 
 
 # Exact tool names that mutate workspace source files. Substring matching

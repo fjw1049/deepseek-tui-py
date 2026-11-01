@@ -91,14 +91,14 @@ async def test_summary_lists_open_items() -> None:
 async def test_gate_stays_quiet_when_nothing_is_open() -> None:
     engine, ctx = _engine_with_context()
     await _write(ctx, [{"content": "A", "status": "completed"}])
-    assert engine._next_checklist_gate_summary(fired=0, last_open=None) is None
+    assert engine._next_checklist_gate_summary(fired=0) is None
 
 
 @pytest.mark.asyncio
 async def test_gate_fires_on_the_first_stop_attempt() -> None:
     engine, ctx = _engine_with_context()
     await _write(ctx, [{"content": "A", "status": "pending"}])
-    summary = engine._next_checklist_gate_summary(fired=0, last_open=None)
+    summary = engine._next_checklist_gate_summary(fired=0)
     assert summary is not None
     assert "#1 pending" in summary
 
@@ -108,31 +108,10 @@ async def test_gate_releases_when_the_block_changed_nothing() -> None:
     """A model that will not reconcile costs one extra round, not a livelock."""
     engine, ctx = _engine_with_context()
     await _write(ctx, [{"content": "A", "status": "pending"}])
-    first = engine._next_checklist_gate_summary(fired=0, last_open=None)
+    first = engine._next_checklist_gate_summary(fired=0)
     assert first is not None
     # Nothing moved since the block — honor the stop.
-    assert engine._next_checklist_gate_summary(fired=1, last_open=first) is None
-
-
-@pytest.mark.asyncio
-async def test_gate_refires_while_the_model_keeps_making_progress() -> None:
-    engine, ctx = _engine_with_context()
-    await _write(
-        ctx,
-        [
-            {"content": "A", "status": "pending"},
-            {"content": "B", "status": "pending"},
-        ],
-    )
-    first = engine._next_checklist_gate_summary(fired=0, last_open=None)
-    assert first is not None
-
-    await _update(ctx, "1", "completed")
-    second = engine._next_checklist_gate_summary(fired=1, last_open=first)
-    assert second is not None
-    assert second != first
-    assert "#2 pending" in second
-    assert "#1" not in second
+    assert engine._next_checklist_gate_summary(fired=1) is None
 
 
 def _checklist_update(item_id: str, status: str) -> ToolCall:
@@ -204,7 +183,7 @@ async def test_gate_stops_at_the_hard_cap_even_with_progress() -> None:
     await _write(ctx, [{"content": "A", "status": "pending"}])
     assert (
         engine._next_checklist_gate_summary(
-            fired=_CHECKLIST_GATE_MAX_FIRES, last_open="stale summary"
+            fired=_CHECKLIST_GATE_MAX_FIRES
         )
         is None
     )

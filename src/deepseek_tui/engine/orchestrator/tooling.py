@@ -7,11 +7,9 @@ interactive user-input waits.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from contextlib import nullcontext
-from dataclasses import replace
 from typing import Any
 
 from deepseek_tui.engine.context import compact_tool_result_for_context
@@ -21,6 +19,7 @@ from deepseek_tui.engine.dispatch import (
     is_mcp_tool,
     should_parallelize_tool_batch,
 )
+from deepseek_tui.engine import interventions
 from deepseek_tui.engine.tool_dedup import ToolCallDeduplicator
 from deepseek_tui.engine.ui_progress import UiProgress
 from deepseek_tui.engine.events import (
@@ -53,7 +52,7 @@ from deepseek_tui.tools.plan_mode import (
 )
 from deepseek_tui.protocol.messages import Message, ToolUseBlock
 from deepseek_tui.protocol.responses import ToolCall
-from deepseek_tui.surfaces import is_focus_call, is_task_call
+from deepseek_tui.surfaces import is_task_call
 from deepseek_tui.tools.approval import (
     ApprovalCacheStatus,
     ApprovalDecision,
@@ -84,6 +83,13 @@ def _allowed_tool_names(api_tools: list[dict[str, Any]]) -> set[str]:
         if isinstance(name, str) and name:
             names.add(_normalise_tool_call(name, {})[0])
     return names
+
+
+UNATTENDED_INPUT = (
+    "Nobody is watching this run, so no one can answer. Pick the most reasonable interpretation, "
+    "state it in your answer and continue; before anything irreversible, stop and report the "
+    "step that needs the user."
+)
 
 
 class ToolExecutionMixin:
@@ -158,22 +164,15 @@ class ToolExecutionMixin:
             api_tools = await self._get_tools_with_mcp()
         self._tool_dedup.begin_batch()
 
-        # Phase changes and delivery must not race other calls in the same response.
-        exclusive = {"finish_task", "request_task_tools", REQUEST_USER_INPUT_NAME}
+        # Waiting on the user must not race other calls in the same response.
+        exclusive = {REQUEST_USER_INPUT_NAME}
         if len(tool_calls) > 1 and any(c.name in exclusive for c in tool_calls):
             for call in tool_calls:
-                content = ("Not executed: task delivery, tool expansion and user input "
-                           "must be called alone.")
+                content = "Not executed: user input must be called alone."
                 await self.handle.emit(ToolResultEvent(tool_call_id=call.id, tool_name=call.name,
                                                       success=False, content=content))
                 results.append(Message.tool_result(call.id, content, is_error=True))
             return results
-
-        delivery = self.tool_context.metadata.get("task_delivery")
-        if (delivery and delivery.active and len(tool_calls) == 1
-                and tool_calls[0].name == "finish_task" and not delivery.stop_reminded):
-            # Even malformed submissions get only one bounded correction round.
-            delivery.stop_reminded = True
 
         try:
             # Build execution plans and check if batch can be parallelized.
@@ -275,6 +274,7 @@ class ToolExecutionMixin:
                 )
                 if decision.kind == "reuse":
                     content = self._tool_dedup.reuse_content(decision)
+                    interventions.record("dedup", tool_call.name, outcome="reused")
                     logger.info(
                         "tool_call_dedup_reuse name=%s tool_id=%s",
                         tool_call.name,
@@ -298,6 +298,7 @@ class ToolExecutionMixin:
                     continue
                 if decision.kind == "block":
                     content = self._tool_dedup.block_content(decision)
+                    interventions.record("dedup", tool_call.name, outcome="blocked")
                     logger.warning(
                         "tool_call_dedup_blocked name=%s streak=%d tool_id=%s",
                         tool_call.name,
@@ -333,6 +334,10 @@ class ToolExecutionMixin:
                                 duration_ms,
                             )
                             denied = f"Tool {tool_call.name} denied by approval policy"
+                            facts = self.tool_context.metadata.get("turn_facts")
+                            if facts:
+                                facts.record(tool_call.name, tool_call.arguments,
+                                             success=False, error=denied)
                             self._tool_dedup.record(decision.key, denied, is_error=True)
                             denied = self._tool_dedup.decorate_execute_content(decision, denied)
                             results.append(
@@ -430,56 +435,16 @@ class ToolExecutionMixin:
             }
         )
         from deepseek_tui.goal.tools import capture_goal_checklist
-        from deepseek_tui.tools.registry import ToolCapability
 
-        delivery = self.tool_context.metadata.get("task_delivery")
-        if (delivery and delivery.active and result.success
-                and result.metadata.get("task_evidence", True) and tool_call.name not in {
-            "finish_task", "request_task_tools", "request_user_input", "checklist",
-        }):
-            if tool_call.name != "browser_use" or tool_call.arguments.get("action") != "request_assistance":
-                evidence_ref = "tool:" + tool_call.id
-                delivery.remember_evidence(evidence_ref, result.metadata)
-                metadata = {**result.metadata, "evidence_ref": evidence_ref}
-                if isinstance(metadata.get("browser"), dict):
-                    browser = {**metadata["browser"]}
-                    browser["receipt"] = {
-                        **browser.get("receipt", {}), "evidence_ref": evidence_ref,
-                    }
-                    metadata["browser"] = browser
-                    result = replace(result, content=json.dumps(browser, ensure_ascii=False),
-                                     metadata=metadata)
-                else:
-                    result = replace(result, metadata=metadata)
+        facts = self.tool_context.metadata.get("turn_facts")
+        if facts:
+            facts.record(tool_call.name, tool_call.arguments, success=result.success,
+                         error=result.content or "")
 
         if tool_call.name == "checklist" and result.success:
             capture_goal_checklist(self.tool_context)
-        start = self.tool_context.metadata.get("goal_tool_starts", {}).pop(tool_call.id, None)
         goal = self.goal_service.snapshot()
         if goal is not None and self.tool_context.metadata.get("goal_turn_id") == goal.goal_id:
-            spec = (
-                self.tool_registry.get(tool_call.name)
-                if self.tool_registry.contains(tool_call.name) else None
-            )
-            args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-            mutates = bool(
-                spec is not None and ToolCapability.WRITES_FILES in spec.capabilities()
-                and not spec.is_read_only_for_input(args)
-            )
-            stable = False
-            if start is not None:
-                from deepseek_tui.goal.workspace import workspace_digest
-
-                digest = await asyncio.to_thread(
-                    workspace_digest, self.tool_context.working_directory
-                )
-                current = self.goal_service.snapshot()
-                if current is not None and current.goal_id == start[0]:
-                    self.goal_service.observe_workspace(digest)
-                    stable = (digest is not None and digest == start[1]
-                              and self.goal_service.snapshot().work_revision == start[2])
-            # Unknown tools cannot claim verification based solely on a success flag.
-            mutates = mutates or spec is None
             metadata = result.metadata or {}
             status = metadata.get("status")
             if isinstance(status, dict):
@@ -488,11 +453,10 @@ class ToolExecutionMixin:
                 status not in {"running", "queued", "pending", "cancelled"}
                 and not metadata.get("background")
             )
-            self.goal_service.record_tool_result(
-                tool_call.id, tool_call.name, args,
-                success=result.success and status not in {"failed", "error"},
-                mutates=mutates, finished=finished, verification=stable,
-                output=result.content or "",
+            self.goal_service.record_work(
+                tool_call.name,
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
+                finished=finished, output=result.content or "",
             )
         if result.success:
             self._mark_subagent_tool_result_consumed(
@@ -523,8 +487,6 @@ class ToolExecutionMixin:
             pressure_ratio=self._ingress_pressure_ratio(model),
             model_config=getattr(self, "_app_config", None),
         )
-        if result.metadata.get("evidence_ref") and tool_call.name != "browser_use":
-            output_for_context += "\nEvidence reference: " + result.metadata["evidence_ref"]
         if not result.images:
             self._tool_dedup.record(
                 decision.key,
@@ -562,20 +524,17 @@ class ToolExecutionMixin:
         emit_result: bool = True,
     ) -> None:
         """Shared error-path post-processing: emit, record, append."""
-        start = self.tool_context.metadata.get("goal_tool_starts", {}).pop(tool_call.id, None)
-        if start is not None:
-            from deepseek_tui.goal.workspace import workspace_digest
-
-            digest = await asyncio.to_thread(workspace_digest, self.tool_context.working_directory)
-            current = self.goal_service.snapshot()
-            if current is not None and current.goal_id == start[0]:
-                self.goal_service.observe_workspace(digest)
+        facts = self.tool_context.metadata.get("turn_facts")
+        if facts:
+            facts.record(tool_call.name, tool_call.arguments, success=False, error=error_msg)
+        if tool_call.name == "UpdateGoal":
+            interventions.record("goal_audit", error_msg, outcome="rejected")
         goal = self.goal_service.snapshot()
         if goal is not None and self.tool_context.metadata.get("goal_turn_id") == goal.goal_id:
-            self.goal_service.record_tool_result(
-                tool_call.id, tool_call.name,
+            self.goal_service.record_work(
+                tool_call.name,
                 tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
-                success=False, output=error_msg,
+                output=error_msg,
             )
         if emit_result:
             await self._emit_tool_failure(tool_call, error_msg)
@@ -754,43 +713,12 @@ class ToolExecutionMixin:
         )
         # A tool absent from the request catalog is rejected before touching runtime state.
         if tool_name not in _allowed_tool_names(api_tools):
+            interventions.record("tool_list", tool_call.name, outcome="not_in_catalog")
             raise ToolError(missing_tool_error_message(tool_call.name, api_tools))
         self._check_human_intervention()
-        goal = self.goal_service.snapshot()
-        goal_control = tool_call.name in {"CreateGoal", "GetGoal", "SetGoalBudget", "checklist"} or (
-            tool_call.name == "UpdateGoal"
-            and isinstance(tool_call.arguments, dict)
-            and tool_call.arguments.get("status") != "complete"
-        )
-        if goal is not None and goal.status.value != "complete" and not goal_control:
-            from deepseek_tui.goal.workspace import workspace_digest
-
-            digest = await asyncio.to_thread(workspace_digest, self.tool_context.working_directory)
-            current = self.goal_service.snapshot()
-            if current is not None and current.goal_id == goal.goal_id:
-                self.goal_service.observe_workspace(digest)
-                self.tool_context.metadata.setdefault("goal_tool_starts", {})[tool_call.id] = (
-                    goal.goal_id, digest, self.goal_service.snapshot().work_revision,
-                )
-                if (tool_call.name == "UpdateGoal" and digest is None
-                        and isinstance(tool_call.arguments, dict)
-                        and tool_call.arguments.get("status") == "complete"):
-                    raise ToolError(
-                        "Cannot verify workspace contents; retry after files are readable"
-                    )
-        delivery =self.tool_context.metadata.get("task_delivery")
-        if delivery:
-            if not delivery.allows(tool_name):
-                raise ToolError("Tool is outside this task's browser phase; "
-                                "request_task_tools with the task dependency first")
-            # Without finish_task in this catalog the turn could never be delivered.
-            if is_task_call(tool_name, tool_call.arguments) and "finish_task" in delivery.catalog:
-                delivery.active = True
-                if tool_name in {"browser_use", "browser_skill"}:
-                    delivery.browser_used = True
-                delivery.focused = delivery.focused or is_focus_call(tool_name, tool_call.arguments)
         if is_task_call(tool_name, tool_call.arguments) and (
                 blocked := self._ui_progress.blocked_content(tool_name)):
+            interventions.record("gate", "ui_no_progress", outcome="rejected")
             raise ToolError(blocked)
 
         hook_ctx = self._lifecycle_hook_context(
@@ -945,9 +873,18 @@ class ToolExecutionMixin:
             PATH_ACCESS_FINGERPRINT,
             approval_request_for_tool,
             path_access_prompt,
+            removal_prompt,
         )
 
         args = arguments if isinstance(arguments, dict) else None
+        removal = removal_prompt(tool, args, self.tool_context, self.exec_policy.approval_policy)
+        if removal is not None:
+            if await self._handle_approval_flow(tool_call, removal.request, use_cache=False):
+                interventions.record("guard", removal.denial, outcome="blocked")
+                return ToolResult(success=False, content=removal.denial)
+            facts = self.tool_context.metadata.get("turn_facts")
+            if facts:
+                facts.approved_removals.update(removal.paths)
         path_prompt = path_access_prompt(
             tool, args, self.tool_context, self.exec_policy.approval_policy
         )
@@ -1015,6 +952,9 @@ class ToolExecutionMixin:
         from deepseek_tui.tools.approval import NEVER_BLOCKED_PREFIX
         from deepseek_tui.tools.approval import enrich_approval_request
 
+        # It must reach a human and there is none: waiting would only run out the turn.
+        if approval_request.force_prompt and self.tool_context.metadata.get("unattended"):
+            return True
         fp_name = fingerprint_name if fingerprint_name is not None else tool_call.name
         fp_args = (
             fingerprint_arguments if fingerprint_arguments is not None else tool_call.arguments
@@ -1296,6 +1236,8 @@ class ToolExecutionMixin:
         """Emit UserInputRequiredEvent and block until TUI resolves."""
         from deepseek_tui.tools.user_input import validate_user_input_request
 
+        if self.tool_context.metadata.get("unattended"):
+            raise ToolError(UNATTENDED_INPUT)
         kind = input_data.get("kind", "information")
         if not isinstance(kind, str) or kind not in {"information", "decision", "action"}:
             raise ToolError("Unknown user input kind")
@@ -1306,8 +1248,9 @@ class ToolExecutionMixin:
         if kind == "action":
             if (self.mode or "agent") != "agent":
                 raise ToolError("Manual browser action is unavailable outside agent mode")
-            delivery = self.tool_context.metadata.get("task_delivery")
-            if delivery and "browser_use" not in delivery.catalog:
+            listed = getattr(self, "_active_api_tools", None)
+            if listed is not None and not any(
+                    (t.get("function") or t)["name"] == "browser_use" for t in listed):
                 raise ToolError("Browser assistance is unavailable under this tool profile")
             reason = input_data.get("reason")
             if (input_data.get("surface") != "browser"
@@ -1324,9 +1267,9 @@ class ToolExecutionMixin:
                 response = await request(str(thread_id), reason.strip())
             except (ValueError, RuntimeError) as exc:
                 raise ToolError(str(exc)) from exc
-            delivery = self.tool_context.metadata.get("task_delivery")
-            if delivery:
-                delivery.active = True
+            facts = self.tool_context.metadata.get("turn_facts")
+            if facts:
+                facts.browser_used = True
             return ToolResult(
                 content=json.dumps(response, ensure_ascii=False), success=response["success"]
             )
@@ -1373,8 +1316,6 @@ class ToolExecutionMixin:
             raise ToolError("Manual desktop action requires a non-empty reason")
         if (self.mode or "agent") != "agent" or "desktop" not in self._cua_surfaces():
             raise ToolError("Desktop assistance is unavailable: computer use is not enabled here")
-        if self.tool_context.metadata.get("unattended"):
-            raise ToolError("Nobody is watching this run; report the step that needs the user")
         session = getattr(self, "_cua_session", None)
         if session is None:
             raise ToolError("Computer use is not ready for desktop assistance")

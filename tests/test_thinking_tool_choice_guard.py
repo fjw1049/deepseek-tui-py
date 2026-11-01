@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-import pytest
 
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.protocol.messages import Message, MessageRequest
@@ -88,30 +87,3 @@ class _CaptureClient(DeepSeekClient):
         )
 
 
-@pytest.mark.asyncio
-async def test_narration_request_disables_thinking() -> None:
-    """Narration must be safe on thinking-capable endpoints of any provider."""
-    from deepseek_tui.server.phase_bridge import (
-        IntentBundle,
-        compute_narration_plan,
-    )
-
-    client = _CaptureClient()
-    bundle = IntentBundle(
-        user_goal="goal",
-        phase="explore",
-        tool_observations=(),
-        working_hypothesis=(),
-        next_intent="read files",
-        locale="zh",
-    )
-    plan = await compute_narration_plan(
-        client, model="deepseek-v4-flash", bundle=bundle, timeout_s=5.0
-    )
-    assert plan is not None and plan.publish
-    assert client.captured is not None
-    assert client.captured.reasoning_effort == "off"
-    assert client.captured.tool_choice == {
-        "type": "tool",
-        "name": "narration_emit",
-    }

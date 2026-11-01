@@ -27,7 +27,7 @@ from deepseek_tui.server.threads import (
     TurnItemLifecycleStatus,
     TurnItemRecord,
     TurnRecord,
-    reconstruct_messages_from_turns,
+    load_thread_messages,
     tool_kind_for_name,
 )
 from deepseek_tui.utils import read_json_or_none, summarize_text, write_json_atomic
@@ -169,7 +169,7 @@ def export_thread_to_tui_session(
     session_id: str | None = None,
 ) -> tuple[Path, str]:
     """Write a Workbench thread back to a TUI-compatible session JSON file."""
-    messages: list[Message] = reconstruct_messages_from_turns(store, thread.id)
+    messages: list[Message] = load_thread_messages(store, thread.id)
     if not messages:
         raise ValueError("thread has no exportable messages")
 

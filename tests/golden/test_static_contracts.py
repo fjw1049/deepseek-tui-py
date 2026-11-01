@@ -11,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from deepseek_tui.engine.prompts import (
-    LONG_SESSION_REMINDER,
     AppMode,
     build_system_prompt,
     render_plugin_rules_context,
@@ -43,17 +42,6 @@ def test_compaction_is_not_the_models_job(tmp_path: Path) -> None:
     for mode in (AppMode.AGENT, AppMode.YOLO):
         prompt = build_system_prompt(mode=mode, workspace=tmp_path, project_context_enabled=False)
         assert "do not wrap up early" in prompt, mode
-
-
-def test_long_session_reminder_covers_core_disciplines(tmp_path: Path) -> None:
-    """The drift reminder re-asserts the disciplines that decay."""
-    for needle in (
-        "LATEST request",
-        "in_progress",
-        "Action Safety",
-        "Do not mention this reminder",
-    ):
-        assert needle in LONG_SESSION_REMINDER, needle
 
 
 def test_reminder_authority_is_bounded(tmp_path: Path) -> None:

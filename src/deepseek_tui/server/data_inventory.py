@@ -340,6 +340,8 @@ def clear_conversation_history(
         store.delete_item(item.id)
     for path in (store.root / "events").glob("*.jsonl"):
         path.unlink(missing_ok=True)
+    for path in (store.root / "transcripts").glob("*.jsonl"):
+        path.unlink(missing_ok=True)
     for path in (store.root / "checkpoints").glob("*.json"):
         path.unlink(missing_ok=True)
 

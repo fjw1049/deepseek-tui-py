@@ -11,12 +11,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+from deepseek_tui.engine import interventions
 from deepseek_tui.engine.capacity import (
     L0_HARD_CLEAR_MIN_RECLAIM,
     MAX_WORKING_SET_PATHS,
     CompactionResult,
     ToolPruneConfig,
+    _estimate_tokens_for_message,
     compact_messages_safe,
+    fold_superseded_observations,
     prune_old_tool_results,
     should_l0_prune,
 )
@@ -122,65 +125,6 @@ class SessionMaintenanceMixin:
             )
         except Exception:  # noqa: BLE001
             logger.debug("checkpoint save failed", exc_info=True)
-
-    # Long-session drift reminder: first injection once the context passes
-    # _DRIFT_REMINDER_FIRST_RATIO of the window, then again after each
-    # further _DRIFT_REMINDER_STEP_RATIO of growth (0.4 → 0.6 → 0.8).
-    _DRIFT_REMINDER_FIRST_RATIO = 0.40
-    _DRIFT_REMINDER_STEP_RATIO = 0.20
-
-    def _maybe_inject_long_session_reminder(
-        self,
-        messages: list[Message],
-        model: str,
-        *,
-        system_prompt: str | None = None,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> None:
-        """Append a short values reminder when the session grows long.
-
-        Counters attention decay on the distant system prefix (the
-        ``long_conversation_reminder`` pattern): a ~150-token re-anchor of
-        the load-bearing disciplines, injected as a user-role
-        ``<system-reminder>`` at the context tail. Earlier copies are never
-        removed (prefix-cache friendly); compaction/rewrite archives them
-        naturally, and the tracker resets when the context shrinks past the
-        last injection point.
-        """
-        from deepseek_tui.engine import reminders
-        from deepseek_tui.engine.context_pressure import measure_context_pressure
-        from deepseek_tui.engine.prompts import LONG_SESSION_REMINDER
-
-        pressure = measure_context_pressure(
-            model,
-            messages,
-            real_input_tokens=self.last_real_input_tokens,
-            real_input_estimate=getattr(self, "last_real_input_estimate", 0),
-            system_prompt=system_prompt,
-            tools=tools,
-            model_config=getattr(self, "_app_config", None),
-        )
-        if pressure.tokens < int(pressure.window * self._DRIFT_REMINDER_FIRST_RATIO):
-            return
-        last = getattr(self, "_drift_reminder_tokens", 0)
-        if last > pressure.tokens:
-            # Context shrank (compaction/rewrite/cycle) past the last
-            # injection point — the old copy was archived, start over.
-            last = 0
-        step = int(pressure.window * self._DRIFT_REMINDER_STEP_RATIO)
-        if last and pressure.tokens - last < step:
-            return
-        self._drift_reminder_tokens = pressure.tokens
-        logger.info(
-            "long_session_reminder_injected tokens=%d window=%d",
-            pressure.tokens,
-            pressure.window,
-        )
-        messages.append(
-            reminders.reminder_message(
-                reminders.LONG_SESSION_DRIFT, LONG_SESSION_REMINDER
-            )
-        )
 
     async def _auto_persist_session(self) -> None:
         """Best-effort standalone-TUI persistence in the canonical thread store."""
@@ -298,6 +242,14 @@ class SessionMaintenanceMixin:
         result = await self._run_compaction(messages)
         return result.messages, result.summary_prompt
 
+    def _fold_browser_observations(self, messages: list[Message]) -> None:
+        reclaimed = fold_superseded_observations(messages)
+        if reclaimed:
+            interventions.record(
+                "prune", "superseded_observations", outcome="folded",
+                tokens_affected=reclaimed // 4,
+            )
+
     def _maybe_l0_prune_tool_results(
         self,
         messages: list[Message],
@@ -355,6 +307,7 @@ class SessionMaintenanceMixin:
             if pressure.ratio >= self.compaction_config.rewrite_ratio
             else L0_HARD_CLEAR_MIN_RECLAIM
         )
+        before_tokens = sum(map(_estimate_tokens_for_message, messages))
         changed = prune_old_tool_results(
             messages,
             config=ToolPruneConfig(
@@ -365,6 +318,12 @@ class SessionMaintenanceMixin:
             mutate_before_index=boundary,
         )
         if changed:
+            interventions.record(
+                "prune",
+                "l0_tool_results",
+                outcome=f"changed={changed}",
+                tokens_affected=before_tokens - sum(map(_estimate_tokens_for_message, messages)),
+            )
             logger.info(
                 "l0_tool_prune changed=%d boundary=%d ratio=%.2f min_reclaim=%d",
                 changed,
@@ -584,6 +543,7 @@ class SessionMaintenanceMixin:
 
         self._cycle_n += 1
         self._cycle_started_at = int(time.time())
+        interventions.record("compaction", "cycle", outcome="compacted")
         logger.info(
             "cycle_advanced new_cycle=%d seed_msgs=%d briefing_tokens=%d",
             self._cycle_n,

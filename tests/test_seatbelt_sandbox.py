@@ -230,12 +230,7 @@ class TestSeatbeltIntegration:
             "echo hacked >> .deepseek/config.toml",
             workspace,
         )
-        # Prefer host-side write guard (shell_write_denied); seatbelt is a
-        # second line of defense and may not run when the guard blocks first.
-        denied = metadata.get("shell_write_denied") is True or (
-            metadata.get("sandboxed") is True and metadata.get("sandbox_denied") is True
-        )
-        assert denied
+        assert metadata.get("sandboxed") is True and metadata.get("sandbox_denied") is True
         assert "hacked" not in config_path.read_text(encoding="utf-8")
 
     @pytest.mark.asyncio

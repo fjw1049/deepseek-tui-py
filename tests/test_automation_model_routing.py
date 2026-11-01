@@ -338,26 +338,7 @@ async def test_helper_requests_use_the_conversation_provider(setup, monkeypatch)
     )
     assert requests[0].model == "unlisted-helper-model"
 
-    async def narrate(actual_client, config, **kwargs):
-        assert actual_client is client
-        assert config.provider == "endpoint-secondary"
-        assert config.effective_provider_config().model == "unlisted-helper-model"
-        return "phase summary"
-
-    monkeypatch.setattr("deepseek_tui.server.threads.manager.compute_narration_display", narrate)
-    assert (
-        await setup.threads._compute_phase_bridge(
-            thread_id=thread.id,
-            user_prompt="Read README",
-            state=object(),
-            segment=object(),
-            tool_calls=(),
-            recent_tool_results=[],
-            locale="en",
-        )
-        == "phase summary"
-    )
-    assert selected == ["endpoint-secondary", "endpoint-secondary"]
+    assert selected == ["endpoint-secondary"]
 
 
 @pytest.mark.parametrize("protocol", ["openai", "anthropic"])

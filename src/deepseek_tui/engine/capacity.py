@@ -6,6 +6,7 @@ compaction planning, summary creation, and L0 tool-result pruning.
 
 from __future__ import annotations
 
+import json
 import asyncio
 import logging
 import re
@@ -857,6 +858,63 @@ def prune_old_tool_results(
 
             add_documentation_reminder(messages)
     return changed
+
+
+def _observation_view(content: str) -> tuple[Any, ...] | None:
+    """What a browser result shows, or None when it cannot be replaced by a newer one."""
+    try:
+        data = json.loads(content)
+    except ValueError:
+        return None
+    observation = data.get("observation") if isinstance(data, dict) else None
+    if not isinstance(observation, dict) or not observation.get("url") or observation.get("details"):
+        return None
+    # Pages of one long document and scoped reads are different content at the same URL.
+    return tuple(observation.get(key) for key in (
+        "url", "frame_id", "scope_selector", "text_offset", "element_offset"))
+
+
+def fold_superseded_observations(
+    messages: list[Message], *, min_reclaim: int = L0_HARD_CLEAR_MIN_RECLAIM,
+) -> int:
+    """Replace browser observations a newer one of the same view has superseded.
+
+    Pruning by age never reaches inside a single long turn, where a UI task
+    re-observes one page dozens of times. Other pages stay whole: what a task
+    read on page 1 is not in the observation of page 2. Returns chars reclaimed.
+    """
+    from deepseek_tui.protocol.messages import ToolResultBlock, ToolUseBlock
+
+    names = {block.id: block.name for message in messages for block in message.content
+             if isinstance(block, ToolUseBlock)}
+    seen: set[tuple[Any, ...]] = set()
+    stale: dict[str, str] = {}
+    reclaim = 0
+    for message in reversed(messages):
+        for block in reversed(message.content):
+            if (not isinstance(block, ToolResultBlock)
+                    or names.get(block.tool_use_id) != "browser_use"):
+                continue
+            view = _observation_view(block.content or "")
+            if view is None:
+                continue
+            if view in seen:
+                note = (f"[Earlier observation of {view[0]}; a newer one of this view follows. "
+                        "Observe again if you need it.]")
+                stale[block.tool_use_id] = note
+                reclaim += max(0, len(block.content) - len(note))
+            seen.add(view)
+    # A rewrite re-bills the prefix after it, so it waits until it is worth one.
+    if reclaim < min_reclaim:
+        return 0
+    for index, message in enumerate(messages):
+        if any(isinstance(b, ToolResultBlock) and b.tool_use_id in stale for b in message.content):
+            messages[index] = message.model_copy(update={"content": [
+                b.model_copy(update={"content": stale[b.tool_use_id]})
+                if isinstance(b, ToolResultBlock) and b.tool_use_id in stale else b
+                for b in message.content
+            ]})
+    return reclaim
 
 
 def should_l0_prune(

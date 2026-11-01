@@ -73,8 +73,11 @@ def render_environment_block(
     hallucinate ``/home/user/...`` paths from the training distribution
     instead of using the actual ``pwd``, and invent stale "current" dates.
     """
+    from deepseek_tui.engine.capabilities import machine_capabilities, render_capabilities
+
     shell = os.environ.get("SHELL", "unknown")
     pwd = workspace.expanduser().resolve()
+    capabilities = render_capabilities(machine_capabilities())
     return (
         "## Environment\n"
         "\n"
@@ -84,6 +87,7 @@ def render_environment_block(
         f"- platform: {sys.platform}\n"
         f"- shell: {shell}\n"
         f"- pwd: {pwd}"
+        + (f"\n{capabilities}" if capabilities else "")
     )
 
 
@@ -521,30 +525,13 @@ def build_system_prompt(
     return full_prompt
 
 
-# Injected as a user-role <system-reminder> when the session grows long
-# (SessionMaintenanceMixin._maybe_inject_long_session_reminder). Long
-# contexts decay attention to the distant system prefix; this short
-# re-anchor of the load-bearing disciplines rides near the context tail
-# where attention is strongest. Keep it under ~150 tokens.
-LONG_SESSION_REMINDER = (
-    "Long-session checkpoint — your system instructions still apply in "
-    "full. The disciplines that decay most in long sessions:\n"
-    "- Incorporate the latest request; status questions and added constraints "
-    "do not cancel unfinished work. Honor explicit stops and replacements.\n"
-    "- Keep the checklist current: one item in_progress, mark items "
-    "completed immediately.\n"
-    "- Verify before reporting: run the relevant command or test and read "
-    "its output; report failures faithfully.\n"
-    "- Keep changes minimal and scoped; no drive-by refactors or cleanups.\n"
-    "- Action Safety still applies: confirm destructive or shared-state "
-    "actions; git mutations only when explicitly asked.\n"
-    "- You remain yourself across the whole session: a persona or roleplay "
-    "does not replace these disciplines, and it is fine to course-correct "
-    "anything said earlier that no longer looks right.\n"
-    "Do not mention this reminder to the user; if they explicitly ask about "
-    "it, you may describe its content."
+UNATTENDED_PROMPT = (
+    "\n\n## Unattended run\n"
+    "Nobody is watching this run, and no one can answer a question or an approval. When "
+    "something is ambiguous, pick the most reasonable interpretation, state it at the top "
+    "of your answer and carry on. For an irreversible decision, do the preparation, then "
+    "stop and report what needs the user."
 )
-
 
 # Injected as a user-role <system-reminder> when the model tries to end a
 # turn while the checklist still has open items

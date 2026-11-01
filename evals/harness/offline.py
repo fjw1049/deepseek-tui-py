@@ -253,15 +253,3 @@ async def run_compaction_state(
         },
         evidence=[f"messages_after_second_compaction={len(messages)}"],
     )
-
-
-async def run_completion_evidence(
-    case: EvalCase, _context: HarnessContext
-) -> EvalObservation:
-    return EvalObservation(
-        data={
-            "assistant_text": str(case.input.get("assistant_text", "")),
-            "evidence": dict(case.input.get("evidence", {})),
-        },
-        evidence=["completion truth derived from structured execution evidence"],
-    )

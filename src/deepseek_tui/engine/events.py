@@ -44,7 +44,9 @@ class ToolCallEvent:
 
 @dataclass(frozen=True, slots=True)
 class ModelRequestInterruptedEvent:
-    """Close streamed fragments when takeover discards a model request."""
+    """Close streamed fragments when a model request is discarded."""
+
+    reason: str = "human_takeover"
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +167,8 @@ class TurnCompleteEvent:
     running_subagents: int = 0
     running_tasks: int = 0
     task_outcome: dict[str, object] | None = None
+    # Facts rendered below the final answer; never part of model history.
+    completion_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +231,17 @@ class PluginMountEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessInterventionEvent:
+    """See ``engine.interventions``: the harness acted inside the model's loop."""
+
+    kind: str
+    reason: str
+    outcome: str
+    round_idx: int
+    tokens_affected: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class SessionStartedEvent:
     session_id: str
 
@@ -261,6 +276,7 @@ EngineEvent = (
     | ModeChangedEvent
     | GoalUpdatedEvent
     | PluginMountEvent
+    | HarnessInterventionEvent
     | SessionStartedEvent
     | SessionEndedEvent
 )

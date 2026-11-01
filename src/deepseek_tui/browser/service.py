@@ -26,7 +26,14 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    model_validator,
+)
 
 from deepseek_tui.browser.input import BrowserInput
 from deepseek_tui.browser.observation import (
@@ -39,7 +46,7 @@ from deepseek_tui.browser.observation import (
     target,
     target_state,
 )
-from deepseek_tui.browser.permissions import is_loopback
+from deepseek_tui.browser.permissions import NAVIGATION_ACTIONS, is_loopback, local_page_allowed
 
 # Identity of the focused editable field and its record scope, without its contents.
 FOCUSED_FIELD = (
@@ -225,7 +232,7 @@ class BrowserAction(BaseModel):
                        "input_value_equals", "checked_equals", "selected_equals"] | None = None
 
     @model_validator(mode="after")
-    def validate_action(self) -> BrowserAction:
+    def validate_action(self, info: ValidationInfo) -> BrowserAction:
         if self.include_editable and (
             self.action not in {"observe", "check_text", "wait"}
             or not (self.selector or (self.action == "observe" and self.scope_ref))
@@ -264,7 +271,13 @@ class BrowserAction(BaseModel):
             key_event(self.key)
         if self.action == "open" or (self.action == "new_tab" and self.url):
             parsed = urlsplit(self.url)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            if parsed.scheme == "file":
+                # Only callers that name a workspace can open files; the model tool does.
+                if not local_page_allowed(self.url, (info.context or {}).get("local_root")):
+                    raise ValueError("file:// pages must be inside the workspace")
+            elif self.url != "about:blank" and (
+                parsed.scheme not in {"http", "https"} or not parsed.hostname
+            ):
                 raise ValueError("Only http/https pages can be opened")
             if parsed.username or parsed.password:
                 raise ValueError("Credentials in URLs are not supported")
@@ -944,7 +957,11 @@ class BrowserService:
         saved = {"success": response["success"], "content": str(response.get("content", ""))[:2000],
                  "receipt": dict(receipt)}
         run.operations[action_id] = saved
-        if receipt["execution"] == "unknown":
+        # Loading a page again settles a timed-out navigation, and filling a field again
+        # replaces its value; holding either for human review would lock the page for a
+        # run with nobody there to review.
+        if (receipt["execution"] == "unknown"
+                and receipt.get("action") not in {*NAVIGATION_ACTIONS, "fill"}):
             run.unresolved[action_id] = dict(receipt)
         while len(run.operations) > 80:
             expired = next((key for key in run.operations if key not in run.unresolved), None)
@@ -1529,7 +1546,7 @@ class BrowserService:
         run.log.append({"action": action.action, "success": False, **receipt})
         run.log[:] = run.log[-80:]
         guidance = {
-            "missing_observation_id": "Copy observation_id from the returned observation before retrying; the action was not executed.",
+            "missing_observation_id": "No page has been observed yet: call observe first; the action was not executed.",
             "target_obscured": "Inspect and dismiss the overlay using its own observed controls; do not click through it.",
             "target_scroll_only": "scroll_containers refs only accept scroll; use a ref from elements for other actions.",
             "screenshot_pixels_changed": "Pixels around the target point changed. Prefer an observed element ref/selector on dynamic pages; if none is available, inspect a fresh screenshot or request manual help.",
@@ -1707,7 +1724,11 @@ class BrowserService:
                 raise ValueError("Video is already recording")
             if (action.action in TARGET_ACTIONS and require_observation
                     and not action.chooser_id and not action.observation_id):
-                return await self._reject_action(run, action, "missing_observation_id")
+                # Identity checks below still reject it if the page has moved on.
+                if not run.latest_observation:
+                    return await self._reject_action(run, action, "missing_observation_id")
+                action = action.model_copy(
+                    update={"observation_id": run.latest_observation["observation_id"]})
             if action.action in TARGET_ACTIONS and not (
                 require_observation or action.observation_id
             ) and (action.ref or action.selector or action.action in {

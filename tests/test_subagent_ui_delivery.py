@@ -33,16 +33,9 @@ def desktop(monkeypatch, tmp_path):
     return tool
 
 
-async def test_child_requires_delivery_and_pauses_a_dead_loop(tmp_path, desktop):
+async def test_child_ends_on_its_report_and_pauses_a_dead_loop(tmp_path, desktop):
     clients = []
-    scripts = [call("cua_js", f"look{i}", code=f"observe {i}") for i in range(10)]
-    scripts += [
-        REPORT,  # Summary alone cannot bypass the UI contract.
-        call("finish_task", "invalid", status="completed", answer="Done.", evidence=[], remaining=[]),
-        call("finish_task", "finished", status="completed", answer="Window observed.",
-             evidence=["tool:look8"], remaining=[]),
-        REPORT,
-    ]
+    scripts = [call("cua_js", f"look{i}", code=f"observe {i}") for i in range(10)] + [REPORT]
     snap = await _run(scripts, tmp_path, clients)
     assert snap.status.kind == SubAgentStatusKind.COMPLETED
     assert desktop.calls == 9  # the first capture, then STALL_STREAK repeats; look9 is refused
@@ -50,35 +43,31 @@ async def test_child_requires_delivery_and_pauses_a_dead_loop(tmp_path, desktop)
                 for m in r.messages for b in m.content]
     assert any("may indicate stalled progress" in text for text in contents)
     assert any("Not executed: Further CUA code is paused" in text for text in contents)
-    assert any("Completed requires evidence" in text for text in contents)
-    assert '"status": "completed"' in snap.result
-    assert "tool:look8" in snap.result
     assert clients[0].calls == len(scripts)
 
 
-async def test_child_out_of_budget_delivers_unverified_partial(tmp_path, monkeypatch, desktop):
+async def test_child_out_of_budget_reports_it_as_a_fact(tmp_path, monkeypatch, desktop):
     monkeypatch.setattr("deepseek_tui.tools.subagent.loop.DEFAULT_MAX_STEPS", 3)
-    snap = await _run([call("cua_js", "look", code="observe"), REPORT], tmp_path, [])
+    scripts = [call("cua_js", f"look{i}", code=f"observe {i}") for i in range(3)] + [REPORT]
+    snap = await _run(scripts, tmp_path, [])
     assert snap.status.kind == SubAgentStatusKind.COMPLETED
     assert snap.max_steps_reached
     assert snap.task_outcome["status"] == "partial"
-    assert snap.task_outcome["evidence"] == []
-    assert "Checked 1 desktop window." in snap.result  # what the child wrote still reaches the parent
+    assert snap.result.startswith("---")  # no stray blank lines when the child wrote nothing
+    assert "Step budget exhausted" in snap.result
 
 
-async def test_child_reports_remaining_work_from_partial_delivery(tmp_path, desktop):
+async def test_parent_reads_a_childs_unresolved_failure(tmp_path, monkeypatch, desktop):
     snap = await _run([
-        call("cua_js", "look", code="observe"),
-        call("finish_task", "partial", status="partial", answer="Waiting for permission.",
-             evidence=["tool:look"], remaining=["User must grant access"]),
+        call("exec_shell", "bad", command="false"),
         REPORT,
     ], tmp_path, [])
     assert snap.status.kind == SubAgentStatusKind.COMPLETED
-    assert '"status": "partial"' in snap.result
-    assert "User must grant access" in snap.result
+    assert snap.task_outcome["status"] == "partial"
+    assert "exec_shell false" in snap.result
 
 
-async def test_structured_child_cannot_bypass_delivery_and_preserves_partial_status(tmp_path, desktop):
+async def test_structured_child_keeps_partial_status_through_store_and_payload(tmp_path, desktop):
     import asyncio
     from dataclasses import replace
 
@@ -92,22 +81,18 @@ async def test_structured_child_cannot_bypass_delivery_and_preserves_partial_sta
     agent.output_schema = {"type": "object", "properties": {"count": {"type": "integer"}},
                            "required": ["count"]}
     runtime.client = _ScriptedClient([
-        call("cua_js", "look", code="observe"),
-        call("structured_output", "early", count=0),
-        call("finish_task", "blocked", status="blocked", answer="Permission needed.",
-             evidence=[], remaining=["Grant access"]),
+        call("exec_shell", "bad", command="false"),
         call("structured_output", "final", count=0),
     ])
     try:
         result = await run_subagent_loop(agent, runtime, asyncio.Event())
-        assert runtime.client.calls == 4
         assert result.structured == {"count": 0}
-        assert result.task_outcome["status"] == "blocked"
+        assert result.task_outcome["status"] == "partial"
         snap = replace(agent.snapshot(), result=result.text, structured=result.structured,
                        structured_received=True, task_outcome=result.task_outcome)
         payload = build_completion_payload(snap)
-        assert payload.startswith("UI task blocked:")
-        assert '"task_outcome"' in payload and "Grant access" in payload
+        assert payload.startswith("Partial: exec_shell false")
+        assert '"task_outcome"' in payload
         agent.task_outcome = result.task_outcome
         restored = restore_agent(agent_record(agent), tmp_path, "deepseek-chat")
         assert restored.task_outcome == result.task_outcome

@@ -173,10 +173,7 @@ async def test_engine_warns_then_pauses_a_dead_loop_until_the_next_turn(tmp_path
     client = ScriptedClient([
         *(ToolCall(id=f"c{i}", name="cua_js", arguments={"code": f"click {i}"})
           for i in range(attempts)),
-        ToolCall(id="finish", name="finish_task", arguments={
-            "status": "blocked", "answer": "The window never responded.", "evidence": [],
-            "remaining": ["The window shows nothing"],
-        }),
+        "The window never responded.",
     ])
     engine = await Engine.create(
         handle=EngineHandle(), client=client, working_directory=tmp_path,
@@ -196,14 +193,11 @@ async def test_engine_warns_then_pauses_a_dead_loop_until_the_next_turn(tmp_path
         assert "paused until the person acts" in contents[f"c{STALL_STREAK}"]
         assert tool.calls == STALL_STREAK + 1  # the first capture, then the repeats
         assert "Not executed" in contents[f"c{STALL_STREAK + 1}"]
-        assert result.task_outcome["status"] == "blocked"
+        assert result.task_outcome["status"] == "partial"
         # The next turn starts with a clean history: the same screen is new again.
         client.replies = iter([
             ToolCall(id="again", name="cua_js", arguments={"code": "look"}),
-            ToolCall(id="done", name="finish_task", arguments={
-                "status": "completed", "answer": "Seen.", "evidence": ["tool:again"],
-                "remaining": [],
-            }),
+            "Seen.",
         ])
         await engine._run_conversation([Message.user("Look again")], "test", "sys", None)
         assert tool.calls == STALL_STREAK + 2

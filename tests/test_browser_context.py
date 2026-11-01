@@ -24,6 +24,39 @@ def test_navigation_controls_leave_room_for_document_text():
     assert observation['next_element_offset'] == len(observation['elements'])
 
 
+def test_model_sees_no_repeating_backend_fields():
+    from deepseek_tui.browser.context import project_result
+
+    data = {
+        "success": True, "timings": {"total_ms": 1}, "artifact": None,
+        "history": [{"action": str(i)} for i in range(8)],
+        "receipt": {"action_id": "a", "execution": "executed", "effect": "unchecked",
+                    "before_observation_id": "old", "after_observation_id": "obs"},
+        "observation": {
+            "observation_id": "obs", "text": "", "elements": [], "url": "http://x/", "title": "",
+            "document_id": "d", "frame_document_id": None, "capabilities": {"oopif": True},
+            "truncated": False, "next_text_offset": None, "frames": [], "text_offset": 0,
+        },
+    }
+    output = json.loads(project_result(data, 18000))
+    assert output["receipt"] == {"execution": "executed", "effect": "unchecked"}
+    assert [h["action"] for h in output["history"]] == ["5", "6", "7"]
+    assert "timings" not in output
+    observation = output["observation"]
+    assert not {"document_id", "capabilities", "truncated", "frames", "text_offset"} & set(observation)
+    # What the model acts on survives even when empty.
+    assert observation["observation_id"] == "obs"
+    assert observation["elements"] == [] and observation["text"] == ""
+
+
+def test_receipt_keeps_identity_of_an_unconfirmed_action():
+    from deepseek_tui.browser.context import project_result
+
+    data = {"success": False, "receipt": {"action_id": "a", "execution": "unknown"},
+            "observation": {"observation_id": "obs", "text": "", "elements": []}}
+    assert json.loads(project_result(data, 18000))["receipt"]["action_id"] == "a"
+
+
 @pytest.mark.parametrize("budget", [6000, 12000, 36000])
 @pytest.mark.parametrize("branch", ["status", "scope", "unknown"])
 def test_every_response_branch_obeys_budget(budget, branch):

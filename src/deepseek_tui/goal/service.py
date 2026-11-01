@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import shlex
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -22,7 +21,6 @@ from deepseek_tui.goal.state import (
 )
 from deepseek_tui.goal.types import (
     ALLOWED_GOAL_MODES,
-    MAX_UNRESOLVED_FAILURES,
     GOAL_TOOL_NAMES,
     ContinuationDecision,
     GoalActor,
@@ -53,7 +51,6 @@ class GoalService:
         self._turn_pending_work = False
         self.control_epoch = 0
         self.changed = asyncio.Event()
-        self._workspace_digest: str | None = None
 
     @property
     def state(self) -> GoalState | None:
@@ -70,7 +67,6 @@ class GoalService:
 
     def restore(self, goal: dict[str, Any] | None, queue: object = None) -> None:
         self.control_epoch += 1
-        self._workspace_digest = None
         self.changed.set()
         self._state = state_from_dict(goal)
         self._queue = load_queue(queue)
@@ -117,7 +113,6 @@ class GoalService:
             candidate.requirements.append(
                 {"id": "criterion", "content": candidate.completion_criterion}
             )
-        self._workspace_digest = None
         self._state = candidate
         self._turn_counted = False
         self._turn_work_calls = 0
@@ -155,8 +150,6 @@ class GoalService:
             raise GoalError("user_controlled", "Only the user can resume a goal; use /goal resume.")
         self.assert_mode_allows_run(mode)
         state = self._require()
-        if state.evidence_overflow:
-            raise GoalError("evidence_overflow", "Review the transcript and replace this goal; its evidence index overflowed")
         if state.status is GoalStatus.COMPLETE and self._queue.peek_next() is not None:
             item = self._queue.peek_next()
             snapshot = self.create(item.objective, mode=mode, actor=actor, queue_item_id=item.item_id)
@@ -191,11 +184,8 @@ class GoalService:
         self,
         reason: str | None = None,
         actor: GoalActor = GoalActor.MODEL,
-        *,
-        evidence: object = None,
-        audit: object = None,
     ) -> tuple[GoalSnapshot, GoalQueueItem | None]:
-        self.validate_completion(reason, evidence, audit)
+        self.validate_completion()
         state = self._state
         if state is None or state.status is not GoalStatus.ACTIVE:
             raise GoalError("not_found", "No active goal")
@@ -221,7 +211,7 @@ class GoalService:
             raise GoalError("status_invalid", "Only a completed goal can be reopened")
         # A reopened goal must be checked again against the current workspace.
         self.discard_promoted()
-        self._state = replace(state, evidence=[], completion_evidence=(), completion_audit={})
+        self._state = replace(state, completion_evidence=(), completion_audit={})
         self._set_status(GoalStatus.PAUSED, "Reopened by user", GoalActor.USER)
         return self.resume(mode=mode)
 
@@ -240,97 +230,19 @@ class GoalService:
             GoalChange(GoalChangeKind.PROGRESS, state.status, actor=GoalActor.RUNTIME),
         )
 
-    def observe_workspace(self, digest: str | None) -> None:
-        state = self._state
-        if state is None or state.status is GoalStatus.COMPLETE:
-            return
-        previous = self._workspace_digest
-        self._workspace_digest = digest
-        if digest is None or (previous is not None and digest != previous):
-            self._state = replace(state, work_revision=state.work_revision + 1)
-            self._emit(
-                self.snapshot(),
-                GoalChange(GoalChangeKind.PROGRESS, state.status, actor=GoalActor.RUNTIME),
-            )
-
-    def record_tool_result(
-        self,
-        call_id: str,
-        name: str,
-        arguments: dict[str, Any],
-        *,
-        success: bool,
-        mutates: bool = False,
-        finished: bool = True,
-        verification: bool = True,
-        output: str = "",
+    def record_work(
+        self, name: str, arguments: dict[str, Any], *, finished: bool = True, output: str = "",
     ) -> None:
+        """Count a tool result for the continuation and stall checks; nothing audits it."""
         state = self._state
-        if state is None or state.status is GoalStatus.COMPLETE:
+        if state is None or state.status is not GoalStatus.ACTIVE:
             return
         if name in GOAL_TOOL_NAMES or name == "checklist":
             return
-        if state.status is not GoalStatus.ACTIVE:
-            if mutates:
-                self._state = replace(state, work_revision=state.work_revision + 1)
-                self._emit(
-                    self.snapshot(),
-                    GoalChange(GoalChangeKind.PROGRESS, state.status, actor=GoalActor.RUNTIME),
-                )
-            return
         self._turn_work_calls += 1
-        revision = state.work_revision + int(mutates)
-        signature = hashlib.sha256(
-            (name + json.dumps(arguments, sort_keys=True, ensure_ascii=False)).encode()
-        ).hexdigest()
-        output_digest = hashlib.sha256(output.encode()).hexdigest()
-        self._turn_observations.append(signature + output_digest)
+        call = json.dumps([name, arguments], sort_keys=True, ensure_ascii=False, default=str)
+        self._turn_observations.append(hashlib.sha256((call + output).encode()).hexdigest())
         self._turn_pending_work = self._turn_pending_work or not finished
-        if name == "exec_shell":
-            try:
-                command = shlex.split(str(arguments.get("command") or ""))
-            except ValueError:
-                command = []
-            # Environment discovery is useful work but cannot verify a deliverable.
-            if command and command[0] in {"pwd", "whoami", "hostname", "date", "echo", "printf", "true"}:
-                verification = False
-        record = {
-            "tool_call_id": call_id,
-            "tool": name,
-            "signature": signature,
-            "description": str(arguments.get("command") or arguments.get("path") or name)[:240],
-            "success": success,
-            "finished": finished,
-            "revision": revision,
-            "verification": verification and not mutates,
-            "output_excerpt": output[:512],
-            "output_sha256": output_digest,
-        }
-        records = [*state.evidence, record]
-        latest = {item["signature"]: item for item in records}
-        # Keep unresolved failures even when successful history rolls over.
-        recent_ids = {item["tool_call_id"] for item in records[-80:]}
-        retained = [item for item in latest.values()
-                    if not item["success"] and item["tool_call_id"] not in recent_ids]
-        overflow = state.evidence_overflow or len(retained) > MAX_UNRESOLVED_FAILURES
-        self._state = replace(
-            state, work_revision=revision,
-            evidence=[*retained[:MAX_UNRESOLVED_FAILURES], *records[-80:]],
-            evidence_overflow=overflow,
-        )
-        if overflow:
-            self._set_status(
-                GoalStatus.PAUSED,
-                "Goal evidence capacity exceeded; some failures cannot remain in the active index. "
-                "Review the transcript and start a replacement goal with a bounded scope. "
-                "This goal cannot be marked complete from incomplete evidence.",
-                GoalActor.RUNTIME,
-            )
-            return
-        self._emit(
-            self.snapshot(),
-            GoalChange(GoalChangeKind.PROGRESS, state.status, actor=GoalActor.RUNTIME),
-        )
 
     def add_requirements(self, items: object) -> GoalSnapshot:
         state = self._require()
@@ -357,15 +269,12 @@ class GoalService:
         )
         return snapshot
 
-    def validate_completion(
-        self, reason: str | None, evidence: object, audit: object = None
-    ) -> None:
+    def validate_completion(self) -> None:
+        """Budget, status and open checklist items: what the harness knows for certain."""
         if self._state is None:
             raise GoalError("not_found", "No active goal")
         self._block_if_budget_reached(actor=GoalActor.RUNTIME, include_turn=False)
         state = self._require()
-        if state.evidence_overflow:
-            raise GoalError("evidence_overflow", "Evidence history exceeded capacity; review and replace this goal before completing")
         if state.status is not GoalStatus.ACTIVE:
             raise GoalError("status_invalid", "Only an active goal can complete")
         open_items = [
@@ -375,112 +284,6 @@ class GoalService:
         ]
         if open_items:
             raise GoalError("incomplete", "Required work remains: " + "; ".join(open_items))
-        if not reason or not isinstance(evidence, list) or not evidence:
-            raise GoalError(
-                "evidence_required",
-                "Provide a completion audit in reason and actual "
-                "tool call IDs in evidence. Use GetGoal to inspect recorded evidence.",
-            )
-        by_id = {item["tool_call_id"]: item for item in state.evidence}
-        latest = {item["signature"]: item for item in state.evidence}
-        for call_id in evidence:
-            item = by_id.get(call_id) if isinstance(call_id, str) else None
-            if (
-                item is None
-                or not item["success"]
-                or not item["finished"]
-                or not item["verification"]
-                or item["revision"] != state.work_revision
-                or latest[item["signature"]]["tool_call_id"] != call_id
-            ):
-                raise GoalError(
-                    "evidence_invalid",
-                    f"Evidence {call_id!r} is missing, failed, "
-                    "unfinished, not a stable verification, superseded, "
-                    "or predates a workspace edit. "
-                    "Verify the current result before completing.",
-                )
-        if not isinstance(audit, dict) or not isinstance(audit.get("checks"), list):
-            raise GoalError("audit_required", "Supply audit.checks for every GetGoal requirement")
-        checks = audit["checks"]
-        required = {item["id"] for item in state.requirements}
-        seen = set()
-        for check in checks:
-            if not isinstance(check, dict):
-                raise GoalError("audit_invalid", "Each check must identify a requirement")
-            key = check.get("requirement_id")
-            refs = check.get("evidence")
-            if (
-                not isinstance(key, str)
-                or key not in required
-                or key in seen
-                or not isinstance(check.get("explanation"), str)
-                or not check["explanation"].strip()
-                or not isinstance(refs, list)
-                or not refs
-                or any(not isinstance(ref, str) or ref not in evidence for ref in refs)
-            ):
-                raise GoalError(
-                    "audit_invalid", "Each requirement needs an explanation and cited evidence"
-                )
-            seen.add(key)
-        if seen != required:
-            raise GoalError(
-                "incomplete", "Unverified requirements: " + ", ".join(sorted(required - seen))
-            )
-        # Failed explorations are legitimate, but cannot silently disappear behind pwd/read success.
-        failures = {item["tool_call_id"] for item in latest.values() if not item["success"]}
-        resolutions = audit.get("failure_resolutions", [])
-        resolved = set()
-        if not isinstance(resolutions, list):
-            raise GoalError("audit_invalid", "failure_resolutions must be a list")
-        for resolution in resolutions:
-            if not isinstance(resolution, dict):
-                raise GoalError("audit_invalid", "Invalid failure resolution")
-            key = resolution.get("tool_call_id")
-            refs = resolution.get("evidence")
-            if (
-                not isinstance(key, str)
-                or key not in failures
-                or not isinstance(resolution.get("reason"), str)
-                or not resolution["reason"].strip()
-                or not isinstance(refs, list)
-                or not refs
-                or any(not isinstance(ref, str) or ref not in evidence for ref in refs)
-            ):
-                raise GoalError("audit_invalid", "Explain each failed check using current evidence")
-            resolved.add(key)
-        if failures - resolved:
-            raise GoalError(
-                "unresolved_failures",
-                "Unresolved tool failures: " + ", ".join(sorted(failures - resolved)),
-            )
-        cancelled = {item["id"] for item in state.checklist if item["status"] == "cancelled"}
-        adjustments = audit.get("plan_adjustments", [])
-        adjusted = set()
-        if not isinstance(adjustments, list):
-            raise GoalError("audit_invalid", "plan_adjustments must be a list")
-        for adjustment in adjustments:
-            if (
-                not isinstance(adjustment, dict)
-                or not isinstance(adjustment.get("item_id"), str)
-                or adjustment["item_id"] not in cancelled
-                or not isinstance(adjustment.get("reason"), str)
-                or not adjustment["reason"].strip()
-            ):
-                raise GoalError(
-                    "audit_invalid", "Explain cancelled plan items; requirements remain mandatory"
-                )
-            adjusted.add(adjustment["item_id"])
-        if cancelled - adjusted:
-            raise GoalError(
-                "incomplete", "Cancelled plan items need an explicit scope-preserving explanation"
-            )
-        self._state = replace(
-            state,
-            completion_evidence=tuple(evidence),
-            completion_audit=json.loads(json.dumps(audit)),
-        )
 
     def consume_promoted(self) -> GoalQueueItem | None:
         item = self._last_promoted
@@ -700,7 +503,6 @@ class GoalService:
             json.dumps(
                 {
                     "results": sorted(self._turn_observations),
-                    "revision": state.work_revision,
                     "checklist": state.checklist,
                     "requirements": state.requirements,
                 },

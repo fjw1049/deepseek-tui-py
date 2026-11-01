@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from deepseek_tui.browser.permissions import local_page_allowed
 from deepseek_tui.browser.service import BrowserAction, BrowserActionError
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
@@ -36,8 +37,6 @@ class BrowserUseTool(ToolSpec):
             "request_user_input(kind=action, surface=browser, reason=...) as the only call. "
             "request_assistance remains a compatible alias for manual browser help. "
             "After help verify fresh evidence and continue within the user's authorization. "
-            "Browser use activates task focus: request_task_tools exposes named capabilities for "
-            "later stages. Deliver the whole task with finish_task, not just a browser step. "
             "Do not ask the user before ordinary navigation: the app asks them to approve each "
             "new site itself and they may trust it for the session. "
             "open keeps the user's own page: from a tab the user was using it opens a new tab. "
@@ -52,9 +51,9 @@ class BrowserUseTool(ToolSpec):
             "unique element; hidden waits for that scoped condition to disappear. "
             "observe returns visible text, elements and observation_id; "
             "level=full expands elements. "
-            "For click/fill/type/select/set_checked/hover/press/scroll pass observation_id "
-            "from "
-            "the latest observation. Old refs must never be reused after a new observation. "
+            "click/fill/type/select/set_checked/hover/press/scroll act on the latest observation; "
+            "omit observation_id unless targeting a specific one. A stale observation is rejected, "
+            "never guessed at: observe again. "
             "observe viewport gives page scroll_x/scroll_y and total scroll_width/scroll_height; "
             "scroll_containers lists inner scrollable panels (largest first) with the same "
             "viewport fields "
@@ -131,7 +130,7 @@ class BrowserUseTool(ToolSpec):
             "url": "HTTP(S) address to open; do not include credentials.",
             "ref": "Exact element reference from the latest observation.",
             "to_ref": "For drag, the destination element reference from the same observation.",
-            "observation_id": "Latest observation ID; required for all page interaction actions.",
+            "observation_id": "Observation to act on. Omit to use the latest; after navigation observe first.",
             "selector": "CSS selector for a unique observed target, or a read/wait scope.",
             "text": (
                 "Text to insert, select value, or visible text expected by check_text/wait. "
@@ -211,7 +210,8 @@ class BrowserUseTool(ToolSpec):
         if browser is None or not thread_id:
             return ToolResult(False, "Browser operation requires a Workbench runtime thread.")
         try:
-            action = BrowserAction.model_validate(input_data)
+            root = getattr(context, "working_directory", None)
+            action = BrowserAction.model_validate(input_data, context={"local_root": root})
             if action.action == "request_assistance":
                 request = context.metadata.get("request_browser_assistance")
                 if request is None:
@@ -220,8 +220,13 @@ class BrowserUseTool(ToolSpec):
             else:
                 run = getattr(browser, "runs", {}).get(str(thread_id))
                 if run:
-                    run.upload_root = getattr(context, "working_directory", None)
+                    run.upload_root = root
                 result = await browser.action(str(thread_id), action, require_observation=True)
+                # A link on a workspace page can reach any file; its content stays out.
+                if not all(local_page_allowed((result.get(key) or {}).get("url", ""), root)
+                           for key in ("observation", "page")):
+                    return ToolResult(False, "That file is outside the workspace, so its content "
+                                             "was withheld. Navigate back or open a workspace page.")
                 if action.action == "downloads" and isinstance(context, ToolContext):
                     downloads = browser.artifact_root / str(thread_id) / "downloads"
                     items = result.get("content", [])

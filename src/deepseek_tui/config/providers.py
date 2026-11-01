@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 __all__ = [
@@ -230,10 +231,11 @@ def max_output_tokens_for_model(model: str) -> int:
     """Return the default per-request output limit for a model."""
     model_lower = model.lower()
     is_v4_pro = "v4-pro" in model_lower or model_lower == "deepseek-v4pro"
+    # Point releases (deepseek-v4-1-flash) and the API alias deepseek-flash are the
+    # same family; missing them silently caps every round at the 4096 default below.
     is_v4_flash = (
-        "v4-flash" in model_lower
-        or model_lower == "deepseek-v4flash"
-        or model_lower == "deepseek-v4"
+        re.search(r"v4(?:[-.]\d+)?-flash", model_lower) is not None
+        or model_lower in {"deepseek-v4flash", "deepseek-v4", "deepseek-flash"}
     )
     if is_v4_pro or is_v4_flash:
         return 262_144

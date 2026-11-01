@@ -88,21 +88,6 @@ async def test_user_held_browser_asks_for_return_and_resumes(help_task):
     assert "Login still required" in handle.resume_context
 
 
-async def test_finish_reports_blocker_while_user_holds_browser(tmp_path):
-    from deepseek_tui.tools.registry import ToolContext, ToolError
-    from deepseek_tui.tools.task_delivery import FinishTaskTool, TaskDelivery
-
-    service = BrowserService(tmp_path)
-    service.runs["one"] = BrowserRun("one", tmp_path, owner="user")
-    delivery = TaskDelivery(active=True, browser_used=True, evidence={"tool:s"})
-    context = ToolContext(working_directory=tmp_path, metadata={
-        "task_delivery": delivery, "browser_service": service, "runtime_thread_id": "one"})
-    args = {"answer": "Return control so I can continue.", "evidence": ["tool:s"]}
-    with pytest.raises(ToolError, match="report partial/blocked"):
-        await FinishTaskTool().execute({**args, "status": "completed", "remaining": []}, context)
-    result = await FinishTaskTool().execute(
-        {**args, "status": "blocked", "remaining": ["User holds browser control"]}, context)
-    assert result.success and delivery.outcome["status"] == "blocked"
 
 
 @pytest.mark.asyncio
@@ -273,7 +258,7 @@ async def test_engine_fences_bing_until_explicit_user_decision(help_task, tmp_pa
         await manager.respond_browser_assistance("one", run.assistance["id"], "ignore")
         await asyncio.wait_for(task, 3)
         assert run.session.navigate.await_count == 0  # queued Bing action was discarded
-        assert len(requests) == 4  # help, continue, finalize, then partial
+        assert len(requests) == 2  # help, then the model's own answer
         assert any("Do not skip" in m.text_content() for m in requests[1].messages)
     finally:
         task.cancel()

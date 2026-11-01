@@ -622,11 +622,7 @@ async def test_real_engine_observes_clicks_and_returns_answer(chrome, tmp_path):
                 "observation_id": observation["observation_id"],
             }
         else:
-            return TurnResult(assistant_message=None, tool_calls=[ToolCall(
-                id="finish", name="finish_task", arguments={
-                    "status": "completed", "answer": "推荐川沙测试店，评分4.8分，距离800米。",
-                    "evidence": ["tool:browser-2"], "remaining": [],
-                })])
+            return TurnResult(assistant_message=Message.assistant("推荐川沙测试店，评分4.8分，距离800米。"))
         return TurnResult(
             assistant_message=None,
             tool_calls=[
@@ -2513,13 +2509,36 @@ async def test_scroll_outside_list_reports_no_observed_movement(chrome):
     assert "outside the list" in result["content"]
 
 
-async def test_missing_observation_is_not_reported_as_expired(chrome):
+async def test_omitted_observation_id_uses_the_latest_observation(chrome):
     service, run = chrome
+    observed = await service.action("t", BrowserAction(action="observe"), require_observation=True)
+    button = next(e for e in observed["observation"]["elements"] if e.get("name") == "搜索")
+    clicked = await service.action(
+        "t", BrowserAction(action="click", ref=button["ref"]), require_observation=True)
+    assert clicked["success"]
+    assert clicked["receipt"]["execution"] == "executed"
+
+
+async def test_nothing_observed_yet_is_not_reported_as_expired(chrome):
+    service, run = chrome
+    run.latest_observation = None
     result = await service.action("t", BrowserAction(action="scroll"), require_observation=True)
     assert not result["success"]
     assert result["receipt"]["reason"] == "missing_observation_id"
     assert result["receipt"]["execution"] == "not_executed"
     assert result["observation"]["observation_id"]
+
+
+async def test_omitted_id_still_rejects_an_old_document(chrome):
+    service, run = chrome
+    observed = await service.action("t", BrowserAction(action="observe"), require_observation=True)
+    button = next(e for e in observed["observation"]["elements"] if e.get("name") == "搜索")
+    await evaluate(run.session._internal.client, "setTimeout(()=>location.reload(),0);true")
+    await asyncio.sleep(0.3)
+    result = await service.action(
+        "t", BrowserAction(action="click", ref=button["ref"]), require_observation=True)
+    assert not result["success"]
+    assert result["receipt"]["execution"] == "not_executed"
 
 
 async def test_review_coordinate_rejects_reused_control_for_other_record(chrome):

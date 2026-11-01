@@ -239,4 +239,4 @@ def test_consumer_hint_names_the_ledger_and_gives_a_tiebreaker() -> None:
     the expected state, so the precedence rule has to be stated outright."""
     assert "<prior_user_requests>" in COMPACT_CONSUMER_HINT
     assert "verbatim requests win" in COMPACT_CONSUMER_HINT
-    assert "last entry is the current request" in COMPACT_CONSUMER_HINT
+    assert "Incorporate the last entry into the active task" in COMPACT_CONSUMER_HINT

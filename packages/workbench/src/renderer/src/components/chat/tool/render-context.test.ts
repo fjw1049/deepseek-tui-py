@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ToolBlock } from '../../../agent/types'
-import { buildToolRenderContext } from './render-context'
+import { buildToolRenderContext, describeToolCallTarget } from './render-context'
 
 // added=2 (new lines 2,3), removed=1; first changed line in the new file = 2.
 const DIFF = [
@@ -127,6 +127,22 @@ it('uses the structured tool name when the summary has no parseable prefix', () 
   })
   expect(ctx.toolName).toBe('write_file')
   expect(ctx.label).toBe('写入文件')
+})
+
+describe('shell tool labels', () => {
+  it('uses the model description for the step, falling back to the command', () => {
+    const command = 'pytest -q tests/test_x.py'
+    expect(describeToolCallTarget('exec_shell', { command, description: '运行测试' })).toBe('运行测试')
+    expect(describeToolCallTarget('exec_shell', { command })).toBe(command)
+  })
+
+  it('keeps the real command on the card so an approval never shows only the description', () => {
+    const ctx = buildToolRenderContext({
+      kind: 'tool', id: 'sh_1', summary: 'exec_shell', status: 'running', toolKind: 'command_execution',
+      meta: { tool_name: 'exec_shell', tool_input: { command: 'rm -rf build', description: '清理' } }
+    })
+    expect(ctx.input.command).toBe('rm -rf build')
+  })
 })
 
 describe('computer-use tool cards', () => {

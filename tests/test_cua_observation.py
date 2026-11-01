@@ -7,7 +7,6 @@ import pytest
 from deepseek_tui.cua.tools import CuaObserveTool, CuaTool, register_tools
 from deepseek_tui.engine.ui_progress import UiProgress
 from deepseek_tui.tools.registry import ToolContext, ToolError, ToolRegistry, ToolResult
-from deepseek_tui.tools.task_delivery import FinishTaskTool, TaskDelivery
 from tests import test_cua as fixtures
 
 fresh_runtime_cache = fixtures.fresh_runtime_cache
@@ -47,31 +46,6 @@ async def test_observing_unknown_outcome_preserves_receipt(session, tmp_path):
         assert session.unresolved["call_id"] == "uncertain-click"
         with pytest.raises(ToolError, match="unknown outcome"):
             await registry.get("cua_js").execute({"code": "click again"}, context)
-    finally:
-        await session.close()
-
-
-@pytest.mark.asyncio
-async def test_print_only_cannot_supply_completion_evidence(session, tmp_path):
-    await session.connect()
-    state = TaskDelivery(active=True)
-    context = ToolContext(
-        tmp_path, metadata={"task_delivery": state, "cua_turn_id": "t", "cua_call_id": "c"}
-    )
-    try:
-        result = await CuaTool(session, session.descriptors[0]).execute({"code": "ok"}, context)
-        assert result.metadata["task_evidence"] is False
-        state.evidence.add("tool:unrelated-read")
-        with pytest.raises(ToolError, match="observation"):
-            await FinishTaskTool().execute(
-                dict(
-                    status="completed",
-                    answer="Saved",
-                    evidence=["tool:unrelated-read"],
-                    remaining=[],
-                ),
-                context,
-            )
     finally:
         await session.close()
 
@@ -161,7 +135,7 @@ async def test_change_during_observation_cannot_release_guard(session, tmp_path,
     monkeypatch.setattr(session, "_request", interrupted)
     try:
         result = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
-        assert not result.success and not result.metadata["task_evidence"]
+        assert not result.success
         assert session.outside_change
     finally:
         await session.close()
@@ -179,28 +153,6 @@ async def test_observer_handles_existing_browser_tab(session, tmp_path):
         assert observation["target"] == {"browser": "chrome", "tab_id": 'tab"1'}
         assert observation["expectations"][0]["matched"]
         assert "documentation" not in observation["text"]
-    finally:
-        await session.close()
-
-
-@pytest.mark.asyncio
-async def test_other_app_cannot_verify_previous_action(session, tmp_path):
-    state = TaskDelivery(active=True)
-    context = ToolContext(
-        tmp_path, metadata={"task_delivery": state, "cua_turn_id": "t", "cua_call_id": "c"}
-    )
-    await session.connect()
-    try:
-        await CuaTool(session, session.descriptors[0]).execute(
-            {"code": "surface:dev.original"}, context
-        )
-        for _ in range(2):
-            result = await CuaObserveTool(session).execute({"app": "dev.other"}, context)
-            state.remember_evidence("tool:other", result.metadata)
-            assert not state.cua_observation_evidence
-        result = await CuaObserveTool(session).execute({"app": "dev.original"}, context)
-        state.remember_evidence("tool:original", result.metadata)
-        assert "tool:original" in state.cua_observation_evidence
     finally:
         await session.close()
 
@@ -224,45 +176,6 @@ async def test_observing_another_app_switches_target_and_releases_guard(session,
         await session.close()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failed", [False, True])
-async def test_new_observation_cannot_reuse_old_success(session, tmp_path, monkeypatch, failed):
-    state = TaskDelivery(active=True)
-    context = ToolContext(
-        tmp_path, metadata={"task_delivery": state, "cua_turn_id": "t", "cua_call_id": "c"}
-    )
-    tool = CuaObserveTool(session)
-    try:
-        result = await tool.execute({"app": "dev.fixture", "expect": ["Saved"]}, context)
-        state.remember_evidence("tool:old", result.metadata)
-        request = session._request
-
-        async def fail_observation(kind, **kwargs):
-            payload = await request(kind, **kwargs)
-            if kind == "observe" and failed:
-                payload["isError"] = True
-            return payload
-
-        monkeypatch.setattr(session, "_request", fail_observation)
-        result = await tool.execute({"app": "dev.fixture", "expect": ["Missing"]}, context)
-        if result.success:
-            state.remember_evidence("tool:new", result.metadata)
-        state.evidence.add("tool:unrelated")
-        assert "tool:old" not in state.cua_observation_evidence
-        with pytest.raises(ToolError, match="observation|not verified"):
-            await FinishTaskTool().execute(
-                dict(
-                    status="completed",
-                    answer="Saved",
-                    evidence=sorted(state.evidence),
-                    remaining=[],
-                ),
-                context,
-            )
-    finally:
-        await session.close()
-
-
 def test_canvas_pixels_are_preserved_and_cannot_override_missing_expectation(tmp_path, monkeypatch):
     from tests.engine.test_ui_progress import screen
 
@@ -278,136 +191,6 @@ def test_canvas_pixels_are_preserved_and_cannot_override_missing_expectation(tmp
         result.metadata["cua_observation"]["expectations"] = [{"text": "Saved", "matched": False}]
         progress.record_result("cua_observe", result)
     assert progress.blocked_content("cua_js")
-
-
-@pytest.mark.asyncio
-async def test_completion_discloses_incomplete_evidence(tmp_path):
-    observation = {"complete": False}
-    state = TaskDelivery(
-        active=True,
-        cua_used=True,
-        cua_acted=True,
-        evidence={"tool:seen"},
-        cua_observation_evidence={"tool:seen": observation},
-    )
-    context = ToolContext(tmp_path, metadata={"task_delivery": state})
-    args = dict(
-        status="completed",
-        answer="One visible row",
-        evidence=["tool:seen"],
-        remaining=[],
-        verification=[{"claim": "One visible row", "evidence": ["tool:seen"], "limitations": []}],
-    )
-    with pytest.raises(ToolError, match="incomplete observation"):
-        await FinishTaskTool().execute(args, context)
-    args["answer"] += "; total not verified"
-    args["verification"][0]["limitations"] = ["total not verified"]
-    assert (await FinishTaskTool().execute(args, context)).success
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("retry_observation", [False, True])
-async def test_engine_delivers_only_after_observation(session, tmp_path, retry_observation):
-    from unittest.mock import AsyncMock
-
-    from deepseek_tui.config.models import Config, FeatureConfig
-    from deepseek_tui.engine.handle import EngineHandle
-    from deepseek_tui.engine.orchestrator import Engine
-    from deepseek_tui.protocol.messages import Message
-    from deepseek_tui.protocol.responses import ToolCall
-    from tests.engine.test_browser_primary_loop import ScriptedClient
-
-    client = ScriptedClient(
-        [
-            ToolCall(id="act", name="cua_js", arguments={"code": "surface:dev.fixture"}),
-            *([
-                "Done", "Done",
-                ToolCall(id="bad-observe", name="cua_observe", arguments={}),
-            ] if retry_observation else []),
-            ToolCall(
-                id="observe",
-                name="cua_observe",
-                arguments={"app": "dev.fixture", "expect": ["Saved"]},
-            ),
-            ToolCall(
-                id="finish",
-                name="finish_task",
-                arguments=dict(
-                    status="completed",
-                    answer="Saved",
-                    evidence=["tool:observe"],
-                    remaining=[],
-                    verification=[
-                        {"claim": "Saved", "evidence": ["tool:observe"], "limitations": []}
-                    ],
-                ),
-            ),
-        ]
-    )
-    engine = await Engine.create(
-        handle=EngineHandle(),
-        client=client,
-        working_directory=tmp_path,
-        config=Config(
-            features=FeatureConfig(tasks=False, subagents=False, mcp=False, automations=False)
-        ),
-        start_mcp=False,
-    )
-    await session.connect()
-    register_tools(engine.tool_registry, session)
-    engine.tool_context.metadata["cua_turn_id"] = "test-turn"
-    engine._handle_approval_flow = AsyncMock(return_value=False)
-    try:
-        result = await engine._run_conversation(
-            [Message.user("Save the document")], "test", "sys", None
-        )
-        assert result.task_outcome["status"] == "completed"
-        assert result.task_outcome["evidence"] == ["tool:observe"]
-        state = engine.tool_context.metadata["task_delivery"]
-        assert "tool:act" not in state.evidence
-    finally:
-        await session.close()
-        await engine.shutdown_session()
-
-
-@pytest.mark.asyncio
-async def test_verification_need_not_quote_answer(tmp_path):
-    state = TaskDelivery(
-        active=True,
-        cua_used=True,
-        cua_acted=True,
-        evidence={"tool:seen"},
-        cua_observation_evidence={"tool:seen": {"complete": True}},
-    )
-    context = ToolContext(tmp_path, metadata={"task_delivery": state})
-    args = dict(
-        status="completed",
-        answer="文档已保存。",
-        evidence=["tool:seen"],
-        remaining=[],
-        verification=[{"claim": "Document saved", "evidence": ["tool:seen"], "limitations": []}],
-    )
-    assert (await FinishTaskTool().execute(args, context)).success
-
-
-@pytest.mark.asyncio
-async def test_observing_only_needs_no_verification(session, tmp_path):
-    state = TaskDelivery(active=True)
-    context = ToolContext(
-        tmp_path, metadata={"task_delivery": state, "cua_turn_id": "t", "cua_call_id": "c"}
-    )
-    try:
-        result = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
-        state.remember_evidence("tool:seen", result.metadata)
-        assert not state.cua_acted
-        outcome = await FinishTaskTool().execute(
-            dict(status="completed", answer="The window shows the fixture.",
-                 evidence=["tool:seen"], remaining=[]),
-            context,
-        )
-        assert outcome.success and "verification" not in outcome.metadata["task_outcome"]
-    finally:
-        await session.close()
 
 
 def test_ax_completeness_never_reads_an_unknown_range_as_complete():
@@ -453,21 +236,6 @@ async def test_observation_accepts_window_ids_for_linux_and_windows(session, tmp
                 await observe.execute(bad, context)
     finally:
         await session.close()
-
-
-@pytest.mark.asyncio
-async def test_missing_completion_evidence_names_the_observation_after_computer_use(tmp_path):
-    state = TaskDelivery(active=True, cua_used=True)
-    context = ToolContext(tmp_path, metadata={"task_delivery": state})
-    for evidence in ([], ["tool:unknown"]):
-        with pytest.raises(ToolError, match="cua_observe result is the evidence"):
-            await FinishTaskTool().execute(
-                dict(status="completed", answer="Done", evidence=evidence, remaining=[]), context)
-    plain = ToolContext(tmp_path, metadata={"task_delivery": TaskDelivery(active=True)})
-    with pytest.raises(ToolError) as error:
-        await FinishTaskTool().execute(
-            dict(status="completed", answer="Done", evidence=[], remaining=[]), plain)
-    assert "cua_observe" not in str(error.value)
 
 
 def test_observation_resolves_localized_app_names_but_never_retries_a_denial():
@@ -578,107 +346,3 @@ console.log(JSON.stringify({ first, second, third, tabs: Boolean(globalThis.__de
     assert out["tabs"] is False
 
 
-@pytest.mark.asyncio
-async def test_reading_state_or_closing_the_tab_keeps_verified_evidence(session, tmp_path):
-    await session.connect()
-    state = TaskDelivery(active=True)
-    context = ToolContext(
-        tmp_path, metadata={"task_delivery": state, "cua_turn_id": "t", "cua_call_id": "c"})
-    tool = CuaTool(session, session.descriptors[0])
-    try:
-        observed = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
-        state.remember_evidence("tool:observed", observed.metadata)
-        for code in ('actions:[{"action":"getAXState","observe":true,"ok":true}]',
-                     'actions:[{"action":"close","ok":true}]'):
-            await tool.execute({"code": code}, context)
-            assert "tool:observed" in state.cua_observation_evidence, code
-        for code in ('actions:[{"action":"playwright"}]', 'actions:[{"action":"click","ok":true}]'):
-            state.remember_evidence("tool:observed", observed.metadata)
-            await tool.execute({"code": code}, context)
-            assert not state.cua_observation_evidence, code
-    finally:
-        await session.close()
-
-
-def test_cached_browser_locator_cannot_keep_old_verified_evidence():
-    from deepseek_tui.cua.tools import _kept_ui
-
-    # A locator cached in an earlier REPL call bypasses the playwright property getter.
-    assert not _kept_ui({"ready": True, "tabs": True, "actions": []})
-    assert not _kept_ui({"ready": True, "tabs": True, "actions": [
-        {"action": "getAXState", "observe": True, "ok": True}]})
-    assert _kept_ui({"ready": True, "actions": []})
-
-
-@pytest.mark.asyncio
-async def test_cached_locator_and_tab_close_completion(tmp_path):
-    import json
-    import shutil
-    import subprocess
-    from pathlib import Path
-    from deepseek_tui.cua.tools import _kept_ui
-
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node required")
-    script = """
-const fs = await import('node:fs');
-const src = fs.readFileSync(process.argv[1], 'utf8');
-const install = (0, eval)(src.slice(src.indexOf('const INPUTS'), src.indexOf('const TRACE_MARK')) + '\\nTRACE_INSTALL');
-const run = code => new (Object.getPrototypeOf(async () => {}).constructor)(code)();
-let clicks = 0;
-class Locator {
-  first() { return this; }
-  async click() { clicks++; }
-  async fill() { throw new Error('rejected'); }
-}
-const locator = new Locator();
-globalThis.cua = { async getTab() { return {
-  playwright: { locator() { return locator; } }, async close() {}, async getAXState() {}
-}; } };
-await run(install);
-const tab = await cua.getTab();
-const cached = tab.playwright.locator('#save').first();
-const cachedClick = cached.click.bind(cached);
-const snapshot = () => ({ready: true, tabs: true,
-  playwright_traced: Boolean(globalThis.__deepseekPlaywrightTraced),
-  actions: globalThis.__deepseekTrace.splice(0)});
-await run(install);
-await cachedClick(); await tab.close();
-const changed = snapshot();
-await run(install);
-try { await cached.fill('x'); } catch {}
-const failed = snapshot();
-await run(install);
-await tab.getAXState();
-const read = snapshot();
-await run(install);
-await tab.close();
-const closed = snapshot();
-console.log(JSON.stringify({clicks, changed, failed, read, closed}));
-"""
-    bridge = Path(__file__).parents[1] / "src/deepseek_tui/cua/bridge.mjs"
-    result = json.loads(subprocess.run(
-        [node, "--input-type=module", "-e", script, str(bridge)],
-        capture_output=True, text=True, check=True, timeout=30).stdout)
-    assert result["clicks"] == 1
-    assert result["changed"]["actions"][0] == {
-        "action": "playwright", "method": "click", "ok": True}
-    assert not _kept_ui(result["changed"])
-    assert not _kept_ui(result["failed"])
-    assert _kept_ui(result["read"])
-    assert _kept_ui(result["closed"])
-
-    state = TaskDelivery(active=True, cua_used=True, cua_acted=True)
-    state.remember_evidence("tool:verified", {
-        "cua_verifies_target": True, "cua_observation": {"complete": True}})
-    verified = dict(state.cua_observation_evidence)
-    state.cua_observation_evidence.clear()
-    if _kept_ui(result["closed"]):
-        state.cua_observation_evidence.update(verified)
-    outcome = await FinishTaskTool().execute({
-        "status": "completed", "answer": "Saved and closed the tab.",
-        "evidence": ["tool:verified"], "remaining": [],
-        "verification": [{"claim": "Saved", "evidence": ["tool:verified"], "limitations": []}],
-    }, ToolContext(tmp_path, metadata={"task_delivery": state}))
-    assert outcome.success

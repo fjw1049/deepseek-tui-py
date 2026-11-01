@@ -72,6 +72,7 @@ class RuntimeThreadStore:
         self._worktree_baselines_dir = root / "worktree_baselines"
         self._path_grants_dir = root / "path_grants"
         self._rewind_audit_dir = root / "rewind_audit"
+        self._transcripts_dir = root / "transcripts"
         self._state_path = root / "state.json"
 
         for d in (
@@ -82,6 +83,7 @@ class RuntimeThreadStore:
             self._worktree_baselines_dir,
             self._path_grants_dir,
             self._rewind_audit_dir,
+            self._transcripts_dir,
         ):
             if d.is_symlink():
                 raise ValueError(f"Symlink store directory: {d}")
@@ -150,6 +152,9 @@ class RuntimeThreadStore:
     def _path_grants_path(self, thread_id: str) -> Path:
         return self._record_path(self._path_grants_dir, thread_id, "json")
 
+    def transcript_path(self, thread_id: str) -> Path:
+        return self._record_path(self._transcripts_dir, thread_id, "jsonl")
+
     def _rewind_audit_path(self, thread_id: str) -> Path:
         return self._record_path(self._rewind_audit_dir, thread_id, "jsonl")
 
@@ -187,6 +192,7 @@ class RuntimeThreadStore:
         self.delete_worktree_baseline(thread_id)
         self.delete_path_grants(thread_id)
         self.delete_rewind_audit(thread_id)
+        self.transcript_path(thread_id).unlink(missing_ok=True)
 
     @_serialized
     def delete_events(self, thread_id: str) -> None:

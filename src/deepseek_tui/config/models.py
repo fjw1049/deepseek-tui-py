@@ -88,14 +88,9 @@ class VisionConfig(BaseModel):
 
 
 class ProcessNarrationConfig(BaseModel):
-    enabled: bool = True
-    model: str | None = None
-    min_chars: int = 80
-    min_interval_s: float = 60.0
-    flash_timeout_s: float = 8.0
-    turn_wait_s: float = 6.0
-    include_recent_tool_results: int = 3
-    max_per_turn: int = 12
+    """Retired; existing config files with [ui.process_narration] must still load."""
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class UiConfig(BaseModel):
@@ -340,6 +335,8 @@ class Config(BaseModel):
     reasoning_effort: str | None = None
     approval_policy: str = "on-request"
     sandbox_mode: str = "workspace-write"
+    # Nobody can answer questions or approvals: they fail fast instead of waiting.
+    unattended: bool = False
     allow_shell: bool = True
     tavily_api_key: str | None = None
     anysearch_api_key: str | None = None

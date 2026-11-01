@@ -20,6 +20,10 @@ def test_glm_gets_headroom_above_legacy_cap() -> None:
 def test_v4_keeps_large_budget() -> None:
     assert max_output_tokens_for_model("deepseek-v4-pro") == 262_144
     assert max_output_tokens_for_model("deepseek-v4-flash") == 262_144
+    # The point release and the API alias must not fall through to the 4096 default.
+    assert max_output_tokens_for_model("deepseek-v4-1-flash") == 262_144
+    assert max_output_tokens_for_model("deepseek-v4.1-flash") == 262_144
+    assert max_output_tokens_for_model("deepseek-flash") == 262_144
 
 
 def test_unknown_model_keeps_default() -> None:

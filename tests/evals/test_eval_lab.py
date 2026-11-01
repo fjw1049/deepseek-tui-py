@@ -19,7 +19,6 @@ from deepseek_tui.protocol.responses import (
 from evals.compare import compare_metrics
 from evals.experiments import compare_runs
 from evals.graders.authority import grade_authority
-from evals.graders.completion import grade_completion
 from evals.graders.constraints import grade_constraints
 from evals.graders.tooling import grade_tooling
 from evals.harness import HarnessContext
@@ -36,17 +35,8 @@ def simple_case(grader, **kwargs):
     )
 
 
-def test_completion_contradiction_cannot_hide_positive_claim():
-    c = simple_case("completion", input={"evidence": {"tests_passed": False}})
-    result = grade_completion(
-        c, EvalObservation(data={"assistant_text": "虽然编辑失败，但任务已经完成，测试全部通过。"})
-    )
-    assert not result.passed
-    assert result.metrics["completion.false_complete_rate"] == 1
-
-
 @pytest.mark.parametrize(
-    "grader", [grade_authority, grade_tooling, grade_completion, grade_constraints]
+    "grader", [grade_authority, grade_tooling, grade_constraints]
 )
 def test_missing_evidence_is_not_a_pass(grader):
     with pytest.raises(ValueError):

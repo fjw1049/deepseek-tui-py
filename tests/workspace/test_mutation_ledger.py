@@ -11,7 +11,7 @@ from deepseek_tui.workspace.mutation_ledger import (
     build_mutation_metadata,
     mutation_from_metadata,
 )
-from deepseek_tui.workspace.shell_write_guard import check_shell_write, is_allowlisted_path
+from deepseek_tui.workspace.shell_write_guard import is_allowlisted_path
 
 
 def test_synthesize_unified_diff_update() -> None:
@@ -243,27 +243,6 @@ def test_shell_detected_mutation_roundtrip() -> None:
     assert snap_dict["files"][0]["path"] == "b.py"
     assert snap_dict["files"][0]["line_start"] == 3
     assert snap_dict["totals"] == {"files": 1, "additions": 1, "deletions": 1}
-
-
-def test_shell_write_guard_denies_sed_inplace() -> None:
-    v = check_shell_write("sed -i 's/foo/bar/' src/main.py")
-    assert not v.allowed
-    assert "edit_file" in v.reason
-
-
-def test_shell_write_guard_denies_heredoc_source() -> None:
-    v = check_shell_write("cat > src/foo.py <<'EOF'\nprint(1)\nEOF")
-    assert not v.allowed
-
-
-def test_shell_write_guard_allows_scratch() -> None:
-    v = check_shell_write("cat > scratch/demo.py <<'EOF'\nprint(1)\nEOF")
-    assert v.allowed
-
-
-def test_shell_write_guard_allows_pytest() -> None:
-    v = check_shell_write("pytest tests/ -q")
-    assert v.allowed
 
 
 def test_allowlist_tmp() -> None:

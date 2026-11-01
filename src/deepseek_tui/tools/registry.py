@@ -726,10 +726,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
 
         registry.register(BrowserUseTool())
         registry.register(BrowserSkillTool())
-        from deepseek_tui.tools.task_delivery import FinishTaskTool, RequestTaskToolsTool
-
-        registry.register(FinishTaskTool())
-        registry.register(RequestTaskToolsTool())
 
     for tool in [
         ReadFileTool(),
@@ -856,12 +852,11 @@ def build_subagent_registry(
     registry = build_default_registry(cfg, mode=mode)
     from deepseek_tui.goal.types import GOAL_TOOL_NAMES
     from deepseek_tui.tools.plan_mode import ENTER_PLAN_MODE_NAME, EXIT_PLAN_MODE_NAME
-    from deepseek_tui.tools.task_delivery import CONTROL_TOOLS
     from deepseek_tui.tools.user_input import REQUEST_USER_INPUT_NAME
 
     # The sub-agent loop executes tools directly: engine-intercepted tools and
     # browser-task delivery controls would always fail there.
-    for name in GOAL_TOOL_NAMES | CONTROL_TOOLS | {
+    for name in GOAL_TOOL_NAMES | {
         REQUEST_USER_INPUT_NAME,
         ENTER_PLAN_MODE_NAME,
         EXIT_PLAN_MODE_NAME,

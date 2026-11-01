@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from deepseek_tui.browser.service import BrowserAction, BrowserRun, BrowserService
 
 
@@ -135,7 +137,7 @@ def test_browser_parameters_explain_observation_and_wait_contract():
 
     properties = BrowserUseTool().input_schema()["properties"]
     assert all(p.get("description") for p in properties.values())
-    assert "required" in properties["observation_id"]["description"]
+    assert "Omit to use the latest" in properties["observation_id"]["description"]
     assert "disappearance" in properties["wait_state"]["description"]
 
 
@@ -189,6 +191,36 @@ async def test_unknown_receipt_survives_log_clear_and_persistence_failure(tmp_pa
     assert receipt["action_id"] in run.unresolved
     assert service.operation("t", receipt["action_id"])["receipt"]["execution"] == "unknown"
     assert error.value.response["evidence_warning"]
+
+
+async def test_timed_out_navigation_does_not_lock_the_page(tmp_path, monkeypatch):
+    # Opening the page again settles it, and only a person can clear an unresolved operation.
+    import pytest
+
+    from deepseek_tui.browser.service import BrowserActionError
+
+    service, run, _, _ = browser(tmp_path)
+
+    async def lost_response(run, action):
+        run.last_dispatch_id = action._action_id
+        raise ConnectionError("response lost")
+
+    monkeypatch.setattr(service, "_action", lost_response)
+    with pytest.raises(BrowserActionError) as error:
+        await service.action("t", BrowserAction(action="open", url="http://127.0.0.1:8000/"))
+    assert error.value.response["receipt"]["execution"] == "unknown"
+    assert not run.unresolved
+
+
+@pytest.mark.parametrize("action,held", [("fill", False), ("click", True), ("press", True)])
+def test_only_repeatable_actions_escape_review_after_an_unknown_outcome(tmp_path, action, held):
+    # Filling again replaces the value and cannot submit; a click may already have acted.
+    service, run, _, _ = browser(tmp_path)
+    service._remember_response(run, {
+        "success": False, "content": "outcome unknown",
+        "receipt": {"action_id": "a", "action": action, "execution": "unknown", "effect": "unchecked"},
+    }, persist=False)
+    assert ("a" in run.unresolved) is held
 
 
 async def test_http_error_preserves_the_same_unknown_receipt():

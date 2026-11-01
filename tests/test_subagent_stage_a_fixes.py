@@ -65,8 +65,6 @@ def test_build_subagent_registry_drops_engine_only_tools() -> None:
         "request_user_input",
         "enter_plan_mode",
         "exit_plan_mode",
-        "finish_task",
-        "request_task_tools",
     }
     assert "read_file" in names
 

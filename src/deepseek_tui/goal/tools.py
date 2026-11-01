@@ -182,17 +182,14 @@ class UpdateGoalTool(ToolSpec):
     def description(self) -> str:
         return (
             "Define acceptance requirements, complete, or block the current goal. "
-            "an autonomous goal. Most active goal turns should not call this tool. "
-            "`complete` — the objective is satisfied and any stated validation has passed. "
-            "Provide a requirement-by-requirement audit in reason and cite actual successful "
-            "verification tool call IDs in evidence (inspect GetGoal). Edits alone are not "
-            "verification. Do not omit required scope or cancel unfinished checklist items. "
+            "Most active goal turns should not call this tool. "
+            "`complete` — the objective has actually been achieved and no required work "
+            "remains; say in reason what you checked and anything you could not verify. "
+            "Open checklist items and running background work prevent it. Do not cancel "
+            "unfinished checklist items or drop required scope to get there. "
             "`blocked` — a genuine impasse; for non-terminal blockers the same condition must "
             "repeat for at least 3 consecutive goal turns. `requirements` adds acceptance criteria "
             "from the user request before working. Existing requirements cannot be removed. "
-            "Supply audit.checks covering every GetGoal requirement with an explanation "
-            "and evidence IDs, failure_resolutions for unsuperseded failures, and plan_adjustments "
-            "explaining cancelled plan steps without dropping user requirements. "
             "Only the user can resume a goal or adjust its budget using /goal controls."
         )
 
@@ -205,54 +202,7 @@ class UpdateGoalTool(ToolSpec):
                     "enum": ["requirements", "blocked", "complete"],
                 },
                 "requirements": {"type": "array", "items": {"type": "string"}},
-                "audit": {
-                    "type": "object",
-                    "properties": {
-                        "checks": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "requirement_id": {"type": "string"},
-                                    "explanation": {"type": "string"},
-                                    "evidence": {"type": "array", "items": {"type": "string"}},
-                                },
-                                "required": ["requirement_id", "explanation", "evidence"],
-                            },
-                        },
-                        "failure_resolutions": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "tool_call_id": {"type": "string"},
-                                    "reason": {"type": "string"},
-                                    "evidence": {"type": "array", "items": {"type": "string"}},
-                                },
-                                "required": ["tool_call_id", "reason", "evidence"],
-                            },
-                        },
-                        "plan_adjustments": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "item_id": {"type": "string"},
-                                    "reason": {"type": "string"},
-                                },
-                                "required": ["item_id", "reason"],
-                            },
-                        },
-                    },
-                    "required": ["checks"],
-                },
                 "reason": {"type": "string"},
-                "evidence": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "For complete: tool call IDs proving the current result. "
-                    "Must be successful, finished, and after the latest file edit.",
-                },
             },
             "required": ["status"],
         }
@@ -284,12 +234,7 @@ class UpdateGoalTool(ToolSpec):
                     and context.subagent_manager.running_count()
                 ):
                     raise GoalError("work_pending", "Wait for running subagents before completing.")
-                snapshot, _promoted = service.mark_complete(
-                    reason,
-                    GoalActor.MODEL,
-                    evidence=input_data.get("evidence"),
-                    audit=input_data.get("audit"),
-                )
+                snapshot, _promoted = service.mark_complete(reason, GoalActor.MODEL)
                 return ToolResult(success=True, content=completion_summary_prompt(snapshot))
             if status == "blocked":
                 snapshot = service.mark_blocked(reason, GoalActor.MODEL)

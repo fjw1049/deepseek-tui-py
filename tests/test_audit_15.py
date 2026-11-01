@@ -269,6 +269,7 @@ async def test_restore_plan_approval_belongs_to_original_thread(tmp_path, monkey
     app._thread_store = Mock()
     app._thread_store.load_thread.return_value = thread
     app._thread_store.list_turns_for_thread.return_value = []
+    app._thread_store.transcript_path.return_value = tmp_path / "no-transcript.jsonl"
     monkeypatch.setattr(
         "deepseek_tui.server.threads.reconstruct_messages_from_turns",
         lambda *_: [Message.user("saved")],

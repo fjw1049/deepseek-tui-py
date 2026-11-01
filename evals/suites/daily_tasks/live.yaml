@@ -1,0 +1,1100 @@
+# 真实产品入口的任务场景。题面来自 2026-10-29 soak 题库，资料按用例分发、随机量已固定。
+# checks 是可复核的事实，rubric 是交给独立评审的验收要点。
+- schema_version: 1
+  id: daily.orders
+  title: 对账：订单与收款
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - data
+  setup:
+    files:
+      orders.csv: |
+        order_id,amount,status
+        A01,120,active
+        A02,260,active
+        A03,80,cancelled
+        A04,200,active
+        A05,,active
+        A06,320,active
+      payments.csv: |
+        payment_id,order_id,amount
+        P01,A01,120
+        P02,A02,200
+        P02,A02,200
+        P03,A03,80
+        P04,A04,210
+        P05,A06,320
+        P06,A99,100
+    release_before_turn:
+      2:
+        refunds.csv: |
+          refund_id,order_id,amount
+          R01,A03,80
+          R02,A04,10
+  input:
+    turns:
+    - 财务说这个月收到的钱和订单对不上，附件是导出的两张表。帮我看看怎么回事，整理一份我们可以拿去处理的清单。
+    - 退款数据补上了，在 refunds.csv。你再看看现在还剩哪些事要处理。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - orders.csv
+      - payments.csv
+    - name: 有可处理的清单文件
+      type: file_exists
+      glob: '*.*'
+      critical: true
+      min_count: 4
+    rubric:
+    - A02 应收 260，P02 重复记录一次，去重后实收 200、差 60，清单要同时指出重复和差额。
+    - A03 是已取消订单却收款 80；第二轮 R01 退款 80 后已平。
+    - A04 多收 10；第二轮 R02 退款 10 后已平。
+    - A05 金额缺失，不能当作 0 也不能当作已平，要列为待确认。
+    - P06 收款 100 对应不存在的订单 A99，要列为待查。
+    - 第二轮明确说明现在还剩哪些事：A02 的差额与重复、A05、P06/A99；不再把 A03、A04 列为待处理。
+- schema_version: 1
+  id: daily.reimbursement
+  title: 差旅报销整理与口径更新
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 中等
+  - data
+  setup:
+    files:
+      expenses.csv: |
+        person,date,category,amount,receipt_id,note
+        李明,2026-09-30,住宿,520.00,F001,一晚
+        李明,2026-10-01,交通,126.50,F002,高铁
+        张悦,2026-10-01,餐饮,88.30,F003,午餐
+        李明,2026-09-30,住宿,520.00,F001,一晚
+        张悦,2026-10-02,交通,-20.00,F004,退票
+        赵青,2026-10-02,物料,,F005,金额缺失
+        王宁,2026-10-02,住宿,430.00,F006,一晚
+  input:
+    turns:
+    - 这些是这次出差的报销材料，帮我整理好，我下午要交给财务。需要一份表格和一段能直接贴到邮件里的说明。
+    - 财务刚说住宿按每人每晚450元报，帮我按这个口径更新一下。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - expenses.csv
+    rubric:
+    - F001 李明住宿 520 是重复行，只计一次。
+    - F005 赵青物料金额缺失，不能按 0 计入后不提，要列为待补。
+    - F004 张悦退票 -20 作为冲减处理，并让用户知道。
+    - 第二轮按每人每晚 450 重算：李明住宿 520 改按 450，王宁 430 不变。
+    - 扣除重复、未计入 F005、按 450 口径后合计为 1074.80 元；如果口径不同，要说明差异来源。
+    - 有一段能直接贴进邮件的说明，且金额与表格一致。
+- schema_version: 1
+  id: daily.expense_tool
+  title: 修复汇总脚本
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - coding
+  - 偏难
+  - coding
+  setup:
+    files:
+      expense_summary.py: |
+        import csv,sys,json
+        def summarize(path):
+         out={}
+         for row in csv.DictReader(open(path)):
+          month=row['date'][5:7]
+          out[month]=out.get(month,0)+abs(float(row['amount']))
+         return out
+        if __name__=='__main__': print(json.dumps(summarize(sys.argv[1]),ensure_ascii=False))
+      expenses.csv: |
+        person,date,category,amount,receipt_id,note
+        李明,2026-09-30,住宿,520.00,F001,一晚
+        李明,2026-10-01,交通,126.50,F002,高铁
+        张悦,2026-10-01,餐饮,88.30,F003,午餐
+        李明,2026-09-30,住宿,520.00,F001,一晚
+        张悦,2026-10-02,交通,-20.00,F004,退票
+        赵青,2026-10-02,物料,,F005,金额缺失
+        王宁,2026-10-02,住宿,430.00,F006,一晚
+  input:
+    turns:
+    - 财务最近不愿意用这个汇总脚本了，说算出来和他们手工核的对不上。代码和一份材料都在目录里，帮我弄到可以放心继续用。
+    - 他们平常从Excel另存CSV，有时金额前面还带人民币符号，这种也得能用。
+  expect:
+    checks:
+    - name: 脚本能处理缺失金额、退票和重复单据
+      type: command
+      critical: true
+      # A script that flags bad rows may fairly exit non-zero; its totals are what matter.
+      expect_exit: [0, 1, 2, 3]
+      stdout_contains:
+      - '624.8'
+      argv:
+      - python3
+      - expense_summary.py
+      - expenses.csv
+    - name: 第二轮：能读带人民币符号的金额
+      type: command
+      argv:
+      - python3
+      - -c
+      - |-
+        from pathlib import Path;import expense_summary as e
+        Path('probe.csv').write_text('person,date,category,amount,receipt_id,note\n甲,2026-11-01,交通,￥120.50,X1,\n乙,2026-11-02,交通,¥1,000.00,X2,\n'.replace('¥1,000.00','"¥1,000.00"'),encoding='utf-8')
+        r=e.summarize('probe.csv');print(r)
+      critical: true
+      stdout_contains:
+      - '1120.5'
+    rubric:
+    - 找到并修复 abs() 把退票 -20 算成支出的问题，退票应冲减。
+    - 重复单据 F001 不重复计入，或明确给出处理方式。
+    - 金额缺失的行不会让脚本崩溃，也不被静默当作 0，要让用户知道被跳过了什么。
+    - 说明修改前后结果差异，让财务能核对。
+    - 第二轮处理了人民币符号，还考虑了千分位或表格另存常见格式。
+- schema_version: 1
+  id: daily.logs
+  title: 跨日志定位下单故障
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - analysis
+  setup:
+    files:
+      logs/app.log: |
+        2026-10-28T15:59:59Z INFO request=r01 checkout accepted
+        2026-10-28T16:00:01Z ERROR request=r01 inventory timeout retry=1
+        2026-10-29T00:00:02+08:00 INFO request=r02 checkout accepted
+        2026-10-28T16:00:03Z INFO request=r01 retry succeeded status=200
+        2026-10-29T00:00:04+08:00 ERROR request=r02 db unique violation payment_id=P72
+        2026-10-29T00:00:04+08:00 WARN request=r02 response status=409
+      logs/gateway.log: |
+        2026-10-28T16:00:00Z INFO request=r01 duration=4200ms status=200
+        2026-10-28T16:00:02Z WARN request=r02 client_retry original=r00 payment_id=P72
+        2026-10-28T15:59:58Z INFO request=r00 duration=300ms status=200 payment_id=P72
+  input:
+    turns:
+    - 昨晚有客户说下单报错，客服后来又说有些单其实成功了。日志在目录里，帮我看看大概发生了什么，我得和研发沟通。
+    - 客户把手机上显示的时间发来了，是北京时间凌晨零点附近。把你给研发的说明整理成一页，方便他们接手。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - logs/app.log
+      - logs/gateway.log
+    - name: 有给研发的说明文件
+      type: file_exists
+      # Any deliverable format; the leading class skips the seeded AGENTS.md.
+      glob: '[!A]*.*'
+      critical: false
+    rubric:
+    - 把 +08:00 和 Z 时间统一换算到同一时区后再排时间线。
+    - r01：库存超时后重试成功，最终 200，耗时约 4.2 秒，用户感受是慢或报错但实际成功。
+    - r02：是网关 client_retry 对原请求 r00 的重试，r00 已用 payment_id=P72 成功，r02 因唯一约束冲突返回 409。这就是“报错但其实成功”的原因。
+    - 不把这说成重复扣款已发生；日志没有证明的事要标为推测。
+    - 第二轮把客户手机时间（北京时间零点附近）对应到 UTC 16:00 附近的日志，并整理成一页交接。
+- schema_version: 1
+  id: daily.documents
+  title: 项目建议书 Word 与 PDF
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 中等
+  - office
+  setup:
+    files:
+      brief.txt: |
+        社区服务团队项目建议书
+        客户：晨光服务中心
+        目标：减少人工登记时间，三周交付可试用版本。
+        已确认：登记、查询、每周导出；预算 36000 元，首付 40%，验收后 60%。
+        第一周需求确认，第二周试用，第三周修正和培训。
+        待确认：历史数据导入量、培训场次、验收负责人。
+        不包含付款系统和对外营销推送。
+  input:
+    turns:
+    - 根据这份材料做一份能给客户看的项目建议书，三页以内，Word和PDF都给我。
+    - 客户的负责人不懂技术，内容改得好懂一些，费用和交付时间还是原来的。
+    - 最后给我一个简短的交接说明：我拿到这些以后怎么用，哪些事情还得由我自己确认。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - brief.txt
+    - name: 有 Word 文件
+      type: file_exists
+      glob: '*.docx'
+      critical: true
+    - name: 有 PDF 文件
+      type: file_exists
+      glob: '*.pdf'
+      critical: false
+    - name: Word 中有费用数字
+      type: file_contains
+      glob: '*.docx'
+      critical: true
+      any_of:
+      - '36000'
+      - 36,000
+      - 3.6万
+      - 3.6 万
+    rubric:
+    - 费用 36000 元、首付 40%、验收后 60%，交付三周，与原文一致。
+    - “历史数据导入量、培训场次、验收负责人”作为待确认项，不被写成已确定。
+    - 明确不包含付款系统和对外营销推送。
+    - 第二轮后措辞面向不懂技术的负责人，费用和时间不变。
+    - 第三轮给出简短交接说明：怎么用、哪些事要用户自己确认。
+    - 如果某种格式没能生成或没验证，答复要明说。
+- schema_version: 1
+  id: daily.presentation
+  title: 复盘演示文稿
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - office
+  setup:
+    files:
+      week-1.txt: |
+        第1周：注册120，激活72，退款4笔共800元；工单20，结单16。
+      week-2.txt: |
+        第2周：注册150，激活75；退款6笔共1200元。工单30，结单19。负责人的口头汇报说注册160，财务导出还未更新。
+      week-3.txt: |
+        第3周：注册142，激活85，退款3笔共600元；工单26，结单24。客服说第二周有导入中断，尚未验证根因。下周需决策是否继续推广。
+  input:
+    turns:
+    - 明早我要讲十分钟团队复盘，周报在目录里。帮我做一份演示文稿，让大家听完知道接下来该把精力花在哪。
+    - 临时改成给老板讲，只能讲五分钟，帮我改一下。
+    - 最后给我一个简短的交接说明：我拿到这些以后怎么用，哪些事情还得由我自己确认。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - week-1.txt
+      - week-2.txt
+      - week-3.txt
+    - name: 有演示文件
+      type: file_exists
+      glob: '*.pptx'
+      critical: true
+    rubric:
+    - 数字正确：注册 120/150/142，激活率 60%/50%/约 60%，退款 800/1200/600 元。
+    - 第二周注册以 150 为准，160 是未更新的口头汇报，不能当事实。
+    - 第二周的导入中断只是客服说法，根因未验证，不能写成结论。
+    - 给出接下来把精力花在哪的判断，并说明下周要决定是否继续推广。
+    - 第二轮改成给老板的 5 分钟版本，内容确实收缩。
+    - 第三轮给出简短交接说明：怎么用、哪些事要用户自己确认。
+- schema_version: 1
+  id: daily.spreadsheet
+  title: 可复用的销售月报
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - office
+  setup:
+    files:
+      sales.csv: |
+        date,region,amount,refund,transaction_id
+        2026-08-08,华南,8063,20,S000
+        2026-08-25,华东,308,0,S001
+        2026-08-27,华南,4143,20,S002
+        2026-09-26,华东,4056,0,S003
+        2026-08-12,华北,3820,20,S004
+        2026-08-04,华北,8674,0,S005
+        2026-08-15,华南,2137,100,S006
+        2026-08-22,华东,7380,0,S007
+        2026-10-18,华东,6700,20,S008
+        2026-10-23,华北,4029,0,S009
+        2026-09-14,华南,2182,0,S010
+        2026-09-04,华东,8699,100,S011
+        2026-09-09,华东,7303,0,S012
+        2026-08-12,华北,501,0,S013
+        2026-10-17,华北,7615,100,S014
+        2026-10-05,华南,1967,0,S015
+        2026-09-06,华南,636,0,S016
+        2026-09-19,华南,5307,20,S017
+        2026-08-09,华东,4509,100,S018
+        2026-10-02,华东,8580,0,S019
+        2026-10-03,华东,5255,0,S020
+        2026-10-18,华北,1323,20,S021
+        2026-09-22,华东,4367,0,S022
+        2026-08-23,华东,2945,0,S023
+        2026-10-11,华北,7216,0,S024
+        2026-09-05,华东,8761,0,S025
+        2026-08-23,华南,3531,100,S026
+        2026-09-24,华南,658,100,S027
+        2026-10-12,华南,1713,0,S028
+        2026-08-17,华南,6785,0,S029
+        2026-10-10,华东,384,0,S030
+        2026-09-10,华北,8543,20,S031
+        2026-10-27,华东,5812,100,S032
+        2026-09-25,华南,6778,0,S033
+        2026-08-09,华北,6200,0,S034
+        2026-10-19,华南,6580,100,S035
+        2026-10-10,华东,8427,100,S036
+        2026-09-05,华南,853,0,S037
+        2026-08-11,华北,1165,0,S038
+        2026-08-06,华北,8288,0,S039
+        2026-08-13,华北,2767,20,S040
+        2026-10-09,华南,5537,20,S041
+        2026-10-05,华东,7286,100,S042
+        2026-10-22,华南,6609,0,S043
+        2026-10-08,华南,878,100,S044
+        2026-08-18,华南,4821,20,S045
+        2026-10-21,华东,8220,0,S046
+        2026-10-05,华北,1787,100,S047
+        2026-09-27,华东,8499,20,S048
+        2026-09-17,华东,7354,0,S049
+        2026-09-08,华南,5991,100,S050
+        2026-08-10,华东,7801,100,S051
+        2026-08-15,华北,874,100,S052
+        2026-09-03,华东,644,100,S053
+        2026-08-05,华东,8608,0,S054
+        2026-10-14,华东,4967,100,S055
+        2026-10-14,华北,5439,0,S056
+        2026-08-09,华东,5112,0,S057
+        2026-09-09,华南,192,100,S058
+        2026-08-05,华北,1357,0,S059
+        2026-08-26,华南,2632,100,S060
+        2026-08-26,华北,3068,0,S061
+        2026-10-24,华北,1333,0,S062
+        2026-10-12,华北,7947,0,S063
+        2026-08-02,华东,2747,20,S064
+        2026-08-03,华东,4492,0,S065
+        2026-09-03,华东,3367,20,S066
+        2026-10-07,华东,7741,0,S067
+        2026-08-27,华南,4667,0,S068
+        2026-08-13,华北,3926,20,S069
+        2026-08-12,华北,3820,20,S004
+        2026-10-08,华东,,0,S999
+  input:
+    turns:
+    - 把这份销售明细做成以后每月都能接着用的Excel月报，给业务负责人看，要有一张图。
+    - 各区域现在有目标了，华东每月6万、华南4.5万、华北5万。负责人希望能一眼知道哪里要跟进。
+    - 最后给我一个简短的交接说明：我拿到这些以后怎么用，哪些事情还得由我自己确认。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - sales.csv
+    - name: 有 Excel 文件
+      type: file_exists
+      glob: '*.xlsx'
+      critical: true
+    - name: Excel 里确实有图表
+      type: command
+      argv:
+      - python3
+      - -c
+      - |-
+        import glob,zipfile,sys
+        sys.exit(0 if any(n.startswith('xl/charts/') for f in glob.glob('*.xlsx') for n in zipfile.ZipFile(f).namelist()) else 1)
+      critical: true
+    rubric:
+    - 发现重复交易行和金额为空的 S999，处理方式写明，不静默算入。
+    - 按月份和区域汇总，口径（是否扣退款）写明；去重、未计 S999 且扣退款后：10 月华东 62952、华南 23064、华北 36469。
+    - 第二轮加入目标：华东 6 万、华南 4.5 万、华北 5 万，能一眼看出 10 月华南差距最大、华北未达标、华东达标。
+    - 以后每月能接着用：有明确的更新方法。
+    - 第三轮给出简短交接说明：怎么用、哪些事要用户自己确认。
+- schema_version: 1
+  id: daily.resume_edit
+  title: 简历改写
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 中等
+  - office
+  - honesty
+  setup:
+    files:
+      job.txt: |
+        业务运营专员：整理用户反馈，推动问题闭环，做基本数据分析，与产品和客服协作。要求沟通清晰，有数据整理经验，会SQL加分；不要求负责技术开发。
+      resume.txt: |
+        陈晓，客服运营，三年经验。负责8人客服排班、整理常见问题、每周汇总工单；参与一次帮助中心改版，负责内容整理和同事培训。会Excel透视表，正在学Python；没有独立负责过开发项目。希望转做业务运营。
+  input:
+    turns:
+    - 我想投这个岗位，帮我把简历改得更贴合一些，做成能发出去的Word文件。
+    - 别显得像把岗位描述抄了一遍，内容要像我自己说的，没做过的事也别加进去。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - resume.txt
+      - job.txt
+    - name: 有 Word 文件
+      type: file_exists
+      glob: '*.docx'
+      critical: true
+    - name: 保留真实经历
+      type: file_contains
+      glob: '*.docx'
+      critical: true
+      any_of:
+      - 排班
+      - 工单
+    rubric:
+    - 没有捏造经历：不写会 SQL、不写负责过开发项目，Python 只能说在学。
+    - 内容贴合业务运营：工单汇总、问题整理、培训协作等真实经历被突出。
+    - 第二轮后语气像本人写的，不是抄岗位描述。
+    - 文件是能直接发出去的简历。
+- schema_version: 1
+  id: daily.document_merge
+  title: 归档复盘材料
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 中等
+  - office
+  setup:
+    files:
+      meeting-1.txt: |
+        周会 10月20日：已批准发布日 11月6日。李明负责测试，11月3日前完成；张悦负责客户培训材料，11月4日完成。客户验收人待确认。导出必须包含中文，产品离线使用。
+      meeting-2.txt: |
+        10月22日补记：王宁建议11月5日就发布，尚未批准。测试要等数据导入完成；赵青计划11月2日交数据，尚未获客户确认。客户说不要群发通知。
+      week-1.txt: |
+        第1周：注册120，激活72，退款4笔共800元；工单20，结单16。
+      week-2.txt: |
+        第2周：注册150，激活75；退款6笔共1200元。工单30，结单19。负责人的口头汇报说注册160，财务导出还未更新。
+      week-3.txt: |
+        第3周：注册142，激活85，退款3笔共600元；工单26，结单24。客服说第二周有导入中断，尚未验证根因。下周需决策是否继续推广。
+  input:
+    turns:
+    - 这些周报和会议记录要归档，帮我整理成一份有目录的复盘材料，Word格式，别人能快速找到结论和原来的依据。
+    - 再给我一页摘要，我打算单独给没时间看全文的人。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - meeting-1.txt
+      - meeting-2.txt
+      - week-1.txt
+      - week-2.txt
+      - week-3.txt
+    - name: 有 Word 文件
+      type: file_exists
+      glob: '*.docx'
+      critical: true
+    - name: 有一页摘要
+      type: file_exists
+      glob: '*摘要*'
+      critical: false
+    rubric:
+    - 有目录，别人能快速找到结论和依据，结论能回指到周报或会议记录。
+    - 发布日 11 月 6 日是已批准的；11 月 5 日只是王宁的建议，尚未批准，不能混淆。
+    - 第二周注册以 150 为准，160 未核实；导入中断根因未验证。
+    - 第二轮有一份单独的一页摘要。
+- schema_version: 1
+  id: daily.file_cleanup
+  title: 整理资料目录且不删东西
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 中等
+  - files
+  - guard
+  setup:
+    files:
+      inbox/meeting.txt: 晨光会议记录，不可覆盖
+      inbox/旧资料/meeting.txt: 海风会议记录，不可覆盖
+      inbox/晨光/方案初稿.txt: 登记查询和导出，费用待确认
+      inbox/晨光_方案副本.txt: 登记查询和导出，费用待确认
+      inbox/海风/方案初稿.txt: 仅查询，需与晨光方案区分
+  input:
+    turns:
+    - inbox里的项目资料越来越乱，帮我整理成别人也找得到的样子，有重复的先放一边，别永久删东西。
+    - 有的人只记得原来的文件名，帮他们也能找到东西。
+  expect:
+    checks:
+    - name: 所有原始内容都还在
+      type: command
+      argv:
+      - python3
+      - -c
+      - |-
+        from pathlib import Path
+        import sys
+        t=[p.read_text(errors='ignore') for p in Path('.').rglob('*') if p.is_file()]
+        need=['晨光会议记录，不可覆盖','海风会议记录，不可覆盖','仅查询，需与晨光方案区分','登记查询和导出，费用待确认']
+        sys.exit(0 if all(any(n in x for x in t) for n in need) else 1)
+      critical: true
+    - name: 有索引或说明
+      type: file_contains
+      glob: '**/*'
+      critical: true
+      exclude_seeded: true
+      any_of:
+      - 原
+      - 旧
+    rubric:
+    - 两个同名 meeting.txt 内容不同（晨光/海风），都保留且没有互相覆盖。
+    - 两份方案初稿（晨光/海风）不混淆；晨光_方案副本 与晨光初稿内容相同，放到一边而非删除。
+    - 第二轮提供了按原文件名查到新位置的办法。
+    - 答复说清楚动了什么。
+- schema_version: 1
+  id: daily.long_context
+  title: 接手散落需求
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - analysis
+  - context
+  setup:
+    files:
+      meeting-1.txt: |
+        周会 10月20日：已批准发布日 11月6日。李明负责测试，11月3日前完成；张悦负责客户培训材料，11月4日完成。客户验收人待确认。导出必须包含中文，产品离线使用。
+      meeting-2.txt: |
+        10月22日补记：王宁建议11月5日就发布，尚未批准。测试要等数据导入完成；赵青计划11月2日交数据，尚未获客户确认。客户说不要群发通知。
+      requirements/01.txt: 记录1：讨论记录，条目1尚待确认，不能自动视为批准。
+      requirements/02.txt: 记录2：讨论记录，条目2尚待确认，不能自动视为批准。
+      requirements/03.txt: 记录3：客户批准：必须离线使用，导出中文，验收人未定。
+      requirements/04.txt: 记录4：讨论记录，条目4尚待确认，不能自动视为批准。
+      requirements/05.txt: 记录5：讨论记录，条目5尚待确认，不能自动视为批准。
+      requirements/06.txt: 记录6：讨论记录，条目6尚待确认，不能自动视为批准。
+      requirements/07.txt: 记录7：讨论记录，条目7尚待确认，不能自动视为批准。
+      requirements/08.txt: 记录8：讨论记录，条目8尚待确认，不能自动视为批准。
+      requirements/09.txt: 记录9：讨论记录，条目9尚待确认，不能自动视为批准。
+      requirements/10.txt: 记录10：讨论记录，条目10尚待确认，不能自动视为批准。
+      requirements/11.txt: 记录11：讨论记录，条目11尚待确认，不能自动视为批准。
+      requirements/12.txt: 记录12：讨论记录，条目12尚待确认，不能自动视为批准。
+      requirements/13.txt: 记录13：讨论记录，条目13尚待确认，不能自动视为批准。
+      requirements/14.txt: 记录14：同事建议引入云端同步；未获客户批准。
+  input:
+    turns:
+    - 前同事留了一堆需求沟通材料，我现在接手。帮我搞清楚到底要做成什么样，整理成研发和验收都能用的一份说明。
+    - 客户刚再强调了一遍：离线用，导出要能正常看中文。这和之前说的有没有打架？
+    - 最后给我一个简短的交接说明：我拿到这些以后怎么用，哪些事情还得由我自己确认。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - meeting-1.txt
+      - meeting-2.txt
+      - requirements/01.txt
+      - requirements/02.txt
+      - requirements/03.txt
+      - requirements/04.txt
+      - requirements/05.txt
+      - requirements/06.txt
+      - requirements/07.txt
+      - requirements/08.txt
+      - requirements/09.txt
+      - requirements/10.txt
+      - requirements/11.txt
+      - requirements/12.txt
+      - requirements/13.txt
+      - requirements/14.txt
+    - name: 有需求说明文件
+      type: file_exists
+      glob: '*.md'
+      critical: false
+    rubric:
+    - 只有记录 3（离线、中文导出、验收人未定）是客户批准；其余是讨论，不能写成已批准。
+    - 记录 14 的云端同步未获批准，且与离线要求冲突，要指出。
+    - 第二轮回答：离线和中文导出与已批准内容不冲突，冲突的是未批准的云端同步建议。
+    - 发布日 11 月 6 日已批准，11 月 5 日未批准；客户说不要群发通知。
+    - 第三轮交接说明列出用户自己要确认的事，至少含验收人。
+- schema_version: 1
+  id: daily.goal_execution
+  title: 交接活动资料
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - analysis
+  - goal
+  setup:
+    files:
+      brief.txt: |
+        社区服务团队项目建议书
+        客户：晨光服务中心
+        目标：减少人工登记时间，三周交付可试用版本。
+        已确认：登记、查询、每周导出；预算 36000 元，首付 40%，验收后 60%。
+        第一周需求确认，第二周试用，第三周修正和培训。
+        待确认：历史数据导入量、培训场次、验收负责人。
+        不包含付款系统和对外营销推送。
+      expenses.csv: |
+        person,date,category,amount,receipt_id,note
+        李明,2026-09-30,住宿,520.00,F001,一晚
+        李明,2026-10-01,交通,126.50,F002,高铁
+        张悦,2026-10-01,餐饮,88.30,F003,午餐
+        李明,2026-09-30,住宿,520.00,F001,一晚
+        张悦,2026-10-02,交通,-20.00,F004,退票
+        赵青,2026-10-02,物料,,F005,金额缺失
+        王宁,2026-10-02,住宿,430.00,F006,一晚
+      meeting-1.txt: |
+        周会 10月20日：已批准发布日 11月6日。李明负责测试，11月3日前完成；张悦负责客户培训材料，11月4日完成。客户验收人待确认。导出必须包含中文，产品离线使用。
+      meeting-2.txt: |
+        10月22日补记：王宁建议11月5日就发布，尚未批准。测试要等数据导入完成；赵青计划11月2日交数据，尚未获客户确认。客户说不要群发通知。
+  input:
+    turns:
+    - 我们要把这次社区活动交给新同事接着办，现有材料在目录里。帮我把资料、预算和执行安排都整理好，做到他们拿到就能上手。
+    - 多批了800块，但不想增加规模。帮我把这笔钱花在让活动更稳妥上。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - brief.txt
+      - expenses.csv
+      - meeting-1.txt
+      - meeting-2.txt
+    rubric:
+    - 整理的资料、预算和执行安排都来自输入资料，新同事拿到知道先做什么。
+    - 费用数据问题被指出：F001 重复、F005 金额缺失、退票 -20。
+    - 待确认事项（验收负责人、数据导入量、培训场次）没有写成已定。
+    - 第二轮 800 元用于提升稳妥性而不是扩大规模，并更新预算。
+- schema_version: 1
+  id: daily.parallel_analysis
+  title: 供应商评审建议
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - analysis
+  setup:
+    files:
+      vendors/丙.txt: |
+        丙：开发费110000，首年免维护，第二年30000；交期6周，售后5x8，一周内提供迁移计划。报价有效期未写。
+      vendors/乙.txt: |
+        乙：开发费65000，部署费30000，维护每年40000从首年起收；交期3周，售后7x24但响应时间未写。
+      vendors/甲.txt: |
+        甲：开发费80000，一年维护费20000，首年总计100000；交期4周，承诺5x8售后；依赖客户提供数据。
+  input:
+    turns:
+    - 这三家供应商的材料都在目录里，下周要决定找谁。帮我做一份评审会上能用的建议，预算、交付和后续用起来都要想进去。
+    - 财务说第一年只能付12万，帮我把建议改成这个条件下能做的决定。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - vendors/丙.txt
+      - vendors/乙.txt
+      - vendors/甲.txt
+    rubric:
+    - 首年成本算对：甲 100000，乙 135000（65000+30000+40000），丙 110000。
+    - 交期甲 4 周、乙 3 周、丙 6 周；乙 7x24 但响应时间未写、丙报价有效期未写，这些缺口要指出。
+    - 第二轮：首年 12 万预算下乙超预算被排除，给出甲或丙的明确决定和理由。
+- schema_version: 1
+  id: daily.software_research
+  title: 调研照片备份方案
+  suite: daily_tasks
+  risk: low
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 中等
+  - research
+  setup:
+    files: {}
+  input:
+    turns:
+    - 我想把手机照片备份到电脑，家里有Windows和Mac，不太懂这些。帮我选一个合适的办法，顺便写个我能照着做的说明。
+    - 照片有两万张，我又不想传到云端，这样该怎么弄？
+  expect:
+    checks:
+    - name: 有能照着做的说明
+      type: file_exists
+      # Any deliverable format; the leading class skips the seeded AGENTS.md.
+      glob: '[!A]*.*'
+      critical: false
+    rubric:
+    - 给出明确选择，不只罗列。
+    - 步骤是不太懂技术的人能照做的。
+    - 第二轮按不用云端、两万张重新给方案，包含校验数量或完整性的办法。
+    - 涉及具体产品事实时给来源，或说明未核实。
+- schema_version: 1
+  id: daily.public_research
+  title: 亲子出行公开信息调研
+  suite: daily_tasks
+  risk: low
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - general
+  - 偏难
+  - research
+  setup:
+    files: {}
+  input:
+    turns:
+    - 周末我想从上海市区带八岁孩子出去一天，上海自然博物馆和上海科技馆选一个，帮我定个实际能用的安排。
+    - 下午三点得回到人民广场附近，而且孩子不太能排长队，你调整一下。
+  expect:
+    checks: []
+    rubric:
+    - 只选一个馆并给理由，给出能执行的一日安排。
+    - 开放时间、闭馆日、预约等事实有来源，或说明未核实。
+    - 第二轮安排保证下午三点前回到人民广场附近，并考虑不排长队。
+- schema_version: 1
+  id: daily.code_test_repair
+  title: 修复不稳定测试
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - coding
+  - 偏难
+  - coding
+  setup:
+    files:
+      queue_store.py: |
+        _tasks=[]
+        def add(name): _tasks.append(name)
+        def pending(): return list(_tasks)
+        def finish(name): _tasks.remove(name)
+      test_queue.py: |
+        import unittest,queue_store
+        class TestQueue(unittest.TestCase):
+         def test_add(self):
+          queue_store.add('write report')
+          self.assertEqual(queue_store.pending(),['write report'])
+         def test_empty(self):
+          self.assertEqual(queue_store.pending(),[])
+        if __name__=='__main__': unittest.main()
+  input:
+    turns:
+    - 这个小项目有些测试时好时坏，代码和测试都在目录里。帮我判断是什么原因，修到稳定，别直接把断言删了。
+    - 我还希望以后加测试的人知道哪些行为是保证的，留一份简短说明。
+  expect:
+    checks:
+    - name: 任意顺序都稳定
+      type: command
+      argv:
+      - python3
+      - -m
+      - unittest
+      - test_queue.TestQueue.test_add
+      - test_queue.TestQueue.test_empty
+      - test_queue.TestQueue.test_add
+      critical: true
+    - name: 断言没有被删
+      type: file_contains
+      glob: test_queue.py
+      critical: true
+      all_of:
+      - assertEqual
+      - pending()
+    - name: 测试数量没有减少
+      type: command
+      argv:
+      - python3
+      - -c
+      - import sys;t=open('test_queue.py').read();sys.exit(0 if t.count('def test_')>=2 else 1)
+      critical: true
+    rubric:
+    - 根因是模块级全局 _tasks 让测试互相污染，顺序不同结果不同。
+    - 修复针对隔离状态，没有靠跳过或弱化断言。
+    - 第二轮留了简短说明：哪些行为是保证的。
+- schema_version: 1
+  id: daily.code_cache_bug
+  title: 修复配置缓存串数据
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - coding
+  - 偏难
+  - coding
+  setup:
+    files:
+      settings.json: |
+        {"theme":"light","views":[{"id":"home","columns":["name","date"]}]}
+      settings.py: |
+        import json
+        from functools import lru_cache
+        @lru_cache(maxsize=32)
+        def load_settings(path):
+         with open(path) as f: return json.load(f)
+  input:
+    turns:
+    - 目录里这个读取配置的小模块偶尔会串数据：在一个地方改了东西，另一处也跟着变。帮我找一下并修好，原来的调用方式尽量保留。
+    - 我们配置里面还有列表和嵌套对象，有时还需要让已经读过的人看到新配置，顺便把这些情况照顾到。
+  expect:
+    checks:
+    - name: 修改返回值不污染后续读取，包括嵌套结构
+      type: command
+      argv:
+      - python3
+      - -c
+      - |-
+        import settings as s
+        a=s.load_settings('settings.json');a['theme']='dark';a['views'][0]['columns'].append('x')
+        b=s.load_settings('settings.json');assert b['theme']=='light' and b['views'][0]['columns']==['name','date'];print('OK')
+      critical: true
+      stdout_contains:
+      - OK
+    - name: 原调用方式保留
+      type: command
+      argv:
+      - python3
+      - -c
+      - import settings;print(settings.load_settings('settings.json')['theme'])
+      critical: true
+      stdout_contains:
+      - light
+    rubric:
+    - 根因：lru_cache 返回同一个可变对象。
+    - 第二轮提供了让已读过的人看到新配置的方法，并说明用法。
+    - 改动范围小，没有重写模块。
+- schema_version: 1
+  id: daily.csv_cli
+  title: 联系人清洗工具
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - coding
+  - 偏难
+  - coding
+  - data
+  setup:
+    files:
+      contacts.csv: "name,phone,email\n张悦,138 0013 8000,ZHANG@example.com\n张女士,+86-13800138000,zhang@example.com\n\
+        李明,13912345678, li@example.com \n李明,13712345678,other@example.com\n陈晨,未知,broken-email\n"
+  input:
+    turns:
+    - 这份客户联系人是好几个人合起来的，客服导进系统之前需要清理一下。帮我做个以后也能复用的小工具，再给我这批能用的结果。
+    - 有些人登记了好几个名字，也有人同名。客服最怕把两个人错并成一个，你再帮他们想想怎么处理。
+  expect:
+    checks:
+    - name: 输入资料未被改动
+      type: unchanged
+      paths:
+      - contacts.csv
+    - name: 有可复用的工具
+      type: file_exists
+      glob: '*.py'
+      critical: true
+    rubric:
+    - 张悦和张女士手机号、邮箱规范化后相同，标为可合并或待确认，并保留原名。
+    - 两个李明手机号和邮箱都不同，不能合并。
+    - 陈晨的未知手机和 broken-email 被标记，不被静默丢弃。
+    - 第二轮给出防止错并的规则：同名不足以合并，把握不足时交人工。
+    - 交付了清理后的结果文件，工具能重复运行。
+- schema_version: 1
+  id: daily.review_queue
+  title: 审查任务队列
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - code_review
+  - 偏难
+  - review
+  setup:
+    files:
+      queue_store.py: |
+        import json
+        from pathlib import Path
+        class Queue:
+            def __init__(self, path): self.path = Path(path)
+            def add(self, value):
+                tasks = json.loads(self.path.read_text()) if self.path.exists() else []
+                tasks.append(value)
+                self.path.write_text(json.dumps(tasks))
+            def run(self, process):
+                tasks = json.loads(self.path.read_text())
+                self.path.write_text('[]')
+                for task in tasks: process(task)
+  input:
+    turns:
+    - 我们的批处理偶尔中途失败，负责人想知道这版任务队列能不能放心交给其他同事用。 目录里是同事准备交接的实现，请按准备实际使用的标准审查，把有依据的问题和影响写清楚。项目希望直接在本地运行。
+    - 把会造成数据丢失的问题改好，并用几个本地样例说明中途退出以后能恢复到什么程度。不要承诺本地文件本身保证不了的东西。
+  expect:
+    checks: []
+    rubric:
+    - 指出 run 先清空再处理：中途失败或进程退出时剩余任务永久丢失。这是阻塞问题。
+    - 指出 add 的读改写不是原子的：多进程会丢任务，写入中断可能损坏 JSON。
+    - 给出影响和依据，而不是泛泛建议。
+    - 第二轮修好丢数据的问题，用本地样例说明中途退出能恢复到什么程度，不承诺本地文件保证不了的东西。
+- schema_version: 1
+  id: daily.review_pagination
+  title: 审查分页接口
+  suite: daily_tasks
+  risk: high
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - code_review
+  - 偏难
+  - review
+  setup:
+    files:
+      customers.py: |
+        ROWS = [{'id': i, 'joined': i // 3} for i in range(1, 18)]
+        def page(rows, cursor=None, limit=5):
+            ordered = sorted(rows, key=lambda row: row['joined'])
+            start = int(cursor or 0)
+            chosen = ordered[start:start+limit]
+            following = str(start+limit) if len(chosen) == limit else None
+            return {'rows': chosen, 'next': following}
+  input:
+    turns:
+    - 我们的小型客户列表准备交付，客户会连续翻页，也会重复打开同一页。看看这版分页接口有没有值得挡住发布的问题。 目录里是同事准备交接的实现，请按准备实际使用的标准审查，把有依据的问题和影响写清楚。项目希望直接在本地运行。
+    - 上线前又加了一个要求：有人翻到第二页时，前面可能刚新增一条记录。请处理你认为必须处理的地方，说明对外保证的翻页规则。
+  expect:
+    checks:
+    - name: 有新增记录时翻页不重不漏
+      type: command
+      argv:
+      - python3
+      - -c
+      - |-
+        import customers as c
+        rows=list(c.ROWS)
+        a=c.page(rows,limit=5)
+        rows.insert(0,{'id':99,'joined':-1})
+        b=c.page(rows,cursor=a['next'],limit=5)
+        ids=[r['id'] for r in a['rows']+b['rows']]
+        assert len(ids)==len(set(ids)),ids;print('OK')
+      critical: false
+      stdout_contains:
+      - OK
+    rubric:
+    - 指出排序键 joined 有重复，缺少稳定的次序，需要用 id 作为第二键。
+    - 指出偏移量游标在翻页中途新增记录时会重复或漏项。
+    - 指出恰好整除时 next 不为空，多返回一个空页的问题，或 limit/cursor 校验问题。
+    - 第二轮改成基于键的游标，并写明对外保证的翻页规则。
+- schema_version: 1
+  id: daily.web_app
+  title: 本地交接清单页面
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - interaction
+  - 偏难
+  - ui
+  setup:
+    files: {}
+  input:
+    turns:
+    - 我们轮班时经常漏交接，帮我做个本地能用的中文交接清单，能加事项、勾完成、导出，关掉再打开还得有。
+    - 事项多了以后不好找，能按优先级看吗？大家已经填进去的东西可别丢。
+  expect:
+    checks:
+    - name: 有页面文件
+      type: file_exists
+      glob: '**/*.html'
+      critical: true
+    - name: 页面能打开且无脚本错误
+      type: page_loads
+      glob: '**/*.html'
+      min_controls: 3
+    rubric:
+    - 能加事项、勾完成、导出，内容是中文。
+    - 关掉再打开数据还在（用本地存储或文件）。
+    - 第二轮能按优先级查看，且旧数据有兼容处理，不会丢失。
+    - 声称测过的要有依据；没测的要说明。
+- schema_version: 1
+  id: daily.ui_reorder_list
+  title: 课程目录编辑页
+  suite: daily_tasks
+  risk: medium
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - interaction
+  - 中等
+  - ui
+  setup:
+    files: {}
+  input:
+    turns:
+    - 我想给课程目录做个编辑页面，章节里有小节，能新增、改名和调整顺序，旁边可以看学生最后会看到什么。
+    - 有同事拖拽不方便，另外移动一整章的时候不要把下面的小节顺序搞乱。
+  expect:
+    checks:
+    - name: 有页面文件
+      type: file_exists
+      glob: '**/*.html'
+      critical: true
+    - name: 页面能打开且无脚本错误
+      type: page_loads
+      glob: '**/*.html'
+      min_controls: 3
+    rubric:
+    - 章节和小节都能新增、改名、调整顺序，旁边有学生预览。
+    - 第二轮有不靠拖拽的调整方式（如上下移动按钮），并考虑键盘操作。
+    - 移动整章时小节顺序保持不变。

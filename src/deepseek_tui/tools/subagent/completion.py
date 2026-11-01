@@ -85,8 +85,8 @@ def summarize_subagent_result(snap: SubAgentResult) -> str:
         return "Cancelled"
     if snap.status.kind is SubAgentStatusKind.INTERRUPTED:
         return f"Interrupted: {snap.status.message or 'unknown'}"
-    if snap.task_outcome is not None and snap.task_outcome.get("status") != "completed":
-        return f"UI task {snap.task_outcome['status']}: {snap.task_outcome['answer']}"[:240]
+    if snap.task_outcome is not None and snap.task_outcome.get("status") == "partial":
+        return f"Partial: {'; '.join(snap.task_outcome.get('remaining', []))}"[:240]
     body = (snap.result or "").strip()
     if not body:
         return f"Completed ({snap.agent_type.value})"

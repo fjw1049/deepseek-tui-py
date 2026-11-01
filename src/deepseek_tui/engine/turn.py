@@ -192,6 +192,7 @@ class TurnResult:
     # what a fragment is worth belongs to the caller.
     truncated: bool = False
     task_outcome: dict[str, Any] | None = None
+    completion_note: str | None = None
 
 
 @dataclass

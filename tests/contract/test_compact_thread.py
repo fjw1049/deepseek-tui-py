@@ -37,6 +37,7 @@ async def test_compact_thread_emits_context_compaction_item(
                 Message.user("c"),
             ],
             mode=kwargs.get("mode", "agent"),
+            record_transcript=lambda *args, **kwargs: None,
             turn_usage_ledger=SimpleNamespace(
                 reset=lambda: None,
                 totals=lambda: {},

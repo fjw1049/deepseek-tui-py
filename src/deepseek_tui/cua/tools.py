@@ -287,14 +287,6 @@ def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) 
     return any(action.get("coordinate") for action in _inputs(trace))
 
 
-def _kept_ui(trace: dict[str, Any] | None) -> bool:
-    """Keep verified state across reads and closing tabs, only with complete input tracing."""
-    return (trace is not None
-            and (not trace.get("tabs") or trace.get("playwright_traced") is True)
-            and all(action.get("action") == "close" and action.get("ok") is True
-                    for action in _inputs(trace)))
-
-
 # Rejected while validating the request, before any input is sent.
 _PRE_DISPATCH = frozenset({"stale_element", "text_not_found", "invalid_key", "unsupported_form",
                            "unknown_app", "state_changed"})
@@ -337,30 +329,8 @@ class CuaTool(ToolSpec):
         return False
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
-        delivery = context.metadata.get("task_delivery")
         context.metadata["cua_session"] = self.session
-        observing = self.descriptor["name"] == "observe"
-        verified = {}
-        if delivery is not None:
-            delivery.cua_used = True
-            delivery.cua_acted |= self.descriptor["name"] == "js"
-            verified = dict(delivery.cua_observation_evidence)
-            delivery.cua_observation_evidence.clear()
-            if not observing:
-                if self.session.last_surface:
-                    delivery.cua_verification_target = self.session.last_surface
-        try:
-            result = await self._execute(input_data, context)
-        except BaseException:
-            if delivery is not None:
-                delivery.cua_failed_evidence = set(delivery.evidence)
-            raise
-        if not result.success and delivery is not None:
-            delivery.cua_failed_evidence = set(delivery.evidence)
-        if (delivery is not None and not observing and result.success
-                and _kept_ui(result.metadata.get("cua_trace"))):
-            # Reading state or closing the verified tab keeps the earlier evidence valid.
-            delivery.cua_observation_evidence.update(verified)
+        result = await self._execute(input_data, context)
         if not result.success and self.descriptor["name"] == "js":
             kind = result.metadata.get("cua_error_kind")
             if kind == "user_intervened":
@@ -368,8 +338,6 @@ class CuaTool(ToolSpec):
                     "The user operated the app during the last call; inspect its actual state.")
             elif not _sent_no_input(result.metadata.get("cua_trace"), kind):
                 self.session.invalidate_observation("CUA code failed; inspect its actual effects.")
-        if not observing:
-            result = replace(result, metadata={**result.metadata, "task_evidence": False})
         return result
 
     async def _execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -407,7 +375,6 @@ class CuaTool(ToolSpec):
         metadata = {**result.metadata, "cua_runtime_content": True}
         if self.descriptor["name"] == "observe":
             observation = payload.get("observation")
-            metadata["task_evidence"] = result.success and isinstance(observation, dict)
             if isinstance(observation, dict):
                 text = str(observation.get("text", ""))
                 observation["complete"] = ax_complete(text)
@@ -416,21 +383,12 @@ class CuaTool(ToolSpec):
                     for expected in input_data.get("expect", [])
                 ]
                 metadata["cua_observation"] = observation
-                # Inspecting a different app cannot verify the app we just operated.
-                observed_surface = cua_surface(payload.get("_meta"))
-                delivery = context.metadata.get("task_delivery")
-                required = (delivery.cua_verification_target if delivery
-                            else self.session.last_surface)
-                metadata["cua_verifies_target"] = required is None or observed_surface == required
         if surface := cua_surface(payload.get("_meta")):
             metadata["cua_surface"] = surface
             if self.descriptor["name"] != "observe" or not (
                 self.session.outside_change or self.session.reset_reason
             ):
                 self.session.last_surface = surface
-            delivery = context.metadata.get("task_delivery")
-            if delivery is not None and self.descriptor["name"] == "js":
-                delivery.cua_verification_target = surface
         trace = payload.get("trace")
         if isinstance(trace, dict) and trace.get("ready"):
             metadata["cua_trace"] = trace
@@ -509,7 +467,7 @@ class CuaObserveTool(CuaTool):
             "browser and tab_id from the runtime inventory. "
             "Returns full accessibility state and a screenshot through the same CUA runtime; "
             "existing access permissions apply. Use after actions to verify the expected "
-            "change, when the user changes the interface, and before finish_task. "
+            "change, when the user changes the interface, and before reporting a result. "
             "For text-verifiable changes, supply expect with exact visible text fragments "
             "that would show success; width, quote style, case and spacing are ignored. "
             "A missing fragment means not yet verified, not absent. "

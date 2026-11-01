@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-MAX_UNRESOLVED_FAILURES = 256
 MAX_GOAL_OBJECTIVE_LENGTH = 4000
 MAX_GOAL_COMPLETION_CRITERION_LENGTH = MAX_GOAL_OBJECTIVE_LENGTH
 GOAL_SERVICE_KEY = "goal_service"
@@ -120,12 +119,9 @@ class GoalSnapshot:
     budget: GoalBudgetReport
     terminal_reason: str | None = None
     checklist: tuple[dict[str, str], ...] = ()
-    evidence: tuple[dict[str, Any], ...] = ()
     completion_evidence: tuple[str, ...] = ()
-    work_revision: int = 0
     requirements: tuple[dict[str, str], ...] = ()
     completion_audit: dict[str, Any] = field(default_factory=dict)
-    evidence_overflow: bool = False
 
     def for_model(self) -> dict[str, Any]:
         """Snapshot the model may see — never includes goal_id."""
@@ -136,12 +132,7 @@ class GoalSnapshot:
             "tokens_used": self.tokens_used,
             "wall_clock_ms": self.wall_clock_ms,
             "checklist": list(self.checklist),
-            "evidence": list(self.evidence),
-            "completion_evidence": list(self.completion_evidence),
-            "work_revision": self.work_revision,
             "requirements": list(self.requirements),
-            "completion_audit": deepcopy(self.completion_audit),
-            "evidence_overflow": self.evidence_overflow,
             "budget": {
                 "token_budget": self.budget.token_budget,
                 "turn_budget": self.budget.turn_budget,
@@ -169,12 +160,9 @@ class GoalSnapshot:
             "wall_clock_ms": self.wall_clock_ms,
             "terminal_reason": self.terminal_reason,
             "checklist": list(self.checklist),
-            "evidence": list(self.evidence),
             "completion_evidence": list(self.completion_evidence),
-            "work_revision": self.work_revision,
             "requirements": list(self.requirements),
             "completion_audit": deepcopy(self.completion_audit),
-            "evidence_overflow": self.evidence_overflow,
             "budget_limits": {
                 "token_budget": self.budget.token_budget,
                 "turn_budget": self.budget.turn_budget,

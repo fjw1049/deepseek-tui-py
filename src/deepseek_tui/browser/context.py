@@ -37,6 +37,7 @@ PAGE_CONTENT_NOTICE = (
 )
 # Omitted when false: the model only needs the exceptions.
 DEFAULT_FALSE = ("disabled", "editable", "readonly", "name_truncated", "details_truncated")
+KEPT_WHEN_EMPTY = ("text", "elements", "url", "title", "total_elements")
 
 
 def _compact_element(element: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +114,26 @@ class _Scopes:
             self.index = {k: v for k, v in self.index.items() if v != added}
 
 
+def _trim_for_model(data: dict[str, Any], observation: dict[str, Any]) -> None:
+    """Drop what repeats on every result and what the model never acts on."""
+    data.pop("timings", None)
+    if isinstance(data.get("history"), list):
+        data["history"] = data["history"][-3:]
+    for key in ("capabilities", "document_id", "frame_document_id"):
+        observation.pop(key, None)
+    # Absent means the default: no truncation, no frames, offset 0.
+    for key, value in list(observation.items()):
+        if key not in KEPT_WHEN_EMPTY and value in (None, False, "", [], 0):
+            observation.pop(key)
+    receipt = data.get("receipt")
+    if isinstance(receipt, dict):
+        receipt.pop("before_observation_id", None)
+        if receipt.get("after_observation_id") == observation.get("observation_id"):
+            receipt.pop("after_observation_id")
+        if receipt.get("execution") == "executed":
+            receipt.pop("action_id", None)
+
+
 def project_result(result: dict[str, Any], budget: int) -> str:
     def encode(value):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -121,6 +142,7 @@ def project_result(result: dict[str, Any], budget: int) -> str:
     observation = data.get("observation")
     if not isinstance(observation, dict):
         return _bounded_result(data, budget)
+    _trim_for_model(data, observation)
     # Leads the observation so it frames every page-written string that follows.
     data["observation"] = observation = {"source": PAGE_CONTENT_NOTICE, **observation}
     # The previous model output may have been truncated independently of its snapshot.

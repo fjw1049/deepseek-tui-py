@@ -713,6 +713,7 @@ class ProjectContext:
             source = ",".join(str(p) for p in paths)
         return (
             f'<project_instructions source="{html_escape(source, quote=True)}">\n'
+            "Loaded here in full; do not read these files again.\n"
             f"{html_escape(self.instructions, quote=False)}\n"
             f"</project_instructions>"
         )
@@ -843,12 +844,15 @@ def _load_project_layer(workspace: Path, *, allow_auto_generate: bool = True) ->
     """
     ctx = load_project_context(workspace)
 
-    if not ctx.has_instructions():
+    # A repository owns its instructions, and home holds unrelated ones: the search
+    # stops at the repository root and never reaches home.
+    home = Path.home().resolve()
+    if not ctx.has_instructions() and not (workspace / ".git").exists():
         current = workspace.parent
         seen: set[Path] = {workspace.resolve()}
         while current is not None:
             resolved = current.resolve()
-            if resolved in seen:  # reached filesystem root, parent is itself
+            if resolved in seen or resolved == home:  # filesystem root: parent is itself
                 break
             seen.add(resolved)
             parent_ctx = load_project_context(current)
@@ -856,6 +860,8 @@ def _load_project_layer(workspace: Path, *, allow_auto_generate: bool = True) ->
             if parent_ctx.has_instructions():
                 ctx.instructions = parent_ctx.instructions
                 ctx.source_path = parent_ctx.source_path
+                break
+            if (resolved / ".git").exists():
                 break
             next_parent = current.parent
             if next_parent == current:

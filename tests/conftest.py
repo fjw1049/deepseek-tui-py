@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
+from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.config.paths import user_config_path
-from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
+from deepseek_tui.engine.orchestrator import Engine
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +23,23 @@ def _isolate_claude_plugins(
 ) -> None:
     """Keep plugin discovery off the developer's real ~/.claude/plugins."""
     monkeypatch.setenv("CLAUDE_PLUGINS_DIR", str(tmp_path / "_claude-plugins"))
+
+
+@functools.cache
+def _api_key_rejected() -> bool:
+    """A rejected key is the same as no key: live tests skip rather than fail."""
+    config = ConfigLoader().load()
+    provider = config.effective_provider_config()
+    if not provider.api_key or not provider.base_url:
+        return False  # The tests' own no-key skip covers this.
+    try:
+        reply = httpx.get(
+            f"{provider.base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {provider.api_key}"}, timeout=10,
+        )
+    except httpx.HTTPError:
+        return False
+    return reply.status_code == 401
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +52,8 @@ def _isolate_deepseek_home(
     """
     if request.node.get_closest_marker("live") is not None:
         monkeypatch.setenv("DEEPSEEK_CONFIG_PATH", str(user_config_path()))
+        if _api_key_rejected():
+            pytest.skip("configured API key was rejected")
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "_deepseek-home"))
 
 

@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -160,16 +159,6 @@ async def test_nested_spawn_inherits_parent_runtime(tmp_path, monkeypatch):
         await m.shutdown()
 
 
-async def test_narration_inherits_selected_model():
-    from deepseek_tui.server.phase_bridge import resolve_narration_model
-
-    assert (
-        resolve_narration_model(Config(provider="glm", model="selected-custom-model"))
-        == "selected-custom-model"
-    )
-    assert resolve_narration_model(cfg("alpha")) == "alpha-model"
-
-
 async def test_no_key_subagent_never_returns_synthetic_success(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -258,39 +247,3 @@ async def test_plugin_persona_accepts_generic_models(tmp_path, monkeypatch, mode
         await m.shutdown()
 
 
-async def test_narration_override_routes_and_closes_client(tmp_path, monkeypatch):
-    from deepseek_tui.server.phase_bridge import (
-        NarrationPlan,
-        ReasoningSegment,
-        TurnNarrationState,
-        compute_narration_display,
-    )
-
-    config = cfg("alpha")
-    config.ui.process_narration.model = "beta::beta-model"
-    owned = SimpleNamespace(close=AsyncMock())
-    routes = []
-
-    def build(c):
-        routes.append(c)
-        return owned
-
-    monkeypatch.setattr("deepseek_tui.client.factory.build_llm_client", build)
-    plan = AsyncMock(
-        return_value=NarrationPlan(publish=True, phase="verify", finding="Verified", next_goal="")
-    )
-    monkeypatch.setattr("deepseek_tui.server.phase_bridge.compute_narration_plan", plan)
-    await compute_narration_display(
-        Client(),
-        config,
-        user_goal="inspect",
-        state=TurnNarrationState(),
-        segment=ReasoningSegment(item_id="one", text="read files"),
-        tool_calls=(),
-        recent_tool_results=(),
-        locale="en",
-    )
-    assert routes[0].provider == "beta"
-    assert plan.call_args.args[0] is owned
-    assert plan.call_args.kwargs["model"] == "beta-model"
-    owned.close.assert_awaited_once()

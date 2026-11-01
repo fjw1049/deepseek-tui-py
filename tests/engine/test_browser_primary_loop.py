@@ -66,10 +66,7 @@ async def test_tool_failure_returns_to_primary_model_for_recovery(tmp_path):
                 arguments={"action": "open", "url": "https://example.test"},
             ),
             ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-            ToolCall(id="finish", name="finish_task", arguments={
-                "status": "completed", "answer": "The report total is 42.",
-                "evidence": ["tool:read"], "remaining": [],
-            }),
+            "The report total is 42.",
         ]
     )
     browser = SimpleNamespace(
@@ -145,10 +142,7 @@ async def test_large_observation_survives_actual_engine_tool_ingress(tmp_path, m
     client = ScriptedClient(
         [
             ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-            ToolCall(id="finish", name="finish_task", arguments={
-                "status": "completed", "answer": "Read.",
-                "evidence": ["tool:read"], "remaining": [],
-            }),
+            "Read.",
         ]
     )
     engine = await Engine.create(
@@ -179,7 +173,6 @@ async def test_large_observation_survives_actual_engine_tool_ingress(tmp_path, m
         result = json.loads(content)
         assert len(content) <= 6000
         assert result["receipt"]["execution"] == "executed"
-        assert result["receipt"]["evidence_ref"] == "tool:read"
         assert result["observation"]["observation_id"] == "obs-current"
         assert result["observation"]["elements"][0]["ref"] == "e0"
         assert result["observation"]["next_element_offset"] > 0
@@ -188,9 +181,7 @@ async def test_large_observation_survives_actual_engine_tool_ingress(tmp_path, m
 
 
 def finish(answer="The total is 42."):
-    return ToolCall(id="finish", name="finish_task", arguments={
-        "status": "completed", "answer": answer, "evidence": ["tool:read"], "remaining": [],
-    })
+    return answer
 
 
 async def delivery_engine(tmp_path, replies):
@@ -206,20 +197,18 @@ async def delivery_engine(tmp_path, replies):
     return engine, client
 
 
-@pytest.mark.parametrize("early_stop", [False, True])
 @pytest.mark.parametrize("locale", ["en", "zh"])
-async def test_delivery_returns_exact_answer_without_finalization_notice(tmp_path, early_stop, locale):
+async def test_answer_is_delivered_exactly_as_written(tmp_path, locale):
     from deepseek_tui.engine.events import StatusEvent, TextDeltaEvent
     engine, client = await delivery_engine(tmp_path, [
-        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        *(["I opened the page."] if early_stop else []), finish(),
+        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}), finish(),
     ])
     engine.reply_locale = locale
     try:
         result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 2 + early_stop  # no model call to rewrite the accepted delivery
+        assert len(client.requests) == 2  # no model call to rewrite the answer
         assert result.assistant_message.text_content() == "The total is 42."
-        assert result.task_outcome["status"] == "completed"
+        assert result.task_outcome["status"] == "completed_with_evidence"
         events = engine.handle.drain_events()
         assert any(isinstance(e, TextDeltaEvent) and e.text == "The total is 42."
                    for e in events)
@@ -230,60 +219,24 @@ async def test_delivery_returns_exact_answer_without_finalization_notice(tmp_pat
         await engine.shutdown_session()
 
 
-async def test_announced_step_without_tool_call_can_still_be_taken(tmp_path):
-    engine, client = await delivery_engine(tmp_path, [
-        ToolCall(id="look", name="browser_use", arguments={"action": "observe"}),
-        "I'll open the report next.",
-        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        finish(),
-    ])
-    try:
-        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 4
-        assert "browser_use" in {(t.get("function") or t)["name"] for t in client.requests[2].tools}
-        assert result.task_outcome["status"] == "completed"
-    finally:
-        await engine.shutdown_session()
-
-
-async def test_repeated_unstructured_stop_is_partial_not_infinite_loop(tmp_path):
-    engine, client = await delivery_engine(tmp_path, [
-        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        "Opened.", "Opened.", "Opened.",
-    ])
-    try:
-        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        # One round to continue, one to finalize, then a bounded partial.
-        assert len(client.requests) == 4
-        assert result.task_outcome["status"] == "partial"
-        assert "not verified" in result.assistant_message.text_content()
-    finally:
-        await engine.shutdown_session()
-
-
-async def test_focus_blocks_hidden_tool_then_enables_only_requested_tool(tmp_path):
+async def test_browser_use_keeps_the_tool_list_for_the_whole_task(tmp_path):
     (tmp_path / "report.txt").write_text("42")
     engine, client = await delivery_engine(tmp_path, [
         ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        ToolCall(id="hidden", name="write_file", arguments={"path": "report.txt", "content": "43"}),
-        ToolCall(id="extend", name="request_task_tools", arguments={
-            "names": ["write_file"], "reason": "Save analyzed report"}),
         ToolCall(id="file", name="write_file", arguments={"path": "report.txt", "content": "43"}),
         finish(),
     ])
     try:
         result = await engine._run_conversation([Message.user("Read report")], "test", "sys", None)
-        names = lambda req: {(t.get("function") or t)["name"] for t in req.tools}
-        # read_file is a basic tool; others are listed once requested.
-        assert "write_file" not in names(client.requests[1])
-        assert "write_file" in names(client.requests[3])
-        assert "read_file" in names(client.requests[1])
+        names = lambda req: [(t.get("function") or t)["name"] for t in req.tools]
+        # An unchanged list keeps the prefix cache and the model's picture of its tools.
+        assert names(client.requests[1]) == names(client.requests[0])
+        assert "write_file" in names(client.requests[1])
         tool_results = {b.tool_use_id: b for m in client.requests[-1].messages
                         for b in m.content if b.type == "tool_result"}
-        assert tool_results["hidden"].is_error
         assert not tool_results["file"].is_error
-        assert result.task_outcome["status"] == "completed"
-        # Focus and evidence belong to one task, not the next conversation turn.
+        assert result.task_outcome["status"] == "completed_with_evidence"
+        # Facts belong to one task, not the next conversation turn.
         client.replies = iter(["Hello"])
         result = await engine._run_conversation([Message.user("Hello")], "test", "sys", None)
         assert result.task_outcome is None and "read_file" in names(client.requests[-1])
@@ -291,7 +244,7 @@ async def test_focus_blocks_hidden_tool_then_enables_only_requested_tool(tmp_pat
         await engine.shutdown_session()
 
 
-async def test_delivery_on_last_tool_round_still_reaches_user(tmp_path):
+async def test_answer_on_last_tool_round_still_reaches_user(tmp_path):
     engine, client = await delivery_engine(tmp_path, [
         ToolCall(id="read", name="browser_use", arguments={"action": "observe"}), finish(),
     ])
@@ -299,15 +252,13 @@ async def test_delivery_on_last_tool_round_still_reaches_user(tmp_path):
     try:
         result = await engine._run_conversation([Message.user("Read")], "test", "sys", None)
         assert len(client.requests) == 2
-        assert result.task_outcome["status"] == "completed"
+        assert result.task_outcome["status"] == "completed_with_evidence"
         assert result.assistant_message.text_content() == "The total is 42."
     finally:
         await engine.shutdown_session()
 
 
 @pytest.mark.parametrize("control,args", [
-    ("request_task_tools", {"names": ["read_file"], "reason": "Read report"}),
-    ("finish_task", {"status": "blocked", "answer": "Blocked", "evidence": [], "remaining": ["Login"]}),
     ("request_user_input", {"questions": [{"id": "order", "header": "Order", "question": "Which?"}]}),
 ])
 async def test_control_calls_cannot_race_a_browser_action(tmp_path, control, args):
@@ -325,13 +276,11 @@ async def test_control_calls_cannot_race_a_browser_action(tmp_path, control, arg
         await engine.shutdown_session()
 
 
-async def test_expanding_tools_does_not_bypass_approval(tmp_path):
+async def test_browser_task_keeps_approval_for_other_tools(tmp_path):
     engine, client = await delivery_engine(tmp_path, [
         ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        ToolCall(id="expand", name="request_task_tools", arguments={"names": ["write_file"], "reason": "Save report"}),
         ToolCall(id="denied", name="write_file", arguments={"path": "report.txt", "content": "42"}),
-        ToolCall(id="finish", name="finish_task", arguments={"status": "partial", "answer": "Total 42; file not saved.",
-            "evidence": ["tool:read"], "remaining": ["File write was denied"]}),
+        "Total 42; file not saved.",
     ])
     engine._handle_approval_flow = AsyncMock(return_value=True)
     try:
@@ -343,7 +292,7 @@ async def test_expanding_tools_does_not_bypass_approval(tmp_path):
         await engine.shutdown_session()
 
 
-async def test_provider_failure_after_browser_returns_blocked_delivery(tmp_path):
+async def test_provider_failure_after_browser_is_reported_as_a_fact(tmp_path):
     from deepseek_tui.protocol.responses import StreamError
 
     class FailingClient(ScriptedClient):
@@ -383,102 +332,10 @@ async def test_provider_failure_after_browser_returns_blocked_delivery(tmp_path)
             [Message.user("Find nearby places")], "test", "sys", None
         )
         assert len(client.requests) == 2
-        assert result.task_outcome["status"] == "blocked"
+        assert result.task_outcome["status"] == "partial"
         assert "413" in result.task_outcome["remaining"][0]
-        assert result.error_message and result.assistant_message.text_content()
-        assert "tool:open" in result.task_outcome["evidence"]
-    finally:
-        await engine.shutdown_session()
-
-
-@pytest.mark.parametrize("recover", [True, False])
-async def test_rejected_delivery_has_one_correction_then_marks_answer_unverified(tmp_path, recover):
-    wrong = ToolCall(id="bad-finish", name="finish_task", arguments={
-        "status": "completed", "answer": "The report says 42.",
-        "evidence": ["tool:browser-action-id"], "remaining": [],
-    })
-    engine, client = await delivery_engine(tmp_path, [
-        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        wrong, finish() if recover else wrong,
-    ])
-    try:
-        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 3
-        assert {(t.get("function") or t)["name"] for t in client.requests[-1].tools} == {"finish_task"}
-        errors = [b.content for m in client.requests[-1].messages for b in m.content
-                  if b.type == "tool_result" and b.is_error]
-        assert any("tool:read" in e and "action_id" in e for e in errors)
-        assert result.task_outcome["status"] == ("completed" if recover else "partial")
-        if recover:
-            assert "The total is 42." in result.assistant_message.text_content()
-        else:
-            # The model's answer is still delivered, marked as unverified.
-            text = result.assistant_message.text_content()
-            assert text.startswith("The report says 42.")
-            assert "not verified" in text
-    finally:
-        await engine.shutdown_session()
-
-
-async def test_progress_narration_is_never_reused_as_answer(tmp_path):
-    engine, client = await delivery_engine(tmp_path, [
-        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        "Retry with the screenshot ID.", "Trying again.", "Trying again.",
-    ])
-    try:
-        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 4
-        assert result.task_outcome["status"] == "partial"
-        assert "Retry" not in result.assistant_message.text_content()
-        assert "Trying" not in result.assistant_message.text_content()
-    finally:
-        await engine.shutdown_session()
-
-
-async def test_malformed_finish_also_has_bounded_correction(tmp_path):
-    engine, client = await delivery_engine(tmp_path, [
-        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        ToolCall(id="bad", name="finish_task", arguments={"answer": "Incomplete schema"}),
-        finish(),
-    ])
-    try:
-        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 3
-        assert {(t.get("function") or t)["name"] for t in client.requests[-1].tools} == {"finish_task"}
-        assert result.task_outcome["status"] == "completed"
-    finally:
-        await engine.shutdown_session()
-
-
-async def test_stalled_correction_times_out_with_answer_marked_unverified(tmp_path, monkeypatch):
-    import asyncio
-
-    monkeypatch.setattr("deepseek_tui.tools.task_delivery.FINALIZATION_TIMEOUT_SECONDS", 0.01)
-    engine, client = await delivery_engine(tmp_path, [
-        ToolCall(id="read", name="browser_use", arguments={"action": "observe"}),
-        ToolCall(id="bad", name="finish_task", arguments={
-            "status": "completed", "answer": "The report says 42.",
-            "evidence": ["tool:wrong"], "remaining": [],
-        }),
-    ])
-    stream = client.stream_chat_completion
-
-    async def stalled(request):
-        if len(client.requests) == 2:
-            client.requests.append(request)
-            await asyncio.Event().wait()
-        async for event in stream(request):
-            yield event
-
-    monkeypatch.setattr(client, "stream_chat_completion", stalled)
-    try:
-        result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 3
-        assert result.task_outcome["status"] == "partial"
-        text = result.assistant_message.text_content()
-        assert text.startswith("The report says 42.")
-        assert "not verified" in text
-        assert "timed out" in result.task_outcome["remaining"][0]
+        assert "413" in result.completion_note
+        assert result.error_message
     finally:
         await engine.shutdown_session()
 

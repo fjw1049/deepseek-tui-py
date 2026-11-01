@@ -43,7 +43,7 @@ screenshot actually received and inspected. After navigation, tab changes,
 takeover, or changes that invalidate the target, observe again. A stale page
 result needs a fresh observation. `vision_available` describes capability, not
 proof of image delivery: a saved path or `image_warning` is not a viewed image.
-Pass the latest `observation_id` with every interaction. Send one state-changing
+Interactions act on the latest observation; a stale one is rejected, so observe again rather than guess. Send one state-changing
 browser action per tool round and consume its returned observation; older IDs
 are invalid. A ref names the same element for the life of the page: with the
 latest observation ID it stays usable while that element is listed. Action results
@@ -227,26 +227,17 @@ Image provenance describes the actual asset, scope, dimensions and wire
 transform. Only an unchanged current viewport screenshot is actionable for coordinates;
 cropped, full-page, compressed or older images are evidence and must be mapped or refreshed.
 
-### Task focus and delivery
+### Task delivery
 
-The first browser call activates a task-scoped tool set: browser_use,
-request_user_input, checklist, finish_task, request_task_tools, and computer-use
-tools when available, so one task can move between the web and desktop apps. This is a
-phase of the existing Engine, not a separate browser agent. Other listed tools stay
-visible but are rejected until enabled. If another capability is needed (for example
-reading a downloaded report), call request_task_tools with its names and the concrete
-dependency; names=[] lists eligible tools. New tools become usable next round. Existing approval, sandbox, and user restrictions
-still apply. Do not use another tool to bypass a denied browser operation.
+All your tools stay available during browser work, including file, search and shell
+tools. Do not use another tool to bypass a denied browser operation.
 
-End the whole task with finish_task as the only call. Supply the actual answer,
-status completed/partial/blocked, supporting evidence references in the form
-tool:<tool_call_id>, and remaining work. Reference successful observations or
-file results that establish the claimed outcome, not just dispatch receipts.
-A login, page opening, or file download is not completion when the user also
-requested an answer or analysis. For partial/blocked results explain precisely
-what was obtained and what remains. Do not claim completion with unresolved
-mutations. The Engine checks references and explicit blockers, not arbitrary
-business semantics; you must judge relevance, scope and coverage from evidence.
+End the whole task with your answer in plain text. A login, page opening, or file
+download is not completion when the user also requested an answer or analysis. If
+something is unfinished or unverified, say what was obtained and what remains; do not
+claim completion with unresolved mutations. You judge relevance, scope and coverage
+from what you observed. The host lists open operations and unresolved failures below
+your answer, so state any limits in your own words.
 
 On human return, use the resume reconciliation plus fresh observation. Before/
 after differences are sampled facts, not proof of who caused a change. User

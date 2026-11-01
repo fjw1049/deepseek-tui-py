@@ -22,9 +22,6 @@ class Surface:
     context_keys: tuple[str, ...] = ()
     # Mixed-purpose tools whose operations are classified by is_task_call.
     aux_tools: frozenset[str] = frozenset()
-    # Operating it also narrows the turn to the task-scoped tool set. Off where the
-    # surface is routinely a step inside other work (checking a native UI you build).
-    focus: bool = False
 
 
 CUA_TOOLS = frozenset({"cua_js", "cua_js_reset", "cua_observe"})
@@ -39,7 +36,6 @@ SURFACES: tuple[Surface, ...] = (
         context_keys=("action", "ref", "selector", "frame_id", "observation_id", "full_page",
                       "crop"),
         aux_tools=frozenset({"browser_skill"}),
-        focus=True,
     ),
     Surface(
         "chrome",
@@ -70,12 +66,6 @@ def is_task_call(tool_name: str, arguments: dict | None = None) -> bool:
     if tool_name == "browser_skill":
         return (arguments or {}).get("action") in {"run_site", "capture_start", "capture_stop"}
     return any(tool_name in s.tools - s.aux_tools for s in SURFACES)
-
-
-def is_focus_call(tool_name: str, arguments: dict | None = None) -> bool:
-    return is_task_call(tool_name, arguments) and any(
-        s.focus and tool_name in s.tools for s in SURFACES
-    )
 
 
 def context_keys_for(tool_name: str) -> tuple[str, ...]:

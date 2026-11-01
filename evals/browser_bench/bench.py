@@ -265,7 +265,6 @@ async def live_task(name: str, cfg, semaphore) -> dict[str, Any]:
     from deepseek_tui.protocol.responses import StreamDone
     from deepseek_tui.tools.browser import BrowserUseTool
     from deepseek_tui.tools.registry import ToolContext, ToolRegistry
-    from deepseek_tui.tools.task_delivery import FinishTaskTool, RequestTaskToolsTool
 
     meter = {"requests": 0, "input_tokens": 0, "cache_read_input_tokens": 0,
              "output_tokens": 0, "cost_usd": 0.0}
@@ -320,7 +319,7 @@ async def live_task(name: str, cfg, semaphore) -> dict[str, Any]:
                 thread = "live-" + name
                 service.configure(thread, persistent=False)
                 registry = CountingRegistry()
-                registry.register_all([BrowserUseTool(), FinishTaskTool(), RequestTaskToolsTool()])
+                registry.register_all([BrowserUseTool()])
                 context = ToolContext(working_directory=Path(tmp), metadata={
                     "browser_service": service, "runtime_thread_id": thread})
                 engine = Engine(handle=EngineHandle(), client=client, tool_registry=registry,
@@ -347,8 +346,7 @@ async def live_task(name: str, cfg, semaphore) -> dict[str, Any]:
                     raise TimeoutError("turn exceeded 900s")
                 result = turn.result()
                 outcome = result.outcome.value
-                answer = (result.task_outcome or {}).get("answer") or (
-                    result.assistant_message.text_content() if result.assistant_message else "")
+                answer = result.assistant_message.text_content() if result.assistant_message else ""
         except Exception as exc:  # noqa: BLE001 - the bench reports every failure as data
             errors.append(f"run: {type(exc).__name__}: {exc}"[:300])
         finally:

@@ -135,10 +135,28 @@ def suggest_tool_names(
     return result
 
 
+# Names models bring from other agents; edit distance alone cannot map these.
+_TOOL_EQUIVALENTS = {
+    "exec_command": "exec_shell", "run_command": "exec_shell", "run_terminal_cmd": "exec_shell",
+    "shell": "exec_shell", "bash": "exec_shell", "terminal": "exec_shell",
+    "read": "read_file", "view": "read_file", "cat": "read_file",
+    "write": "write_file", "create_file": "write_file",
+    "edit": "edit_file", "str_replace": "edit_file", "apply_patch": "edit_file",
+    "grep": "grep_files", "search_files": "grep_files", "glob": "file_search",
+    "webfetch": "fetch_url", "websearch": "web_search",
+}
+
+
 def missing_tool_error_message(
     tool_name: str, catalog: list[dict[str, Any]]
 ) -> str:
     """Build an error message for a missing tool, with suggestions."""
+    listed = {tool.get("function", tool).get("name", "") for tool in catalog}
+    equivalent = _TOOL_EQUIVALENTS.get(tool_name.strip().lower())
+    if equivalent in listed:
+        return (
+            f"Tool '{tool_name}' does not exist here. Use {equivalent} instead."
+        )
     suggestions = suggest_tool_names(catalog, tool_name, 3)
     if not suggestions:
         return (

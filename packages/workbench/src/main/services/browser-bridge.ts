@@ -170,7 +170,8 @@ export function createBrowserBridge(deps: Deps) {
     if (method === 'Workbench.listTabs') return { tabs: listTabs(browserId) }
     if (method === 'Workbench.createTab') {
       const url = typeof params.url === 'string' ? params.url : 'about:blank'
-      if (url !== 'about:blank' && !/^https?:\/\//i.test(url)) throw new Error('Only http(s) pages can be opened')
+      // The runtime has already confined file:// pages to the task workspace.
+      if (url !== 'about:blank' && !/^(https?:\/\/|file:\/\/)/i.test(url)) throw new Error('Only http(s) and workspace file pages can be opened')
       const reply = await request({ kind: 'create', browserId, url })
       if (!reply.ok || !reply.tabId) throw new Error(reply.error ?? 'Workbench could not open a tab')
       const tabId = reply.tabId

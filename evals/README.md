@@ -29,9 +29,11 @@ bash scripts/dev-eval.sh
 
 | 范围 | 当前能力 | 边界 |
 |---|---|---|
-| 离线机制 | 12 个确定性检查 | 不调用模型，不能证明 Agent 任务精度 |
-| 单步决策 | 4 个真实模型探针 | 观察一次响应，工具不执行 |
+| 离线机制 | 9 个确定性检查 | 不调用模型，不能证明 Agent 任务精度 |
+| 单步决策 | 真实模型探针 | 观察一次响应，工具不执行 |
 | 真实文件任务 | 3 个真实 Engine 文件任务 | 生产文件工具与工具循环；临时目录；独立 JSON/保护文件验收 |
+| 产品任务 | 22 个 `daily_tasks` 场景 | 真实 HTTP 入口、完整工具、持久化；事实检查 + 独立评审 |
+| 评审校准 | 6 个 `judge_calibration` 样本 | 用人工构造的好坏结果测评审员本身 |
 | 缓存探针 | 1 个 provider 缓存实验 | 人工稳定前缀；不代表真实任务质量 |
 
 真实模型读取现有用户级模型配置与环境变量；Key 不通过页面或导出接口暴露。
@@ -65,12 +67,57 @@ node --check evals/web/app.js
 
 新增回归覆盖评分误判、缺失证据、失败请求计数、取消落盘、真实 Engine 文件修改、
 路径边界、独立 API、跨站请求拒绝、真实离线子进程、历史/导出与比较。
-旧 completion 规则仍是启发式声明检测，不等于通用语义裁判。
 
 - `src/` implements the product.
 - `tests/` proves deterministic code contracts and tests this platform.
 - `evals/` measures the combined behavior of prompts, context assembly, models,
   provider serialization, tools, approval policy, compaction, and completion claims.
+
+## 产品任务评测（daily_tasks）
+
+这是判断 harness 改动好坏的主要依据。结构分三段，互相不依赖：
+
+1. **执行**（`evals/harness/product.py`）：每次运行启动一个产品服务，用一次性 home，
+   不带用户的 AGENTS.md、skills、插件、MCP；工作区在仓库外。先做一次真实往返
+   （preflight），模型不可达就停止，不产生“看起来像行为”的失败样本；连续 3 个回合
+   模型请求失败同样停止，超时和无人回答是任务自身的结果，不算环境问题。用户提问 60 秒无人回答视为卡住。
+2. **留档**：每个试验的 turns/items/events/transcript 和工作区产物存到
+   `sessions/<case>-<id>/`，打分只依赖这份留档。
+3. **打分**：`checks` 是可复核的事实，`rubric` 交给独立评审（看要求、答复、产物，
+   以及系统统计的运行记录，看不到 harness 状态）。评审不能推翻失败的事实：critical 检查失败即 fail，
+   非 critical 检查失败最高 partial。评审回复解析失败记为 error，不算判定。
+
+修改 rubric 或评审后不用重跑 Agent：
+
+```bash
+python -m evals regrade evals/artifacts/<run-id>
+python -m evals regrade evals/artifacts/<run-id> --reuse-judge  # 只改了确定性检查时不调用模型
+```
+
+一次基线（办公类任务常超过 15 分钟，回合上限用 1200 秒）：
+
+```bash
+python -m evals run --mode live --suite judge_calibration \
+  --provider deepseek --model deepseek-flash --max-live-requests 12 --timeout 120
+python -m evals run --mode live --suite daily_tasks \
+  --provider deepseek --model deepseek-flash \
+  --concurrency 4 --timeout 1200 --max-live-requests 50 --max-input-tokens 150000000
+```
+
+`--timeout` 在这里是每回合上限。`--max-input-tokens` 是软上限：达到后不再开始新试验，
+在跑的试验会继续。桌面用例设 `input.exclusive: true` 后不与其他试验并行。
+
+`session.*` 指标由 `evals/session_metrics.py` 从留档算出，历史数据走同一份代码：
+
+```bash
+python -m evals soak-baseline <thread-store> --output report.json
+```
+
+其中命令模式匹配（绕过、安装、sleep）是启发式，只看趋势，不参与判定通过。
+界面类用例目前只能看到源码，评审无法真正操作页面。
+
+场景的 `command` 检查在工作区副本里执行 `argv`，不经过 shell。这是对
+“用例不含可执行内容”的唯一放宽，因为脚本能不能跑只有运行才知道。
 
 ## Commands
 

@@ -131,3 +131,23 @@ async def test_fetch_follows_enabled_order(monkeypatch, providers, empty_anysear
         {'url': 'https://8.8.8.8/page'}, SimpleNamespace(timeout_ms=None)
     )
     assert called == expected
+
+
+async def test_fetch_failure_reports_the_site_not_just_the_extractor(monkeypatch):
+    """A blocked site must not read as a problem with the extraction API key."""
+
+    async def extractor(*args, **kwargs):
+        raise ToolError("DeepSeek fetch API returned HTTP 401")
+
+    async def blocked(*args, **kwargs):
+        return httpx.Response(403, request=httpx.Request("GET", args[1]))
+
+    monkeypatch.setattr(web, "_deepseek_request", extractor)
+    monkeypatch.setattr(web, "_anysearch_extract", extractor)
+    monkeypatch.setattr(web, "_http_get", blocked)
+    with pytest.raises(ToolError) as caught:
+        await web.FetchUrlTool(providers=["deepseek"]).execute(
+            {"url": "https://8.8.8.8/page"}, SimpleNamespace(timeout_ms=None)
+        )
+    assert "HTTP 403" in str(caught.value)
+    assert "HTTP 401" in str(caught.value)

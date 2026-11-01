@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from evals.schema import RunSummary, TrialResult
+from evals.session_metrics import percentile
 
 _SECRET_KEYS = {
     "api_key",
@@ -72,6 +73,8 @@ def summarize(run_id: str, results: list[TrialResult]) -> RunSummary:
             "mean": sum(values) / len(values),
             "min": min(values),
             "max": max(values),
+            "p50": percentile(values, 0.5),
+            "p90": percentile(values, 0.9),
         }
         for name, values in sorted(metric_values.items())
         if values
