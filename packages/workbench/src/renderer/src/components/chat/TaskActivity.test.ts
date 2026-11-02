@@ -54,7 +54,8 @@ it('counts running work separately from queued work and keeps failures visible',
     { id: 't', prompt: '等待执行', status: 'queued' }
   ])
   expect(trigger().textContent).toContain('4 个任务')
-  expect(trigger().querySelector('[data-status="failed"]')).not.toBeNull()
+  expect(trigger().querySelector('.ds-task-activity-status')?.textContent).toContain('1')
+  expect(trigger().querySelector('.ds-task-activity-status')?.textContent).toContain('失败')
   expect(trigger().querySelector('[data-status="running"]')).not.toBeNull()
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
   expect(container.querySelector('.ds-task-activity-body')?.hasAttribute('inert')).toBe(true)

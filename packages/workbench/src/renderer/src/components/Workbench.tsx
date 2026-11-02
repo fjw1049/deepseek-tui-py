@@ -2074,7 +2074,7 @@ export function Workbench(): ReactElement {
                         />
                       </div>
                     ) : null}
-                    <div key="composer" className={`${operationColumnActive ? 'ds-chat-stage ' : ''}mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0`}>
+                    <div key="composer" className={`${operationColumnActive ? 'ds-chat-stage ' : ''}mx-auto mb-4 flex w-full shrink-0 -mt-6 pb-0 pt-0`}>
                       <div ref={attachComposer} className="flex min-w-0 w-full flex-col" />
                     </div>
                   </div>

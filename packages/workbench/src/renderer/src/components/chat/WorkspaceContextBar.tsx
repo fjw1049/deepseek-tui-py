@@ -73,7 +73,7 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
       className={
         embedded
           ? 'ds-workspace-context-bar ds-workspace-context-bar--embedded relative flex min-h-7 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden px-1 pb-0.5 pt-1'
-          : 'ds-workspace-context-bar relative z-0 -mt-5 flex min-h-7 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden rounded-b-2xl rounded-t-none px-2 pb-1 pt-6 sm:px-3'
+          : 'ds-workspace-context-bar relative z-0 mt-1.5 flex min-h-7 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden px-[13px] py-0 sm:px-[15px]'
       }
       data-workspace-context-bar="true"
       data-context-bar-variant={variant}

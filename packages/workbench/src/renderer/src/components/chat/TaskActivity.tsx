@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ReactElement } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Users } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { subagentListTitle, type DockSubagentItem } from '../../lib/extract-subagents-from-blocks'
 import { taskListTitle, type TaskItemView } from '../../lib/extract-tasks-from-blocks'
@@ -64,13 +64,17 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
           else if (first) onOpen({ kind: first.kind, id: first.id })
         }}
       >
-        <RunStatusMark status={status} />
+        {multiple && !running && !queued ? <Users className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.75} aria-hidden /> : <RunStatusMark status={status} />}
         <span className="ds-task-activity-heading">
           <span className="ds-task-activity-title">
             {title}
           </span>
         </span>
-        {failed > 0 && status !== 'failed' && status !== 'timed_out' ? <RunStatusMark status="failed" /> : null}
+        {multiple && failed > 0 ? (
+          <span className="ds-task-activity-status text-ds-danger">
+            {t('taskActivityCountStatus', { count: failed, status: t(runStatusKey('failed')) })}
+          </span>
+        ) : null}
         {stopped > 0 && status !== 'canceled' && status !== 'cancelled' ? <RunStatusMark status="canceled" /> : null}
         {first ? <ChevronRight className="ds-task-activity-chevron" aria-hidden /> : null}
       </button>

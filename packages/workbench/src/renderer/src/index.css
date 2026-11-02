@@ -13,8 +13,8 @@
   --bg-canvas: #ffffff;
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
-  --font-default-ui: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont,
-    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-default-ui: -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'Segoe UI', 'Microsoft YaHei', 'Inter', 'Noto Sans SC', sans-serif;
   --font-ui: var(--font-default-ui);
   --font-chat: var(--font-ui);
   --font-display: var(--font-ui);
@@ -1166,24 +1166,19 @@ samp {
 
 /* Shared composer card (home + conversation). Compact IDE rail opts out. */
 .ds-composer-empty.ds-chat-composer {
-  border-radius: 1.2rem;
-  min-height: 64px;
-  gap: 0.25rem;
-  padding-top: 0.375rem;
-  padding-bottom: 0.25rem;
+  border-radius: 16px;
+  min-height: 92px;
+  gap: 4px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
-/* Context tray tucked under the composer (project | branch).
-   Home and conversation share this layer so the silhouette stays one card + tray. */
+/* Lightweight project context beneath the composer. */
 .ds-workspace-context-bar {
-  /* Cursor-style tray: a *gray* tone (not white) so it visibly reads as a
-     secondary layer tucked behind the white composer card. */
-  background: rgba(0, 0, 0, 0.06);
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
-  box-shadow:
-    0 8px 28px -12px rgba(15, 23, 42, 0.14),
-    0 1px 2px rgba(0, 0, 0, 0.04);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
   font-family: var(--font-ui);
 }
 
@@ -1202,28 +1197,7 @@ samp {
 }
 
 .ds-workspace-context-bar::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: 1px;
-  background: color-mix(in srgb, #ffffff 55%, transparent);
-  pointer-events: none;
-}
-
-[data-theme='dark'] .ds-workspace-context-bar {
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow:
-    0 10px 32px -12px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
-}
-
-[data-theme='dark'] .ds-workspace-context-bar--embedded {
-  background: transparent;
-  box-shadow: none;
-}
-
-[data-theme='dark'] .ds-workspace-context-bar::before {
-  background: color-mix(in srgb, #ffffff 10%, transparent);
+  content: none;
 }
 
 /* Chip labels. Dock / IDE stay dense; composer tray uses --tray. */
@@ -1241,18 +1215,18 @@ samp {
   will-change: transform;
 }
 
-/* Same size as the composer input so the tucked tray doesn't read as caption. */
+/* Project context remains secondary to the input and its actions. */
 .ds-workspace-context-chip--tray {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 400;
   letter-spacing: -0.011em;
   line-height: 1.2;
 }
 
 /* The empty-state prompt is guidance, not a selected project value. */
 .ds-workspace-context-chip--prompt {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 400;
   letter-spacing: 0;
   line-height: 20px;
 }
@@ -2248,7 +2222,7 @@ samp {
 }
 
 .ds-composer-empty textarea {
-  min-height: 48px;
+  min-height: 38px;
   padding-top: 0.375rem;
   padding-bottom: 0.375rem;
 }
@@ -2270,8 +2244,8 @@ samp {
    * and Chromium would inflate the empty composer to many lines.
    */
   field-sizing: content;
-  min-height: 44px;
-  max-height: 176px;
+  min-height: 38px;
+  max-height: 166px;
   overflow-y: auto;
 }
 
@@ -2279,9 +2253,9 @@ samp {
 .ds-composer-empty textarea:placeholder-shown,
 .ds-composer-input:placeholder-shown {
   field-sizing: fixed;
-  height: 48px;
-  min-height: 48px;
-  max-height: 48px;
+  height: 38px;
+  min-height: 38px;
+  max-height: 38px;
   overflow-y: hidden;
 }
 
@@ -2983,10 +2957,6 @@ samp {
   padding-bottom: clamp(1rem, 2.5vh, 1.75rem);
 }
 
-.ds-empty-stage .ds-composer-shell {
-  padding-inline: 0;
-}
-
 .ds-trending-grid-scroll {
   min-height: 0;
   overflow-x: hidden;
@@ -3072,7 +3042,7 @@ samp {
 
 .ds-sidebar-shell {
   --font-sidebar: var(--font-ui);
-  --sidebar-text: 0.9375rem; /* 15px — nav, projects, threads */
+  --sidebar-text: 0.875rem; /* 14px — nav, projects, threads */
   --sidebar-text-sm: 0.875rem; /* 14px — indented nav, search */
   --sidebar-text-xs: 0.8125rem; /* 13px — section labels, meta */
   --sidebar-weight: 400;
@@ -3133,20 +3103,20 @@ samp {
 
 .ds-sidebar-section-label {
   font-family: inherit;
-  font-size: var(--sidebar-text);
+  font-size: var(--sidebar-text-xs);
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.01em;
   color: var(--text-tertiary);
 }
 
 .ds-sidebar-subsection-label {
-  padding: 0.5rem 0.5rem 0.35rem;
-  font-size: var(--sidebar-text);
+  padding: 0.85rem 0.5rem 0.45rem;
+  font-size: var(--sidebar-text-xs);
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--text-tertiary);
-  opacity: 0.72;
+  opacity: 1;
 }
 
 .ds-sidebar-search {
@@ -7725,7 +7695,6 @@ select:focus-visible,
 }
 
 /* One quiet surface; structure comes from the controls inside, not nested cards. */
-.ds-operation-dock.ds-hero-panel.ds-glass,
 .ds-cua-preview-card {
   background: var(--ds-card-strong);
   border-width: 1.5px;
@@ -7735,7 +7704,6 @@ select:focus-visible,
     0 8px 24px rgba(0, 0, 0, 0.07);
 }
 
-[data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass,
 [data-theme='dark'] .ds-cua-preview-card {
   background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
   border-width: 1.5px;
@@ -7743,6 +7711,12 @@ select:focus-visible,
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.28),
     0 10px 28px rgba(0, 0, 0, 0.34);
+}
+
+.ds-operation-dock.ds-hero-panel.ds-glass {
+  background: var(--ds-card-strong);
+  border: 1px solid var(--ds-border);
+  box-shadow: var(--ds-shadow-composer);
 }
 
 .ds-operation-dock-topbar {
@@ -7755,8 +7729,8 @@ select:focus-visible,
 
 .ds-operation-dock-topbar__title {
   font-size: 0.875rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-weight: 500;
+  letter-spacing: normal;
   color: var(--text-primary);
   line-height: 1.2;
 }
@@ -7792,10 +7766,8 @@ select:focus-visible,
 }
 
 .ds-operation-dock-body {
-  /* Side and bottom padding stay above the concentric limit: card radius 18px − panel radius
-     12.8px = 5.2px, so a smaller pad starts colliding with the card corner. */
-  padding: 0 0.4rem 0.4rem;
-  margin-top: calc(-0.25rem + 3px);
+  padding: 0 0.65rem 0.65rem;
+  margin-top: 0;
   background: transparent;
 }
 
@@ -7868,9 +7840,9 @@ select:focus-visible,
 
 .ds-operation-dock-status {
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
-  border-radius: 0.8rem;
-  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .ds-operation-dock-status__section {
@@ -8569,10 +8541,6 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   padding-inline: 0;
 }
 
-.ds-chat-operation-band__dialogue .ds-composer-shell {
-  padding-inline: 0;
-}
-
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 > .flex.w-full.flex-col {
   align-items: stretch;
   width: 100%;
@@ -9259,12 +9227,12 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   margin-top: 0;
 }
 
-[data-density='compact'] .ds-chat-composer {
+[data-density='compact'] .ds-chat-composer:not(.ds-composer-empty) {
   padding-top: 0.55rem;
   padding-bottom: 0.55rem;
 }
 
-[data-density='spacious'] .ds-chat-composer {
+[data-density='spacious'] .ds-chat-composer:not(.ds-composer-empty) {
   padding-top: 1rem;
   padding-bottom: 1rem;
 }

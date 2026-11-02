@@ -685,8 +685,8 @@ export function FloatingComposer({
   const resizeTextarea = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
-    const minHeight = compactChrome ? 22 : 48
-    const maxHeight = compactChrome ? 120 : 176
+    const minHeight = compactChrome ? 22 : 38
+    const maxHeight = compactChrome ? 120 : 166
     if (!el.value) {
       el.style.height = `${minHeight}px`
       el.style.overflowY = 'hidden'
@@ -2066,7 +2066,7 @@ export function FloatingComposer({
                   setPlusMenuOpen((open) => !open)
                 }}
                 className={`ds-no-drag inline-flex items-center justify-center rounded-full text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-50 ${
-                  compactChrome ? 'h-7 w-7' : 'h-9 w-9'
+                  compactChrome ? 'h-7 w-7' : 'h-8 w-8'
                 }`}
                 aria-label={t('composerPlusMenu')}
                 title={t('composerPlusMenu')}
@@ -2216,7 +2216,7 @@ export function FloatingComposer({
                   aria-label={voiceButtonTitle}
                   title={voiceButtonTitle}
                   className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                    compactChrome ? 'h-7 w-7' : 'h-9 w-9'
+                    compactChrome ? 'h-7 w-7' : 'h-8 w-8'
                   } ${
                     voicePhase === 'recording'
                       ? 'border-red-500/45 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-300'
@@ -2239,7 +2239,7 @@ export function FloatingComposer({
                     disabled={interruptPending}
                     aria-busy={interruptPending}
                     className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200 ${
-                      compactChrome ? 'h-7 w-7' : 'h-9 w-9'
+                      compactChrome ? 'h-7 w-7' : 'h-8 w-8'
                     }`}
                     aria-label={t(interruptPending ? 'interruptPending' : 'interrupt')}
                     title={t(interruptPending ? 'interruptPending' : 'interrupt')}
@@ -2254,7 +2254,7 @@ export function FloatingComposer({
                     disabled={primaryActionDisabled}
                     onClick={handleSendClick}
                     className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-accent-foreground shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-ds-faint disabled:shadow-none ${
-                      compactChrome ? 'h-7 w-7' : 'h-9 w-9'
+                      compactChrome ? 'h-7 w-7' : 'h-8 w-8'
                     }`}
                     aria-label={primaryActionLabel}
                     title={primaryActionLabel}

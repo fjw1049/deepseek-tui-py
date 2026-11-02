@@ -354,11 +354,11 @@ describe('appearance-derive', () => {
     expect(bare['--ds-chat-code-font']).toBeUndefined()
   })
 
-  it('falls back to bundled UI and code fonts before platform fonts', () => {
+  it('prefers platform UI fonts while retaining bundled monospace fonts', () => {
     const theme = { ...DEFAULT_CHROME_THEMES.dark, uiFont: 'Unavailable UI', codeFont: 'Unavailable Mono' }
     const vars = buildChromeThemeCssVars(theme, 'dark')
-    expect(vars['--font-ui'].indexOf("'Inter'")).toBeLessThan(vars['--font-ui'].indexOf('-apple-system'))
-    expect(vars['--font-ui'].indexOf("'Noto Sans SC'")).toBeLessThan(vars['--font-ui'].indexOf("'PingFang SC'"))
+    expect(vars['--font-ui'].indexOf('-apple-system')).toBeLessThan(vars['--font-ui'].indexOf("'Inter'"))
+    expect(vars['--font-ui'].indexOf("'PingFang SC'")).toBeLessThan(vars['--font-ui'].indexOf("'Noto Sans SC'"))
     expect(vars['--font-mono'].indexOf("'JetBrains Mono'")).toBeLessThan(vars['--font-mono'].indexOf('ui-monospace'))
     expect(vars['--ds-chat-code-font']).toBe(vars['--font-mono'])
   })

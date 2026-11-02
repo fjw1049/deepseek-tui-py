@@ -457,29 +457,13 @@ export function OperationContextDock({
         aria-expanded={!collapsed.process}
         className={DOCK_SECTION_HEADER_CLASS}
       >
-        <RowIcon icon={ListTodo} tint="muted" />
+        <ListTodo className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.75} aria-hidden />
         <span className="ds-operation-dock-section-label min-w-0 flex-1">
           {t('contextRailProcess')}
         </span>
         {totalCount > 0 ? (
-          <span className="flex shrink-0 items-center gap-2">
-            <span className="flex items-center gap-[2px]" aria-hidden>
-              {todos.map((item) => (
-                <span
-                  key={item.id}
-                  className={`h-3.5 w-[3px] rounded-full ${
-                    item.status === 'completed'
-                      ? 'bg-emerald-500'
-                      : item.status === 'in_progress'
-                        ? 'bg-accent'
-                        : 'bg-ds-border-muted'
-                  }`}
-                />
-              ))}
-            </span>
-            <span className="text-[11px] tabular-nums text-ds-faint">
-              {doneCount}/{totalCount}
-            </span>
+          <span className="text-[12px] tabular-nums text-ds-muted">
+            {doneCount}/{totalCount}
           </span>
         ) : null}
         <ChevronRight
@@ -493,7 +477,7 @@ export function OperationContextDock({
 
       {!collapsed.process ? (
         totalCount > 0 ? (
-          <ul className="mt-2 flex max-h-[min(36vh,240px)] flex-col gap-0.5 overflow-y-auto overflow-x-hidden rounded-[14px] bg-ds-card/55 p-1.5 dark:bg-white/[0.03]">
+          <ul className="mt-1 flex max-h-[min(36vh,240px)] flex-col gap-0.5 overflow-y-auto overflow-x-hidden">
             {todos.map((item, index) => {
               const completed = item.status === 'completed'
               const inProgress = item.status === 'in_progress'
@@ -510,7 +494,7 @@ export function OperationContextDock({
                     aria-expanded={expanded}
                     title={expanded ? undefined : item.content}
                     className={[
-                      'flex w-full items-start gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left transition-colors',
+                      'flex min-h-9 w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors',
                       'hover:bg-ds-hover/50',
                       inProgress ? 'bg-ds-hover/60' : ''
                     ].join(' ')}
@@ -520,16 +504,16 @@ export function OperationContextDock({
                       aria-hidden
                     >
                       {completed ? (
-                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">
-                          <Check className="h-3 w-3" strokeWidth={3} />
+                        <span className="flex h-5 w-5 items-center justify-center text-ds-success">
+                          <Check className="h-4 w-4" strokeWidth={2} />
                         </span>
                       ) : (
                         <span
                           className={[
-                            'flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums',
+                            'flex h-5 w-5 items-center justify-center rounded-full text-[12px] font-medium tabular-nums',
                             inProgress
-                              ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                              : 'bg-ds-subtle text-ds-faint'
+                              ? 'bg-accent/10 text-accent'
+                              : 'text-ds-faint'
                           ].join(' ')}
                         >
                           {step}
@@ -539,11 +523,11 @@ export function OperationContextDock({
                     <span
                       className={[
                         'min-w-0 flex-1 text-[13px] leading-5',
-                        expanded ? 'break-words whitespace-pre-wrap' : 'truncate',
+                        expanded ? 'break-words whitespace-pre-wrap' : 'line-clamp-2 break-words',
                         completed
-                          ? 'text-ds-faint line-through decoration-ds-faint/55'
+                          ? 'text-ds-muted'
                           : inProgress
-                            ? 'font-semibold text-ds-ink'
+                            ? 'font-medium text-ds-ink'
                             : 'text-ds-muted'
                       ].join(' ')}
                     >

@@ -92,7 +92,7 @@ export const DEFAULT_CHAT_FONT_SIZE_PX = 15
 export const MIN_TERMINAL_FONT_SIZE_PX = 10
 export const MAX_TERMINAL_FONT_SIZE_PX = 22
 export const DEFAULT_TERMINAL_FONT_SIZE_PX = 13
-export const DEFAULT_UI_FONT_STACK = "'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+export const DEFAULT_UI_FONT_STACK = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', 'Inter', 'Noto Sans SC', sans-serif"
 export const DEFAULT_MONO_FONT_STACK = "'JetBrains Mono', 'Noto Sans SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
 
 export const DEFAULT_THEME_PRESET_ID = 'default'

@@ -4,7 +4,6 @@
   --task-activity-done: var(--ds-success);
   --task-activity-failed: var(--ds-danger);
   --task-activity-attention: var(--ds-warning);
-  --task-activity-line: color-mix(in srgb, var(--text-primary) 13%, transparent);
 }
 
 .ds-task-activity > .ds-task-activity-trigger {
@@ -95,7 +94,7 @@
 }
 
 .ds-task-activity-list {
-  margin: 0 0.2rem 0.4rem 1.2rem;
+  margin: 0.25rem 0 0.4rem;
   padding: 0;
   list-style: none;
   max-height: min(36vh, calc(4 * var(--task-activity-row-height)));
@@ -109,41 +108,30 @@
   display: none;
 }
 
-.ds-task-activity-list > li {
-  position: relative;
-  padding-left: 0.85rem;
-}
-
-.ds-task-activity-list > li::before,
-.ds-task-activity-list > li::after {
-  position: absolute;
-  content: '';
-  left: 0;
-  background: var(--task-activity-line);
-}
-
-.ds-task-activity-list > li::before {
-  top: 0;
-  bottom: 0;
-  width: 1px;
-}
-
-.ds-task-activity-list > li:last-child::before { bottom: 50%; }
-.ds-task-activity-list > li::after { top: 50%; width: 0.65rem; height: 1px; }
-
 .ds-task-activity-row {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.5rem;
   width: 100%;
-  height: var(--task-activity-row-height);
-  padding: 0.4375rem 0.3rem;
+  min-height: var(--task-activity-row-height);
+  padding: 0.5rem;
   border-radius: 0.5rem;
   text-align: left;
   transition: background-color 160ms ease;
 }
 
-.ds-task-activity-row .ds-task-activity-title { font-size: 0.75rem; }
+.ds-task-activity-row .ds-task-activity-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+
+.ds-task-activity-trigger .ds-task-activity-title { font-size: 0.875rem; }
+.ds-task-activity-status.text-ds-danger { color: var(--ds-danger); }
 
 
 @media (prefers-reduced-motion: reduce) {

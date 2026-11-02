@@ -419,7 +419,7 @@ export function ProjectContextPicker({
         )}
         <span
           className={`min-w-0 flex-1 truncate ${
-            size === 'tray' ? (isTemporary ? 'leading-5' : 'text-[14px]') : ''
+            size === 'tray' ? (isTemporary ? 'leading-5' : 'text-[13px]') : ''
           }`}
         >
           {triggerLabel}
