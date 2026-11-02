@@ -6,7 +6,9 @@ import glob
 import os
 import re
 import shlex
+from collections.abc import Iterator
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 
 # Paths relative to workspace (posix) or absolute /tmp that shell may write.
@@ -28,6 +30,8 @@ _ALLOWLIST_PREFIXES = (
 )
 
 _ALLOWLIST_SUFFIXES = (".log", ".pyc", ".pyo")
+
+FileId = tuple[int, int]  # st_dev, st_ino
 
 _NESTED_SHELL = re.compile(
     r"(?:^|[;&|`]|\s)(?:ba)?sh\s+-c\s+([\"'])(.*?)\1",
@@ -422,6 +426,26 @@ def _predates(path: Path, session_started_at: float) -> bool:
     return getattr(info, "st_birthtime", info.st_mtime) < session_started_at
 
 
+def _walk_files(root: Path) -> Iterator[Path]:
+    """Files under ``root``, bounded so a huge tree costs missed files, never a slow command."""
+    def files() -> Iterator[Path]:
+        for base, directories, names in os.walk(root):
+            directories[:] = [d for d in directories if d not in _UNWATCHED_DIRS]
+            for name in names:
+                yield Path(base, name)
+
+    return islice(files(), _MAX_WATCHED_FILES)
+
+
+def _predating(path: Path, session_started_at: float) -> list[Path]:
+    """What the session did not create at ``path``. A new folder can hold older files."""
+    if _predates(path, session_started_at):
+        return [path]
+    if path.is_symlink() or not path.is_dir():
+        return []
+    return [file for file in _walk_files(path) if _predates(file, session_started_at)]
+
+
 def existing_file_removals(
     command: str, *, workspace: Path, session_started_at: float,
 ) -> list[str]:
@@ -445,40 +469,53 @@ def existing_file_removals(
         else:
             continue
         for operand in sources:
-            for path in _targets(operand, base):
-                if (_predates(path, session_started_at)
-                        and not is_allowlisted_path(str(path), workspace=root)
-                        and str(path) not in removed):
-                    removed.append(str(path))
+            for target in _targets(operand, base):
+                for path in _predating(target, session_started_at):
+                    if (not is_allowlisted_path(str(path), workspace=root)
+                            and str(path) not in removed):
+                        removed.append(str(path))
     return removed
 
 
-def moved_sources(command: str, *, workspace: Path) -> set[str]:
-    """Paths a command moves on purpose, so their absence afterwards is expected."""
-    root = workspace.expanduser().resolve()
-    return {
-        str(path)
-        for tool, operands, directory in _operands(command)
-        if tool == "mv" and directory is not None
-        for operand in operands[:-1]
-        for path in _targets(operand, (root / directory).resolve())
-    }
+def _file_id(path: Path) -> FileId | None:
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    return info.st_dev, info.st_ino
 
 
-def existing_files(workspace: Path, session_started_at: float) -> set[str]:
+def existing_files(workspace: Path, session_started_at: float) -> dict[str, FileId]:
     """Files that predate the session, to notice what any command removes.
 
     Parsing cannot see ``python -c os.remove``; comparing disk before and after can.
-    Bounded, so a huge tree costs missed files and never a slow command.
     """
     root = workspace.expanduser().resolve()
-    found: set[str] = set()
-    for base, directories, files in os.walk(root):
-        directories[:] = [d for d in directories if d not in _UNWATCHED_DIRS]
-        for name in files:
-            path = Path(base, name)
-            if _predates(path, session_started_at):
-                found.add(str(path))
-                if len(found) >= _MAX_WATCHED_FILES:
-                    return found
+    found: dict[str, FileId] = {}
+    for path in _walk_files(root):
+        if _predates(path, session_started_at) and (identity := _file_id(path)):
+            found[str(path)] = identity
     return found
+
+
+def gone_files(
+    watched: dict[str, FileId], workspace: Path, session_started_at: float,
+) -> set[str]:
+    """Paths whose file no longer exists; ``watched`` follows files that only moved.
+
+    Files are tracked by identity because a path says nothing about a folder that
+    was renamed, or about a file moved aside and deleted by a later command.
+    """
+    missing = {path: watched.pop(path) for path in list(watched) if not os.path.lexists(path)}
+    if not missing:
+        return set()
+    wanted = set(missing.values())
+    for path in _walk_files(workspace.expanduser().resolve()):
+        identity = _file_id(path)
+        # A new file can take a freed inode, so it must also be as old as the one it replaces.
+        if identity in wanted and _predates(path, session_started_at):
+            watched[str(path)] = identity
+            wanted.discard(identity)
+            if not wanted:
+                break
+    return {path for path, identity in missing.items() if identity in wanted}

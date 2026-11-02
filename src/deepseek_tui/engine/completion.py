@@ -103,7 +103,7 @@ class TurnFacts:
     pending_reminded: bool = False
     short_stop_checked: bool = False
     # Absolute paths from before the session; None until the first shell command.
-    existing_files: set[str] | None = None
+    existing_files: dict[str, tuple[int, int]] | None = None
     approved_removals: set[str] = field(default_factory=set)
     gone_files: list[str] = field(default_factory=list)
 

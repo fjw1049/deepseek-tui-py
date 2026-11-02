@@ -644,6 +644,7 @@ def path_access_prompt(
     return PathAccessPrompt(request, pending, fingerprint)
 
 
+_REMOVALS_LISTED = 20
 REMOVAL_DENIED = (
     "Shell cannot remove files that predate this session without the user's approval: {paths}. "
     "Nothing was run. Move them into _to_delete/ in the workspace with mv and tell the user "
@@ -678,7 +679,9 @@ def removal_prompt(
         command, workspace=context.working_directory, session_started_at=started)
     if not removed:
         return None
-    paths = ", ".join(removed)
+    paths = ", ".join(removed[:_REMOVALS_LISTED])
+    if len(removed) > _REMOVALS_LISTED:
+        paths += f" and {len(removed) - _REMOVALS_LISTED} more"
     action = _gate_action(ApprovalRequirement.REQUIRED, policy)
     request = build_approval_request(
         tool.name(), [ToolCapability.EXECUTES_CODE],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 
 import pytest
@@ -15,7 +16,7 @@ from deepseek_tui.workspace.shell_write_guard import (
     check_managed_worktree_git,
     existing_file_removals,
     existing_files,
-    moved_sources,
+    gone_files,
 )
 
 
@@ -163,11 +164,60 @@ def test_watched_files_skip_generated_trees_and_stay_bounded(workspace, monkeypa
 
 
 def test_files_made_this_session_are_not_watched(workspace):
-    assert existing_files(workspace, 0) == set()
+    assert existing_files(workspace, 0) == {}
 
 
-def test_moved_sources_are_expected_to_leave(workspace):
-    moved = moved_sources("mv old.txt docs/ && rm made.txt", workspace=workspace)
-    assert moved == {str(workspace.resolve() / "old.txt")}
-    moved = moved_sources("cd docs && mv old.md ../x.md", workspace=workspace)
-    assert moved == {str(workspace.resolve() / "docs" / "old.md")}
+def test_a_folder_holding_older_files_is_not_the_sessions_to_delete(workspace, monkeypatch):
+    # The folder is new; what was moved into it is not.
+    (workspace / "_to_delete").mkdir()
+    (workspace / "_to_delete" / "kept.txt").write_text("the user's")
+    (workspace / "made").mkdir()
+    (workspace / "made" / "new.txt").write_text("the agent's")
+    older = {workspace / "_to_delete" / "kept.txt"}
+    monkeypatch.setattr(guard, "_predates", lambda path, _: path in older)
+    assert removed(workspace, "rm -rf _to_delete", started=0) == ["_to_delete/kept.txt"]
+    assert removed(workspace, "rm -rf made", started=0) == []
+    assert removed(workspace, "mv _to_delete /elsewhere", started=0) == ["_to_delete/kept.txt"]
+
+
+def run(root, command, watched, started):
+    subprocess.run(command, shell=True, cwd=root, check=True, capture_output=True)
+    return {os.path.relpath(p, root) for p in gone_files(watched, root, started)}
+
+
+@pytest.fixture
+def watched(workspace):
+    return existing_files(workspace, time.time() + 5)
+
+
+def test_a_moved_file_stays_watched_at_its_new_path(workspace, watched):
+    assert run(workspace, "mkdir aside && mv old.txt aside/", watched, time.time() + 5) == set()
+    assert str(workspace.resolve() / "aside" / "old.txt") in watched
+    assert run(workspace, "rm -rf aside", watched, time.time() + 5) == {"aside/old.txt"}
+
+
+def test_moving_a_folder_keeps_every_file_inside_it(workspace, watched):
+    assert run(workspace, "mkdir aside && mv docs aside/", watched, time.time() + 5) == set()
+    assert str(workspace.resolve() / "aside" / "docs" / "old.md") in watched
+
+
+def test_deleting_through_an_allowlisted_folder_is_still_seen(workspace, watched):
+    assert run(workspace, "mkdir scratch && mv old.txt scratch/", watched, time.time() + 5) == set()
+    assert run(workspace, "rm scratch/old.txt", watched, time.time() + 5) == {"scratch/old.txt"}
+
+
+def test_moving_and_deleting_in_one_command_is_seen(workspace, watched):
+    command = "mkdir aside && mv old.txt aside/ && rm -rf aside"
+    assert run(workspace, command, watched, time.time() + 5) == {"old.txt"}
+
+
+def test_a_file_leaving_the_workspace_is_gone(workspace, watched, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    assert run(workspace, f"mv old.txt {outside}/", watched, time.time() + 5) == {"old.txt"}
+
+
+def test_a_new_file_taking_a_freed_inode_is_not_the_old_file(workspace, watched):
+    # Filesystems reuse inode numbers, so identity alone would call this a move.
+    path = str(workspace.resolve() / "old.txt")
+    watched[path] = (watched[path][0], (workspace / "made.txt").stat().st_ino)
+    assert run(workspace, "rm old.txt", watched, 0) == {"old.txt"}

@@ -46,6 +46,23 @@ def test_pages_of_one_document_and_scoped_reads_are_different_views():
     assert fold_superseded_observations(messages, min_reclaim=0) == 0
 
 
+def test_the_same_url_in_another_tab_is_another_view():
+    # Two tabs of one app can hold different unsaved state.
+    messages = history(observation(tab_id="a"), observation(tab_id="b", text="short"))
+    assert fold_superseded_observations(messages, min_reclaim=0) == 0
+
+
+def test_a_narrower_read_does_not_replace_a_fuller_one():
+    messages = history(observation(level="full"), observation(level="interactive", text="short"))
+    assert fold_superseded_observations(messages, min_reclaim=0) == 0
+
+
+def test_a_rerender_of_the_same_page_is_still_superseded():
+    messages = history(observation(tab_id="a", control_generation=1),
+                       observation(tab_id="a", control_generation=2))
+    assert fold_superseded_observations(messages, min_reclaim=0) > 0
+
+
 def test_an_element_detail_is_not_replaced_by_a_later_observation():
     messages = history(observation(details=True), observation())
     assert fold_superseded_observations(messages, min_reclaim=0) == 0

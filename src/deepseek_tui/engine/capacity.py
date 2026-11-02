@@ -869,9 +869,11 @@ def _observation_view(content: str) -> tuple[Any, ...] | None:
     observation = data.get("observation") if isinstance(data, dict) else None
     if not isinstance(observation, dict) or not observation.get("url") or observation.get("details"):
         return None
-    # Pages of one long document and scoped reads are different content at the same URL.
-    return tuple(observation.get(key) for key in (
-        "url", "frame_id", "scope_selector", "text_offset", "element_offset"))
+    from deepseek_tui.browser.context import SAME_VIEW
+
+    # Another tab, a later page of the document or a narrower read is different content
+    # at the same URL. A rerender is not: its generation changes and the view does not.
+    return tuple(observation.get(key) for key in ("url", *SAME_VIEW))
 
 
 def fold_superseded_observations(

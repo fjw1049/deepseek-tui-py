@@ -56,11 +56,14 @@ def _compact_element(element: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+# Observations that agree on these read the same part of the same document.
+SAME_VIEW = ("tab_id", "document_id", "frame_id", "frame_document_id", "scope_selector",
+             "scope_shadow_path", "level", "element_offset", "text_offset")
+
+
 def observation_changes(before: dict[str, Any] | None, after: dict[str, Any]) -> dict[str, Any] | None:
     """What changed since the observation the model last received; None sends it whole."""
-    same_view = ("tab_id", "document_id", "frame_id", "frame_document_id", "scope_selector",
-                 "scope_shadow_path", "level", "element_offset", "text_offset",
-                 "control_generation")
+    same_view = (*SAME_VIEW, "control_generation")
     if not before or before.get("details") or any(before.get(k) != after.get(k) for k in same_view):
         return None
     old = {e["ref"]: _compact_element(e) for e in before.get("elements", [])}

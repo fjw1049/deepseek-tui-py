@@ -185,18 +185,15 @@ class ExecShellTool(ToolSpec):
         from deepseek_tui.workspace.shell_mutation_watch import (
             capture_shell_snapshot, detect_shell_mutations,
         )
-        from deepseek_tui.workspace.shell_write_guard import existing_files, moved_sources
+        from deepseek_tui.workspace.shell_write_guard import existing_files, gone_files
 
         facts = context.metadata.get("turn_facts")
         started = context.metadata.get("session_started_at")
         command = input_data.get("command")
         watching = facts is not None and started is not None and isinstance(command, str)
-        moved: set[str] = set()
-        if watching:
-            if facts.existing_files is None:
-                facts.existing_files = await asyncio.to_thread(
-                    existing_files, context.working_directory, started)
-            moved = moved_sources(command, workspace=context.working_directory)
+        if watching and facts.existing_files is None:
+            facts.existing_files = await asyncio.to_thread(
+                existing_files, context.working_directory, started)
         snapshot = None
         if context.on_file_mutation is not None:
             try:
@@ -208,9 +205,10 @@ class ExecShellTool(ToolSpec):
             result = await self._execute(input_data, context)
             if watching:
                 gone = await asyncio.to_thread(
-                    lambda: {p for p in facts.existing_files if not os.path.lexists(p)})
-                facts.existing_files -= gone
-                reported = sorted(gone - moved - facts.approved_removals)
+                    gone_files, facts.existing_files, context.working_directory, started)
+                # Approving a folder approves what is in it.
+                reported = sorted(p for p in gone if not any(
+                    p == a or p.startswith(f"{a}{os.sep}") for a in facts.approved_removals))
                 if reported:
                     shown = [os.path.relpath(p, context.working_directory) for p in reported]
                     facts.gone_files.extend(shown)

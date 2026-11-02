@@ -317,6 +317,24 @@ async def test_a_moved_file_is_not_reported_as_gone(tmp_path):
     assert result.completion_note is None
 
 
+async def test_a_renamed_folder_is_not_reported_as_gone(tmp_path):
+    (tmp_path / "old").mkdir()
+    _keep(tmp_path / "old")
+    result, seen = await _run_commands(tmp_path, "mkdir _to_delete && mv old _to_delete/")
+    assert (tmp_path / "_to_delete" / "old" / "keep.txt").exists()
+    assert "no longer at their path" not in seen[0]
+    assert result.completion_note is None
+
+
+async def test_a_file_moved_aside_then_deleted_is_reported(tmp_path):
+    _keep(tmp_path)
+    result, seen = await _run_commands(
+        tmp_path, "mkdir scratch && mv keep.txt scratch/", "rm scratch/keep.txt")
+    assert "no longer at their path" not in seen[0]
+    assert "no longer at their path: scratch/keep.txt" in seen[1]
+    assert "scratch/keep.txt" in result.completion_note
+
+
 async def test_a_file_the_session_made_may_vanish_quietly(tmp_path):
     engine, client = await desktop_engine(tmp_path, [
         ToolCall(id="make", name="exec_shell", arguments={"command": "touch mine.txt"}),
@@ -331,6 +349,15 @@ async def test_a_file_the_session_made_may_vanish_quietly(tmp_path):
         assert result.completion_note is None
     finally:
         await engine.shutdown_session()
+
+
+async def test_approving_a_folder_covers_the_files_in_it(tmp_path):
+    (tmp_path / "old").mkdir()
+    _keep(tmp_path / "old")
+    result, seen = await _run_commands(tmp_path, "rm -rf old")
+    assert not (tmp_path / "old").exists()
+    assert "no longer at their path" not in seen[0]
+    assert result.completion_note is None
 
 
 async def test_an_approved_deletion_is_not_reported_again(tmp_path):
