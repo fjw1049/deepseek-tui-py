@@ -85,7 +85,8 @@ class BrowserSkillTool(ToolSpec):
                 },
                 "from_step": {
                     "type": "string",
-                    "description": "Step ID to resume run_site from, as returned in resume_from.",
+                    "description": "Resume position returned in resume_from; @verify runs only result checks "
+                                   "after the final manual step. Omit only to start a new replay.",
                 },
             },
             "required": ["action"],

@@ -41,7 +41,7 @@ from deepseek_tui.browser.observation import (
 
 RECORDER_WORLD = "deepseek-recorder"
 # Reported alongside the user's actions without changing what those actions mean.
-PASSIVE_EVENTS = {"recorder_installed", "page_opened", "scroll"}
+PASSIVE_EVENTS = {"recorder_installed", "page_opened"}
 
 
 def _same_element(before, after):
@@ -86,13 +86,12 @@ class ScopedSemanticProcessor(SemanticProcessor):
             same_tab = last.get("targetId") == event.get("targetId")
             if kind == "navigation":
                 tab, url = event.get("targetId"), event.get("urlAfter")
-                # Octop skips every visit to the start URL. Reached by a click, the click is
-                # the step; back or a typed address has none, so it needs one of its own.
-                returned = (url == start_url and urls.get(tab, start_url) != start_url
-                            and not (same_tab and last.get("kind") in {"click", "keydown"}))
+                # Adjacency cannot prove a click caused navigation. Preserve the return;
+                # replay observes first and leaves an already reached destination alone.
+                returned = url == start_url and urls.get(tab, start_url) != start_url
                 urls[tab] = url
                 # Filling the field repeats the URL a live search keeps in step with it.
-                if event.get("withinDocument") and same_tab and (
+                if event.get("withinDocument") and same_tab and not returned and (
                     last.get("kind") in {"input", "change"}
                 ):
                     continue
@@ -104,11 +103,6 @@ class ScopedSemanticProcessor(SemanticProcessor):
             elif (kind in {"input", "change"} and same_tab and last.get("kind") == kind
                   and _same_edit(last, event)):
                 kept[next(i for i, e in enumerate(kept) if e is last)] = event
-                continue
-            elif (kind == "scroll" and kept and kept[-1].get("kind") == "scroll"
-                  and kept[-1].get("targetId") == event.get("targetId")
-                  and _same_element(kept[-1], event)):
-                kept[-1] = event  # Where one gesture stopped, not each pause along the way.
                 continue
             kept.append(event)
         return kept
@@ -209,6 +203,7 @@ class ScopedSemanticProcessor(SemanticProcessor):
                             kind="open",
                             url=event["urlAfter"],
                             description="Return to " + event["urlAfter"],
+                            expect={"urlAfter": event["urlAfter"]},
                         )
                     )
                 elif event.get("kind") == "native_dialog":

@@ -646,7 +646,7 @@ def test_going_back_to_the_start_page_is_a_step_and_not_the_end_check():
     compile_workflow(doc, {})
 
 
-def test_a_click_that_lands_on_the_start_page_is_only_that_click():
+def test_return_navigation_is_preserved_even_after_a_click():
     start, other = "https://shop.example/login", "https://shop.example/account"
     link = {"tag": "a", "role": "link", "id": "a", "selectorCandidates": ['[id="a"]']}
     doc = _compile(
@@ -654,7 +654,7 @@ def test_a_click_that_lands_on_the_start_page_is_only_that_click():
         _page_event(3, "click", target=link, detail=1),
         _page_event(4, "navigation", urlAfter=start),
     )
-    assert [step.kind for step in doc.steps] == ["open", "navigate", "click"]
+    assert [step.kind for step in doc.steps] == ["open", "navigate", "click", "open"]
 
 
 def test_recorded_navigation_expectations_compile():
@@ -721,12 +721,12 @@ def _scroll(seq, y, target=PANEL):
     return _page_event(seq, "scroll", target=target, scroll={"x": 0, "y": y})
 
 
-def test_one_gesture_is_one_scroll_step_naming_its_container():
+def test_separately_reported_scrolls_keep_each_position_and_container():
     from deepseek_tui.browser.workflows import compile_workflow
 
     doc = _compile(_scroll(2, 300), _scroll(3, 900))
     assert [(step.kind, step.value) for step in doc.steps] == [
-        ("open", None), ("scroll_to", "0.000,900.000")]
+        ("open", None), ("scroll_to", "0.000,300.000"), ("scroll_to", "0.000,900.000")]
     assert doc.steps[1].target["selectorCandidates"] == PANEL["selectorCandidates"]
     compile_workflow(doc, {})
 
@@ -856,3 +856,53 @@ def test_a_named_card_clicked_at_a_point_is_one_step():
     doc = _compile(_page_event(2, "click", target=card, detail=1))
     assert [step.kind for step in doc.steps] == ["open", "click"]
 
+
+
+def test_scroll_round_trip_preserves_the_loading_step():
+    doc = _compile(_scroll(2, 300), _scroll(3, 0))
+    assert [step.value for step in doc.steps[1:]] == ['0.000,300.000', '0.000,0.000']
+
+
+def test_scrolling_ends_a_continuous_edit():
+    doc = _compile(_edit(2, 1), _scroll(3, 300), _edit(4, 2))
+    assert [step.kind for step in doc.steps] == ['open', 'fill', 'scroll_to', 'fill']
+    assert len(doc.inputs) == 2
+
+
+def test_return_after_an_unrelated_click_preserves_navigation():
+    start = 'https://shop.example/login'
+    button = {'tag': 'button', 'role': 'button', 'selectorCandidates': ['#expand']}
+    doc = _compile(
+        _page_event(2, 'navigation', urlAfter='https://shop.example/account'),
+        _page_event(3, 'click', target=button, detail=1),
+        _page_event(4, 'navigation', urlAfter=start),
+    )
+    assert doc.steps[-1].kind == 'open' and doc.steps[-1].url == start
+
+
+@pytest.mark.parametrize('already_there', [True, False])
+async def test_return_navigation_observes_before_reopening(already_there):
+    from octop_browser.record.models import SemanticStep
+    from deepseek_tui.browser.workflows import _step
+
+    url = 'https://shop.example/login'
+    step = SemanticStep(id='return', kind='open', url=url, expect={'urlAfter': url})
+    service = SimpleNamespace(action=AsyncMock(side_effect=[
+        {'success': True, 'observation': {'url': url if already_there else url + '/other'}},
+        {'success': True},
+    ]))
+    run = SimpleNamespace(generation=1, replay_tabs={}, thread_id='t', upload_root=None, tabs=[])
+    result = await _step(service, run, step, None)
+    assert result['success']
+    assert [call.args[1].action for call in service.action.await_args_list] == (
+        ['observe'] if already_there else ['observe', 'open'])
+
+
+def test_same_document_return_after_an_edit_is_not_a_live_search_update():
+    start = "https://shop.example/login"
+    doc = _compile(
+        _page_event(2, "navigation", urlAfter=start + "?page=2", withinDocument=True),
+        _edit(3, 1),
+        _page_event(4, "navigation", urlAfter=start, withinDocument=True),
+    )
+    assert doc.steps[-1].kind == "open" and doc.steps[-1].url == start

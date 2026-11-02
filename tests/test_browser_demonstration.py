@@ -45,6 +45,10 @@ list.addEventListener('scroll',()=>{
   more.id='more';more.textContent='loaded';more.onclick=()=>{document.title='loaded'};
   list.append(more);
 })</script>""",
+    "/search-scroll": """<title>search</title><input id=q>
+<div id=list style='height:300px;overflow:auto'><div style='height:1000px'>results</div></div>
+<script>window.searched=[];document.getElementById('list').addEventListener('scroll',()=>{
+searched.push(document.getElementById('q').value)})</script>""",
     "/carousel": """<title>carousel</title><div id=track style='height:100px;overflow:auto'>
 <div style='height:600px'>slides</div></div><button id=go>go</button>
 <script>setInterval(()=>{document.getElementById('track').scrollTop+=40},100)</script>""",
@@ -216,13 +220,14 @@ async def test_back_to_the_start_page_is_replayed(browser, tmp_path):
     async def perform(user):
         await user.click("#detail")
         await asyncio.sleep(.4)
+        await user.click("#act")  # This click does not cause the subsequent history navigation.
         await user.client.send("Runtime.evaluate", {"expression": "history.back()"})
         await asyncio.sleep(.5)
         await user.click("#q")
         await user.type("hi")
 
     run, doc, recording = await demonstrate(browser, "/", perform)
-    assert [step.kind for step in doc.steps] == ["open", "click", "open", "fill"]
+    assert [step.kind for step in doc.steps] == ["open", "click", "click", "open", "fill"]
     page = await replay(browser, run, doc, recording, tmp_path)
     assert await page("location.pathname") == "/"
 
@@ -267,7 +272,7 @@ async def test_content_a_panel_loads_on_scroll_is_reached_again(browser, tmp_pat
         await user.click("#more")
 
     run, doc, recording = await demonstrate(browser, "/lazy", perform)
-    assert [step.kind for step in doc.steps] == ["open", "scroll_to", "click"]
+    assert [step.kind for step in doc.steps] == ["open", "scroll_to", "scroll_to", "click"]
     await evaluate(run.session._internal.client, "(()=>{document.getElementById('more').remove();"
                    "document.getElementById('list').scrollTop=0;document.title='lazy';return 1})()")
     page = await replay(browser, run, doc, recording, tmp_path)
@@ -296,3 +301,33 @@ async def test_recording_survives_the_console_reset_of_a_navigation(browser):
 
     _, doc, _ = await demonstrate(browser, "/", perform)
     assert [(step.target or {}).get("name") for step in doc.steps[1:]] == ["detail", "act"]
+
+
+async def test_scroll_down_then_up_keeps_lazy_loaded_content(browser, tmp_path):
+    async def perform(user):
+        await user.wheel(300)
+        await user.wheel(-300)
+
+    run, doc, recording = await demonstrate(browser, '/lazy', perform)
+    assert await evaluate(run.session._internal.client, "!!document.getElementById('more')")
+    page = await replay(browser, run, doc, recording, tmp_path)
+    assert await page("!!document.getElementById('more')")
+
+
+async def test_edits_around_scrolling_replay_against_the_right_search(browser):
+    async def perform(user):
+        await user.click("#q")
+        await user.type("a")
+        await user.wheel(300)
+        await user.type("b")
+
+    run, doc, recording = await demonstrate(browser, "/search-scroll", perform)
+    assert [step.kind for step in doc.steps] == ["open", "fill", "scroll_to", "fill"]
+    service, _ = browser
+    await service.action("t", BrowserAction(action="reload", generation=run.generation),
+                         actor="user")
+    await workflows.start_replay(service, "t", recording, {"q": "first", "q_2": "second"})
+    await asyncio.wait_for(run.demo_task, 40)
+    assert run.demo_status == "passed", run.error
+    assert await evaluate(run.session._internal.client, "searched.includes('first')")
+    assert await evaluate(run.session._internal.client, "document.getElementById('q').value") == "second"

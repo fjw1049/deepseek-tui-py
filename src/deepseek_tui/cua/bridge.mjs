@@ -24,7 +24,7 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
       value => { entry.ok = true; return value; }, error => { entry.ok = false; throw error; });
   };
   const playwrightObjects = new WeakSet();
-  const wrapPlaywright = target => {
+  const wrapPlaywright = (target, owner) => {
     if (!target || typeof target !== 'object' || Array.isArray(target) || playwrightObjects.has(target)) return target;
     playwrightObjects.add(target);
     const names = new Set();
@@ -36,16 +36,17 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
     for (const name of names) {
       const original = target[name];
       target[name] = function (...args) {
+        globalThis.__deepseekTarget = owner;
         const entry = { action: 'playwright', method: name };
         trace.push(entry);
         try {
           const value = original.apply(this, args);
           if (value && typeof value.then === 'function') {
-            return value.then(result => { entry.ok = true; return wrapPlaywright(result); },
+            return value.then(result => { entry.ok = true; return wrapPlaywright(result, owner); },
               error => { entry.ok = false; throw error; });
           }
           entry.ok = true;
-          return wrapPlaywright(value);
+          return wrapPlaywright(value, owner);
         } catch (error) { entry.ok = false; throw error; }
       };
     }
@@ -58,6 +59,7 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
       if (typeof original !== 'function') continue;
       const observe = ${JSON.stringify(OBSERVATIONS)}.includes(name);
       target[name] = function (...args) {
+        globalThis.__deepseekTarget = target;
         return record(observe ? { action: name, observe } : { action: name,
           coordinate: ['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]) },
         () => original.apply(this, args));
@@ -65,7 +67,7 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
     }
     // Wrap locator methods themselves so cached and chained locators remain traced.
     if ('playwright' in target) {
-      const playwright = wrapPlaywright(target.playwright);
+      const playwright = wrapPlaywright(target.playwright, target);
       Object.defineProperty(target, 'playwright', { configurable: true, get() { return playwright; } });
     }
     Object.defineProperty(target, '__deepseekTraced', { value: true });
