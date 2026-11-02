@@ -11,6 +11,7 @@
 - **还没解决：** 如实率、虚报率没有改善；封存组单看不显著；`fill` 修复没有经过真实运行。
 - **工作区不止这一个 session 在改。** 评测期间另一个 session 改了 `src/deepseek_tui/browser/` 的录制功能，工作区改动已到 160 个。合入只用窄补丁，不要整文件覆盖，运行前后看 `source_changed_during_run`。
 - **soak 数据已不怕丢。** 完整内容在 `~/Desktop/未命名文件夹/agent-results-2026-10-29-to-30.zip`（只读）。解压后 `runtime/main` 就是 `load_sessions` 能读的目录，`replay_184.py` 改这个路径即可。
+- **`build_1028` 审核的 3 个问题已修**，见报告“审核后的修复”。文件监控已改为按身份跟踪，`existing_files` 返回 dict，`moved_sources` 已删除。
 - **评测沙箱用 `workspace-write`。** `danger-full-access` 加自动批准会被 Claude Code 的权限审查拦下。
 - **余额 ¥3.73。** 有效单价约 ¥0.13/M 输入 token，留出集一遍约 ¥10，`daily_tasks` 一遍约 ¥5。用过的 key 已在聊天记录里，应作废，下次重新要。
 
