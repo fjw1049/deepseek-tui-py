@@ -682,3 +682,49 @@ console.log(JSON.stringify({clicks, changed, failed, read, closed}));
         "verification": [{"claim": "Saved", "evidence": ["tool:verified"], "limitations": []}],
     }, ToolContext(tmp_path, metadata={"task_delivery": state}))
     assert outcome.success
+
+
+def test_preview_follows_reused_apps_and_cached_chained_locators():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node required')
+    bridge = Path(__file__).parents[1] / 'src/deepseek_tui/cua/bridge.mjs'
+    script = r"""
+const fs = await import('node:fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const install = (0, eval)(src.slice(src.indexOf('const INPUTS'), src.indexOf('const TRACE_MARK')) + '\nTRACE_INSTALL');
+const run = code => new (Object.getPrototypeOf(async () => {}).constructor)(code)();
+const make = id => ({
+  async click() {}, async getScreenshot() { return id; },
+  playwright: { locator() { return {
+    first() { return this; }, async click() {},
+    async next() { return { async fill() {} }; }
+  }; } }
+});
+globalThis.cua = { async getApp(id) { return make(id); }, async getTab(id) { return make(id); } };
+await run(install);
+const a = await cua.getApp('A');
+const b = await cua.getApp('B');
+await run(install);
+await a.click();
+const app = await globalThis.__deepseekTarget.getScreenshot();
+const t = await cua.getTab('T');
+const cached = t.playwright.locator('button').first();
+const nested = await cached.next();
+await cua.getTab('Other');
+await run(install);
+await cached.click();
+const tab = await globalThis.__deepseekTarget.getScreenshot();
+await b.click();
+await nested.fill('text');
+const chained = await globalThis.__deepseekTarget.getScreenshot();
+console.log(JSON.stringify({app, tab, chained}));
+"""
+    result = subprocess.run([node, '--input-type=module', '-e', script, str(bridge)],
+                            capture_output=True, text=True, check=True, timeout=30)
+    assert json.loads(result.stdout) == {'app': 'A', 'tab': 'T', 'chained': 'T'}

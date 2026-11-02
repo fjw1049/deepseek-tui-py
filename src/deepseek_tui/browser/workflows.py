@@ -392,6 +392,13 @@ async def _step(service: BrowserService, run: BrowserRun, step: Any, inputs: dic
                 if result["success"]:
                     run.replay_tabs[alias] = tab_id
                 return result
+        if step.kind == "open" and (step.expect or {}).get("urlAfter") == step.url:
+            observed = await service.action(run.thread_id, BrowserAction(
+                action="observe", generation=generation))
+            if not observed["success"]:
+                return observed
+            if observed.get("observation", {}).get("url") == step.url:
+                return observed
         action = BrowserAction.model_validate(
             {"action": "new_tab" if step.kind == "new_tab" else "open", "url": step.url or "",
              "generation": generation}, context={"local_root": run.upload_root})
@@ -626,9 +633,12 @@ async def run_trace(
     placeholders = {name: "{{" + name + "}}" for name in secrets}
     doc = compile_workflow(doc, {**inputs, **placeholders}, local_root)
     ids = [step.id for step in doc.steps]
-    if from_step and from_step not in ids:
+    if from_step and from_step != "@verify" and from_step not in ids:
         raise ValueError("Unknown step to resume from")
-    start = ids.index(from_step) if from_step else 0
+    if from_step == "@verify":
+        start = len(ids)
+    else:
+        start = ids.index(from_step) if from_step else 0
     run = await service.ensure(thread_id)
     if run.owner != "agent":
         raise ValueError("The user controls this browser; wait until control is returned")
@@ -644,7 +654,7 @@ async def run_trace(
             result["stopped_at"]["detail"] = detail
         if reason in {"needs_user", "manual_step"}:
             index = ids.index(step.id) + 1
-            result["resume_from"] = ids[index] if index < len(ids) else None
+            result["resume_from"] = ids[index] if index < len(ids) else "@verify"
         return result
 
     opened_tabs = []

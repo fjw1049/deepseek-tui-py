@@ -12,6 +12,7 @@
   const pending = new Map(), scrolled = new Map(), revisions = new WeakMap(), emitted = new WeakMap();
   const roots = new WeakSet(), seen = new WeakSet(), removals = [], observers = [];
   let sequence = 0, stopped = false, scrollingUntil = 0, pressed = null, vanished = false;
+  let scrollDirection = '';
   const editable = e => e?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e?.tagName);
   const fullName=__NAME__, role=__ROLE__, context=__SCOPE_CONTEXT__;
   const name=e=>Array.from(fullName(e)).slice(0,300).join('');
@@ -126,7 +127,16 @@
   function handle(event) {
     if(stopped) return;
     // Scroll events look alike from any source; carousels and scripts are not the user.
-    if(event.type==='wheel') { if(event.isTrusted) scrollingUntil=Date.now()+1000; return; }
+    if(event.type==='wheel') {
+      if(event.isTrusted) {
+        Array.from(pending.keys()).forEach(flush);
+        const direction=Math.sign(event.deltaX)+','+Math.sign(event.deltaY);
+        if(direction!==scrollDirection) Array.from(scrolled.keys()).forEach(flushScroll);
+        scrollDirection=direction;
+        scrollingUntil=Date.now()+1000;
+      }
+      return;
+    }
     if(seen.has(event)) return;
     if(/^(click|keydown|pointerdown|mouseup)$/.test(event.type) && !event.isTrusted) return;
     seen.add(event);
@@ -138,6 +148,7 @@
     const operated=e && (visible(e) || event.isTrusted && /^(checkbox|radio|file)$/.test(e.type));
     if((event.type==='input' || event.type==='change') && !operated) return;
     if(event.type==='input' && e && editable(e)) {
+      Array.from(scrolled.keys()).forEach(flushScroll);
       revisions.set(e,(revisions.get(e) || 0)+1);
       clearTimeout(pending.get(e));
       pending.set(e,setTimeout(()=>flush(e),300)); return;

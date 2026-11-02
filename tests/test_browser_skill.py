@@ -366,3 +366,36 @@ async def test_real_demonstration_becomes_a_skill_that_learns_a_second_site(
     finally:
         await service.close_all()
         httpd.shutdown()
+
+
+@pytest.mark.parametrize('kind', ['upload', 'handle_dialog', 'fill'])
+@pytest.mark.parametrize('verified', [True, False, None])
+async def test_final_manual_step_resumes_only_verification(service, monkeypatch, kind, verified):
+    from unittest.mock import AsyncMock
+    from octop_browser.record.models import SemanticStep, StepsDocument
+    from deepseek_tui.browser import workflows
+
+    run = _agent_run(service)
+    run.replay_tabs['main'] = 'existing-tab'
+    target = {'selectorCandidates': ['#field']}
+    if kind == 'handle_dialog':
+        target = {'accept': True}
+    doc = StepsDocument(recordingId='rec_final', steps=[
+        SemanticStep(id='first', kind='open', url='https://shop.example/'),
+        SemanticStep(id='last', kind=kind, target=target,
+                     value='{{password}}' if kind == 'fill' else ''),
+    ], verification=[] if verified is None else [{'type': 'text_contains', 'value': 'done'}])
+    execute = AsyncMock(return_value={'success': True})
+    verify = AsyncMock(side_effect=ValueError('not done') if verified is False else None)
+    monkeypatch.setattr(workflows, '_step', execute)
+    monkeypatch.setattr(workflows, '_verify', verify)
+    first = await workflows.run_trace(service, 'one', doc, {}, secrets={'password'})
+    assert first['resume_from']
+    run.replay_tabs['main'] = 'existing-tab'
+    execute.reset_mock()
+    result = await workflows.run_trace(service, 'one', doc, {}, secrets={'password'},
+                                       from_step=first['resume_from'])
+    execute.assert_not_awaited()
+    assert run.replay_tabs['main'] == 'existing-tab'
+    assert result['completed'] == [] and result['verified'] is verified
+    assert verify.await_count == (0 if verified is None else 1)
