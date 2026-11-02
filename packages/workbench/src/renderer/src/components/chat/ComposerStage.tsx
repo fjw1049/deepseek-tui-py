@@ -13,7 +13,11 @@ import { PawPrint } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { usePetController } from '../../hooks/use-pet-controller'
-import { filterPetSlashMenu, PET_SLASH_MENU } from '../../lib/pet/pet-slash-commands'
+import {
+  filterPetSlashMenu,
+  parsePetSlashCommand,
+  PET_SLASH_MENU
+} from '../../lib/pet/pet-slash-commands'
 import { useNoticeAutoDismiss, type Notice } from '../extensions/marketplace-shared'
 import { PetMascotDock } from '../pet/PetMascotDock'
 import { ComposerNoticeToast } from './composer-notice'
@@ -58,8 +62,13 @@ export function ComposerStage(props: Props): ReactElement {
 
   const handleSend = useCallback((text: string): Promise<boolean> => {
     if (pet.handlePetSlash(text)) return Promise.resolve(true)
+    if (parsePetSlashCommand(text)?.type === 'unknown') {
+      // Keep the draft so the typo can be fixed; it is not meant for the model.
+      setComposerNotice({ tone: 'error', message: t('petSlashUnknown') })
+      return Promise.resolve(false)
+    }
     return composerProps.onSend(text)
-  }, [composerProps.onSend, pet.handlePetSlash])
+  }, [composerProps.onSend, pet.handlePetSlash, t])
 
   // Timeline spacer follows real composer height (approvals /
   // queued messages) so overlapping chrome doesn't cover the last answer or
@@ -93,19 +102,25 @@ export function ComposerStage(props: Props): ReactElement {
       ) : null}
       <div className="relative">
         <GoalStrip />
-        {/* Decorative only: rest just above the input (bottom-full) and ignore
-            hits so the model picker popover above the composer stays clickable
-            on the right. */}
-        <div className="pointer-events-none absolute bottom-full right-0 z-0">
+        {/* Rests just above the input (bottom-full). Only the pet and its
+            bubble take hits; the composer, painted later, keeps its popovers
+            (the model picker) on top. */}
+        {/* Mounted only once a sheet is ready, so its motion hooks start with real DOM. */}
+        {pet.status !== 'hidden' ? <div className="pointer-events-none absolute bottom-full right-0 z-0">
           <PetMascotDock
-            visible
-            status={pet.status}
             stateId={pet.stateId}
+            playKey={pet.playKey}
             spritesheetSrc={pet.spritesheetSrc}
-            roamOffset={pet.roamOffset}
+            petName={pet.petName}
+            bubble={pet.bubble}
+            hearts={pet.hearts}
+            canStroll={pet.canStroll}
             motionPaused={pet.motionPaused}
+            onActivate={pet.activate}
+            onHoverChange={pet.setHovered}
+            onBubbleAction={pet.onBubbleAction}
           />
-        </div>
+        </div> : null}
         <MemoFloatingComposer
           {...composerProps}
           onNoticeChange={setComposerNotice}

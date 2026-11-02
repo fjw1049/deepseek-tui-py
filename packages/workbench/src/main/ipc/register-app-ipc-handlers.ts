@@ -45,7 +45,9 @@ import {
   logErrorPayloadSchema,
   notificationPayloadSchema,
   openEditorPathPayloadSchema,
+  petReactPayloadSchema,
   petResolveSpritesheetPayloadSchema,
+  petThumbnailsPayloadSchema,
   rootPathSchema,
   runtimeRequestPayloadSchema,
   shellOpenExternalUrlSchema,
@@ -159,8 +161,11 @@ import {
 } from '../services/workspace-service'
 import {
   fetchPetManifest,
-  resolvePetSpritesheet
+  fetchPopularPets,
+  resolvePetSpritesheet,
+  resolvePetThumbnails
 } from '../services/pet-asset-service'
+import { requestPetReaction } from '../services/pet-reaction-service'
 import { usageLedgerService } from '../services/usage-ledger-service'
 import { deleteGuiDataAndExit } from '../services/gui-data-reset'
 import type { createTerminalService } from '../services/terminal-service'
@@ -1581,6 +1586,15 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       payload ?? {}
     )
     return resolvePetSpritesheet(request.slug)
+  })
+  ipcMain.handle('pet:fetch-popular', async (_, force: unknown) => fetchPopularPets(force === true))
+  ipcMain.handle('pet:thumbnails', async (_, payload: unknown) => {
+    const request = parseIpcPayload('pet:thumbnails', petThumbnailsPayloadSchema, payload)
+    return resolvePetThumbnails(request.slugs)
+  })
+  ipcMain.handle('pet:react', async (_, payload: unknown) => {
+    const request = parseIpcPayload('pet:react', petReactPayloadSchema, payload)
+    return requestPetReaction(await store.load(), request)
   })
 
   ipcMain.handle('usage:query', async (_, payload: unknown) => {

@@ -1,200 +1,104 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ChatBlock } from '../../agent/types'
-import { resolvePetState } from './pet-state-machine'
+import {
+  classifyToolWork,
+  findPetPendingDecision,
+  initialPetMind,
+  nextPetWakeAt,
+  notePetWork,
+  PET_WORK_SETTLE_MS,
+  playPetOneShot,
+  resetPetWork,
+  resolvePetState,
+  settlePetMind
+} from './pet-state-machine'
 
-function baseInput(
-  overrides: Partial<Parameters<typeof resolvePetState>[0]> = {}
-): Parameters<typeof resolvePetState>[0] {
-  return {
-    busy: false,
-    currentTurnId: 'turn-current',
-    blocks: [],
-    liveReasoning: '',
-    turnErrorActive: false,
-    burst: null,
-    activityOverride: null,
-    now: 10_000,
-    lastState: 'idle',
-    lastChangeAt: 0,
-    ...overrides
-  }
-}
+const idle = { busy: false, waiting: false }
+const busy = { busy: true, waiting: false }
 
 describe('resolvePetState', () => {
-  it('returns idle when not busy', () => {
-    expect(resolvePetState(baseInput()).stateId).toBe('idle')
+  it('is idle when nothing happens and works while busy', () => {
+    expect(resolvePetState({ mind: initialPetMind(), ...idle })).toBe('idle')
+    expect(resolvePetState({ mind: initialPetMind(), ...busy })).toBe('running')
   })
 
-  it('prefers waiting over decorative burst', () => {
+  it('lets waiting interrupt a decorative move but not a critical one', () => {
+    const jumping = playPetOneShot(initialPetMind(), 'jumping', 'decorative', 0)
+    expect(resolvePetState({ mind: jumping, busy: true, waiting: true })).toBe('waiting')
+    const failed = playPetOneShot(initialPetMind(), 'failed', 'critical', 0)
+    expect(resolvePetState({ mind: failed, busy: true, waiting: true })).toBe('failed')
+  })
+
+  it('plays a decorative move over work instead of being cut off by it', () => {
+    let mind = playPetOneShot(initialPetMind(), 'jumping', 'decorative', 0)
+    mind = notePetWork(mind, 'review', 100)
+    mind = settlePetMind(mind, 300)
+    expect(resolvePetState({ mind, ...busy })).toBe('jumping')
+    mind = settlePetMind(mind, 840)
+    expect(resolvePetState({ mind, ...busy })).toBe('running')
+  })
+})
+
+describe('one-shot moves', () => {
+  it('drops a decorative move that would interrupt another one', () => {
+    const waving = playPetOneShot(initialPetMind(), 'waving', 'decorative', 0)
+    expect(playPetOneShot(waving, 'jumping', 'decorative', 300)).toBe(waving)
+    expect(playPetOneShot(waving, 'jumping', 'decorative', 700).oneShot?.stateId).toBe('jumping')
+  })
+
+  it('lets a critical move replace a decorative one and replays from a new key', () => {
+    const waving = playPetOneShot(initialPetMind(), 'waving', 'decorative', 0)
+    const failed = playPetOneShot(waving, 'failed', 'critical', 100)
+    expect(failed.oneShot).toEqual({ stateId: 'failed', tier: 'critical', endsAt: 1320 })
+    expect(failed.playKey).toBe(waving.playKey + 1)
+  })
+
+  it('ends exactly after one cycle of its row', () => {
+    const mind = playPetOneShot(initialPetMind(), 'waving', 'decorative', 1000)
+    expect(nextPetWakeAt(mind)).toBe(1700)
+    expect(settlePetMind(mind, 1699).oneShot).not.toBeNull()
+    expect(settlePetMind(mind, 1700).oneShot).toBeNull()
+  })
+})
+
+describe('work mode', () => {
+  it('only changes after the new kind of work has held for a while', () => {
+    let mind = notePetWork(initialPetMind(), 'review', 1000)
+    expect(nextPetWakeAt(mind)).toBe(1000 + PET_WORK_SETTLE_MS)
+    expect(settlePetMind(mind, 1000 + PET_WORK_SETTLE_MS - 1).work).toBe('running')
+    mind = settlePetMind(mind, 1000 + PET_WORK_SETTLE_MS)
+    expect(resolvePetState({ mind, ...busy })).toBe('review')
+  })
+
+  it('does not flicker when tools alternate faster than the settle time', () => {
+    let mind = initialPetMind()
+    for (let at = 0; at < 10_000; at += 400) {
+      mind = notePetWork(mind, (at / 400) % 2 ? 'review' : 'running', at)
+      mind = settlePetMind(mind, at + 399)
+      expect(mind.work).toBe('running')
+    }
+  })
+
+  it('starts each turn from plain work', () => {
+    const settled = settlePetMind(notePetWork(initialPetMind(), 'review', 0), PET_WORK_SETTLE_MS)
+    expect(resetPetWork(settled, 5000)).toMatchObject({ work: 'running', candidate: 'running' })
+  })
+
+  it('classifies edits and commands as running and lookups as review', () => {
+    expect(classifyToolWork({ summary: 'read src/a.ts' })).toBe('review')
+    expect(classifyToolWork({ summary: 'grep foo', toolKind: 'command_execution' })).toBe('running')
+    expect(classifyToolWork({ summary: 'patch', toolKind: 'file_change' })).toBe('running')
+  })
+})
+
+describe('findPetPendingDecision', () => {
+  it('finds a pending approval and ignores resolved ones', () => {
     const blocks: ChatBlock[] = [
-      {
-        kind: 'approval',
-        id: 'a1',
-        approvalId: 'ap1',
-        summary: 'Write file',
-        status: 'pending'
-      }
+      { kind: 'approval', id: 'a0', approvalId: 'x', summary: 'old', status: 'allowed' },
+      { kind: 'approval', id: 'a1', approvalId: 'y', summary: 'Write file', status: 'pending' }
     ]
-    const result = resolvePetState(
-      baseInput({
-        busy: true,
-        blocks,
-        burst: { stateId: 'jumping', expiresAt: 20_000 }
-      })
-    )
-    expect(result.stateId).toBe('waiting')
-  })
-
-  it('uses jumping burst only when sustained is idle', () => {
-    const result = resolvePetState(
-      baseInput({
-        burst: { stateId: 'jumping', expiresAt: 20_000 },
-        now: 10_000
-      })
-    )
-    expect(result.stateId).toBe('jumping')
-  })
-
-  it('does not fail from historical tool errors outside current turn', () => {
-    const blocks: ChatBlock[] = [
-      { kind: 'user', id: 'u-old', text: 'old' },
-      { kind: 'tool', id: 't-old', summary: 'Run', status: 'error' },
-      { kind: 'user', id: 'u-new', text: 'new' },
-      { kind: 'assistant', id: 'a1', text: 'ok' }
-    ]
-    expect(
-      resolvePetState(
-        baseInput({
-          busy: false,
-          blocks
-        })
-      ).stateId
-    ).toBe('idle')
-  })
-
-  it('fails on tool error in current turn', () => {
-    const blocks: ChatBlock[] = [
-      { kind: 'user', id: 'u1', text: 'go' },
-      { kind: 'tool', id: 't1', summary: 'Run', status: 'error' }
-    ]
-    expect(
-      resolvePetState(
-        baseInput({
-          busy: true,
-          blocks
-        })
-      ).stateId
-    ).toBe('failed')
-  })
-
-  it('ignores completed and mismatched turns when inspecting tool errors', () => {
-    const blocks: ChatBlock[] = [
-      { kind: 'user', id: 'u1', text: 'old turn', turnId: 'old' },
-      { kind: 'tool', id: 't1', summary: 'Run', status: 'error' }
-    ]
-    expect(resolvePetState(baseInput({ blocks, currentTurnId: null })).stateId).toBe('idle')
-    expect(resolvePetState(baseInput({ blocks, busy: true, currentTurnId: 'new' })).stateId).toBe('running')
-  })
-
-  it('drops indefinite tool overrides after the turn stops', () => {
-    expect(resolvePetState(baseInput({
-      activityOverride: { stateId: 'review', priority: 'sustained' }
-    })).stateId).toBe('idle')
-  })
-
-  it('respects min dwell time', () => {
-    const first = resolvePetState(
-      baseInput({
-        busy: true,
-        lastState: 'idle',
-        lastChangeAt: 9_800,
-        now: 10_000
-      })
-    )
-    expect(first.stateId).toBe('idle')
-    expect(first.retryAt).toBe(10_100)
-
-    const second = resolvePetState(
-      baseInput({
-        busy: true,
-        lastState: first.stateId,
-        lastChangeAt: first.changedAt,
-        now: 10_050
-      })
-    )
-    expect(second.stateId).toBe('idle')
-
-    const third = resolvePetState(
-      baseInput({
-        busy: true,
-        lastState: second.stateId,
-        lastChangeAt: second.changedAt,
-        now: 10_200
-      })
-    )
-    expect(third.stateId).toBe('running')
-  })
-
-  it('does not delay critical waiting behind min dwell', () => {
-    const blocks: ChatBlock[] = [
-      {
-        kind: 'approval',
-        id: 'a1',
-        approvalId: 'ap1',
-        summary: 'Write file',
-        status: 'pending'
-      }
-    ]
-    expect(
-      resolvePetState(
-        baseInput({
-          busy: true,
-          blocks,
-          lastState: 'jumping',
-          lastChangeAt: 9_950,
-          now: 10_000
-        })
-      ).stateId
-    ).toBe('waiting')
-  })
-
-  it('lets critical activity override sustained running state', () => {
-    expect(
-      resolvePetState(
-        baseInput({
-          busy: true,
-          activityOverride: { stateId: 'waiting', priority: 'critical' }
-        })
-      ).stateId
-    ).toBe('waiting')
-  })
-
-  it('uses sustained activity while a tool is active', () => {
-    expect(
-      resolvePetState(
-        baseInput({
-          busy: true,
-          activityOverride: { stateId: 'review', priority: 'sustained' },
-          lastState: 'idle',
-          lastChangeAt: 0
-        })
-      ).stateId
-    ).toBe('review')
-  })
-
-  it('ignores expired activity overrides', () => {
-    expect(
-      resolvePetState(
-        baseInput({
-          busy: true,
-          activityOverride: {
-            stateId: 'review',
-            priority: 'sustained',
-            expiresAt: 9_999
-          }
-        })
-      ).stateId
-    ).toBe('running')
+    expect(findPetPendingDecision(blocks)?.id).toBe('a1')
+    expect(findPetPendingDecision(blocks.slice(0, 1))).toBeNull()
   })
 })

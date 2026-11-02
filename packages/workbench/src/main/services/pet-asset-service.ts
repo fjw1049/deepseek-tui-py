@@ -10,6 +10,16 @@ import type {
   PetSpritesheetResolveResult
 } from '../../shared/pet-manifest'
 import { DEFAULT_PET_SLUG, PETDEX_MANIFEST_URL } from '../../shared/pet-manifest'
+import {
+  BUNDLED_POPULAR_PETS,
+  cleanPetDisplayName,
+  parsePopularPets,
+  PETDEX_POPULAR_URL,
+  petThumbnailUrl,
+  type PetPopularEntry,
+  type PetPopularResult,
+  type PetThumbnailResult
+} from '../../shared/pet-popular'
 import { isAllowedManifestUrl, isAllowedSpritesheetUrl } from '../../shared/pet-url-allowlist'
 import { resolveWorkbenchPetCacheDir } from '../../shared/workbench-home'
 import { migrateLegacyDirContents } from '../migrate-legacy-dir'
@@ -81,7 +91,7 @@ function parseManifestBody(body: unknown): PetManifestSlim | null {
       const item = pet as Record<string, unknown>
       const rawSlug = typeof item.slug === 'string' ? item.slug.trim() : ''
       const slug = PET_SLUG_PATTERN.test(rawSlug) ? rawSlug : ''
-      const displayName = typeof item.displayName === 'string' ? item.displayName.trim() : ''
+      const displayName = typeof item.displayName === 'string' ? cleanPetDisplayName(item.displayName) : ''
       const spritesheetUrl =
         typeof item.spritesheetUrl === 'string' ? item.spritesheetUrl.trim() : ''
       if (!slug || !displayName || !spritesheetUrl) return null
@@ -288,4 +298,117 @@ export async function resolvePetSpritesheet(
     base64: cached.toString('base64'),
     cached: Boolean(cached)
   }
+}
+
+const POPULAR_TTL_MS = 12 * 60 * 60 * 1000
+const THUMBNAIL_CONCURRENCY = 6
+
+type PopularCacheRecord = { fetchedAt: number; pets: PetPopularEntry[] }
+
+let memoryPopular: PopularCacheRecord | null = null
+
+function popularCachePath(): string {
+  return join(cacheRoot(), 'popular.json')
+}
+
+function thumbnailCachePath(slug: string): string {
+  return join(cacheRoot(), 'thumbs', `${slug}.webp`)
+}
+
+async function readPopularCacheFile(): Promise<PopularCacheRecord | null> {
+  try {
+    const parsed = JSON.parse(await readFile(popularCachePath(), 'utf8')) as PopularCacheRecord
+    const pets = parsePopularPets({ pets: parsed?.pets }, (slug) => PET_SLUG_PATTERN.test(slug))
+    return typeof parsed?.fetchedAt === 'number' && pets.length ? { fetchedAt: parsed.fetchedAt, pets } : null
+  } catch {
+    return null
+  }
+}
+
+async function fetchPopularRemote(): Promise<PetPopularEntry[]> {
+  if (!isAllowedManifestUrl(PETDEX_POPULAR_URL)) throw new Error('Popular pets URL is not allowlisted.')
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const response = await fetch(PETDEX_POPULAR_URL, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' }
+    })
+    if (!response.ok) throw new Error(`Popular pets request failed (${response.status}).`)
+    const pets = parsePopularPets(await response.json(), (slug) => PET_SLUG_PATTERN.test(slug))
+    if (!pets.length) throw new Error('Popular pets response was empty or invalid.')
+    return pets
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * The 30 most-liked pets on Petdex. Falls back to the last good list, then to
+ * the snapshot shipped with the app, so Settings always has something to show.
+ */
+export async function fetchPopularPets(force = false): Promise<PetPopularResult> {
+  await ensureCacheDir()
+  const now = Date.now()
+  if (!force && memoryPopular && now - memoryPopular.fetchedAt < POPULAR_TTL_MS) {
+    return { pets: memoryPopular.pets, source: 'cache' }
+  }
+  const disk = memoryPopular ?? await readPopularCacheFile()
+  if (!force && disk && now - disk.fetchedAt < POPULAR_TTL_MS) {
+    memoryPopular = disk
+    return { pets: disk.pets, source: 'cache' }
+  }
+  try {
+    const pets = await fetchPopularRemote()
+    memoryPopular = { fetchedAt: now, pets }
+    await writeFile(popularCachePath(), JSON.stringify(memoryPopular), 'utf8')
+    return { pets, source: 'live' }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (disk) return { pets: disk.pets, source: 'cache', message }
+    return { pets: [...BUNDLED_POPULAR_PETS], source: 'bundled', message }
+  }
+}
+
+async function resolveOneThumbnail(slug: string): Promise<string | null> {
+  const path = thumbnailCachePath(slug)
+  try {
+    const cached = await readFile(path)
+    if (isCompleteWebp(cached)) return `data:image/webp;base64,${cached.toString('base64')}`
+  } catch {
+    // Not cached yet.
+  }
+  const url = petThumbnailUrl(slug)
+  if (!isAllowedSpritesheetUrl(url)) return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, { signal: controller.signal })
+    if (!response.ok) return null
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (!isCompleteWebp(buffer)) return null
+    await mkdir(join(cacheRoot(), 'thumbs'), { recursive: true })
+    await writeFile(path, buffer)
+    return `data:image/webp;base64,${buffer.toString('base64')}`
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Small (~2 KB) Petdex thumbnails for the picker, cached on disk after the first fetch. */
+export async function resolvePetThumbnails(slugs: string[]): Promise<PetThumbnailResult> {
+  await ensureCacheDir()
+  const unique = [...new Set(slugs.filter((slug) => PET_SLUG_PATTERN.test(slug)))]
+  const result: PetThumbnailResult = {}
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < unique.length) {
+      const slug = unique[next++]!
+      result[slug] = await resolveOneThumbnail(slug)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(THUMBNAIL_CONCURRENCY, unique.length) }, worker))
+  return result
 }

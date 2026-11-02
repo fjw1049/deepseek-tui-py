@@ -14,8 +14,11 @@ import type { GitLogResult } from './git-log'
 import type { GitChangeScope, GitFileDiffResult, GitFileDiffTarget, GitWorkingChangesResult } from './git-working-changes'
 import type {
   PetManifestFetchResult,
+  PetReactionRequest,
+  PetReactionResult,
   PetSpritesheetResolveResult
 } from './pet-manifest'
+import type { PetPopularResult, PetThumbnailResult } from './pet-popular'
 import type {
   TerminalCreateOptions,
   TerminalCreateResult,
@@ -495,6 +498,11 @@ export type DsGuiApi = {
   openLogDir: () => Promise<{ ok: boolean; message?: string }>
   fetchPetManifest: (force?: boolean) => Promise<PetManifestFetchResult>
   resolvePetSpritesheet: (slug?: string) => Promise<PetSpritesheetResolveResult>
+  /** One short line from the pet, written by the default provider's lightest model. */
+  petReact?: (request: PetReactionRequest) => Promise<PetReactionResult>
+  /** The 30 most-liked Petdex pets; never fails, falling back to a bundled snapshot. */
+  fetchPopularPets?: (force?: boolean) => Promise<PetPopularResult>
+  resolvePetThumbnails?: (slugs: string[]) => Promise<PetThumbnailResult>
   /** Workbench browser tabs the runtime may drive through the loopback CDP bridge. */
   browserBridge: {
     setTabs: (browserId: string, tabs: BrowserBridgeTab[]) => Promise<void>

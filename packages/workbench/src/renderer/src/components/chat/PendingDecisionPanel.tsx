@@ -1,4 +1,4 @@
-import { useId, useState, type ReactElement } from 'react'
+import { useEffect, useId, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
@@ -10,6 +10,7 @@ import { AssistanceCard, type Assistance } from '../BrowserAssistanceCard'
 import { respondToAssistance } from '../BrowserAssistance'
 import { useBrowserAssistanceStore } from '../../store/browser-assistance-store'
 import { BROWSER_ACTIVITY_EVENT } from '../../lib/browser-activity'
+import { PET_REVEAL_DECISION_EVENT } from '../../lib/pet/pet-events'
 
 type Decision = Extract<ChatBlock, { kind: 'approval' | 'elevation' | 'user_input' | 'evolution' }>
   | { kind: 'browser_assistance'; id: string; status: 'pending'; request: Assistance }
@@ -24,7 +25,33 @@ export function PendingDecisionPanel({ blocks }: { blocks: ChatBlock[] }): React
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(true)
   const [checking, setChecking] = useState(false)
+  const [flashing, setFlashing] = useState(false)
+  const sectionRef = useRef<HTMLElement>(null)
   const panelId = useId()
+
+  // Clicking the waiting pet brings the open request into view. Only a text
+  // field takes focus: a focused Approve button would be one Enter away.
+  useEffect(() => {
+    let timer: number | undefined
+    const reveal = (event: Event): void => {
+      const section = sectionRef.current
+      if (!section || (event as CustomEvent<{ threadId: string | null }>).detail?.threadId !== activeId) return
+      setExpanded(true)
+      setFlashing(false)
+      window.clearTimeout(timer)
+      requestAnimationFrame(() => {
+        setFlashing(true)
+        timer = window.setTimeout(() => setFlashing(false), 900)
+        section.scrollIntoView({ block: 'nearest' })
+        section.querySelector<HTMLElement>('[data-selected-decision] :is(textarea, input[type="text"])')?.focus()
+      })
+    }
+    window.addEventListener(PET_REVEAL_DECISION_EVENT, reveal)
+    return () => {
+      window.removeEventListener(PET_REVEAL_DECISION_EVENT, reveal)
+      window.clearTimeout(timer)
+    }
+  }, [activeId])
   const decisions: Decision[] = blocks.filter((block): block is Exclude<Decision, { kind: 'browser_assistance' }> =>
     (block.kind === 'approval' || block.kind === 'elevation' || block.kind === 'user_input' || block.kind === 'evolution') &&
     ((block.status === 'error' && !!block.submissionFailed) || (block.kind !== 'evolution' && block.status === 'pending'))
@@ -43,7 +70,7 @@ export function PendingDecisionPanel({ blocks }: { blocks: ChatBlock[] }): React
   const singleQuestion = decisions.length === 1 && questionSelected
 
   return (
-    <section aria-label={t('feedbackPendingCount', { count: decisions.length })} className={`ds-no-drag mb-2 min-w-0 ${questionSelected ? '' : 'rounded-xl border border-ds-border bg-ds-card'}`}>
+    <section ref={sectionRef} aria-label={t('feedbackPendingCount', { count: decisions.length })} className={`ds-no-drag mb-2 min-w-0 ${questionSelected ? '' : 'rounded-xl border border-ds-border bg-ds-card'} ${flashing ? 'ds-decision-flash' : ''}`}>
       {!singleQuestion ? <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <button type="button" className="min-h-8 rounded text-left text-[13px] font-medium text-ds-ink" aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded(!expanded)}>
           {t('feedbackPendingCount', { count: decisions.length })} · {t(expanded ? 'feedbackCollapse' : 'feedbackExpand')}
@@ -54,7 +81,7 @@ export function PendingDecisionPanel({ blocks }: { blocks: ChatBlock[] }): React
       </div> : null}
       <div id={panelId} hidden={!singleQuestion && !expanded} className={`ds-scroll-surface overscroll-contain ${questionSelected ? '' : 'overflow-y-auto max-h-[min(320px,40vh)] px-2 pb-2'}`}>
         {/* Keep drafts mounted while switching between requests. */}
-        {decisions.map((block) => <div key={block.id} hidden={selected.id !== block.id}>
+        {decisions.map((block) => <div key={block.id} hidden={selected.id !== block.id} data-selected-decision={selected.id === block.id ? '' : undefined}>
           {block.kind === 'browser_assistance' ? <>
             <AssistanceCard request={block.request}
               onReveal={() => window.dispatchEvent(new CustomEvent(BROWSER_ACTIVITY_EVENT, { detail: { threadId: block.request.thread_id } }))}

@@ -41,6 +41,7 @@ import { insertComposerSnippet as insertSnippet, queueComposerRetryDraft } from 
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { emitPetEvent } from '../lib/pet/pet-events'
+import { digestPetTurn, petTurnOutcome } from '../lib/pet/pet-turn-digest'
 import { decodeModelRef } from '@shared/model-ref'
 import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import type {
@@ -921,7 +922,10 @@ function buildThreadEventSink(
             ? Date.parse(ev.createdAt)
             : Date.now()
         armBusyWatchdog(set, get)
-        emitPetEvent(threadId, { type: 'user_message' })
+        // sendMessage already told the pet about a turn sent from this window.
+        const echoesLocalSend = s.busy && optimisticCurrentUserId != null &&
+          (optimisticCurrentUserId === ev.itemId || reconciledBlocks !== baseBlocks)
+        if (!echoesLocalSend) emitPetEvent(threadId, { type: 'user_message', text: ev.text })
         return {
           ...flushed,
           blocks: nextBlocks,
@@ -1581,7 +1585,19 @@ function buildThreadEventSink(
       clearTurnCompletionProbe()
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
-      emitPetEvent(threadId, { type: 'turn_complete' })
+      {
+        const s = get()
+        const startedAt = s.currentTurnUserId ? s.turnStartedAtByUserId[s.currentTurnUserId] : undefined
+        emitPetEvent(threadId, {
+          type: 'turn_complete',
+          digest: digestPetTurn({
+            outcome: petTurnOutcome(payload?.status, payload?.taskStatus),
+            blocks: s.blocks,
+            durationMs: payload?.durationMs ?? (startedAt ? Date.now() - startedAt : 0),
+            diff: s.currentTurnId ? s.turnDiffByTurnId[s.currentTurnId] : null
+          })
+        })
+      }
       noteCuaTurnEnded(threadId, payload?.status === 'cancelled' ? 'stopped'
         : payload?.status === 'failed' || payload?.taskStatus === 'partial' || payload?.taskStatus === 'blocked' ? 'failed'
           : payload?.taskStatus === 'completed' ? 'completed' : 'ended')
@@ -2812,7 +2828,7 @@ const store = create<ChatState>((set, get) => ({
         : {}),
       queuedMessages: queued ? s.queuedMessages.filter((message) => message.id !== queued.id) : s.queuedMessages
     }))
-    if (!hidden) emitPetEvent(activeThreadId, { type: 'user_message' })
+    if (!hidden) emitPetEvent(activeThreadId, { type: 'user_message', text: displayText })
     if (!activeThreadId) {
       try {
         const settings = await window.dsGui.getSettings()

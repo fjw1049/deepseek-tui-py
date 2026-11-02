@@ -42,8 +42,14 @@ export async function resolvePetSpritesheetSrc(
   const src = base64ToObjectUrl(result.base64, result.mime)
   try {
     const image = new Image()
+    // decode() stays pending while the window is hidden; `load` still fires,
+    // so a pet opened in the background does not wait for focus to appear.
+    const loaded = new Promise<void>((resolve, reject) => {
+      image.addEventListener('load', () => resolve(), { once: true })
+      image.addEventListener('error', () => reject(new Error('Spritesheet could not be decoded.')), { once: true })
+    })
     image.src = src
-    await image.decode()
+    await Promise.race([image.decode(), loaded])
   } catch (error) {
     URL.revokeObjectURL(src)
     throw error

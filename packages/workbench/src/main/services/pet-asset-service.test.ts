@@ -90,3 +90,41 @@ it('rejects a non-image download and leaves the previous valid cache intact', as
   expect(await service.resolvePetSpritesheet('boba')).toMatchObject({ ok: true, base64: sprite.toString('base64') })
   expect(await readFile(join(cache.root, 'boba.webp'))).toEqual(sprite)
 })
+
+const popularBody = { pets: [
+  { slug: 'capvolt', displayName: 'Pikachu\u200c', kind: 'creature', submittedBy: { name: 'Ann' },
+    metrics: { likeCount: 68, installCount: 2826 } },
+  { slug: '../evil', displayName: 'Nope' }
+] }
+
+it('fetches the most-liked pets, cleans names and caches the list', async () => {
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(popularBody)))
+  const live = await service.fetchPopularPets()
+  expect(live).toEqual({ source: 'live', pets: [{
+    slug: 'capvolt', displayName: 'Pikachu', kind: 'creature', submittedBy: 'Ann', likeCount: 68, installCount: 2826
+  }] })
+  expect(fetchMock.mock.calls[0]![0]).toBe('https://petdex.dev/api/pets/search?sort=popular&limit=30')
+  vi.resetModules()
+  service = await import('./pet-asset-service')
+  await expect(service.fetchPopularPets()).resolves.toMatchObject({ source: 'cache', pets: [{ slug: 'capvolt' }] })
+  expect(fetchMock).toHaveBeenCalledOnce()
+})
+
+it('falls back to the bundled ranking when offline with nothing cached', async () => {
+  const result = await service.fetchPopularPets()
+  expect(result.source).toBe('bundled')
+  expect(result.pets).toHaveLength(30)
+  expect(result.message).toBe('offline')
+})
+
+it('fetches thumbnails once, then serves them from disk', async () => {
+  fetchMock.mockImplementation(async (url: string) => url.endsWith('/boba/thumb.webp')
+    ? new Response(new Uint8Array(sprite)) : new Response('missing', { status: 404 }))
+  const first = await service.resolvePetThumbnails(['boba', 'ghost', 'bad slug!'])
+  expect(first.boba).toBe(`data:image/webp;base64,${sprite.toString('base64')}`)
+  expect(first.ghost).toBeNull()
+  expect(first).not.toHaveProperty('bad slug!')
+  fetchMock.mockClear()
+  await expect(service.resolvePetThumbnails(['boba'])).resolves.toEqual({ boba: first.boba })
+  expect(fetchMock).not.toHaveBeenCalled()
+})

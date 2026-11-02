@@ -2,8 +2,11 @@ import type { PetStateId } from './pet-states'
 
 export type PetSlashAction =
   | { type: 'burst'; stateId: Extract<PetStateId, 'waving' | 'jumping'> }
+  | { type: 'pat' }
   | { type: 'set_enabled'; enabled: boolean }
+  | { type: 'set_chatter'; enabled: boolean }
   | { type: 'toggle_enabled' }
+  | { type: 'unknown' }
 
 export type PetSlashMenuItem = {
   command: string
@@ -13,6 +16,12 @@ export type PetSlashMenuItem = {
 }
 
 export const PET_SLASH_MENU: readonly PetSlashMenuItem[] = [
+  {
+    command: '/pet pat',
+    token: 'pat',
+    titleKey: 'petSlashPatTitle',
+    descriptionKey: 'petSlashPatDescription'
+  },
   {
     command: '/pet wave',
     token: 'wave',
@@ -36,6 +45,18 @@ export const PET_SLASH_MENU: readonly PetSlashMenuItem[] = [
     token: 'tuck',
     titleKey: 'petSlashTuckTitle',
     descriptionKey: 'petSlashTuckDescription'
+  },
+  {
+    command: '/pet mute',
+    token: 'mute',
+    titleKey: 'petSlashMuteTitle',
+    descriptionKey: 'petSlashMuteDescription'
+  },
+  {
+    command: '/pet unmute',
+    token: 'unmute',
+    titleKey: 'petSlashUnmuteTitle',
+    descriptionKey: 'petSlashUnmuteDescription'
   }
 ] as const
 
@@ -59,17 +80,17 @@ export function filterPetSlashMenu(query: string): PetSlashMenuItem[] {
 
 export function parsePetSlashCommand(input: string): PetSlashAction | null {
   const trimmed = input.trim()
-  if (!/^\/pet(?:\s+[a-z]+)?\s*$/i.test(trimmed)) return null
+  if (!/^\/pet(?:\s|$)/i.test(trimmed)) return null
 
   const sub = trimmed.slice(4).trim().toLowerCase()
   if (!sub) return { type: 'toggle_enabled' }
+  if (sub === 'pat') return { type: 'pat' }
   if (sub === 'wave') return { type: 'burst', stateId: 'waving' }
   if (sub === 'jump') return { type: 'burst', stateId: 'jumping' }
   if (sub === 'wake' || sub === 'show') return { type: 'set_enabled', enabled: true }
   if (sub === 'tuck' || sub === 'hide') return { type: 'set_enabled', enabled: false }
-  return null
-}
-
-export function burstDurationMs(stateId: Extract<PetStateId, 'waving' | 'jumping'>): number {
-  return stateId === 'waving' ? 700 : 840
+  if (sub === 'mute') return { type: 'set_chatter', enabled: false }
+  if (sub === 'unmute') return { type: 'set_chatter', enabled: true }
+  // Caught here so a typo gets a notice instead of being sent to the model.
+  return { type: 'unknown' }
 }

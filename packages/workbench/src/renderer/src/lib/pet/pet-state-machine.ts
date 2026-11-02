@@ -1,174 +1,94 @@
-import type { ChatBlock, ToolBlock } from '../../agent/types'
-import type { PetStateId } from './pet-states'
+import type { ChatBlock, ToolItemKind } from '../../agent/types'
+import { petCycleMs, type PetStateId } from './pet-states'
 
-export const MIN_PET_STATE_DWELL_MS = 300
+/** A new kind of work has to hold this long before the body changes to match it. */
+export const PET_WORK_SETTLE_MS = 1800
 
 const READ_LIKE_TOOL = /\b(read|grep|glob|list_dir|search|find|cat)\b/i
 
-export type PetBurst = {
+export type PetWorkMode = Extract<PetStateId, 'running' | 'review'>
+export type PetOneShotTier = 'decorative' | 'critical'
+
+export type PetOneShot = {
   stateId: PetStateId
-  expiresAt: number
+  tier: PetOneShotTier
+  endsAt: number
 }
 
-export type PetActivityOverride = {
-  stateId: PetStateId
-  priority: 'critical' | 'sustained' | 'decorative'
-  expiresAt?: number
+export type PetMind = {
+  work: PetWorkMode
+  candidate: PetWorkMode
+  candidateSince: number
+  oneShot: PetOneShot | null
+  /** Bumped per one-shot so replaying the same move still starts at frame 0. */
+  playKey: number
 }
 
-export type PetStateMachineInput = {
+export function initialPetMind(): PetMind {
+  return { work: 'running', candidate: 'running', candidateSince: 0, oneShot: null, playKey: 0 }
+}
+
+export function classifyToolWork(tool: { summary: string; toolKind?: ToolItemKind }): PetWorkMode {
+  if (tool.toolKind === 'file_change' || tool.toolKind === 'command_execution') return 'running'
+  return READ_LIKE_TOOL.test(tool.summary) ? 'review' : 'running'
+}
+
+export function resetPetWork(mind: PetMind, now: number): PetMind {
+  return { ...mind, work: 'running', candidate: 'running', candidateSince: now }
+}
+
+export function notePetWork(mind: PetMind, mode: PetWorkMode, now: number): PetMind {
+  return mode === mind.candidate ? mind : { ...mind, candidate: mode, candidateSince: now }
+}
+
+/** Decorative moves play out or not at all; only a critical one may cut in. */
+export function playPetOneShot(
+  mind: PetMind,
+  stateId: PetStateId,
+  tier: PetOneShotTier,
+  now: number,
+  durationMs = petCycleMs(stateId)
+): PetMind {
+  if (tier === 'decorative' && mind.oneShot && now < mind.oneShot.endsAt) return mind
+  return { ...mind, oneShot: { stateId, tier, endsAt: now + durationMs }, playKey: mind.playKey + 1 }
+}
+
+export function settlePetMind(mind: PetMind, now: number): PetMind {
+  const oneShot = mind.oneShot && now >= mind.oneShot.endsAt ? null : mind.oneShot
+  const work = mind.candidate !== mind.work && now - mind.candidateSince >= PET_WORK_SETTLE_MS
+    ? mind.candidate
+    : mind.work
+  return oneShot === mind.oneShot && work === mind.work ? mind : { ...mind, oneShot, work }
+}
+
+export function nextPetWakeAt(mind: PetMind): number | null {
+  const times = [
+    mind.oneShot?.endsAt,
+    mind.candidate !== mind.work ? mind.candidateSince + PET_WORK_SETTLE_MS : undefined
+  ].filter((time): time is number => time != null)
+  return times.length ? Math.min(...times) : null
+}
+
+export function resolvePetState(input: {
+  mind: PetMind
   busy: boolean
-  currentTurnId: string | null
-  blocks: ChatBlock[]
-  liveReasoning: string
-  turnErrorActive: boolean
-  burst: PetBurst | null
-  activityOverride: PetActivityOverride | null
-  now: number
-  lastState: PetStateId
-  lastChangeAt: number
+  waiting: boolean
+}): PetStateId {
+  const { oneShot, work } = input.mind
+  if (oneShot?.tier === 'critical') return oneShot.stateId
+  if (input.waiting) return 'waiting'
+  if (oneShot) return oneShot.stateId
+  return input.busy ? work : 'idle'
 }
 
-function hasPendingInteractive(blocks: ChatBlock[]): boolean {
-  return blocks.some(
-    (block) =>
-      (block.kind === 'approval' && block.status === 'pending') ||
-      (block.kind === 'elevation' && block.status === 'pending') ||
-      (block.kind === 'user_input' && block.status === 'pending')
-  )
-}
+export type PetPendingDecision = Extract<ChatBlock, { kind: 'approval' | 'elevation' | 'user_input' }>
 
-function getCurrentTurnBlocks(blocks: ChatBlock[], turnId: string): ChatBlock[] {
-  let lastUserIdx = -1
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const block = blocks[i]
-    if (block?.kind === 'user') {
-      if (block.turnId && block.turnId !== turnId) return []
-      lastUserIdx = i
-      break
-    }
-  }
-  if (lastUserIdx < 0) return []
-  return blocks.slice(lastUserIdx + 1)
-}
-
-function hasToolErrorInCurrentTurn(blocks: ChatBlock[], turnId: string): boolean {
-  return getCurrentTurnBlocks(blocks, turnId).some(
-    (block) => block.kind === 'tool' && block.status === 'error'
-  )
-}
-
-function latestRunningTool(blocks: ChatBlock[]): ToolBlock | null {
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const block = blocks[i]
-    if (block?.kind === 'tool' && block.status === 'running') {
+export function findPetPendingDecision(blocks: ChatBlock[]): PetPendingDecision | null {
+  for (const block of blocks) {
+    if ((block.kind === 'approval' || block.kind === 'elevation' || block.kind === 'user_input') &&
+      block.status === 'pending') {
       return block
     }
   }
   return null
-}
-
-function isReadLikeTool(tool: ToolBlock): boolean {
-  return READ_LIKE_TOOL.test(tool.summary)
-}
-
-function deriveCritical(input: PetStateMachineInput): PetStateId | null {
-  if (input.turnErrorActive || (input.busy && input.currentTurnId &&
-    hasToolErrorInCurrentTurn(input.blocks, input.currentTurnId))) {
-    return 'failed'
-  }
-  if (hasPendingInteractive(input.blocks)) {
-    return 'waiting'
-  }
-  return null
-}
-
-function deriveSustained(input: PetStateMachineInput): PetStateId {
-  if (!input.busy) return 'idle'
-
-  const runningTool = latestRunningTool(input.blocks)
-  if (runningTool && isReadLikeTool(runningTool)) {
-    return 'review'
-  }
-  if (input.liveReasoning.trim() && !runningTool) {
-    return 'review'
-  }
-  return 'running'
-}
-
-function deriveDecorativeBurst(
-  burst: PetBurst | null,
-  sustained: PetStateId,
-  now: number
-): PetStateId | null {
-  if (!burst || now >= burst.expiresAt) return null
-  if (sustained !== 'idle' && sustained !== 'running') return null
-  return burst.stateId
-}
-
-function activeOverride(
-  activityOverride: PetActivityOverride | null,
-  now: number
-): PetActivityOverride | null {
-  if (!activityOverride) return null
-  if (activityOverride.expiresAt != null && now >= activityOverride.expiresAt) return null
-  return activityOverride
-}
-
-function criticalRank(stateId: PetStateId): number {
-  if (stateId === 'failed') return 2
-  if (stateId === 'waiting') return 1
-  return 0
-}
-
-function pickCriticalState(
-  derived: PetStateId | null,
-  override: PetActivityOverride | null
-): PetStateId | null {
-  const overrideState = override?.priority === 'critical' ? override.stateId : null
-  if (!derived) return overrideState
-  if (!overrideState) return derived
-  return criticalRank(overrideState) > criticalRank(derived) ? overrideState : derived
-}
-
-export function resolvePetState(input: PetStateMachineInput): {
-  stateId: PetStateId
-  changedAt: number
-  retryAt?: number
-} {
-  const override = !input.busy && input.activityOverride?.expiresAt == null
-    ? null
-    : activeOverride(input.activityOverride, input.now)
-  const critical = pickCriticalState(deriveCritical(input), override)
-  if (critical) {
-    return critical === input.lastState
-      ? { stateId: input.lastState, changedAt: input.lastChangeAt }
-      : { stateId: critical, changedAt: input.now }
-  }
-
-  const sustained =
-    override?.priority === 'sustained' ? override.stateId : deriveSustained(input)
-  const decorative =
-    override?.priority === 'decorative'
-      ? override.stateId
-      : deriveDecorativeBurst(input.burst, sustained, input.now)
-  const next = decorative ?? sustained
-  return applyDwell(next, input)
-}
-
-function applyDwell(
-  next: PetStateId,
-  input: PetStateMachineInput
-): { stateId: PetStateId; changedAt: number; retryAt?: number } {
-  if (next === input.lastState) {
-    return { stateId: input.lastState, changedAt: input.lastChangeAt }
-  }
-  const elapsed = input.now - input.lastChangeAt
-  if (elapsed < MIN_PET_STATE_DWELL_MS) {
-    return {
-      stateId: input.lastState, changedAt: input.lastChangeAt,
-      retryAt: input.lastChangeAt + MIN_PET_STATE_DWELL_MS
-    }
-  }
-  return { stateId: next, changedAt: input.now }
 }

@@ -33,10 +33,7 @@ import {
   Eye,
   EyeOff,
   FolderOpen,
-  Loader2,
-  RefreshCw,
-  PawPrint,
-  X
+  Loader2
 } from 'lucide-react'
 import type { PetManifestEntry } from '@shared/pet-manifest'
 import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
@@ -44,17 +41,23 @@ import { applyAppearance } from '../lib/apply-appearance'
 import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import {
-  hasSavedPetFavorites,
+  readPetAiLines,
+  readPetChatter,
   readPetEnabled,
-  readPetFavoriteSlugs,
   readPetSlug,
   subscribePetPreferences,
+  writePetAiLines,
+  writePetChatter,
   writePetEnabled,
-  writePetFavoriteSlugs,
   writePetSlug
 } from '../lib/pet/pet-preferences'
-import { resolvePetSpritesheetSrc } from '../lib/pet/pet-catalog'
 import { filterManifestPets } from '@shared/pet-catalog-utils'
+import {
+  BUNDLED_POPULAR_PETS,
+  PET_POPULAR_LIMIT,
+  type PetPopularEntry,
+  type PetPopularResult
+} from '@shared/pet-popular'
 import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
@@ -74,7 +77,7 @@ import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
-import { PetSprite } from './pet/PetSprite'
+import { PetPicker, type PetPickerItem } from './pet/PetPicker'
 import { FieldHelpPopover } from './channels/FieldHelpPopover'
 import type { UsageRange } from '@shared/usage-ledger'
 import { usePersistentUsage } from '../hooks/use-persistent-usage'
@@ -192,14 +195,16 @@ export function SettingsView(): ReactElement {
   const savingQueue = useRef<Promise<unknown>>(Promise.resolve())
   const leavingRef = useRef(false)
   const [petEnabled, setPetEnabled] = useState(() => readPetEnabled())
+  const [petChatter, setPetChatter] = useState(() => readPetChatter())
+  const [petAiLines, setPetAiLines] = useState(() => readPetAiLines())
   const [petSlug, setPetSlug] = useState(() => readPetSlug())
-  const [petFavoriteSlugs, setPetFavoriteSlugs] = useState(() => readPetFavoriteSlugs())
-  const [favoritePets, setFavoritePets] = useState<PetManifestEntry[]>([])
-  const [petCatalogPets, setPetCatalogPets] = useState<PetManifestEntry[]>([])
+  const [popularPets, setPopularPets] = useState<PetPopularEntry[]>(() => [...BUNDLED_POPULAR_PETS])
+  const [popularSource, setPopularSource] = useState<PetPopularResult['source'] | null>(null)
+  const [popularLoading, setPopularLoading] = useState(false)
+  const [petCatalogPets, setPetCatalogPets] = useState<PetManifestEntry[] | null>(null)
   const [petCatalogQuery, setPetCatalogQuery] = useState('')
-  const [petCachedSlugs, setPetCachedSlugs] = useState<Set<string>>(() => new Set())
-  const [petCatalogLoading, setPetCatalogLoading] = useState(false)
   const [petCatalogError, setPetCatalogError] = useState<string | null>(null)
+  const petPopularRequested = useRef(false)
   const petCatalogRequested = useRef(false)
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
   const [logDirPath, setLogDirPath] = useState('~/.deepseek/caches/logs')
@@ -228,117 +233,72 @@ export function SettingsView(): ReactElement {
   useEffect(() => {
     return subscribePetPreferences(() => {
       setPetEnabled(readPetEnabled())
+      setPetChatter(readPetChatter())
+      setPetAiLines(readPetAiLines())
       setPetSlug(readPetSlug())
-      setPetFavoriteSlugs(readPetFavoriteSlugs())
     })
   }, [])
 
-  const cachePetSlugs = useCallback((slugs: string[]): void => {
-    if (typeof window.dsGui?.resolvePetSpritesheet !== 'function') return
-    void Promise.allSettled(slugs.map((slug) => window.dsGui.resolvePetSpritesheet(slug))).then(
-      (results) => {
-        setPetCachedSlugs((current) => {
-          const next = new Set(current)
-          for (const result of results) {
-            if (result.status === 'fulfilled' && result.value.ok) {
-              next.add(result.value.slug)
-            }
-          }
-          return next
-        })
-      }
-    )
+  const loadPopularPets = useCallback(async (force = false): Promise<void> => {
+    if (typeof window.dsGui?.fetchPopularPets !== 'function') {
+      setPopularSource('bundled')
+      return
+    }
+    setPopularLoading(true)
+    try {
+      const result = await window.dsGui.fetchPopularPets(force)
+      setPopularPets(result.pets)
+      setPopularSource(result.source)
+    } finally {
+      setPopularLoading(false)
+    }
   }, [])
 
-  const applyFavoriteSlugs = useCallback((slugs: string[], catalog: PetManifestEntry[]): void => {
-    const bySlug = new Map(catalog.map((pet) => [pet.slug, pet]))
-    const normalized = slugs.slice(0, 15)
-    setPetFavoriteSlugs(normalized)
-    setFavoritePets(
-      normalized.map(
-        (slug) =>
-          bySlug.get(slug) ?? {
-            slug,
-            displayName: slug,
-            kind: 'creature',
-            submittedBy: null,
-            spritesheetUrl: '',
-            petJsonUrl: '',
-            zipUrl: null
-          }
-      )
-    )
-  }, [])
-
+  // The full catalog is ~2 MB, so it only loads once someone starts searching.
   const loadPetCatalog = useCallback(async (force = false): Promise<void> => {
     if (typeof window.dsGui?.fetchPetManifest !== 'function') return
-    setPetCatalogLoading(true)
     setPetCatalogError(null)
-    applyFavoriteSlugs(readPetFavoriteSlugs(), petCatalogPets)
     try {
       const result = await window.dsGui.fetchPetManifest(force)
-      if (!result.ok) {
-        setPetCatalogError(result.message)
-        return
-      }
-      const catalog = result.manifest.pets
-      setPetCatalogPets(catalog)
-      let favoriteSlugs = readPetFavoriteSlugs()
-      if (!hasSavedPetFavorites()) {
-        favoriteSlugs = catalog.slice(0, 15).map((pet) => pet.slug)
-        writePetFavoriteSlugs(favoriteSlugs)
-      }
-      applyFavoriteSlugs(favoriteSlugs, catalog)
-      cachePetSlugs(favoriteSlugs)
+      if (result.ok) setPetCatalogPets(result.manifest.pets)
+      else setPetCatalogError(result.message)
     } catch (error) {
-      applyFavoriteSlugs(readPetFavoriteSlugs(), petCatalogPets)
       setPetCatalogError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setPetCatalogLoading(false)
     }
-  }, [applyFavoriteSlugs, cachePetSlugs, petCatalogPets])
+  }, [])
 
   useEffect(() => {
-    if (category !== 'general') return
-    if (petCatalogRequested.current) return
+    if (category !== 'general' || petPopularRequested.current) return
+    petPopularRequested.current = true
+    void loadPopularPets()
+  }, [category, loadPopularPets])
+
+  useEffect(() => {
+    if (!petCatalogQuery.trim() || petCatalogRequested.current) return
     petCatalogRequested.current = true
     void loadPetCatalog()
-  }, [category, loadPetCatalog])
+  }, [loadPetCatalog, petCatalogQuery])
 
-  const selectPetSlug = useCallback((pet: PetManifestEntry): void => {
+  const selectPetSlug = useCallback((pet: PetPickerItem): void => {
     setPetSlug(pet.slug)
     writePetSlug(pet.slug)
-    if (!petCachedSlugs.has(pet.slug)) cachePetSlugs([pet.slug])
-  }, [cachePetSlugs, petCachedSlugs])
+  }, [])
 
-  const addFavoritePet = useCallback(
-    (pet: PetManifestEntry): void => {
-      const next = [pet.slug, ...petFavoriteSlugs.filter((slug) => slug !== pet.slug)].slice(0, 15)
-      writePetFavoriteSlugs(next)
-      applyFavoriteSlugs(next, petCatalogPets)
-      cachePetSlugs([pet.slug])
-    },
-    [applyFavoriteSlugs, cachePetSlugs, petCatalogPets, petFavoriteSlugs]
-  )
+  const petSearchResults = useMemo<PetPickerItem[] | null>(() => {
+    if (!petCatalogPets || !petCatalogQuery.trim()) return null
+    return filterManifestPets(
+      { generatedAt: '', total: petCatalogPets.length, pets: petCatalogPets },
+      petCatalogQuery,
+      PET_POPULAR_LIMIT
+    ).map((pet) => ({ slug: pet.slug, displayName: pet.displayName, submittedBy: pet.submittedBy, likeCount: null }))
+  }, [petCatalogPets, petCatalogQuery])
 
-  const removeFavoritePet = useCallback(
-    (slug: string): void => {
-      const next = petFavoriteSlugs.filter((item) => item !== slug)
-      writePetFavoriteSlugs(next)
-      applyFavoriteSlugs(next, petCatalogPets)
-    },
-    [applyFavoriteSlugs, petCatalogPets, petFavoriteSlugs]
-  )
-
-  const petSearchResults = useMemo(() => {
-    if (petCatalogPets.length === 0) return []
-    const favoriteSet = new Set(petFavoriteSlugs)
-    return filterManifestPets({
-      generatedAt: '',
-      total: petCatalogPets.length,
-      pets: petCatalogPets.filter((pet) => !favoriteSet.has(pet.slug))
-    }, petCatalogQuery, 10)
-  }, [petCatalogPets, petCatalogQuery, petFavoriteSlugs])
+  const selectedPet = useMemo<PetPickerItem | null>(() => {
+    const popular = popularPets.find((pet) => pet.slug === petSlug)
+    if (popular) return popular
+    const listed = petCatalogPets?.find((pet) => pet.slug === petSlug)
+    return listed ? { slug: listed.slug, displayName: listed.displayName, submittedBy: listed.submittedBy, likeCount: null } : null
+  }, [petCatalogPets, petSlug, popularPets])
 
   useEffect(() => {
     let cancelled = false
@@ -863,37 +823,61 @@ export function SettingsView(): ReactElement {
 
               <SettingsCard title={t('sectionPet')} className="mt-6">
                 <SettingRow
-                  controlWidth="full"
                   title={t('petMascotEnabled')}
-                  description={
-                    <PetMascotSettingPreview
-                      enabled={petEnabled}
-                      selectedSlug={petSlug}
-                      selectedName={
-                        favoritePets.find((pet) => pet.slug === petSlug)?.displayName ?? petSlug
-                      }
-                      description={t('petMascotEnabledDesc')}
-                    />
-                  }
+                  description={t('petMascotEnabledDesc')}
                   control={
-                    <PetMascotSettingsControl
-                      enabled={petEnabled}
-                      selectedSlug={petSlug}
-                      favoritePets={favoritePets}
-                      favoriteCount={petFavoriteSlugs.length}
-                      searchQuery={petCatalogQuery}
-                      searchResults={petSearchResults}
-                      loading={petCatalogLoading}
-                      error={petCatalogError}
-                      onEnabledChange={(value) => {
+                    <Toggle
+                      checked={petEnabled}
+                      onChange={(value) => {
                         setPetEnabled(value)
                         writePetEnabled(value)
                       }}
-                      onRefresh={() => void loadPetCatalog(true)}
-                      onSearchQueryChange={setPetCatalogQuery}
-                      onSelect={(pet) => void selectPetSlug(pet)}
-                      onAddFavorite={addFavoritePet}
-                      onRemoveFavorite={removeFavoritePet}
+                    />
+                  }
+                />
+                <div className="px-3 py-4">
+                  <PetPicker
+                    enabled={petEnabled}
+                    selectedSlug={petSlug}
+                    selectedPet={selectedPet}
+                    popular={popularPets}
+                    popularSource={popularSource}
+                    popularLoading={popularLoading}
+                    catalogSize={petCatalogPets?.length ?? null}
+                    searchQuery={petCatalogQuery}
+                    searchResults={petSearchResults}
+                    searchError={petCatalogError}
+                    onSearchQueryChange={setPetCatalogQuery}
+                    onRefreshPopular={() => void loadPopularPets(true)}
+                    onRetrySearch={() => void loadPetCatalog(true)}
+                    onSelect={selectPetSlug}
+                  />
+                </div>
+                <SettingRow
+                  title={t('petChatterTitle')}
+                  description={t('petChatterDesc')}
+                  control={
+                    <Toggle
+                      checked={petChatter}
+                      disabled={!petEnabled}
+                      onChange={(value) => {
+                        setPetChatter(value)
+                        writePetChatter(value)
+                      }}
+                    />
+                  }
+                />
+                <SettingRow
+                  title={t('petAiLinesTitle')}
+                  description={t('petAiLinesDesc')}
+                  control={
+                    <Toggle
+                      checked={petAiLines}
+                      disabled={!petEnabled || !petChatter}
+                      onChange={(value) => {
+                        setPetAiLines(value)
+                        writePetAiLines(value)
+                      }}
                     />
                   }
                 />
@@ -1317,277 +1301,6 @@ function GroupedField({
     </div>
   )
 }
-
-function PetMascotSettingPreview({
-  enabled,
-  selectedSlug,
-  selectedName,
-  description
-}: {
-  enabled: boolean
-  selectedSlug: string
-  selectedName: string
-  description: string
-}): ReactElement {
-  const { t } = useTranslation('settings')
-  const [previewSrc, setPreviewSrc] = useState<string | null>(null)
-  const [previewError, setPreviewError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    let revokePreview: (() => void) | null = null
-
-    setPreviewSrc(null)
-    setPreviewError(null)
-
-    if (!selectedSlug) return undefined
-
-    void resolvePetSpritesheetSrc(selectedSlug)
-      .then((result) => {
-        revokePreview = result.revoke
-        if (cancelled) {
-          result.revoke()
-          return
-        }
-        setPreviewSrc(result.src)
-      })
-      .catch(() => {
-        if (!cancelled) setPreviewError(t('petMascotPreviewUnavailable'))
-      })
-
-    return () => {
-      cancelled = true
-      revokePreview?.()
-    }
-  }, [selectedSlug, t])
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-[13px] leading-relaxed text-ds-muted">{description}</p>
-      <div
-        className={`rounded-xl border border-ds-border-muted bg-ds-main/45 p-3 transition dark:bg-white/[0.04] ${
-          enabled ? '' : 'opacity-45 grayscale'
-        }`}
-      >
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="text-[12px] font-semibold text-ds-muted">
-            {t('petMascotPreviewTitle')}
-          </span>
-          <span className="min-w-0 truncate text-right text-[11px] text-ds-faint">
-            {selectedName}
-          </span>
-        </div>
-        <div className="flex h-28 items-end justify-center overflow-hidden rounded-lg border border-ds-border-muted bg-ds-card dark:bg-white/[0.06]">
-          {previewSrc ? (
-            <PetSprite
-              src={previewSrc}
-              stateId="idle"
-              scale={0.42}
-              label={selectedName}
-              className="pointer-events-none"
-            />
-          ) : (
-            <span className="self-center text-[12px] text-ds-faint">
-              {previewError ?? t('petMascotPreviewLoading')}
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function PetMascotSettingsControl({
-  enabled,
-  selectedSlug,
-  favoritePets,
-  favoriteCount,
-  searchQuery,
-  searchResults,
-  loading,
-  error,
-  onEnabledChange,
-  onRefresh,
-  onSearchQueryChange,
-  onSelect,
-  onAddFavorite,
-  onRemoveFavorite
-}: {
-  enabled: boolean
-  selectedSlug: string
-  favoritePets: PetManifestEntry[]
-  favoriteCount: number
-  searchQuery: string
-  searchResults: PetManifestEntry[]
-  loading: boolean
-  error: string | null
-  onEnabledChange: (value: boolean) => void
-  onRefresh: () => void
-  onSearchQueryChange: (value: string) => void
-  onSelect: (pet: PetManifestEntry) => void
-  onAddFavorite: (pet: PetManifestEntry) => void
-  onRemoveFavorite: (slug: string) => void
-}): ReactElement {
-  const { t } = useTranslation('settings')
-  const [libraryOpen, setLibraryOpen] = useState(false)
-  const selectedPet =
-    favoritePets.find((pet) => pet.slug === selectedSlug) ??
-    (selectedSlug
-      ? {
-          slug: selectedSlug,
-          displayName: selectedSlug,
-          kind: 'creature',
-          submittedBy: null,
-          spritesheetUrl: '',
-          petJsonUrl: '',
-          zipUrl: null
-        }
-      : null)
-  const selectablePets = selectedPet
-    ? [selectedPet, ...favoritePets.filter((pet) => pet.slug !== selectedPet.slug)]
-    : favoritePets
-
-  return (
-    <div className="flex w-full min-w-0 flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[13px] font-semibold text-ds-ink">{t('petMascotPickTitle')}</div>
-          <div className="mt-0.5 text-[12px] leading-5 text-ds-muted">
-            {t('petMascotPickDesc')}
-          </div>
-        </div>
-        <Toggle checked={enabled} onChange={onEnabledChange} />
-      </div>
-      <fieldset
-        disabled={!enabled}
-        className={`flex min-w-0 flex-col gap-2.5 transition ${
-          enabled ? '' : 'pointer-events-none opacity-45 grayscale'
-        }`}
-      >
-        <div className="rounded-xl border border-ds-border bg-ds-card p-3 shadow-sm">
-          <label className="block min-w-0">
-            <span className="mb-2 flex min-w-0 items-center gap-2">
-              <PawPrint className="h-4 w-4 shrink-0 text-accent" strokeWidth={1.8} />
-              <div className="min-w-0">
-                <span className="block text-[12px] font-medium text-ds-faint">
-                  {t('petMascotSelected')}
-                </span>
-                <span className="block truncate text-[14px] font-semibold text-ds-ink">
-                  {selectedPet?.displayName ?? selectedSlug}
-                </span>
-              </div>
-            </span>
-            <SettingsSelect
-              value={selectedPet?.slug ?? ''}
-              disabled={selectablePets.length === 0}
-              selectClassName="rounded-lg bg-ds-main focus-within:border-accent/50"
-              onChange={(event) => {
-                const pet = selectablePets.find((item) => item.slug === event.target.value)
-                if (pet) onSelect(pet)
-              }}
-            >
-              {selectablePets.map((pet) => (
-                <option key={pet.slug} value={pet.slug}>
-                  {pet.displayName} - {pet.slug}
-                </option>
-              ))}
-            </SettingsSelect>
-          </label>
-        </div>
-        <div className="rounded-xl border border-ds-border-muted bg-ds-main/45">
-          <button
-            type="button"
-            onClick={() => setLibraryOpen((open) => !open)}
-            className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition hover:bg-ds-hover"
-          >
-            <span className="min-w-0 truncate text-[12px] font-semibold text-ds-muted">
-              {t('petMascotSavedTitle')}
-            </span>
-            <span className="flex shrink-0 items-center gap-2 text-[11px] text-ds-faint">
-              <span>{t('petMascotFavoriteCount', { count: favoriteCount })}</span>
-              <ChevronDown
-                className={`h-3.5 w-3.5 transition ${libraryOpen ? 'rotate-180' : ''}`}
-              />
-            </span>
-          </button>
-          {libraryOpen ? (
-            <div className="border-t border-ds-border-muted p-2.5">
-              {favoritePets.length > 0 ? (
-                <div className="mb-2 flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
-                  {favoritePets.map((pet) => {
-                    const active = pet.slug === selectedSlug
-                    return (
-                      <button
-                        key={pet.slug}
-                        type="button"
-                        onClick={() => onRemoveFavorite(pet.slug)}
-                        className={`inline-flex max-w-full items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition ${
-                          active
-                            ? 'border-accent/35 bg-accent/10 text-accent'
-                            : 'border-ds-border bg-ds-card text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                        }`}
-                      >
-                        <span className="truncate">{pet.displayName}</span>
-                        <X className="h-3 w-3 shrink-0" />
-                      </button>
-                    )
-                  })}
-                </div>
-              ) : null}
-              <input
-                value={searchQuery}
-                onChange={(event) => onSearchQueryChange(event.target.value)}
-                placeholder={t('petMascotSearchPlaceholder')}
-                className="w-full rounded-lg border border-ds-border bg-ds-card px-2.5 py-1.5 text-[12px] text-ds-ink placeholder:text-ds-faint focus:border-accent/40 focus:outline-none disabled:cursor-not-allowed"
-              />
-              {searchResults.length > 0 ? (
-                <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto">
-                  {searchResults.map((pet) => (
-                    <button
-                      key={pet.slug}
-                      type="button"
-                      disabled={favoriteCount >= 15}
-                      onClick={() => onAddFavorite(pet)}
-                      className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-45"
-                    >
-                      <PawPrint
-                        className="h-3.5 w-3.5 shrink-0 text-ds-faint"
-                        strokeWidth={1.8}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
-                        {pet.displayName}
-                      </span>
-                      <span className="shrink-0 text-[11px] text-ds-faint">
-                        {favoriteCount >= 15 ? t('petMascotFull') : t('petMascotAdd')}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={onRefresh}
-                  disabled={loading}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-2.5 py-1.5 text-center text-[12px] font-medium leading-none text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-wait disabled:opacity-60"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                  {loading ? t('petMascotCachingList') : t('petMascotRefresh')}
-                </button>
-                {error ? (
-                  <span className="min-w-0 truncate text-right text-[12px] text-red-700 dark:text-red-300">
-                    {error}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </fieldset>
-    </div>
-  )
-}
-
 
 function ShortcutKeycaps({
   chord,

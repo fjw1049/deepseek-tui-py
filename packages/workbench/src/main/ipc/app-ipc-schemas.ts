@@ -356,6 +356,22 @@ export const petResolveSpritesheetPayloadSchema = z
   })
   .strict()
 
+export const petThumbnailsPayloadSchema = z
+  .object({
+    slugs: z.array(trimmedString(80)).max(60)
+  })
+  .strict()
+
+export const petReactPayloadSchema = z
+  .object({
+    reason: z.enum(['turn_done', 'turn_recovered', 'tests_failed', 'large_diff', 'petted', 'named']),
+    petName: trimmedString(80),
+    locale: trimmedString(20),
+    recent: z.array(z.string().max(200)).max(3),
+    context: z.string().max(1200)
+  })
+  .strict()
+
 export const sseStartPayloadSchema = z
   .object({
     threadId: trimmedString(MAX_ID_LENGTH),

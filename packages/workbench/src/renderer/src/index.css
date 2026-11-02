@@ -7018,7 +7018,6 @@ html.ds-light-dismiss-active .ds-window-drag-region {
 
 .pet-mascot-dock {
   height: 48px;
-  overflow: hidden;
   position: relative;
   pointer-events: none;
 }
@@ -7040,60 +7039,210 @@ html.ds-light-dismiss-active .ds-window-drag-region {
   }
 }
 
+.pet-mascot-mover {
+  position: relative;
+  pointer-events: none;
+  animation: pet-mascot-arrive 180ms ease-out;
+}
+
+.pet-mascot-body {
+  position: relative;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+  outline: none;
+}
+
+.pet-mascot-body--dragging {
+  cursor: grabbing;
+}
+
+.pet-mascot-body:focus-visible {
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--ds-accent, currentColor);
+}
+
+@keyframes pet-mascot-arrive {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 .pet-sprite-frame {
   --pet-scale: 1;
-  --pet-roam-offset: 0px;
   width: calc(192px * var(--pet-scale));
   height: calc(208px * var(--pet-scale));
   overflow: hidden;
   contain: layout paint;
-  transform: translateX(var(--pet-roam-offset));
-  transition: transform 80ms linear;
-}
-
-.pet-sprite-frame--paused {
-  will-change: auto;
 }
 
 .pet-sprite {
-  --sprite-row: 0;
-  --sprite-frames: 6;
-  --sprite-duration: 1100ms;
-  --sprite-y: calc(var(--sprite-row) * -208px);
-  --sprite-end-x: calc(var(--sprite-frames) * -192px);
   width: 192px;
   height: 208px;
   background-image: var(--sprite-url);
   background-repeat: no-repeat;
-  background-size: 1536px 1872px;
+  /* Height follows the image: v1 atlases have 9 rows, v2 atlases 11. */
+  background-size: 1536px auto;
   image-rendering: pixelated;
   transform: scale(var(--pet-scale)) translateZ(0);
   transform-origin: top left;
-  animation: pet-state var(--sprite-duration) steps(var(--sprite-frames)) infinite;
 }
 
-.pet-sprite--paused {
-  animation-play-state: paused;
+.pet-mascot-bubble {
+  position: absolute;
+  right: -6px;
+  bottom: calc(100% + 8px);
+  z-index: 1;
+  display: block;
+  width: max-content;
+  max-width: min(240px, 62vw);
+  padding: 7px 10px;
+  border: 1px solid var(--ds-border, rgba(127, 127, 127, 0.3));
+  border-radius: 12px;
+  background: var(--glass-bg-strong);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  animation: pet-bubble-in 160ms ease-out;
 }
 
-@keyframes pet-state {
+.pet-mascot-bubble::after {
+  content: '';
+  position: absolute;
+  right: 22px;
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid var(--ds-border, rgba(127, 127, 127, 0.3));
+  border-bottom: 1px solid var(--ds-border, rgba(127, 127, 127, 0.3));
+  background: inherit;
+  transform: rotate(45deg);
+}
+
+/* The last 3 of its 10 seconds on screen. */
+.pet-mascot-bubble--timed {
+  animation: pet-bubble-in 160ms ease-out, pet-bubble-out 3s linear 7s forwards;
+}
+
+.pet-mascot-bubble--action {
+  cursor: pointer;
+}
+
+.pet-mascot-bubble--nudge {
+  animation: pet-bubble-in 160ms ease-out, pet-bubble-nudge 480ms ease-in-out;
+}
+
+@keyframes pet-bubble-in {
   from {
-    background-position: 0 var(--sprite-y);
+    opacity: 0;
+    transform: translateY(4px);
   }
 
   to {
-    background-position: var(--sprite-end-x) var(--sprite-y);
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pet-bubble-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes pet-bubble-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  25% {
+    transform: translateX(-3px);
+  }
+
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+.pet-mascot-hearts {
+  position: absolute;
+  left: 50%;
+  bottom: 70%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.pet-mascot-heart {
+  position: absolute;
+  left: var(--heart-x);
+  color: #f0719a;
+  font-size: var(--heart-size);
+  line-height: 1;
+  opacity: 0;
+  animation: pet-heart-float 1400ms ease-out var(--heart-delay) forwards;
+}
+
+@keyframes pet-heart-float {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.6);
+  }
+
+  18% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-30px) scale(0.9);
+  }
+}
+
+.ds-decision-flash {
+  animation: ds-decision-flash 900ms ease-out;
+}
+
+@keyframes ds-decision-flash {
+  0%,
+  45% {
+    box-shadow: 0 0 0 2px var(--ds-accent-soft), 0 0 0 1px var(--ds-accent);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 transparent;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pet-sprite {
+  .ds-decision-flash {
+    animation: none;
+    box-shadow: 0 0 0 1px var(--ds-accent);
+  }
+
+  .pet-mascot-mover,
+  .pet-mascot-bubble,
+  .pet-mascot-bubble--nudge {
     animation: none;
   }
 
-  .pet-sprite-frame {
-    transition: none;
-    transform: none;
+  .pet-mascot-bubble--timed {
+    animation: pet-bubble-out 1ms linear 10s forwards;
+  }
+
+  .pet-mascot-heart {
+    animation: pet-heart-float 1ms linear var(--heart-delay) backwards;
+    opacity: 1;
   }
 }
 @keyframes ds-composer-command-ribbon-flow {

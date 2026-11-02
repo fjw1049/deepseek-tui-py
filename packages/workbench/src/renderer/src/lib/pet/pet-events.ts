@@ -1,7 +1,8 @@
 import type { ToolItemKind } from '../../agent/types'
+import type { PetTurnDigest } from './pet-turn-digest'
 
 export type PetActivityEvent =
-  | { type: 'user_message' }
+  | { type: 'user_message'; text?: string }
   | { type: 'agent_reasoning' }
   | { type: 'tool_started'; itemId: string; summary: string; toolKind?: ToolItemKind }
   | {
@@ -19,24 +20,28 @@ export type PetActivityEvent =
   | { type: 'user_input_resolved'; itemId: string; status: 'submitted' | 'cancelled' | 'error' }
   | { type: 'subagent_started'; itemId: string; agentType: string }
   | { type: 'subagent_completed'; itemId: string; status: 'completed' | 'failed' | 'cancelled' }
-  | { type: 'turn_complete' }
+  | { type: 'turn_complete'; digest: PetTurnDigest }
   | { type: 'turn_error' }
-  | { type: 'manual_wave' }
-  | { type: 'manual_jump' }
+
+/** Window event: the waiting pet was clicked, so show the request it is waiting on. */
+export const PET_REVEAL_DECISION_EVENT = 'deepseekgui:pet-reveal-decision'
 
 type PetEventListener = (threadId: string | null, event: PetActivityEvent) => void
 
 const listeners = new Set<PetEventListener>()
 
+export function subscribeAllPetEvents(listener: PetEventListener): () => void {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
 export function subscribePetEvents(
   threadId: string | null,
   listener: (event: PetActivityEvent) => void
 ): () => void {
-  const scoped: PetEventListener = (sourceThreadId, event) => {
+  return subscribeAllPetEvents((sourceThreadId, event) => {
     if (sourceThreadId === threadId) listener(event)
-  }
-  listeners.add(scoped)
-  return () => { listeners.delete(scoped) }
+  })
 }
 
 export function emitPetEvent(threadId: string | null, event: PetActivityEvent): void {

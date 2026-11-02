@@ -228,6 +228,9 @@ const api = {
   fetchPetManifest: (force) => ipcRenderer.invoke('pet:fetch-manifest', force === true),
   resolvePetSpritesheet: (slug) =>
     ipcRenderer.invoke('pet:resolve-spritesheet', slug ? { slug } : {}),
+  petReact: (request) => ipcRenderer.invoke('pet:react', request),
+  fetchPopularPets: (force) => ipcRenderer.invoke('pet:fetch-popular', force === true),
+  resolvePetThumbnails: (slugs) => ipcRenderer.invoke('pet:thumbnails', { slugs }),
   browserBridge: {
     setTabs: (browserId, tabs) => ipcRenderer.invoke('browser-bridge:tabs', { browserId, tabs }),
     reply: (requestId, reply) => ipcRenderer.invoke('browser-bridge:reply', { requestId, ...reply }),
