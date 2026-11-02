@@ -2,7 +2,8 @@ const ENABLED_KEY = 'deepseekgui.pet.enabled'
 const SLUG_KEY = 'deepseekgui.pet.slug'
 const CHATTER_KEY = 'deepseekgui.pet.chatter'
 const AI_LINES_KEY = 'deepseekgui.pet.aiLines'
-const DOCK_X_KEY = 'deepseekgui.pet.dockX'
+// v2: offset left of the dock's right end (v1 was centred, so its values no longer apply).
+const DOCK_X_KEY = 'deepseekgui.pet.dockX.v2'
 
 type PetPreferencesListener = () => void
 
@@ -77,7 +78,7 @@ export function writePetAiLines(enabled: boolean): void {
 export function readPetDockX(): number {
   try {
     const value = Number(window.localStorage.getItem(DOCK_X_KEY))
-    return Number.isFinite(value) ? value : 0
+    return Number.isFinite(value) ? Math.min(0, value) : 0
   } catch {
     return 0
   }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
-import { Check, Heart, RefreshCw, Search } from 'lucide-react'
+import { Check, Heart, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { PetPopularEntry } from '@shared/pet-popular'
@@ -144,38 +144,21 @@ export function PetPicker({
   selectedSlug,
   selectedPet,
   popular,
-  popularSource,
   popularLoading,
-  catalogSize,
-  searchQuery,
-  searchResults,
-  searchError,
-  onSearchQueryChange,
   onRefreshPopular,
-  onRetrySearch,
   onSelect
 }: {
   enabled: boolean
   selectedSlug: string
-  /** Name and stats for the current pet, when a list knows them. */
+  /** Name and stats for the current pet, when the ranking knows them. */
   selectedPet: PetPickerItem | null
   popular: PetPickerItem[]
-  popularSource: 'live' | 'cache' | 'bundled' | null
   popularLoading: boolean
-  catalogSize: number | null
-  searchQuery: string
-  /** Null while there is no query or the catalog is still loading. */
-  searchResults: PetPickerItem[] | null
-  searchError: string | null
-  onSearchQueryChange: (query: string) => void
   onRefreshPopular: () => void
-  onRetrySearch: () => void
   onSelect: (pet: PetPickerItem) => void
 }): ReactElement {
   const { t } = useTranslation('settings')
-  const searching = searchQuery.trim().length > 0
-  const shown = useMemo(() => (searching ? searchResults ?? [] : popular), [popular, searchResults, searching])
-  const thumbs = usePetThumbnails(useMemo(() => shown.map((pet) => pet.slug), [shown]))
+  const thumbs = usePetThumbnails(useMemo(() => popular.map((pet) => pet.slug), [popular]))
 
   return (
     <fieldset
@@ -187,61 +170,29 @@ export function PetPicker({
       <PetPreview pet={selectedPet} slug={selectedSlug} />
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-ds-ink">
-              {t(searching ? 'petPickerSearchTitle' : 'petPickerPopularTitle')}
-            </div>
-            <div className="truncate text-[12px] text-ds-faint">
-              {searching
-                ? t('petPickerSearchHint', { count: searchResults?.length ?? 0 })
-                : t(popularSource === 'bundled' ? 'petPickerPopularOffline' : 'petPickerPopularHint')}
-            </div>
-          </div>
-          {!searching ? (
-            <button
-              type="button"
-              onClick={onRefreshPopular}
-              disabled={popularLoading}
-              title={t('petPickerRefresh')}
-              aria-label={t('petPickerRefresh')}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-60"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${popularLoading ? 'animate-spin' : ''}`} />
-            </button>
-          ) : null}
+          <div className="text-[13px] font-semibold text-ds-ink">{t('petPickerPopularTitle')}</div>
+          <button
+            type="button"
+            onClick={onRefreshPopular}
+            disabled={popularLoading}
+            title={t('petPickerRefresh')}
+            aria-label={t('petPickerRefresh')}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${popularLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
-        <label className="relative block">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-faint" aria-hidden="true" />
-          <input
-            value={searchQuery}
-            onChange={(event) => onSearchQueryChange(event.target.value)}
-            placeholder={catalogSize ? t('petPickerSearchPlaceholderCount', { count: catalogSize }) : t('petPickerSearchPlaceholder')}
-            aria-label={t('petPickerSearchPlaceholder')}
-            className="w-full rounded-lg border border-ds-border bg-ds-card py-1.5 pl-8 pr-2.5 text-[12px] text-ds-ink placeholder:text-ds-faint focus:border-accent/40 focus:outline-none"
-          />
-        </label>
-        {searching && searchError ? (
-          <div className="flex items-center justify-between gap-2 rounded-lg bg-red-500/5 px-2.5 py-2 text-[12px] text-red-700 dark:text-red-300">
-            <span className="min-w-0 truncate">{t('petPickerSearchFailed', { message: searchError })}</span>
-            <button type="button" onClick={onRetrySearch} className="shrink-0 font-medium underline-offset-2 hover:underline">
-              {t('petPickerRetry')}
-            </button>
-          </div>
-        ) : searching && searchResults && searchResults.length === 0 ? (
-          <div className="px-1 py-6 text-center text-[12px] text-ds-faint">{t('petPickerNoResults')}</div>
-        ) : (
-          <div className="grid max-h-[300px] grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-1 overflow-y-auto pr-1">
-            {shown.map((pet) => (
-              <PetTile
-                key={pet.slug}
-                pet={pet}
-                thumb={thumbs[pet.slug]}
-                selected={pet.slug === selectedSlug}
-                onSelect={() => onSelect(pet)}
-              />
-            ))}
-          </div>
-        )}
+        <div className="grid max-h-[300px] grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-1 overflow-y-auto pr-1">
+          {popular.map((pet) => (
+            <PetTile
+              key={pet.slug}
+              pet={pet}
+              thumb={thumbs[pet.slug]}
+              selected={pet.slug === selectedSlug}
+              onSelect={() => onSelect(pet)}
+            />
+          ))}
+        </div>
       </div>
     </fieldset>
   )

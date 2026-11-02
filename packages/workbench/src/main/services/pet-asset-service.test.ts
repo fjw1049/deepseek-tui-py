@@ -103,7 +103,7 @@ it('fetches the most-liked pets, cleans names and caches the list', async () => 
   expect(live).toEqual({ source: 'live', pets: [{
     slug: 'capvolt', displayName: 'Pikachu', kind: 'creature', submittedBy: 'Ann', likeCount: 68, installCount: 2826
   }] })
-  expect(fetchMock.mock.calls[0]![0]).toBe('https://petdex.dev/api/pets/search?sort=popular&limit=30')
+  expect(fetchMock.mock.calls[0]![0]).toBe('https://petdex.dev/api/pets/search?sort=popular&limit=60')
   vi.resetModules()
   service = await import('./pet-asset-service')
   await expect(service.fetchPopularPets()).resolves.toMatchObject({ source: 'cache', pets: [{ slug: 'capvolt' }] })
@@ -113,7 +113,7 @@ it('fetches the most-liked pets, cleans names and caches the list', async () => 
 it('falls back to the bundled ranking when offline with nothing cached', async () => {
   const result = await service.fetchPopularPets()
   expect(result.source).toBe('bundled')
-  expect(result.pets).toHaveLength(30)
+  expect(result.pets).toHaveLength(60)
   expect(result.message).toBe('offline')
 })
 

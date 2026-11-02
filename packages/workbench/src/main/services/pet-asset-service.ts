@@ -14,6 +14,7 @@ import {
   BUNDLED_POPULAR_PETS,
   cleanPetDisplayName,
   parsePopularPets,
+  PET_POPULAR_LIMIT,
   PETDEX_POPULAR_URL,
   petThumbnailUrl,
   type PetPopularEntry,
@@ -308,7 +309,8 @@ type PopularCacheRecord = { fetchedAt: number; pets: PetPopularEntry[] }
 let memoryPopular: PopularCacheRecord | null = null
 
 function popularCachePath(): string {
-  return join(cacheRoot(), 'popular.json')
+  // Keyed by size so a list cached under an older limit is not reused.
+  return join(cacheRoot(), `popular-${PET_POPULAR_LIMIT}.json`)
 }
 
 function thumbnailCachePath(slug: string): string {

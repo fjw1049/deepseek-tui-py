@@ -65,8 +65,8 @@ export function PetMascotDock({
   }
 
   return (
-    <div className="pet-mascot-shell relative flex w-full justify-center">
-      <div ref={dockRef} className="pet-mascot-dock relative flex w-full items-end justify-center">
+    <div className="pet-mascot-shell relative flex w-full justify-end">
+      <div ref={dockRef} className="pet-mascot-dock relative flex w-full items-end justify-end">
         {/* The mover carries the position; bubble and hearts ride along with the pet. */}
         <div ref={moverRef} className="pet-mascot-mover">
           {bubble ? (

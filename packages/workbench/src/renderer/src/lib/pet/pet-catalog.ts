@@ -3,9 +3,9 @@ import type {
   PetSpritesheetResolveResult
 } from '@shared/pet-manifest'
 import { DEFAULT_PET_SLUG } from '@shared/pet-manifest'
-import { filterManifestPets, findPetDisplayName } from '@shared/pet-catalog-utils'
+import { findPetDisplayName } from '@shared/pet-catalog-utils'
 
-export { filterManifestPets, findPetDisplayName }
+export { findPetDisplayName }
 
 function base64ToObjectUrl(base64: string, mime: string): string {
   const binary = atob(base64)

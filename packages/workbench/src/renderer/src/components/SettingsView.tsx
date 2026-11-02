@@ -35,7 +35,6 @@ import {
   FolderOpen,
   Loader2
 } from 'lucide-react'
-import type { PetManifestEntry } from '@shared/pet-manifest'
 import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
 import { applyAppearance } from '../lib/apply-appearance'
 import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
@@ -51,12 +50,9 @@ import {
   writePetEnabled,
   writePetSlug
 } from '../lib/pet/pet-preferences'
-import { filterManifestPets } from '@shared/pet-catalog-utils'
 import {
   BUNDLED_POPULAR_PETS,
-  PET_POPULAR_LIMIT,
-  type PetPopularEntry,
-  type PetPopularResult
+  type PetPopularEntry
 } from '@shared/pet-popular'
 import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
@@ -199,13 +195,8 @@ export function SettingsView(): ReactElement {
   const [petAiLines, setPetAiLines] = useState(() => readPetAiLines())
   const [petSlug, setPetSlug] = useState(() => readPetSlug())
   const [popularPets, setPopularPets] = useState<PetPopularEntry[]>(() => [...BUNDLED_POPULAR_PETS])
-  const [popularSource, setPopularSource] = useState<PetPopularResult['source'] | null>(null)
   const [popularLoading, setPopularLoading] = useState(false)
-  const [petCatalogPets, setPetCatalogPets] = useState<PetManifestEntry[] | null>(null)
-  const [petCatalogQuery, setPetCatalogQuery] = useState('')
-  const [petCatalogError, setPetCatalogError] = useState<string | null>(null)
   const petPopularRequested = useRef(false)
-  const petCatalogRequested = useRef(false)
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
   const [logDirPath, setLogDirPath] = useState('~/.deepseek/caches/logs')
   const [deepseekPaths, setDeepseekPaths] = useState({
@@ -240,30 +231,13 @@ export function SettingsView(): ReactElement {
   }, [])
 
   const loadPopularPets = useCallback(async (force = false): Promise<void> => {
-    if (typeof window.dsGui?.fetchPopularPets !== 'function') {
-      setPopularSource('bundled')
-      return
-    }
+    if (typeof window.dsGui?.fetchPopularPets !== 'function') return
     setPopularLoading(true)
     try {
       const result = await window.dsGui.fetchPopularPets(force)
       setPopularPets(result.pets)
-      setPopularSource(result.source)
     } finally {
       setPopularLoading(false)
-    }
-  }, [])
-
-  // The full catalog is ~2 MB, so it only loads once someone starts searching.
-  const loadPetCatalog = useCallback(async (force = false): Promise<void> => {
-    if (typeof window.dsGui?.fetchPetManifest !== 'function') return
-    setPetCatalogError(null)
-    try {
-      const result = await window.dsGui.fetchPetManifest(force)
-      if (result.ok) setPetCatalogPets(result.manifest.pets)
-      else setPetCatalogError(result.message)
-    } catch (error) {
-      setPetCatalogError(error instanceof Error ? error.message : String(error))
     }
   }, [])
 
@@ -273,32 +247,15 @@ export function SettingsView(): ReactElement {
     void loadPopularPets()
   }, [category, loadPopularPets])
 
-  useEffect(() => {
-    if (!petCatalogQuery.trim() || petCatalogRequested.current) return
-    petCatalogRequested.current = true
-    void loadPetCatalog()
-  }, [loadPetCatalog, petCatalogQuery])
-
   const selectPetSlug = useCallback((pet: PetPickerItem): void => {
     setPetSlug(pet.slug)
     writePetSlug(pet.slug)
   }, [])
 
-  const petSearchResults = useMemo<PetPickerItem[] | null>(() => {
-    if (!petCatalogPets || !petCatalogQuery.trim()) return null
-    return filterManifestPets(
-      { generatedAt: '', total: petCatalogPets.length, pets: petCatalogPets },
-      petCatalogQuery,
-      PET_POPULAR_LIMIT
-    ).map((pet) => ({ slug: pet.slug, displayName: pet.displayName, submittedBy: pet.submittedBy, likeCount: null }))
-  }, [petCatalogPets, petCatalogQuery])
-
-  const selectedPet = useMemo<PetPickerItem | null>(() => {
-    const popular = popularPets.find((pet) => pet.slug === petSlug)
-    if (popular) return popular
-    const listed = petCatalogPets?.find((pet) => pet.slug === petSlug)
-    return listed ? { slug: listed.slug, displayName: listed.displayName, submittedBy: listed.submittedBy, likeCount: null } : null
-  }, [petCatalogPets, petSlug, popularPets])
+  const selectedPet = useMemo<PetPickerItem | null>(
+    () => popularPets.find((pet) => pet.slug === petSlug) ?? null,
+    [petSlug, popularPets]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -841,15 +798,8 @@ export function SettingsView(): ReactElement {
                     selectedSlug={petSlug}
                     selectedPet={selectedPet}
                     popular={popularPets}
-                    popularSource={popularSource}
                     popularLoading={popularLoading}
-                    catalogSize={petCatalogPets?.length ?? null}
-                    searchQuery={petCatalogQuery}
-                    searchResults={petSearchResults}
-                    searchError={petCatalogError}
-                    onSearchQueryChange={setPetCatalogQuery}
                     onRefreshPopular={() => void loadPopularPets(true)}
-                    onRetrySearch={() => void loadPetCatalog(true)}
                     onSelect={selectPetSlug}
                   />
                 </div>

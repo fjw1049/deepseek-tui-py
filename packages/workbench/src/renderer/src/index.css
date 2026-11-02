@@ -7025,16 +7025,17 @@ html.ds-light-dismiss-active .ds-window-drag-region {
 .pet-mascot-shell {
   align-self: flex-end;
   margin-bottom: 0;
-  margin-right: clamp(12px, 4vw, 48px);
-  width: min(30%, 280px);
+  /* Home sits just inside the composer's right edge; the width is room to stroll left. */
+  margin-right: 14px;
+  width: min(40%, 320px);
   min-width: 168px;
   pointer-events: none;
 }
 
 @media (max-width: 640px) {
   .pet-mascot-shell {
-    margin-right: clamp(8px, 3vw, 24px);
-    width: 42%;
+    margin-right: 8px;
+    width: 50%;
     min-width: 148px;
   }
 }

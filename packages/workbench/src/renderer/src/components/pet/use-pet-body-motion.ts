@@ -18,20 +18,22 @@ export function nextPetRestMs(first: boolean, random: () => number = Math.random
   return between(first ? FIRST_REST_MS : REST_MS, random)
 }
 
-/** A short walk that stays inside the dock; null when there is no room for one. */
+/**
+ * A short walk that stays inside the dock; null when there is no room for one.
+ * Home is the right end (x = 0) and the pet may wander up to `span` px left of it.
+ */
 export function nextPetStrollLeg(
   x: number,
-  limit: number,
+  span: number,
   random: () => number = Math.random
 ): PetStrollLeg | null {
-  if (limit < MIN_LEG_PX) return null
+  if (span < MIN_LEG_PX) return null
+  const clamp = (value: number): number => Math.max(-span, Math.min(0, value))
   const distance = Math.max(MIN_LEG_PX, (between(LEG_MS, random) / 1000) * PET_STROLL_SPEED_PX_S)
-  // Lean back toward the middle the closer the pet is to an edge.
-  const towardRight = random() < 0.5 - (x / limit) * 0.4
-  let to = Math.max(-limit, Math.min(limit, x + (towardRight ? distance : -distance)))
-  if (Math.abs(to - x) < MIN_LEG_PX) {
-    to = Math.max(-limit, Math.min(limit, x + (towardRight ? -distance : distance)))
-  }
+  // Mostly wanders left from home, and heads back the further away it gets.
+  const towardHome = random() < 0.1 + 0.8 * (-x / span)
+  let to = clamp(x + (towardHome ? distance : -distance))
+  if (Math.abs(to - x) < MIN_LEG_PX) to = clamp(x + (towardHome ? -distance : distance))
   if (Math.abs(to - x) < MIN_LEG_PX) return null
   return { to, durationMs: (Math.abs(to - x) / PET_STROLL_SPEED_PX_S) * 1000 }
 }
@@ -53,7 +55,7 @@ export type PetBodyMotion = {
 /**
  * Horizontal position of the pet inside its dock. It strolls now and then when
  * allowed, can be dragged, and stays wherever it stops: an interruption never
- * snaps it back to the middle.
+ * snaps it back home. Home is the right end of the dock; x is the offset left of it.
  */
 export function usePetBodyMotion(
   bodyRef: RefObject<HTMLElement | null>,
@@ -65,12 +67,13 @@ export function usePetBodyMotion(
   const [direction, setDirection] = useState<1 | -1 | null>(null)
   const [dragging, setDragging] = useState(false)
 
-  const limit = (): number => {
+  const span = (): number => {
     const dock = dockRef.current
     const body = bodyRef.current
     if (!dock || !body) return 0
-    return Math.max(0, (dock.clientWidth - body.offsetWidth) / 2 - 4)
+    return Math.max(0, dock.clientWidth - body.offsetWidth)
   }
+  const clampX = (x: number): number => Math.max(-span(), Math.min(0, x))
 
   const place = (x: number): void => {
     xRef.current = x
@@ -92,8 +95,8 @@ export function usePetBodyMotion(
   useEffect(() => {
     const dock = dockRef.current
     const clamp = (): void => {
-      const max = limit()
-      if (Math.abs(xRef.current) > max) place(Math.sign(xRef.current) * max)
+      const x = clampX(xRef.current)
+      if (x !== xRef.current) place(x)
     }
     place(xRef.current)
     clamp()
@@ -118,7 +121,7 @@ export function usePetBodyMotion(
       first = false
     }
     const walk = (): void => {
-      const leg = nextPetStrollLeg(xRef.current, limit())
+      const leg = nextPetStrollLeg(xRef.current, span())
       if (!leg) {
         rest()
         return
@@ -168,8 +171,7 @@ export function usePetBodyMotion(
         moved = true
         setDragging(true)
       }
-      const max = limit()
-      place(Math.max(-max, Math.min(max, origin + dx)))
+      place(clampX(origin + dx))
       if (Math.abs(next.clientX - lastX) >= 1) setDirection(next.clientX > lastX ? 1 : -1)
       lastX = next.clientX
     }

@@ -1,7 +1,8 @@
 /** Pets ranked by Petdex likes, as shown in Settings → Desktop pet. */
 
-export const PETDEX_POPULAR_URL = 'https://petdex.dev/api/pets/search?sort=popular&limit=30'
-export const PET_POPULAR_LIMIT = 30
+export const PETDEX_POPULAR_URL = 'https://petdex.dev/api/pets/search?sort=popular&limit=60'
+/** Petdex caps one search page at 60. */
+export const PET_POPULAR_LIMIT = 60
 
 export type PetPopularEntry = {
   slug: string
@@ -32,7 +33,7 @@ const snapshot = (slug: string, displayName: string, kind: string): PetPopularEn
   slug, displayName, kind, submittedBy: null, likeCount: null, installCount: null
 })
 
-/** Top 30 by likes on 2026-11-02, used until the live ranking loads or when offline. */
+/** Top 60 by likes on 2026-11-02, used until the live ranking loads or when offline. */
 export const BUNDLED_POPULAR_PETS: readonly PetPopularEntry[] = [
   snapshot('nezukocoder', 'NezukoCoder', 'character'),
   snapshot('capvolt', 'Pikachu', 'creature'),
@@ -63,7 +64,37 @@ export const BUNDLED_POPULAR_PETS: readonly PetPopularEntry[] = [
   snapshot('violet-mage', 'Violet Mage', 'character'),
   snapshot('a-tom', 'A Tom', 'creature'),
   snapshot('kun-like', 'Kun Like', 'character'),
-  snapshot('aniya', 'Aniya', 'character')
+  snapshot('aniya', 'Aniya', 'character'),
+  snapshot('daodun', 'DaoDun', 'creature'),
+  snapshot('doodlebob', 'Doodle Bob', 'character'),
+  snapshot('gojo', 'Gojo', 'character'),
+  snapshot('goku', 'Goku', 'character'),
+  snapshot('itachi', 'Itachi', 'character'),
+  snapshot('nezuko', 'Nezuko', 'character'),
+  snapshot('nightleaf', 'Xiao Hei', 'creature'),
+  snapshot('yinyue-2', '银月', 'creature'),
+  snapshot('duo', 'Duo', 'character'),
+  snapshot('luffy', 'Luffy', 'character'),
+  snapshot('pingu', 'Pingu', 'character'),
+  snapshot('naifrog-2-0', '奶蛙2.0', 'creature'),
+  snapshot('gugugaga-2', '咕咕嘎嘎', 'creature'),
+  snapshot('bellylaugh', '奶龙', 'creature'),
+  snapshot('phoebibi', '菲比', 'character'),
+  snapshot('wangcai', 'Wangcai', 'creature'),
+  snapshot('jiyi', '吉伊', 'creature'),
+  snapshot('albedo-real-crisp', 'Albedo Real Crisp', 'character'),
+  snapshot('rx-78-2-gundam', 'RX-78-2 Gundam', 'character'),
+  snapshot('zoro', 'Zoro', 'character'),
+  snapshot('frieren-3', 'Frieren', 'character'),
+  snapshot('hachiware', 'Hachiware', 'creature'),
+  snapshot('pochita-mini', 'Pochita Mini', 'creature'),
+  snapshot('anya-2', '阿尼亚', 'character'),
+  snapshot('doro-2', 'Doro', 'creature'),
+  snapshot('maltese', 'Maltese', 'creature'),
+  snapshot('salty-clerk', 'Salty Clerk', 'creature'),
+  snapshot('silver-wolf-lv999', '银狼 Lv999', 'character'),
+  snapshot('rem-xl', '雷姆', 'character'),
+  snapshot('boba', 'Boba', 'creature')
 ]
 
 export function petThumbnailUrl(slug: string): string {
