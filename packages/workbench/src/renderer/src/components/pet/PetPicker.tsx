@@ -37,7 +37,10 @@ function PetPreview({ pet, slug }: { pet: PetPickerItem | null; slug: string }):
       revoke = result.revoke
       setSrc(result.src)
     }).catch(() => {
-      if (!cancelled) setFailed(true)
+      if (!cancelled) {
+        setSrc(null)
+        setFailed(true)
+      }
     })
     return () => {
       cancelled = true

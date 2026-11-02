@@ -3,6 +3,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SettingsView } from './SettingsView'
+import { resolvePetSpritesheetSrc } from '../lib/pet/pet-catalog'
 import { readPetSlug } from '../lib/pet/pet-preferences'
 
 vi.mock('react-i18next', async importOriginal => {
@@ -34,6 +35,7 @@ beforeEach(() => {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value)
   } })
+  vi.mocked(resolvePetSpritesheetSrc).mockReset().mockRejectedValue(new Error('offline'))
   fetchManifest.mockReset()
   fetchPopularPets.mockReset().mockResolvedValue({ source: 'live', pets: popular })
   resolvePetThumbnails.mockReset().mockImplementation(async (slugs: string[]) =>
@@ -82,4 +84,15 @@ it('keeps a usable list when the app has no popular-pets bridge yet', async () =
   } })
   await act(async () => root.render(createElement(SettingsView)))
   expect(container.querySelectorAll('button[aria-pressed]').length).toBeGreaterThanOrEqual(60)
+})
+
+it('shows an error instead of the previous pet when switching fails', async () => {
+  vi.mocked(resolvePetSpritesheetSrc).mockResolvedValueOnce({
+    ok: true, slug: 'boba', src: 'blob:boba', revoke: vi.fn()
+  })
+  await act(async () => root.render(createElement(SettingsView)))
+  expect(container.querySelector('.pet-sprite')).not.toBeNull()
+  await act(async () => tile('deepseek酱').click())
+  expect(container.querySelector('.pet-sprite')).toBeNull()
+  expect(container.textContent).toContain('petMascotPreviewUnavailable')
 })

@@ -253,13 +253,13 @@ export function usePetController() {
   useEffect(() => {
     const say = (reason: PetBubbleReason, params?: Record<string, unknown>): void =>
       sayRef.current(reason, params)
+    dismissChatter()
     setMind(initialPetMind())
-    setChatterBubble(null)
     activeToolIdRef.current = null
     failureShownRef.current = false
     activityRef.current = ''
 
-    return subscribePetEvents(activeThreadId, (event: PetActivityEvent) => {
+    const unsubscribe = subscribePetEvents(activeThreadId, (event: PetActivityEvent) => {
       const now = Date.now()
       if (event.type === 'user_message') {
         activeToolIdRef.current = null
@@ -302,6 +302,10 @@ export function usePetController() {
         if (reason) say(reason, { count: digest.toolErrors, lines: digest.diffLines })
       }
     })
+    return () => {
+      speechSeqRef.current += 1
+      unsubscribe()
+    }
   }, [activeThreadId, dismissChatter])
 
   useEffect(() => {

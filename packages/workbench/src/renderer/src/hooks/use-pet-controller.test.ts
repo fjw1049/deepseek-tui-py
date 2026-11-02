@@ -218,6 +218,20 @@ it('uses an AI line when enabled and falls back to the built-in line on failure'
   expect(snapshots.a.bubble?.text).toMatch(/^petLinePetted/)
 })
 
+it('discards an AI line after switching threads', async () => {
+  let resolveReaction!: (value: { ok: true; text: string }) => void
+  const petReact = vi.fn(() => new Promise(resolve => { resolveReaction = resolve }))
+  Object.defineProperty(window, 'dsGui', { configurable: true, value: { petReact } })
+  writePetAiLines(true)
+  const store = session()
+  await act(async () => root.render(tree(store)))
+  await act(async () => snapshots.a.activate())
+  expect(petReact).toHaveBeenCalledOnce()
+  await act(async () => store.setState({ activeThreadId: 'b' }))
+  await act(async () => resolveReaction({ ok: true, text: 'A 的台词' }))
+  expect(snapshots.a.bubble).toBeNull()
+})
+
 it('points at another task that is waiting, and forgets it once answered', async () => {
   await act(async () => root.render(tree(session())))
   await act(async () => emitPetEvent('other', { type: 'approval_waiting', itemId: 'ap-1' }))
