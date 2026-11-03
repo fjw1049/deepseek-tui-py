@@ -3,9 +3,13 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatBlock } from '../../agent/types'
+import type { RunConversation } from '../../hooks/use-run-conversation'
 import { RunPanel } from './RunPanel'
 import { useChatStore } from '../../store/chat-store'
 import { useRunPanelStore } from '../../store/run-panel-store'
+
+const runConversation = vi.hoisted(() => ({ value: null as RunConversation | null }))
+vi.mock('../../hooks/use-run-conversation', () => ({ useRunConversation: () => runConversation.value }))
 
 vi.mock('../../store/chat-store', async () => {
   const { create } = await import('zustand')
@@ -190,4 +194,34 @@ it('scrolls complete run titles on hover in both the header and task menu', asyn
     if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate)
     else Reflect.deleteProperty(HTMLElement.prototype, 'animate')
   }
+})
+
+
+it('toggles the separate context card from the header and closes it with Escape', async () => {
+  runConversation.value = { status: 'completed', workspace: '/workspace', blocks: [
+    { kind: 'tool', id: 'todo', status: 'success', summary: 'checklist', meta: { tool_name: 'checklist', items: [{ id: 'one', content: 'Review files', status: 'completed' }] } }
+  ] }
+  try {
+    await act(async () => root.render(createElement(RunPanel)))
+    const toggle = container.querySelector<HTMLButtonElement>('.ds-run-context-trigger')!
+    const overlay = container.querySelector<HTMLElement>('.ds-run-context-overlay')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(overlay.hidden).toBe(true)
+    await act(async () => toggle.click())
+    expect(overlay.hidden).toBe(false)
+    expect(container.querySelector('.ds-run-content .ds-run-context')).toBeNull()
+    await act(async () => overlay.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(overlay.hidden).toBe(true)
+    expect(document.activeElement).toBe(toggle)
+  } finally { runConversation.value = null }
+})
+
+
+it('hides the completed header status but retains running and failure feedback', async () => {
+  await act(async () => root.render(createElement(RunPanel)))
+  expect(container.querySelector('.ds-run-status')?.getAttribute('data-status')).toBe('running')
+  await act(async () => useChatStore.setState({ blocks: [agent('a', 'Done')] }))
+  expect(container.querySelector('.ds-run-status')).toBeNull()
+  await act(async () => useChatStore.setState({ blocks: [{ ...agent('a'), status: 'failed' }] }))
+  expect(container.querySelector('.ds-run-status')?.getAttribute('data-status')).toBe('failed')
 })

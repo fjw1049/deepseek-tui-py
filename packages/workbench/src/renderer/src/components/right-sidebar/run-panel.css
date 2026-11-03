@@ -23,9 +23,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  /* Match the centered reading column, including its reserved scrollbar gutter. */
-  --ds-run-header-inset: max(var(--ds-run-content-inset), calc((100% - var(--ds-run-scrollbar-width) - var(--ds-run-content-width)) / 2 + var(--ds-run-content-inset)));
-  padding: 8px calc(var(--ds-run-header-inset) + var(--ds-run-scrollbar-width)) 8px var(--ds-run-header-inset);
+  padding: 8px 16px;
   min-height: 46px;
   border-bottom: 1px solid var(--ds-border-muted);
 }
@@ -36,7 +34,7 @@
 .ds-run-state-icon.is-error { color: var(--ds-danger); }
 svg.ds-run-state-icon.lucide-loader-circle { animation: ds-run-spin 1s linear infinite; }
 @keyframes ds-run-spin { to { transform: rotate(360deg); } }
-.ds-run-switcher { position: relative; flex: 1; min-width: 0; max-width: 50cqw; margin-right: auto; }
+.ds-run-switcher { position: relative; flex: 1; min-width: 0; max-width: 50%; margin-right: auto; }
 .ds-run-title-button {
   display: flex;
   align-items: center;
@@ -178,3 +176,14 @@ svg.ds-run-state-icon.lucide-loader-circle { animation: ds-run-spin 1s linear in
 .ds-run-process-stats { margin-left: auto; color: var(--ds-text-faint); font-size: 11px; font-weight: 400; }
 .ds-run-process > div { padding: 4px 0 0 19px; }
 .ds-run-menu::before { content: ''; position: absolute; top: -10px; left: 0; width: 100%; height: 10px; }
+
+/* The viewport owns scrolling; the context card never creates a middle gutter. */
+.ds-run-layout { display: flex; flex: 1; min-height: 0; position: relative; }
+.ds-run-layout > .ds-run-scroll { min-width: 0; width: 100%; }
+.ds-run-context-overlay { position: absolute; top: 16px; right: 24px; width: min(280px, calc(100% - 48px)); max-height: calc(100% - 32px); overflow-y: auto; z-index: 3; border-radius: 18px; }
+.ds-run-context { padding: 8px; border-radius: 18px; }
+.ds-run-context-trigger { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 6px; color: var(--ds-text-muted); }
+.ds-run-context-trigger:hover, .ds-run-context-trigger[aria-expanded='true'] { background: var(--ds-hover); color: var(--ds-text); }
+@container (min-width: 900px) {
+  .ds-run-layout[data-context-open='true'] .ds-run-reading-area { margin-right: 320px; }
+}

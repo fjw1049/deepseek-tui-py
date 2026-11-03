@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { ArrowDown } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react'
+import { ArrowDown, ListTodo } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
@@ -16,6 +16,8 @@ import { useTaskRunDetail } from '../../hooks/use-task-run-detail'
 import { formatTaskDuration } from '../chat/task-status'
 import { RunStateIcon } from './RunActivity'
 import { RunSwitcher, type RunOption } from './RunSwitcher'
+import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
+import { RunContext } from './RunContext'
 import './run-panel.css'
 
 export function RunPanel(): ReactElement {
@@ -89,6 +91,14 @@ function RunDetail({ target, blocks, options, onSelect }: {
     result, live: isTask ? detail?.liveText : selected?.liveText, active
   }), [selectedId, assignment, isTask, detail, selected, owner, agent, result, active])
   const displayBlocks = conversation?.blocks ?? legacy.blocks
+  const contextId = useId()
+  const [contextOpenFor, setContextOpenFor] = useState<string | null>(null)
+  const hasContext = useMemo(() => !!extractTodosFromBlocks(displayBlocks)?.items.length
+    || extractTasksFromBlocks(displayBlocks).some((item) => !isTask || item.id !== target.id)
+    || extractSubagentsFromBlocks(displayBlocks).some((item) => isTask || item.agentId !== selectedId),
+  [displayBlocks, isTask, target.id, selectedId])
+  const contextOpen = hasContext && contextOpenFor === selectedId
+
   const tree = useMemo(() => root ? buildSubagentTreeNodes(root, related) : [], [root, related])
   const [resuming, setResuming] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -145,17 +155,28 @@ function RunDetail({ target, blocks, options, onSelect }: {
     <>
       <header className="ds-run-header">
         <RunSwitcher current={{ ...currentOption, status }} options={options.map((item) => item.kind === target.kind && item.id === target.id ? { ...item, status } : item)} onSelect={onSelect} />
-        <span className="ds-run-status" data-status={status} role="status" title={duration || undefined}>
+        {hasContext ? <button type="button" className="ds-run-context-trigger" title={t(contextOpen ? 'contextRailCollapse' : 'contextRailExpand')} aria-label={t(contextOpen ? 'contextRailCollapse' : 'contextRailExpand')} aria-expanded={contextOpen} aria-controls={contextId} onClick={() => setContextOpenFor(contextOpen ? null : selectedId)}><ListTodo size={16} aria-hidden /></button> : null}
+        {status && status !== 'completed' && status !== 'ok' ? <span className="ds-run-status" data-status={status} role="status" title={duration || undefined}>
           <RunStateIcon status={status} />{t(runStatusKey(status))}
-        </span>
+        </span> : null}
         {canResume ? <button type="button" disabled={resuming} onClick={() => void resume()} className="ds-run-resume">{t(resuming ? 'taskResuming' : 'taskResume')}</button> : null}
       </header>
       <div className="ds-run-detail">
+        <div className="ds-run-layout" data-context-open={contextOpen} onKeyDown={(event) => {
+          if (event.key === 'Escape' && contextOpen) {
+            setContextOpenFor(null)
+            document.querySelector<HTMLButtonElement>(`[aria-controls="${contextId}"]`)?.focus()
+          }
+        }}>
+        {hasContext ? <div id={contextId} className="ds-run-context-overlay" hidden={!contextOpen}>
+          <RunContext key={selectedId} blocks={displayBlocks} target={{ ...target, id: isTask ? target.id : selectedId }} />
+        </div> : null}
         <div ref={scrollRef} className="ds-run-scroll" onScroll={() => {
           const el = scrollRef.current!
           following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64
           setShowLatest(!following.current)
         }}>
+          <div className="ds-run-reading-area">
           <div ref={contentRef} className="ds-run-content">
             {tree.length > 1 ? (
               <div className="ds-run-children" aria-label={t('subagentTreeTitle')}>
@@ -172,11 +193,14 @@ function RunDetail({ target, blocks, options, onSelect }: {
             <RunMessageTimeline
               key={selectedId}
               blocks={displayBlocks}
+              hideInlineTodo
               liveId={conversation ? conversation.liveId : legacy.liveId}
               active={active}
               workspace={conversation?.workspace ?? workspace}
             />
           </div>
+        </div>
+        </div>
         </div>
         <footer className="ds-run-footer">
           <i className="ds-run-footer-dot" aria-hidden />

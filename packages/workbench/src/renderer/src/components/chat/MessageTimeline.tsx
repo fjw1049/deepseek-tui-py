@@ -1073,11 +1073,12 @@ function isProcessBlock(block: ChatBlock): boolean {
 
 type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
 
-export function RunMessageTimeline({ blocks, liveId, active, workspace }: {
+export function RunMessageTimeline({ blocks, liveId, active, workspace, hideInlineTodo = false }: {
   blocks: ChatBlock[]
   liveId?: string | null
   active: boolean
   workspace: string
+  hideInlineTodo?: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
   const [pageStart, setPageStart] = useState<number | null>(null)
@@ -1093,6 +1094,7 @@ export function RunMessageTimeline({ blocks, liveId, active, workspace }: {
       {turns.slice(start, end).map((turn, index) => <MessageTurn
         key={turn.user?.id ?? `run-turn-${index}`}
         turn={turn}
+        hideInlineTodo={hideInlineTodo}
         isProcessing={active && start + index === turns.length - 1}
         liveReasoning=""
         live={start + index === turns.length - 1 && liveBlock && 'text' in liveBlock ? liveBlock.text : ''}
@@ -1118,7 +1120,8 @@ function MessageTurn({
   viewportRef,
   turnDiffSnapshot,
   turnDiffTurnId = null,
-  turnDiffRevision = 0
+  turnDiffRevision = 0,
+  hideInlineTodo = false
 }: {
   turn: Turn
   isProcessing: boolean
@@ -1135,6 +1138,7 @@ function MessageTurn({
   turnDiffSnapshot?: TurnDiffSnapshot
   turnDiffTurnId?: string | null
   turnDiffRevision?: number
+  hideInlineTodo?: boolean
 }): ReactElement {
   const scope = useConversationScope()
   const mainWorkspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -1262,7 +1266,7 @@ function MessageTurn({
         </div>
       ) : (
         <>
-          {todoSession && !isProcessing ? (
+          {todoSession && !isProcessing && !hideInlineTodo ? (
             <InlineTodoBlock session={todoSession} />
           ) : null}
           {showWorkMeta ? (

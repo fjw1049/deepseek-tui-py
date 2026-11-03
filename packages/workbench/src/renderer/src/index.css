@@ -7829,9 +7829,13 @@ select:focus-visible,
 
 .ds-operation-dock-repository__name {
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.125rem;
   letter-spacing: -0.01em;
+}
+
+.ds-operation-dock-status .ds-change-stats {
+  font-weight: 400;
 }
 
 .ds-operation-dock-status {
@@ -7866,7 +7870,7 @@ select:focus-visible,
 .ds-operation-dock-section-label {
   font-family: var(--font-ui);
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: -0.005em;
   color: var(--text-secondary);
   font-synthesis: none;
@@ -7887,7 +7891,7 @@ select:focus-visible,
   padding: 0.375rem;
   color: var(--text-primary);
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.25rem;
 }
 

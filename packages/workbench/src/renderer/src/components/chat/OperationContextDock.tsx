@@ -1,3 +1,4 @@
+import { DockTodos } from './DockTodos'
 import { preloadIdeWorkspace } from '../ide/IdeWorkspaceLayout'
 import {
   useCallback,
@@ -9,13 +10,11 @@ import {
   type ReactElement
 } from 'react'
 import {
-  Check,
   ChevronRight,
   Minimize,
   Maximize,
   GitBranch,
   GitGraph,
-  ListTodo,
   PanelsTopLeft,
   FileEdit,
   FolderOpen,
@@ -65,7 +64,7 @@ type Props = {
 }
 
 const DOCK_ROW_CLASS =
-  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] font-semibold leading-5 transition-colors'
+  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] font-normal leading-5 transition-colors'
 
 /** Same horizontal inset / gap as dock rows so icon and label columns line up. */
 const DOCK_SECTION_HEADER_CLASS =
@@ -213,7 +212,6 @@ export function OperationContextDock({
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = useMemo(() => todoSnapshot?.items ?? [], [todoSnapshot])
-  const doneCount = todos.filter((item) => item.status === 'completed').length
   const totalCount = todos.length
   const baseTasks = useMemo(() => extractTasksFromBlocks(blocks), [blocks])
   const tasks = useLiveTasks(baseTasks)
@@ -245,7 +243,6 @@ export function OperationContextDock({
   const [collapsed, setCollapsed] = useState({ git: true, process: true })
   const [compact, setCompactMode] = useDockCompact(activeThreadId, visibleRoot)
   /** Which process todo row is expanded to full text (single-line by default). */
-  const [expandedTodoKey, setExpandedTodoKey] = useState<string | null>(null)
   const toggle = (key: keyof typeof collapsed): void =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
   const hasTodos = totalCount > 0
@@ -449,101 +446,7 @@ export function OperationContextDock({
       ) : null}
       </div>
 
-      {hasTodos ? (
-      <div className="ds-operation-dock-status__section">
-      <button
-        type="button"
-        onClick={() => toggle('process')}
-        aria-expanded={!collapsed.process}
-        className={DOCK_SECTION_HEADER_CLASS}
-      >
-        <ListTodo className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.75} aria-hidden />
-        <span className="ds-operation-dock-section-label min-w-0 flex-1">
-          {t('contextRailProcess')}
-        </span>
-        {totalCount > 0 ? (
-          <span className="text-[12px] tabular-nums text-ds-muted">
-            {doneCount}/{totalCount}
-          </span>
-        ) : null}
-        <ChevronRight
-          className={`h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200 ${
-            collapsed.process ? '' : 'rotate-90'
-          }`}
-          strokeWidth={2}
-          aria-hidden
-        />
-      </button>
-
-      {!collapsed.process ? (
-        totalCount > 0 ? (
-          <ul className="mt-1 flex max-h-80 flex-col gap-0.5 overflow-y-auto overflow-x-hidden [scrollbar-width:thin]">
-            {todos.map((item, index) => {
-              const completed = item.status === 'completed'
-              const inProgress = item.status === 'in_progress'
-              const step = index + 1
-              const rowKey = `${item.id}-${item.content}`
-              const expanded = expandedTodoKey === rowKey
-              return (
-                <li key={rowKey}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedTodoKey((current) => (current === rowKey ? null : rowKey))
-                    }
-                    aria-expanded={expanded}
-                    title={expanded ? undefined : item.content}
-                    className={[
-                      'flex min-h-8 w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
-                      'hover:bg-ds-hover/50',
-                      inProgress ? 'bg-ds-hover/60' : ''
-                    ].join(' ')}
-                  >
-                    <span
-                      className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center"
-                      aria-hidden
-                    >
-                      {completed ? (
-                        <span className="flex h-5 w-5 items-center justify-center text-ds-faint">
-                          <Check className="h-4 w-4" strokeWidth={2} />
-                        </span>
-                      ) : (
-                        <span
-                          className={[
-                            'flex h-5 w-5 items-center justify-center rounded-full text-[12px] font-medium tabular-nums',
-                            inProgress
-                              ? 'bg-accent/10 text-accent'
-                              : 'text-ds-faint'
-                          ].join(' ')}
-                        >
-                          {step}
-                        </span>
-                      )}
-                    </span>
-                    <span
-                      className={[
-                        'min-w-0 flex-1 text-[13px] leading-5',
-                        expanded ? 'break-words whitespace-pre-wrap' : 'truncate',
-                        completed
-                          ? 'text-ds-muted'
-                          : inProgress
-                            ? 'font-medium text-ds-ink'
-                            : 'text-ds-muted'
-                      ].join(' ')}
-                    >
-                      {item.content}
-                    </span>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyProcess')}</p>
-        )
-      ) : null}
-      </div>
-      ) : null}
+      <DockTodos todos={todos} collapsed={collapsed.process} onToggle={() => toggle('process')} />
 
       <TaskActivity key={activeThreadId} tasks={tasks} agents={dockSubagents} onOpen={openRunPanel} />
       </div>
