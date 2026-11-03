@@ -1,5 +1,6 @@
 import { BUNDLED_POPULAR_PETS } from '@shared/pet-popular'
 import { preloadPetThumbnails } from './lib/pet/pet-thumbnails'
+import { readPetEnabled } from './lib/pet/pet-preferences'
 import { Component, lazy, Suspense, useEffect, type ReactNode } from 'react'
 import i18n from './i18n'
 import { StartupWindowDragRegions } from './components/StartupWindowDragRegions'
@@ -44,6 +45,8 @@ function StartupShell(): React.ReactElement {
 
 export default function App(): React.ReactElement {
   useEffect(() => {
+    // Users who turned the pet off never open the picker; skip the Petdex fetch.
+    if (!readPetEnabled()) return
     const timer = window.setTimeout(() => {
       preloadPetThumbnails(BUNDLED_POPULAR_PETS.map(pet => pet.slug))
     }, 1000)
