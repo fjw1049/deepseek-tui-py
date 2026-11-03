@@ -1,3 +1,4 @@
+import { skillIcon } from '../../lib/skill-icon'
 import { ViewportContent } from './ViewportContent'
 import { AutomationResultCard } from './AutomationResultCard'
 import {
@@ -49,7 +50,6 @@ import {
   Puzzle,
   RotateCcw,
   Search,
-  Sparkles,
   Terminal,
   Wand2,
   Wrench,
@@ -2187,7 +2187,7 @@ function UserFocusChip({
         }
       : kind === 'skill'
         ? {
-            Icon: Sparkles,
+            Icon: skillIcon(name),
             className:
               'border-[rgba(79,124,255,0.22)] bg-[rgba(79,124,255,0.08)] text-[#4f7cff]',
             title: t('composerSkillFocus', { name })

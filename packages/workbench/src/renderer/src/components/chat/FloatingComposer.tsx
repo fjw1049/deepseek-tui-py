@@ -1,3 +1,4 @@
+import { skillIcon } from '../../lib/skill-icon'
 import { useChatPaneFocused } from './chat-pane-focus'
 import {
   useCallback,
@@ -27,7 +28,6 @@ import {
   Send,
   Settings2,
   Shrink,
-  Sparkles,
   Square,
   Gauge,
   Mic,
@@ -386,7 +386,7 @@ export function FloatingComposer({
   const focusRemoveRef = useRef<HTMLButtonElement | null>(null)
   const focusName = focusSkill ?? (focusConnector ? mediaConnectorTitle(focusConnector) ?? focusConnector : null)
     ?? (focusPlugin ? displayPluginName(focusPlugin) : null)
-  const FocusIcon = focusSkill ? Sparkles : focusConnector ? Plug : Puzzle
+  const FocusIcon = focusSkill ? skillIcon(focusSkill) : focusConnector ? Plug : Puzzle
   const clearFocus = (): void => {
     setFocusSkill(null)
     setFocusConnector(null)
@@ -1563,11 +1563,14 @@ export function FloatingComposer({
     {
       id: 'skills', label: t('composerPlusSkills'), loading: skillsLoading,
       empty: t(runtimeReady ? 'composerSkillsEmpty' : 'composerSkillsNeedRuntime'),
-      items: composerSkills.map(skill => ({
-        id: `skill-${skill.name}`, label: skill.name, description: skill.description,
-        icon: <Sparkles className="h-[18px] w-[18px]" />, selected: focusSkill === skill.name,
-        onSelect: () => handlePickSkill(skill.name)
-      }))
+      items: composerSkills.map(skill => {
+        const Icon = skillIcon(skill.name)
+        return {
+          id: `skill-${skill.name}`, label: skill.name, description: skill.description,
+          icon: <Icon className="h-[18px] w-[18px]" />, selected: focusSkill === skill.name,
+          onSelect: () => handlePickSkill(skill.name)
+        }
+      })
     },
     {
       id: 'connectors', label: t('composerPlusConnectors'), loading: connectorsLoading,
