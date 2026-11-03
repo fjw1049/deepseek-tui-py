@@ -383,6 +383,16 @@ export function FloatingComposer({
   // `@plugin:<name> ` on send. After send the chip is cleared and the
   // persistent scenario state arrives from the backend via `activePlugin`.
   const [focusPlugin, setFocusPlugin] = useState<string | null>(null)
+  const focusRemoveRef = useRef<HTMLButtonElement | null>(null)
+  const focusName = focusSkill ?? (focusConnector ? mediaConnectorTitle(focusConnector) ?? focusConnector : null)
+    ?? (focusPlugin ? displayPluginName(focusPlugin) : null)
+  const FocusIcon = focusSkill ? Sparkles : focusConnector ? Plug : Puzzle
+  const clearFocus = (): void => {
+    setFocusSkill(null)
+    setFocusConnector(null)
+    setFocusPlugin(null)
+    focusComposer()
+  }
   const pendingPluginSelection = useChatStore(s => s.pendingPluginSelection)
   useEffect(() => {
     if (!pendingPluginSelection || !paneFocused) return
@@ -396,10 +406,9 @@ export function FloatingComposer({
   const footerLayoutOpts = useMemo(
     () => ({
       dense: compactChrome,
-      hasMode: mode !== 'agent',
-      hasPlugin: Boolean(activePlugin || focusPlugin)
+      hasMode: mode !== 'agent'
     }),
-    [activePlugin, compactChrome, focusPlugin, mode]
+    [compactChrome, mode]
   )
   const footerTier = useMemo(
     () => composerFooterTierForWidth(footerWidth, footerLayoutOpts),
@@ -700,7 +709,7 @@ export function FloatingComposer({
 
   useLayoutEffect(() => {
     resizeTextarea()
-  }, [attachments.length, canCompose, input, resizeTextarea])
+  }, [attachments.length, canCompose, input, focusSkill, focusConnector, focusPlugin, resizeTextarea])
 
   // Re-clamp when the composer column width changes (sidebar drag / restore).
   useEffect(() => {
@@ -875,12 +884,12 @@ export function FloatingComposer({
 
   const handlePickSkill = (name: string): void => {
     // Hold the skill as an inline chip (not in the input text). The input is
-    // cleared so the caret lands at the start, ready for the user's request;
+    // preserved when choosing from the menu; a slash query is consumed;
     // `/name ` is prepended only at send time.
     setFocusSkill(name)
     setFocusConnector(null)
     setFocusPlugin(null)
-    setInput('')
+    if (slashQuery != null) setInput('')
     setActiveCommand(null)
     focusComposer()
   }
@@ -954,7 +963,7 @@ export function FloatingComposer({
     setFocusConnector(id)
     setFocusSkill(null)
     setFocusPlugin(null)
-    setInput('')
+    if (slashQuery != null) setInput('')
     setActiveCommand(null)
     focusComposer()
   }
@@ -1049,7 +1058,7 @@ export function FloatingComposer({
     setFocusPlugin(name)
     setFocusSkill(null)
     setFocusConnector(null)
-    setInput('')
+    if (slashQuery != null) setInput('')
     setActiveCommand(null)
     focusComposer()
   }
@@ -1527,6 +1536,15 @@ export function FloatingComposer({
           onSelect: () => { clearAttachNotice(); setMode(mode === item.id ? 'agent' : item.id); focusComposer() }
         }))
     },
+    ...(activePlugin ? [{
+      id: 'active-plugin', label: t('composerSessionPlugin'),
+      items: [{
+        id: 'unmount-plugin', label: displayPluginName(activePlugin.name),
+        description: t('composerPluginUnmount', { name: displayPluginName(activePlugin.name) }),
+        icon: <Puzzle className="h-[18px] w-[18px]" />, selected: true,
+        onSelect: () => { void sendMessage('@plugin:off'); focusComposer() }
+      }]
+    }] : []),
     {
       id: 'plugins', label: t('plugins'), loading: pluginsLoading,
       empty: t(runtimeReady ? 'composerPluginsEmpty' : 'composerPluginsNeedRuntime'),
@@ -1870,52 +1888,6 @@ export function FloatingComposer({
             </div>
           ) : null}
 
-          {focusSkill ? (
-            <div className="flex flex-wrap gap-2 px-1 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setFocusSkill(null)
-                  focusComposer()
-                }}
-                title={t('composerSkillFocus', { name: focusSkill })}
-                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(79,124,255,0.4)] bg-[rgba(79,124,255,0.14)] px-2.5 py-1 text-[12px] font-medium text-[#4f7cff] transition hover:bg-[rgba(79,124,255,0.22)]"
-              >
-                <Sparkles className="h-3 w-3 shrink-0" strokeWidth={2} />
-                <span className="truncate">{focusSkill}</span>
-                <X
-                  className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
-                  strokeWidth={2}
-                />
-              </button>
-            </div>
-          ) : null}
-
-          {focusConnector ? (
-            <div className="flex flex-wrap gap-2 px-1 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setFocusConnector(null)
-                  focusComposer()
-                }}
-                title={t('composerConnectorFocus', {
-                  name: mediaConnectorTitle(focusConnector) ?? focusConnector
-                })}
-                className="ds-no-drag group inline-flex max-w-full items-center gap-1.5 rounded-full border border-[rgba(16,185,129,0.4)] bg-[rgba(16,185,129,0.14)] px-2.5 py-1 text-[12px] font-medium text-[#10b981] transition hover:bg-[rgba(16,185,129,0.22)]"
-              >
-                <Plug className="h-3 w-3 shrink-0" strokeWidth={2} />
-                <span className="truncate">
-                  {mediaConnectorTitle(focusConnector) ?? focusConnector}
-                </span>
-                <X
-                  className="h-3 w-3 shrink-0 opacity-50 transition group-hover:opacity-90"
-                  strokeWidth={2}
-                />
-              </button>
-            </div>
-          ) : null}
-
           {previewPicks.length > 0 ? (
             <div className="flex flex-wrap gap-2 px-1 pt-1">
               {previewPicks.map((pick, index) => {
@@ -1946,10 +1918,30 @@ export function FloatingComposer({
             </div>
           ) : null}
 
+          <div className="flex min-w-0 items-start gap-1">
+          {focusName && <span data-composer-focus className={`ds-no-drag group flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-ds-hover px-1.5 text-[12px] text-ds-muted ${compactChrome ? 'mt-0.5 h-[22px]' : 'mt-1.5 h-[26px]'}`}>
+            <button type="button" title={focusName} aria-haspopup="dialog" aria-expanded={plusMenuOpen}
+              onClick={() => setPlusMenuOpen(true)}
+              className="flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline focus-visible:outline-2">
+              <FocusIcon className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+              <span className="truncate">{focusName}</span>
+            </button>
+            <button ref={focusRemoveRef} type="button" onClick={clearFocus}
+              aria-label={t('composerFocusRemove', { name: focusName })}
+              onKeyDown={event => {
+                if (event.key === 'Backspace' || event.key === 'Delete') {
+                  event.preventDefault()
+                  clearFocus()
+                }
+              }}
+              className="grid h-5 w-5 shrink-0 place-items-center rounded-sm opacity-40 hover:bg-ds-subtle hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2">
+              <X className="h-3 w-3" aria-hidden />
+            </button>
+          </span>}
           <textarea
             ref={textareaRef}
             rows={1}
-            className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
+            className={`ds-composer-input ds-no-drag block min-w-0 w-full flex-1 resize-none break-words bg-transparent text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
               compactChrome ? 'px-1 py-0.5' : 'px-2 py-1.5'
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={
@@ -1989,6 +1981,12 @@ export function FloatingComposer({
               const composing =
                 e.nativeEvent.isComposing || composingRef.current || e.keyCode === 229
 
+              if (!composing && e.key === 'Backspace' && focusName &&
+                  e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+                e.preventDefault()
+                focusRemoveRef.current?.focus()
+                return
+              }
               if (!composing && e.key === 'Escape' && voiceActive) {
                 e.preventDefault()
                 resetVoiceSession()
@@ -2025,6 +2023,8 @@ export function FloatingComposer({
               handlePrimaryAction()
             }}
           />
+
+          </div>
 
           <ComposerVoiceBar
             phase={voicePhase}
@@ -2106,70 +2106,16 @@ export function FloatingComposer({
                   aria-hidden
                 />
                 {footerPlan.showModeLabel ? <span className="truncate">{modeLabel}</span> : null}
+                <button type="button"
+                  aria-label={t('composerModeClear')} title={t('composerModeClear')}
+                  onClick={() => { setMode('agent'); focusComposer() }}
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-sm text-ds-muted hover:bg-ds-hover hover:text-ds-ink focus-visible:outline focus-visible:outline-2">
+                  <X className="h-3 w-3" strokeWidth={2} aria-hidden />
+                </button>
               </div>
             ) : null}
 
-            {activePlugin || focusPlugin ? (
-              <div
-                className={`ds-no-drag group inline-flex max-w-[min(100%,240px)] shrink-0 select-none items-center gap-1 px-1 font-semibold text-[#a855f7] ${
-                  compactChrome ? 'h-7 text-[12px]' : 'h-9 gap-1.5 text-[13px]'
-                }`}
-                title={
-                  focusPlugin
-                    ? t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
-                    : t('composerPluginMounted', {
-                        name: displayPluginName(activePlugin!.name),
-                        path: activePlugin!.path
-                      })
-                }
-              >
-                <Puzzle
-                  className={`${compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0`}
-                  strokeWidth={2}
-                  aria-hidden
-                />
-                {footerPlan.showPluginLabel ? (
-                  <span className="truncate">
-                    {focusPlugin
-                      ? t('composerPluginPendingBadge', { name: displayPluginName(focusPlugin) })
-                      : t('composerPluginBadge', { name: displayPluginName(activePlugin!.name) })}
-                  </span>
-                ) : null}
-                <span
-                  role="button"
-                  tabIndex={0}
-                  aria-label={
-                    focusPlugin
-                      ? t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
-                      : t('composerPluginUnmount', { name: displayPluginName(activePlugin!.name) })
-                  }
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    if (focusPlugin) {
-                      setFocusPlugin(null)
-                      focusComposer()
-                    } else if (activePlugin) {
-                      void sendMessage('@plugin:off')
-                    }
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      if (focusPlugin) {
-                        setFocusPlugin(null)
-                        focusComposer()
-                      } else if (activePlugin) {
-                        void sendMessage('@plugin:off')
-                      }
-                    }
-                  }}
-                  className="inline-flex items-center rounded-sm p-0.5 opacity-50 transition hover:bg-[rgba(168,85,247,0.16)] hover:opacity-100"
-                >
-                  <X className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
-                </span>
-              </div>
-            ) : null}
+
             </div>
 
             {/* Middle: meter + model — progressive hide (meter → effort → model). */}

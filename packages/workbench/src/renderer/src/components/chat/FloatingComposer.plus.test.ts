@@ -71,7 +71,7 @@ it('shows skills directly and navigates the unified list without leaving search'
 })
 it('filters all groups and selects a skill from search with Enter', async () => {
   const setInput = vi.fn()
-  await open({ setInput })
+  await open({ setInput, input: 'Keep my draft' })
   const search = host.querySelector<HTMLInputElement>('input[role="combobox"]')!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'review')
@@ -81,7 +81,7 @@ it('filters all groups and selects a skill from search with Enter', async () => 
   expect(host.querySelector('[role="option"]')?.textContent).toContain('review')
   await key('Enter')
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
-  expect(setInput).toHaveBeenCalledWith('')
+  expect(setInput).not.toHaveBeenCalled()
   expect(host.textContent).toContain('review')
 })
 it('closes the panel when opening the file picker even if selection is cancelled', async () => {
@@ -145,4 +145,63 @@ it('ignores a slow plugin response from the previous workspace', async () => {
   await act(async () => finishOld({ ok: true, status: 200, body: JSON.stringify({ plugins: [{ name: 'old-workspace-plugin' }] }) }))
   expect(host.textContent).toContain('new-workspace-plugin')
   expect(host.textContent).not.toContain('old-workspace-plugin')
+})
+
+it('keeps the skill beside the text and requires two backspaces to remove it', async () => {
+  const setInput = vi.fn()
+  await open({ input: 'Keep my draft', setInput })
+  const skill = [...host.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find(button => button.textContent?.includes('Review changes'))!
+  await act(async () => skill.click())
+  const textarea = host.querySelector('textarea')!
+  const chip = host.querySelector('[data-composer-focus]')!
+  expect(chip.parentElement).toBe(textarea.parentElement)
+  expect(setInput).not.toHaveBeenCalled()
+  textarea.focus()
+  textarea.setSelectionRange(0, 0)
+  await key('Backspace')
+  expect(chip.contains(document.activeElement)).toBe(true)
+  expect(host.querySelector('[data-composer-focus]')).not.toBeNull()
+  await key('Backspace')
+  expect(host.querySelector('[data-composer-focus]')).toBeNull()
+  expect(setInput).not.toHaveBeenCalled()
+})
+
+it('sends the selected skill prefix with the existing draft', async () => {
+  const onSend = vi.fn(async () => true)
+  await open({ input: 'Keep my draft', onSend })
+  const skill = [...host.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find(button => button.textContent?.includes('Review changes'))!
+  await act(async () => skill.click())
+  host.querySelector('textarea')!.focus()
+  await key('Enter')
+  expect(onSend).toHaveBeenCalledWith('/review Keep my draft')
+})
+
+it('places a pending plugin before the draft and sends its plugin prefix', async () => {
+  const setInput = vi.fn()
+  const onSend = vi.fn(async () => true)
+  useChatStore.setState({ pendingPluginSelection: 'data-analysis' })
+  await act(async () => root.render(createElement(FloatingComposer, {
+    ...props, input: 'Analyze this data', setInput, onSend
+  })))
+  const textarea = host.querySelector('textarea')!
+  expect(host.querySelector('[data-composer-focus]')?.parentElement).toBe(textarea.parentElement)
+  expect(setInput).not.toHaveBeenCalled()
+  textarea.focus()
+  await key('Enter')
+  expect(onSend).toHaveBeenCalledWith('@plugin:data-analysis Analyze this data')
+})
+
+it.each(['goal', 'plan', 'ask'] as const)('clears %s mode directly without changing the draft', async mode => {
+  const setMode = vi.fn()
+  const setInput = vi.fn()
+  await act(async () => root.render(createElement(FloatingComposer, {
+    ...props, mode, input: 'Keep my draft', setMode, setInput
+  })))
+  const clear = host.querySelector<HTMLButtonElement>(`button[aria-label="${label('composerModeClear')}"]`)!
+  expect(clear).not.toBeNull()
+  await act(async () => clear.click())
+  expect(setMode).toHaveBeenCalledWith('agent')
+  expect(setInput).not.toHaveBeenCalled()
 })
