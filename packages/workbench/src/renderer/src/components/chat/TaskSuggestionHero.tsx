@@ -91,7 +91,7 @@ function RepoRow({
   return (
     <div
       className={[
-        'group relative flex min-h-[88px] overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-150 hover:bg-ds-elevated',
+        'ds-trending-repo group relative flex min-h-[88px] overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/82 shadow-sm transition duration-150',
         theme.border
       ].join(' ')}
     >
@@ -99,7 +99,7 @@ function RepoRow({
       <button
         type="button"
         onClick={() => onAnalyze(repo)}
-        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-2.5 text-left active:bg-ds-hover/60"
+        className="relative flex min-w-0 flex-1 flex-col px-3.5 py-2.5 text-left"
       >
         <div className="flex min-w-0 items-center gap-2 pr-7">
           <span
@@ -226,7 +226,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
 
         <div
           className={[
-            'ds-hero-panel ds-glass ds-content-card--interactive flex flex-col overflow-hidden rounded-[14px] px-4 py-4 sm:px-5 sm:py-5',
+            'ds-hero-panel ds-glass flex flex-col overflow-hidden rounded-[14px] px-4 py-4 sm:px-5 sm:py-5',
             EMPTY_HERO_PANEL_CLASS
           ].join(' ')}
         >

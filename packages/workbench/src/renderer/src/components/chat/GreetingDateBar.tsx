@@ -124,7 +124,7 @@ export function GreetingDateBar({ daily, asOfDay, loading }: Props): ReactElemen
   const todayLabel = loading && todayTokens === 0 ? '—' : formatCompactNumber(todayTokens)
 
   return (
-    <div className="ds-glass ds-content-card--interactive flex w-full items-center justify-between gap-4 rounded-[14px] px-5 py-4 sm:px-6 sm:py-5">
+    <div className="ds-glass flex w-full items-center justify-between gap-4 rounded-[14px] px-5 py-4 sm:px-6 sm:py-5">
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex items-center gap-2 text-[12.5px] font-medium text-ds-faint">
           <Clock className="h-4 w-4 shrink-0" strokeWidth={1.85} aria-hidden />

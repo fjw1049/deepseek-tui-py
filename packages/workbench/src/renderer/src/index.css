@@ -2949,6 +2949,11 @@ samp {
   padding-bottom: clamp(1rem, 2.5vh, 1.75rem);
 }
 
+.ds-trending-repo:hover,
+.ds-trending-repo:active {
+  background: var(--ds-material-card-hover);
+}
+
 .ds-trending-grid-scroll {
   min-height: 0;
   overflow-x: hidden;
