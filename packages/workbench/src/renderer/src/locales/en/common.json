@@ -1825,7 +1825,6 @@
   "approvalSuggestShort": "Suggest",
   "approvalNeverShort": "Never",
   "composerApprovalMenuTitle": "Tool approval policy",
-  "composerApprovalLearnMore": "Learn more",
   "composerApprovalOnRequestDesc": "Ask before writes, shell, and mutating MCP calls",
   "composerApprovalUntrustedDesc": "Auto-allow workspace writes; ask for shell / MCP writes / elevation",
   "composerApprovalAutoDesc": "Auto-approve all tools and open the filesystem sandbox",

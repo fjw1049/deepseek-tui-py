@@ -47,7 +47,6 @@ export function ComposerApprovalPolicySelector({
   dense = false
 }: Props): ReactElement {
   const { t } = useTranslation(['common', 'settings'])
-  const openSettings = useChatStore((s) => s.openSettings)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
@@ -221,22 +220,6 @@ export function ComposerApprovalPolicySelector({
       {open ? (
         <div className="absolute bottom-full left-0 z-40 mb-2 w-[min(100vw-2rem,320px)]">
           <div className="ds-glass ds-morph-pop overflow-hidden rounded-2xl p-2 shadow-[0_18px_48px_rgba(15,23,42,0.18)]">
-            <div className="flex items-start justify-between gap-3 px-2 pb-2 pt-1.5">
-              <p className="text-[13px] font-semibold leading-5 text-ds-ink">
-                {t('settings:approvalPolicy')}
-              </p>
-              <button
-                type="button"
-                className="shrink-0 text-[12px] font-medium text-accent transition hover:opacity-80"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  setMenuOpen(false)
-                  openSettings('permissions')
-                }}
-              >
-                {t('common:composerApprovalLearnMore')}
-              </button>
-            </div>
             <div className="ds-morph-stagger space-y-0.5">
               {options.map((option, index) => {
                 const selected = policy === option.id

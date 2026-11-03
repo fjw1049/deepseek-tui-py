@@ -1809,7 +1809,6 @@
   "approvalSuggestShort": "仅建议",
   "approvalNeverShort": "从不执行",
   "composerApprovalMenuTitle": "工具审批策略",
-  "composerApprovalLearnMore": "了解更多",
   "composerApprovalOnRequestDesc": "写入或执行命令前，先询问确认",
   "composerApprovalUntrustedDesc": "常规写入自动通过，敏感操作先询问",
   "composerApprovalAutoDesc": "所有工具自动通过，解除文件沙箱限制",
