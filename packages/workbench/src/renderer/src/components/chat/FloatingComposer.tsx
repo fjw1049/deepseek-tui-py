@@ -2046,14 +2046,14 @@ export function FloatingComposer({
             ref={footerRef}
             data-composer-footer
             data-composer-footer-tier={footerTier}
-            className={`flex flex-nowrap items-center ${
-              compactChrome ? 'gap-1 px-1' : 'gap-1.5 px-1'
+            className={`relative top-[7px] -mx-2 flex flex-nowrap items-center ${
+              compactChrome ? 'gap-1' : 'gap-1.5'
             }`}
           >
             {/* Left chrome: progressive hide via footerPlan (plus last-but-one). */}
             <div className={`relative z-10 flex shrink-0 items-center ${compactChrome ? 'gap-1' : 'gap-1.5'}`}>
             {footerPlan.showPlus ? (
-            <div ref={plusMenuRef} className="relative shrink-0">
+            <div ref={plusMenuRef} className="relative flex shrink-0 items-center">
               <button
                 type="button"
                 disabled={!canCompose}
@@ -2081,7 +2081,7 @@ export function FloatingComposer({
             ) : null}
 
             {footerPlan.showApproval ? (
-              <div className="relative z-10 shrink-0">
+              <div className="relative z-10 flex shrink-0 items-center">
                 <ComposerApprovalPolicySelector
                   disabled={!canCompose}
                   compact={!footerPlan.showApprovalLabel}
@@ -2133,7 +2133,7 @@ export function FloatingComposer({
                 />
               ) : null}
               {footerPlan.showModel ? (
-                <div className="min-w-0 max-w-[min(100%,250px)]">
+                <div className="flex min-w-0 max-w-[min(100%,250px)] items-center">
                   <ReasoningEffortSelector
                     models={selectorModels}
                     model={activeModelId}

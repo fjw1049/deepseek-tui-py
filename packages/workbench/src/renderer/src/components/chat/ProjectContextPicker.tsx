@@ -405,18 +405,7 @@ export function ProjectContextPicker({
         title={isTemporary ? t('contextBarWorkInProject') : activePath}
         aria-expanded={open}
       >
-        {isTemporary ? (
-          <TriggerFolderIcon
-            className={
-              size === 'tray'
-                ? 'ds-workspace-context-chip__prompt-icon h-[14px] w-[14px] shrink-0'
-                : 'h-3.5 w-3.5 shrink-0'
-            }
-            strokeWidth={size === 'tray' ? 1.6 : 1.7}
-          />
-        ) : (
-          <TriggerFolderIcon className={`${!open ? 'ds-workspace-context-chip__closed-folder ' : ''}shrink-0 fill-amber-300 text-amber-600 dark:fill-amber-400 dark:text-amber-500 ${size === 'tray' ? 'h-4 w-4' : 'h-3.5 w-3.5'}`} strokeWidth={1.5} />
-        )}
+        <TriggerFolderIcon className={`${!open ? 'ds-workspace-context-chip__closed-folder ' : ''}shrink-0 fill-amber-300 text-amber-600 dark:fill-amber-400 dark:text-amber-500 ${size === 'tray' ? 'h-4 w-4' : 'h-3.5 w-3.5'}`} strokeWidth={1.5} />
         <span
           className={`min-w-0 flex-1 truncate ${
             size === 'tray' ? (isTemporary ? 'leading-5' : 'text-[13px]') : ''

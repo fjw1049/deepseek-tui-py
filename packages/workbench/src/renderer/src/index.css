@@ -1231,10 +1231,6 @@ samp {
   line-height: 20px;
 }
 
-.ds-workspace-context-chip--prompt .ds-workspace-context-chip__prompt-icon {
-  opacity: 0.65;
-}
-
 .ds-workspace-context-chip--prompt .ds-workspace-context-chip__chevron {
   opacity: 0.45;
 }
