@@ -126,11 +126,6 @@ export function ReasoningEffortSelector({
     else el.removeAttribute('dense')
     // Patch shadow tree directly — custom-element HMR often keeps a stale sheet.
     const root = el.shadowRoot
-    const intensity = root?.querySelector('.intensity') as HTMLElement | null
-    if (intensity) {
-      intensity.style.display = 'block'
-      intensity.style.padding = '2px 6px'
-    }
     const intensityTop = root?.querySelector('.intensity-top') as HTMLElement | null
     if (intensityTop) intensityTop.style.display = 'none'
     const name = root?.querySelector('.model-name') as HTMLElement | null

@@ -44,3 +44,50 @@ it('updates selected model effort without replacing rows or resetting scroll', (
   expect(list.scrollTop).toBe(38)
   expect(list.children).toHaveLength(6)
 })
+
+it('toggles effort on demand and keeps custom model configuration separate', () => {
+  const picker = document.createElement('reasoning-effort-selector')
+  document.body.append(picker)
+  const root = picker.shadowRoot!
+  const panel = root.querySelector<HTMLElement>('.intensity')!
+  const effort = root.querySelector<HTMLButtonElement>('.effort-btn')!
+  const configure = root.querySelector<HTMLButtonElement>('.configure-btn:not(.effort-btn)')!
+  const pill = root.querySelector<HTMLButtonElement>('.pill')!
+  const changes: unknown[] = []
+  picker.addEventListener('change', event => changes.push((event as CustomEvent).detail))
+  pill.click()
+  expect(panel.hidden).toBe(true)
+  effort.click()
+  expect(panel.hidden).toBe(false)
+  expect(effort.getAttribute('aria-expanded')).toBe('true')
+  const slider = root.querySelector<HTMLElement>('.slider')!
+  slider.focus()
+  slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+  expect(root.activeElement).toBe(slider)
+  expect(effort.title).toContain('Extra High')
+  effort.click()
+  expect(panel.hidden).toBe(true)
+  effort.focus()
+  effort.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+  expect(root.activeElement).toBe(configure)
+  effort.click()
+  configure.click()
+  expect(changes).toContainEqual({ type: 'configure-models' })
+  pill.click()
+  expect(panel.hidden).toBe(true)
+})
+
+
+it('does not retain a gray highlight after the pointer leaves a model', () => {
+  const picker = document.createElement('reasoning-effort-selector') as HTMLElement & {
+    models: { id: string; label: string }[]
+  }
+  document.body.append(picker)
+  picker.models = [{ id: 'one', label: 'one' }, { id: 'two', label: 'two' }]
+  const root = picker.shadowRoot!
+  expect(root.querySelector('.is-highlight')).toBeNull()
+  const row = root.querySelector('.model-item')!
+  row.dispatchEvent(new PointerEvent('pointerenter'))
+  row.dispatchEvent(new PointerEvent('pointerleave'))
+  expect(root.querySelector('.is-highlight')).toBeNull()
+})

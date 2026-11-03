@@ -25,7 +25,6 @@ class ChatGPTModelSelector extends HTMLElement {
     empty: 'No matching models.',
   };
   #dragPos = null;     // continuous 0–1 position while dragging, else null
-  #highlight = 0;
   #open = false;
   #dragging = false;
   #activePointer = null;
@@ -232,7 +231,7 @@ class ChatGPTModelSelector extends HTMLElement {
         justify-content: flex-start;
         overflow: hidden;
         font-size: var(--ds-selector-font-size, 13px);
-        font-weight: 600;
+        font-weight: 400;
         color: var(--ink);
         letter-spacing: -0.01em;
         white-space: nowrap;
@@ -309,6 +308,7 @@ class ChatGPTModelSelector extends HTMLElement {
         gap: 2px;
       }
 
+      .intensity[hidden], .intensity[hidden] + .divider { display: none; }
       .intensity {
         padding: 2px 6px;
       }
@@ -376,9 +376,6 @@ class ChatGPTModelSelector extends HTMLElement {
         letter-spacing: 0.01em;
         color: var(--ink-3);
       }
-      .model-item.is-highlight:not(.is-active) {
-        background: var(--row-hover);
-      }
       .model-list {
         max-height: calc(38px * 5 + 4px);
         overflow-y: auto;
@@ -397,7 +394,7 @@ class ChatGPTModelSelector extends HTMLElement {
         gap: 10px;
         padding: 0 10px;
         font-size: var(--ds-selector-font-size, 13px);
-        font-weight: 500;
+        font-weight: 400;
         letter-spacing: -0.01em;
         color: var(--ink);
         text-align: left;
@@ -411,7 +408,7 @@ class ChatGPTModelSelector extends HTMLElement {
       .model-item.is-active {
         background: var(--row-active);
         color: var(--ink);
-        font-weight: 600;
+        font-weight: 400;
       }
       .model-item:focus-visible {
         outline: 2px solid var(--blue);
@@ -455,11 +452,11 @@ class ChatGPTModelSelector extends HTMLElement {
       .model-effort {
         flex: none;
         font-size: var(--ds-selector-font-size, 12px);
-        font-weight: 500;
+        font-weight: 400;
         letter-spacing: -0.01em;
         color: var(--ink-2);
       }
-      .model-effort.is-ultra { color: var(--ultra-text); font-weight: 600; }
+      .model-effort.is-ultra { color: var(--ultra-text); font-weight: 400; }
       .model-check {
         flex: none;
         color: var(--blue);
@@ -479,13 +476,16 @@ class ChatGPTModelSelector extends HTMLElement {
       }
 
       .footer {
+        display: flex;
+        justify-content: space-between;
         padding-top: 0;
       }
       .model-list + .divider {
-        margin: 4px;
+        margin: 7px 4px 1px;
       }
       .configure-btn {
-        width: 100%;
+        width: 32px;
+        justify-content: center;
         min-height: 32px;
         border-radius: var(--r-row);
         display: flex;
@@ -493,7 +493,7 @@ class ChatGPTModelSelector extends HTMLElement {
         gap: 10px;
         padding: 0 10px;
         font-size: var(--ds-selector-font-size, 13px);
-        font-weight: 500;
+        font-weight: 400;
         letter-spacing: -0.01em;
         color: var(--ink);
         transition: background-color 100ms var(--ease-out), transform 100ms ease-out;
@@ -676,7 +676,7 @@ class ChatGPTModelSelector extends HTMLElement {
 
     <div class="popover" role="dialog" aria-label="Model settings">
       <div class="menu">
-        <div class="intensity">
+        <div class="intensity" id="intensity-panel" hidden>
           <div class="intensity-top">
             <span class="intensity-title">Reasoning</span>
             <div class="intensity-meta">
@@ -713,12 +713,14 @@ class ChatGPTModelSelector extends HTMLElement {
         <div class="divider" role="separator"></div>
 
         <div class="footer">
+          <button type="button" class="configure-btn effort-btn" aria-expanded="false" aria-controls="intensity-panel">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
+          </button>
           <button type="button" class="configure-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 20h9" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
               <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            Configure custom models
           </button>
         </div>
       </div>
@@ -744,7 +746,9 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$effortV = $('.intensity-value');
     this.$modelName = $('.model-name');
     this.$modelList = $('.model-list');
-    this.$configureBtn = $('.configure-btn');
+    this.$configureBtn = $('.configure-btn:not(.effort-btn)');
+    this.$effortBtn = $('.effort-btn');
+    this.$intensity = $('.intensity');
     this.$pillIcon = $('.pill-icon');
     this.$valueLayer = $('.intensity-value-layer');
     this.$hintLayer = $('.intensity-hint-layer');
@@ -846,6 +850,10 @@ class ChatGPTModelSelector extends HTMLElement {
 
   #applyLabels() {
     const L = this.#labels;
+    if (this.$effortBtn) {
+      this.$effortBtn.title = `${L.title}: ${this.#tiers[this.#index].key}`;
+      this.$effortBtn.setAttribute('aria-label', this.$effortBtn.title);
+    }
     if (this.$intensityTitle) this.$intensityTitle.textContent = L.title;
     if (this.$intensityHint) this.$intensityHint.textContent = L.hint;
     if (this.$intensityWarning) this.$intensityWarning.textContent = L.warning;
@@ -855,11 +863,8 @@ class ChatGPTModelSelector extends HTMLElement {
     if (this.$sliderDesc) this.$sliderDesc.textContent = L.desc;
     if (this.$popover) this.$popover.setAttribute('aria-label', L.dialog);
     if (this.$configureBtn) {
-      // Keep the pencil svg; replace only the trailing text node.
-      const svg = this.$configureBtn.querySelector('svg');
-      this.$configureBtn.textContent = '';
-      if (svg) this.$configureBtn.appendChild(svg);
-      this.$configureBtn.append(' ', L.configure);
+      this.$configureBtn.setAttribute('aria-label', L.configure);
+      this.$configureBtn.title = L.configure;
     }
   }
 
@@ -880,7 +885,6 @@ class ChatGPTModelSelector extends HTMLElement {
     const effortKey = this.#tiers[this.#index].key;
     const isUltra = this.#index === 4;
     const models = this.#models;
-    if (this.#highlight >= models.length) this.#highlight = Math.max(0, models.length - 1);
     if (models.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'model-empty';
@@ -888,7 +892,7 @@ class ChatGPTModelSelector extends HTMLElement {
       this.$modelList.appendChild(empty);
       return;
     }
-    models.forEach((m, index) => {
+    models.forEach((m) => {
       const active = m.id === this.#modelId;
       const providerId = m.providerId || this.#inferProvider(m.id);
       const icon = resolveProviderIcon({
@@ -899,8 +903,7 @@ class ChatGPTModelSelector extends HTMLElement {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'model-item'
-        + (active ? ' is-active' : '')
-        + (index === this.#highlight ? ' is-highlight' : '');
+        + (active ? ' is-active' : '');
 
       const iconEl = document.createElement('span');
       iconEl.className = 'model-icon' + (icon.colored ? ' is-colored' : '');
@@ -938,13 +941,6 @@ class ChatGPTModelSelector extends HTMLElement {
         btn.appendChild(check);
       }
 
-      btn.addEventListener('pointerenter', () => {
-        if (this.#highlight === index) return;
-        this.#highlight = index;
-        this.$modelList.querySelectorAll('.model-item').forEach((el, i) => {
-          el.classList.toggle('is-highlight', i === index);
-        });
-      });
       btn.addEventListener('click', () => {
         if (m.id === this.#modelId) return;
         this.#modelId = m.id;
@@ -1001,6 +997,19 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$pill.addEventListener('click', () => {
       if (this.hasAttribute('disabled')) return;
       this.#open ? this.#close() : this.#openPopover();
+    });
+    this.$effortBtn.addEventListener('click', () => {
+      const expanded = this.$intensity.hidden;
+      this.$intensity.hidden = !expanded;
+      this.$effortBtn.setAttribute('aria-expanded', String(expanded));
+      if (expanded) {
+        this.#layoutSlider();
+        this.#sizeCanvas();
+        this.#startSparkles();
+      } else {
+        cancelAnimationFrame(this.#raf);
+        this.#raf = 0;
+      }
     });
     this.$configureBtn.addEventListener('click', () => {
       this.dispatchEvent(new CustomEvent('change', {
@@ -1067,9 +1076,9 @@ class ChatGPTModelSelector extends HTMLElement {
     });
 
     this.$menu.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      if (e.defaultPrevented || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
       e.preventDefault();
-      const items = [...this.$menu.querySelectorAll('button, [role="slider"]')];
+      const items = [...this.$menu.querySelectorAll('button, [role="slider"]')].filter(item => !item.closest('[hidden]'));
       const i = items.indexOf(this.shadowRoot.activeElement);
       const next = items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length];
       next.focus();
@@ -1079,6 +1088,8 @@ class ChatGPTModelSelector extends HTMLElement {
   /* ======================= popover open/close ======================= */
 
   #openPopover() {
+    this.$intensity.hidden = true;
+    this.$effortBtn.setAttribute('aria-expanded', 'false');
     this.#open = true;
     this.#setPickerOpen(true);
     this.$pill.setAttribute('aria-expanded', 'true');
@@ -1123,7 +1134,6 @@ class ChatGPTModelSelector extends HTMLElement {
   #close() {
     if (!this.#open) return;
     this.#open = false;
-    this.#highlight = 0;
     this.#renderModelList();
     this.#setPickerOpen(false);
     this.$pill.setAttribute('aria-expanded', 'false');
@@ -1241,6 +1251,8 @@ class ChatGPTModelSelector extends HTMLElement {
 
   #renderState({ position = true, animateTier = true, snap = false } = {}) {
     const t = this.#tiers[this.#index];
+    this.$effortBtn.title = `${this.#labels.title}: ${t.key}`;
+    this.$effortBtn.setAttribute('aria-label', this.$effortBtn.title);
     const isUltra = this.#index === 4;
 
     if (position) {
@@ -1435,6 +1447,7 @@ class ChatGPTModelSelector extends HTMLElement {
   }
 
   #startSparkles() {
+    if (this.$intensity.hidden) return;
     cancelAnimationFrame(this.#raf);
     this.#raf = 0;
     if (this.#reducedMotion.matches) {
