@@ -566,9 +566,10 @@ describe('tail-anchor math', () => {
 
 
 describe('collapsed execution details', () => {
-  it.each(['agent', 'agent_resume', 'task_create', 'task_output', 'cron_create'])(
+  it.each(['agent', 'agent_resume', 'task_create', 'task_stop', 'cron_create'])(
     'keeps confirmed %s activity standalone during execution and folds it after completion', (name) => {
-      const block: ChatBlock = { kind: 'tool', id: 'background', summary: name, status: 'success' }
+      const block: ChatBlock = { kind: 'tool', id: 'background', summary: name, status: 'success',
+        meta: { tool_name: name, tool_input: { action: 'spawn' } } }
       expect(isSuccessfulBackgroundTool(block)).toBe(true)
       expect(isSuccessfulBackgroundTool({ ...block, status: 'running' })).toBe(false)
       expect(isSuccessfulBackgroundTool({ ...block, status: 'error' })).toBe(false)
@@ -580,6 +581,15 @@ describe('collapsed execution details', () => {
       expect(isVisibleWithoutExecutionDetails(block)).toBe(false)
     }
   )
+
+  it.each([
+    ['agent', { action: 'wait' }], ['agent', { action: 'send_input' }], ['agent', undefined],
+    ['agent_wait', {}], ['task_output', {}], ['task_list', {}], ['cron_list', {}]
+  ] as const)('keeps %s polling folded instead of adding a standalone row', (name, input) => {
+    const block: ChatBlock = { kind: 'tool', id: 'poll', summary: name, status: 'success',
+      meta: { tool_name: name, ...(input ? { tool_input: input } : {}) } }
+    expect(isSuccessfulBackgroundTool(block)).toBe(false)
+  })
 
   it('folds resolved questions while retaining questions that need attention', () => {
     const blocks: ChatBlock[] = ['submitted', 'cancelled', 'pending', 'error'].map((status) => ({

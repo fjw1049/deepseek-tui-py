@@ -42,12 +42,19 @@ export function isSubagentOrchestrationToolName(name: string | undefined): boole
   return !!name && SUBAGENT_ORCHESTRATION_TOOL_RE.test(name.trim())
 }
 
-/** Confirmed background operations stay visible while the parent turn runs. */
+/**
+ * Confirmed background state changes stay visible while the parent turn runs.
+ * Polling and reads (agent wait, task_output, *_list) stay folded so repeated
+ * checks do not stack identical rows.
+ */
 export function isSuccessfulBackgroundTool(block: ChatBlock): boolean {
   if (block.kind !== 'tool' || block.status !== 'success') return false
   const name = toolNameFromProcessBlock(block)
-  return isSubagentOrchestrationToolName(name) ||
-    /^(?:task_(?:create|output|stop|read|cancel|resume)|cron_(?:create|list|delete)|automation_(?:create|list|delete))$/.test(name)
+  if (name === 'agent') {
+    const input = block.meta?.tool_input
+    return !!input && typeof input === 'object' && (input as Record<string, unknown>).action === 'spawn'
+  }
+  return /^(?:agent_spawn|spawn_agent|delegate_to_agent|agent_resume|agent_cancel|task_(?:create|stop|cancel|resume)|cron_(?:create|delete)|automation_(?:create|delete))$/.test(name)
 }
 
 /**
