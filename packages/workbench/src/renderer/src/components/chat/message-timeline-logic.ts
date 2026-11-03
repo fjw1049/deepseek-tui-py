@@ -42,6 +42,14 @@ export function isSubagentOrchestrationToolName(name: string | undefined): boole
   return !!name && SUBAGENT_ORCHESTRATION_TOOL_RE.test(name.trim())
 }
 
+/** Confirmed background operations stay visible while the parent turn runs. */
+export function isSuccessfulBackgroundTool(block: ChatBlock): boolean {
+  if (block.kind !== 'tool' || block.status !== 'success') return false
+  const name = toolNameFromProcessBlock(block)
+  return isSubagentOrchestrationToolName(name) ||
+    /^(?:task_(?:create|output|stop|read|cancel|resume)|cron_(?:create|list|delete)|automation_(?:create|list|delete))$/.test(name)
+}
+
 /**
  * Sub-agent wait/resume StatusEvents — internal handoff, not chat content.
  * Same English-prefix debt as `isInternalSubagentHandoffStatusItem` in
@@ -226,6 +234,7 @@ export function clipMidTurnPrefaceText(
 
 /** Collapsed history keeps actionable work; the caller selects live progress. */
 export function isVisibleWithoutExecutionDetails(block: ChatBlock): boolean {
+  if (block.kind === 'user_input') return block.status === 'pending' || block.status === 'error'
   if (block.kind === 'assistant' || block.kind === 'reasoning') return false
   if (block.kind === 'tool') return block.status === 'running'
   return true

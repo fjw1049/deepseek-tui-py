@@ -1,6 +1,7 @@
 import { skillIcon } from '../../lib/skill-icon'
 import { ViewportContent } from './ViewportContent'
 import { AutomationResultCard } from './AutomationResultCard'
+import { BackgroundActivityRow } from './BackgroundActivityRow'
 import {
   TurnActivity,
   resolveTurnActivity,
@@ -130,6 +131,7 @@ import {
   groupProcessRows,
   isInternalSubagentHandoffSystemText,
   isSubagentOrchestrationToolName,
+  isSuccessfulBackgroundTool,
   isVisibleWithoutExecutionDetails,
   placeAssistantContentBlock,
   planProcessRenderChunks,
@@ -1695,10 +1697,12 @@ function visibleExecutionBlocks(
   blocks: ChatBlock[],
   todoSession: TodoTurnSession | null,
   hasSubagents: boolean,
-  interactiveToolIds: ReadonlySet<string>
+  interactiveToolIds: ReadonlySet<string>,
+  processing: boolean
 ): ChatBlock[] {
   return blocks.filter((block) => {
     if (interactiveToolIds.has(block.id)) return true
+    if (processing && isSuccessfulBackgroundTool(block)) return true
     if (shouldHideTodoToolBlock(block, todoSession)) return false
     // Subagent status and navigation live in the side activity card.
     if (block.kind === 'subagent') return false
@@ -1922,6 +1926,11 @@ function ProcessStream({
   // completed turns must not leak its heading into the answer area.
   const firstReasoning = blocks.find((block) => block.kind === 'reasoning')
   const standaloneIds = new Set(interactiveToolIds)
+  if (processing) {
+    for (const block of blocks) {
+      if (isSuccessfulBackgroundTool(block)) standaloneIds.add(block.id)
+    }
+  }
   if (firstReasoning) standaloneIds.add(firstReasoning.id)
   // Keep narration and tool summaries in order while running; only their
   // execution details stay folded.
@@ -1933,7 +1942,8 @@ function ProcessStream({
       isVisibleWithoutExecutionDetails(block)),
     todoSession,
     hasSubagents,
-    interactiveToolIds
+    interactiveToolIds,
+    processing
   )
   const rows = groupProcessRows(visible, standaloneIds)
   const chunks = planProcessRenderChunks(rows, standaloneIds)
@@ -2030,6 +2040,7 @@ function ProcessStreamEntry({
 }): ReactElement | null {
   // The actual content blocks.
   if (block.kind === 'tool') {
+    if (processing && isSuccessfulBackgroundTool(block)) return <BackgroundActivityRow block={block} />
     return <ToolCard block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
   }
   if (block.kind === 'reasoning') {

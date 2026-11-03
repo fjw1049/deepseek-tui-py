@@ -9,6 +9,7 @@ import {
   shouldParseIncompleteAssistantMarkdown,
   groupProcessRows,
   isSubagentOrchestrationToolName,
+  isSuccessfulBackgroundTool,
   isInternalSubagentHandoffSystemText,
   placeAssistantContentBlock,
   planProcessRenderChunks,
@@ -565,6 +566,30 @@ describe('tail-anchor math', () => {
 
 
 describe('collapsed execution details', () => {
+  it.each(['agent', 'agent_resume', 'task_create', 'task_output', 'cron_create'])(
+    'keeps confirmed %s activity standalone during execution and folds it after completion', (name) => {
+      const block: ChatBlock = { kind: 'tool', id: 'background', summary: name, status: 'success' }
+      expect(isSuccessfulBackgroundTool(block)).toBe(true)
+      expect(isSuccessfulBackgroundTool({ ...block, status: 'running' })).toBe(false)
+      expect(isSuccessfulBackgroundTool({ ...block, status: 'error' })).toBe(false)
+      const rows = groupProcessRows([
+        { kind: 'tool', id: 'read', summary: 'read_file', status: 'success' }, block
+      ], new Set([block.id]))
+      const chunks = planProcessRenderChunks(rows, new Set([block.id]))
+      expect(chunks.every(chunk => chunk.type === 'row')).toBe(true)
+      expect(isVisibleWithoutExecutionDetails(block)).toBe(false)
+    }
+  )
+
+  it('folds resolved questions while retaining questions that need attention', () => {
+    const blocks: ChatBlock[] = ['submitted', 'cancelled', 'pending', 'error'].map((status) => ({
+      kind: 'user_input', id: status, requestId: status, questions: [],
+      status: status as 'submitted' | 'cancelled' | 'pending' | 'error'
+    }))
+    expect(blocks.filter(isVisibleWithoutExecutionDetails).map(block => block.id))
+      .toEqual(['pending', 'error'])
+  })
+
   it('retains running work while folding narration and historical errors', () => {
     const blocks: ChatBlock[] = [
       { kind: 'assistant', id: 'progress', text: '找到原因，接下来验证修复。', agentSegment: 'mid_turn_preface' },
