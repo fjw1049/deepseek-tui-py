@@ -119,3 +119,14 @@ it('uses compact task labels while keeping assignments and targets available', a
   await act(async () => rows[1].click())
   expect(onOpen).toHaveBeenLastCalledWith({ kind: 'task', id: 'task-b' })
 })
+
+it('numbers each agent type separately and keeps numbers when a run is hidden', async () => {
+  const agents = [agent('a'), { ...agent('b'), agentType: 'explore' }, agent('c')]
+  const rowTitles = () => [...container.querySelectorAll('.ds-task-activity-row .ds-task-activity-title')].map((row) => row.textContent)
+  await render(agents)
+  await act(async () => trigger().click())
+  expect(rowTitles()).toEqual(['code 1', '探索 1', 'code 2'])
+  await act(async () => root.render(createElement(TaskActivity, { agents, tasks: [], onOpen, exclude: { kind: 'subagent', id: 'a' } })))
+  expect(rowTitles()).toEqual(['探索 1', 'code 2'])
+  expect(trigger().textContent).toContain('2')
+})

@@ -13,16 +13,25 @@ type Props = {
   tasks: TaskItemView[]
   agents: DockSubagentItem[]
   onOpen: (target: Omit<RunTarget, 'threadId'>) => void
+  /** Hidden from the list but still counted, so numbers match the full list. */
+  exclude?: Omit<RunTarget, 'threadId'>
 }
 
-export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | null {
+export function TaskActivity({ tasks, agents, onOpen, exclude }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const listId = useId()
+  // Number each label on its own (code 1, explore 1, code 2) in list order.
+  const counts = new Map<string, number>()
+  const numbered = (label: string): string => {
+    const count = (counts.get(label) ?? 0) + 1
+    counts.set(label, count)
+    return `${label} ${count}`
+  }
   const items = [
-    ...tasks.map((task, index) => ({ kind: 'task' as const, id: task.id, status: task.status, title: `${t('taskActivityBackground')} ${index + 1}`, summary: runDisplayTitle(taskListTitle(task, Infinity)) })),
-    ...agents.map((agent, index) => ({ kind: 'subagent' as const, id: agent.agentId, status: agent.status, title: `${humanizeAgentType(agent.agentType) || subagentListTitle({ ...agent, prompt: undefined })} ${index + 1}`, summary: runDisplayTitle(subagentListTitle(agent, Infinity)) }))
-  ]
+    ...tasks.map((task) => ({ kind: 'task' as const, id: task.id, status: task.status, title: numbered(t('taskActivityBackground')), summary: runDisplayTitle(taskListTitle(task, Infinity)) })),
+    ...agents.map((agent) => ({ kind: 'subagent' as const, id: agent.agentId, status: agent.status, title: numbered(humanizeAgentType(agent.agentType) || subagentListTitle({ ...agent, prompt: undefined })), summary: runDisplayTitle(subagentListTitle(agent, Infinity)) }))
+  ].filter((item) => !(exclude && item.kind === exclude.kind && item.id === exclude.id))
   const first = items[0]
   const multiple = items.length > 1
   // The list only renders while multiple; without this reset a stale
@@ -41,7 +50,7 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
   const status = !multiple ? first?.status : running ? 'running' : queued ? 'queued'
     : failed ? 'failed' : stopped ? 'canceled' : 'completed'
   const title = multiple
-    ? t(tasks.length ? 'taskActivityTasksCount' : 'taskActivityAgentsCount', { count: items.length })
+    ? t(items.some((item) => item.kind === 'task') ? 'taskActivityTasksCount' : 'taskActivityAgentsCount', { count: items.length })
     : first.title
   const statusText = multiple
     ? ['running', 'queued', 'completed', 'failed', 'canceled', 'timed_out'].flatMap((value) => {
