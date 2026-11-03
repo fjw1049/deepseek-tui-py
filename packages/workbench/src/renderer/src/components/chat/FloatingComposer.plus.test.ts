@@ -205,3 +205,28 @@ it.each(['goal', 'plan', 'ask'] as const)('clears %s mode directly without chang
   expect(setMode).toHaveBeenCalledWith('agent')
   expect(setInput).not.toHaveBeenCalled()
 })
+
+it('remeasures textarea only when its width changes, not its height', async () => {
+  const observers: { callback: ResizeObserverCallback; target?: Element }[] = []
+  vi.stubGlobal('ResizeObserver', class {
+    record: { callback: ResizeObserverCallback; target?: Element }
+    constructor(callback: ResizeObserverCallback) {
+      this.record = { callback }
+      observers.push(this.record)
+    }
+    observe(target: Element) { this.record.target = target }
+    disconnect() {}
+    unobserve() {}
+  })
+  await act(async () => root.render(createElement(FloatingComposer, props)))
+  const textarea = host.querySelector('textarea')!
+  const observer = observers.find((item) => item.target === textarea)!
+  let width = textarea.offsetWidth
+  Object.defineProperty(textarea, 'offsetWidth', { configurable: true, get: () => width })
+  textarea.style.height = '100px'
+  observer.callback([], {} as ResizeObserver)
+  expect(textarea.style.height).toBe('100px')
+  width += 100
+  observer.callback([], {} as ResizeObserver)
+  expect(textarea.style.height).toBe('38px')
+})

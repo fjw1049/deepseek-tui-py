@@ -701,10 +701,12 @@ export function FloatingComposer({
       el.style.overflowY = 'hidden'
       return
     }
+    const scrollTop = el.scrollTop
     el.style.height = 'auto'
     const nextHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight)
     el.style.height = `${nextHeight}px`
     el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
+    el.scrollTop = scrollTop
   }, [compactChrome])
 
   useLayoutEffect(() => {
@@ -715,7 +717,11 @@ export function FloatingComposer({
   useEffect(() => {
     const el = textareaRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
+    let previousWidth = el.offsetWidth
     const ro = new ResizeObserver(() => {
+      const width = el.offsetWidth
+      if (width === previousWidth) return
+      previousWidth = width
       resizeTextarea()
     })
     ro.observe(el)

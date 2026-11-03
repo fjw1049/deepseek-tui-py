@@ -2234,12 +2234,8 @@ samp {
   font-synthesis: none;
   text-align: start;
   text-justify: auto;
-  /*
-   * Grow with typed content only. Do NOT use field-sizing while the
-   * placeholder is shown — a long CJK placeholder wraps in a narrow column
-   * and Chromium would inflate the empty composer to many lines.
-   */
-  field-sizing: content;
+  /* Height is measured by resizeTextarea; native sizing must not compete. */
+  field-sizing: fixed;
   min-height: 38px;
   max-height: 166px;
   overflow-y: auto;
