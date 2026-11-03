@@ -2823,7 +2823,7 @@ samp {
 [data-theme='light'] .ds-workbench-topbar,
 [data-theme='light'] .ds-right-panel-tabbar,
 [data-theme='light'] .ds-dev-browser__chrome {
-  background-color: var(--ds-workbench-chrome);
+  background-color: var(--ds-bg-canvas);
 }
 
 .ds-workbench-topbar__inner {
@@ -7644,7 +7644,7 @@ select:focus-visible,
 
 /* Same light chrome as the other panels' tab bars. */
 [data-theme='light'] .ds-right-panel-surface.is-browser > .ds-dock-header {
-  background-color: var(--ds-workbench-chrome);
+  background-color: var(--ds-bg-canvas);
 }
 
 .ds-workbench-shell.is-resizing .ds-chat-column > section,
