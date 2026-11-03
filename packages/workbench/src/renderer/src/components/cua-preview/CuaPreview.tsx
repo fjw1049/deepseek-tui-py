@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { AppWindow, ArrowUpRight, CheckCircle2, ChevronDown, CircleAlert, Eye, Monitor, X } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleAlert, Eye, Monitor, X } from 'lucide-react'
 import { create } from 'zustand'
 import {
   dismissEndedCuaPreview,
@@ -179,7 +179,7 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
   if (!threadId || !session) return null
   const card = <section ref={cardRef} hidden={compactRail && !peeking} aria-label={t('cuaPreviewRegion')} data-cua-preview={threadId}
     style={{ height, ...(compactRail ? anchor : {}) }}
-    className={`ds-cua-preview-card overflow-hidden ${animate ? 'transition-[height] duration-200' : ''} ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none rounded-[18px] border text-ds-ink ${
+    className={`ds-cua-preview-card overflow-hidden ${animate ? 'transition-[height] duration-200' : ''} ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none rounded-[20px] border text-ds-ink ${
       compactRail ? 'fixed z-50' : slotUsable ? 'relative w-full' : 'relative w-full max-w-80'
     }`}>
     <div ref={contentRef} className="max-h-[calc(100vh-7rem)] overflow-y-auto">
@@ -308,23 +308,22 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
     if (element && canvas.parentElement !== element) element.prepend(canvas)
   }
   const outcomeIcon = phase === 'ended' && !reviewPending
-    ? session.outcome === 'completed' ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
-      : session.outcome === 'failed' ? <CircleAlert className="h-5 w-5 shrink-0 text-amber-600" aria-hidden /> : null
+    ? session.outcome === 'completed' ? <CheckCircle2 className="h-4 w-4 shrink-0 fill-emerald-600 text-white" aria-hidden />
+      : session.outcome === 'failed' ? <CircleAlert className="h-4 w-4 shrink-0 fill-amber-500 text-white" aria-hidden /> : null
     : null
   const placeholder = <Monitor className="h-5 w-5 text-ds-muted" aria-hidden />
 
   return <>
-    {expanded ? <div className="flex items-center gap-2 px-3 py-2 text-xs">
+    {expanded ? <div className="flex min-h-12 items-center gap-2 px-3 py-2 text-xs">
       {session.surface === 'app' && session.appId && window.dsGui.platform === 'darwin' && <button
         type="button" onClick={() => void openApp()} disabled={openingApp}
         aria-label={t('cuaPreviewOpenApp')} title={t('cuaPreviewOpenApp')}
-        className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ds-muted hover:bg-ds-hover disabled:opacity-40 focus-visible:outline focus-visible:outline-2">
-        <span className="relative h-4 w-4" aria-hidden>
-          <AppWindow className="h-4 w-4" strokeWidth={1.75} />
-          <ArrowUpRight className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-sm bg-white dark:bg-ds-card" strokeWidth={1.75} />
-        </span>
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 disabled:opacity-40 focus-visible:outline focus-visible:outline-2">
+        <Monitor className="h-5 w-5 fill-emerald-500/15" strokeWidth={2.25} aria-hidden />
       </button>}
       <div className="min-w-0 flex-1">
+        {hasFrame && !step && !openAppFailed && <span className="block truncate font-medium">{live.hasFrame && streaming && live.status === 'ok'
+          ? t('cuaPreviewLive') : t('cuaPreviewLastFrame')}</span>}
         {openAppFailed && <span role="status" aria-label={t('cuaPreviewOpenAppFailed')}
           title={t('cuaPreviewOpenAppFailed')} className="flex min-w-0 items-center gap-1 text-ds-muted">
           <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -332,8 +331,11 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
         </span>}
         {!openAppFailed && step && <span title={step} className="block truncate text-ds-muted">{step}</span>}
       </div>
-      {hasFrame && <span className="shrink-0 text-ds-muted">{live.hasFrame && streaming && live.status === 'ok'
+      {hasFrame && step && <span className="shrink-0 text-ds-muted">{live.hasFrame && streaming && live.status === 'ok'
         ? t('cuaPreviewLive') : t('cuaPreviewLastFrame')}</span>}
+      {phase === 'ended' && <span role="status" title={status} className="flex min-w-0 items-center gap-1.5 text-ds-muted">
+        {outcomeIcon}<span className="truncate">{status}</span>
+      </span>}
       <button type="button" onClick={onCollapse} aria-label={t('cuaPreviewCollapse')} title={t('cuaPreviewCollapse')}
         className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ds-muted hover:bg-ds-hover focus-visible:outline focus-visible:outline-2">
         <ChevronDown className="h-4 w-4" aria-hidden />
@@ -358,7 +360,6 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
         {problem === 'permission' && shown && <button type="button" onClick={onOpenPermissions}
           className="rounded-md border border-ds-border px-2.5 py-1 text-ds-ink hover:bg-ds-hover">{t('cuaPreviewOpenSettings')}</button>}
       </div>}
-      {phase === 'ended' && <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-ds-muted">{outcomeIcon}{status}</p>}
     </> : <div className="flex items-center">
       <button type="button" onClick={onExpand} aria-label={`${t('cuaPreviewShow')}: ${status}`} title={t('cuaPreviewShow')} aria-expanded={false}
         className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left hover:bg-ds-hover focus-visible:outline focus-visible:outline-2">

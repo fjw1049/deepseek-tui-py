@@ -179,7 +179,7 @@ it('shows verified success briefly, then collapses once and permits reopening', 
   request.mockResolvedValue({ ok: true, body: JSON.stringify({ used: true, active: false, available: true, turn_id: 'turn', unresolved: null }) })
   await act(async () => noteCuaTurnEnded('thread', 'completed'))
   expect(document.body.textContent).toContain('cuaPreviewDone')
-  expect(document.querySelector('.text-emerald-600')).not.toBeNull()
+  expect(document.querySelector('.lucide-circle-check')).not.toBeNull()
   await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
   expect(document.querySelector('[aria-expanded="false"]')).not.toBeNull()
   await expand()
@@ -194,7 +194,7 @@ it('keeps an unresolved result open without a success check', async () => {
   await act(async () => noteCuaTurnEnded('thread', 'completed'))
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
   expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
-  expect(document.querySelector('.text-emerald-600')).toBeNull()
+  expect(document.querySelector('.lucide-circle-check')).toBeNull()
 })
 
 it('expands inside the same rail slot instead of moving to a fixed overlay', async () => {

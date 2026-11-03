@@ -7697,17 +7697,17 @@ select:focus-visible,
 /* One quiet surface; structure comes from the controls inside, not nested cards. */
 .ds-cua-preview-card {
   background: var(--ds-card-strong);
-  border-width: 1.5px;
-  border-color: rgba(0, 0, 0, 0.16);
+  border-width: 1px;
+  border-color: rgba(0, 0, 0, 0.09);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
-    0 8px 24px rgba(0, 0, 0, 0.07);
+    0 6px 20px rgba(0, 0, 0, 0.05);
 }
 
 [data-theme='dark'] .ds-cua-preview-card {
   background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
-  border-width: 1.5px;
-  border-color: rgba(255, 255, 255, 0.2);
+  border-width: 1px;
+  border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.28),
     0 10px 28px rgba(0, 0, 0, 0.34);

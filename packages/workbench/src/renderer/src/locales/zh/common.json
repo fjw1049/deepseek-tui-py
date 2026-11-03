@@ -2676,7 +2676,7 @@
   "cuaPreviewIncomplete": "未完成",
   "cuaPreviewEnded": "操作已结束",
   "cuaPreviewLive": "实时",
-  "cuaPreviewLastFrame": "最近画面",
+  "cuaPreviewLastFrame": "最新画面",
   "cuaPreviewAppWindow": "应用窗口预览",
   "cuaControlDisconnected": "连接中…",
   "cuaControlRetry": "操作未确认，请等待状态刷新后重试。",
