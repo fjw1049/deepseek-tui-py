@@ -711,7 +711,7 @@ export function FloatingComposer({
 
   useLayoutEffect(() => {
     resizeTextarea()
-  }, [attachments.length, canCompose, input, focusSkill, focusConnector, focusPlugin, resizeTextarea])
+  }, [attachments.length, canCompose, input, focusSkill, focusConnector, focusPlugin, activePlugin, resizeTextarea])
 
   // Re-clamp when the composer column width changes (sidebar drag / restore).
   useEffect(() => {
@@ -1928,6 +1928,19 @@ export function FloatingComposer({
           ) : null}
 
           <div className="flex min-w-0 items-start gap-1">
+          {/* A plugin mounted for this chat applies to every message, so keep it visible. */}
+          {activePlugin && !focusPlugin && <span data-composer-mounted-plugin
+            title={t('composerPluginMounted', { name: displayPluginName(activePlugin.name), path: activePlugin.path })}
+            className={`ds-no-drag flex max-w-[30%] shrink-0 items-center gap-1 rounded-md bg-ds-hover px-1.5 text-[12px] text-ds-muted ${compactChrome ? 'mt-0.5 h-[22px]' : 'mt-1.5 h-[26px]'}`}>
+            <Puzzle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+            <span className="truncate">{displayPluginName(activePlugin.name)}</span>
+            <button type="button" onClick={() => { void sendMessage('@plugin:off'); focusComposer() }}
+              aria-label={t('composerPluginUnmount', { name: displayPluginName(activePlugin.name) })}
+              title={t('composerPluginUnmount', { name: displayPluginName(activePlugin.name) })}
+              className="grid h-5 w-5 shrink-0 place-items-center rounded-sm opacity-40 hover:bg-ds-subtle hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2">
+              <X className="h-3 w-3" aria-hidden />
+            </button>
+          </span>}
           {focusName && <span data-composer-focus className={`ds-no-drag group flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-ds-hover px-1.5 text-[12px] text-ds-muted ${compactChrome ? 'mt-0.5 h-[22px]' : 'mt-1.5 h-[26px]'}`}>
             <button type="button" title={focusName} aria-haspopup="dialog" aria-expanded={plusMenuOpen}
               onClick={() => setPlusMenuOpen(true)}

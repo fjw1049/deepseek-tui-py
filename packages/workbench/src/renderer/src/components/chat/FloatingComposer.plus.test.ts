@@ -230,3 +230,17 @@ it('remeasures textarea only when its width changes, not its height', async () =
   observer.callback([], {} as ResizeObserver)
   expect(textarea.style.height).toBe('38px')
 })
+
+it('keeps a mounted plugin visible beside a focused skill and unmounts it from the chip', async () => {
+  const sendMessage = vi.fn(async () => {})
+  useChatStore.setState({ activePlugin: { name: 'data-analysis', path: '/plugins/data-analysis' }, sendMessage } as never)
+  await open({ input: 'Keep my draft' })
+  const skill = [...host.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find(button => button.textContent?.includes('Review changes'))!
+  await act(async () => skill.click())
+  const chip = host.querySelector<HTMLElement>('[data-composer-mounted-plugin]')!
+  expect(chip.parentElement).toBe(host.querySelector('textarea')!.parentElement)
+  expect(host.querySelector('[data-composer-focus]')).not.toBeNull()
+  await act(async () => chip.querySelector('button')!.click())
+  expect(sendMessage).toHaveBeenCalledWith('@plugin:off')
+})
