@@ -477,7 +477,7 @@ export function OperationContextDock({
 
       {!collapsed.process ? (
         totalCount > 0 ? (
-          <ul className="mt-1 flex max-h-[min(36vh,240px)] flex-col gap-0.5 overflow-y-auto overflow-x-hidden">
+          <ul className="mt-1 flex max-h-80 flex-col gap-0.5 overflow-y-auto overflow-x-hidden [scrollbar-width:thin]">
             {todos.map((item, index) => {
               const completed = item.status === 'completed'
               const inProgress = item.status === 'in_progress'
@@ -494,7 +494,7 @@ export function OperationContextDock({
                     aria-expanded={expanded}
                     title={expanded ? undefined : item.content}
                     className={[
-                      'flex min-h-9 w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors',
+                      'flex min-h-8 w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
                       'hover:bg-ds-hover/50',
                       inProgress ? 'bg-ds-hover/60' : ''
                     ].join(' ')}
@@ -504,7 +504,7 @@ export function OperationContextDock({
                       aria-hidden
                     >
                       {completed ? (
-                        <span className="flex h-5 w-5 items-center justify-center text-ds-success">
+                        <span className="flex h-5 w-5 items-center justify-center text-ds-faint">
                           <Check className="h-4 w-4" strokeWidth={2} />
                         </span>
                       ) : (
@@ -523,7 +523,7 @@ export function OperationContextDock({
                     <span
                       className={[
                         'min-w-0 flex-1 text-[13px] leading-5',
-                        expanded ? 'break-words whitespace-pre-wrap' : 'line-clamp-2 break-words',
+                        expanded ? 'break-words whitespace-pre-wrap' : 'truncate',
                         completed
                           ? 'text-ds-muted'
                           : inProgress

@@ -5,6 +5,7 @@ import { subagentListTitle, type DockSubagentItem } from '../../lib/extract-suba
 import { taskListTitle, type TaskItemView } from '../../lib/extract-tasks-from-blocks'
 import { runDisplayTitle, runStatusKey } from '../../lib/run-activity'
 import type { RunTarget } from '../../store/run-panel-store'
+import { humanizeAgentType } from '../../lib/agent-type-label'
 import { RunStatusMark } from './RunStatusMark'
 import './task-activity.css'
 
@@ -19,8 +20,8 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
   const [expanded, setExpanded] = useState(false)
   const listId = useId()
   const items = [
-    ...tasks.map((task) => ({ kind: 'task' as const, id: task.id, status: task.status, title: runDisplayTitle(taskListTitle(task, Infinity)) })),
-    ...agents.map((agent) => ({ kind: 'subagent' as const, id: agent.agentId, status: agent.status, title: runDisplayTitle(subagentListTitle(agent, Infinity)) }))
+    ...tasks.map((task) => ({ kind: 'task' as const, id: task.id, status: task.status, title: runDisplayTitle(taskListTitle(task, Infinity)), summary: '' })),
+    ...agents.map((agent, index) => ({ kind: 'subagent' as const, id: agent.agentId, status: agent.status, title: `${humanizeAgentType(agent.agentType) || subagentListTitle({ ...agent, prompt: undefined })} ${index + 1}`, summary: runDisplayTitle(subagentListTitle(agent, Infinity)) }))
   ]
   const first = items[0]
   const multiple = items.length > 1
@@ -57,7 +58,7 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
         disabled={!first}
         aria-expanded={multiple ? expanded : undefined}
         aria-controls={multiple ? listId : undefined}
-        title={`${title} · ${statusText}`}
+        title={`${!multiple && first.summary ? first.summary : title} · ${statusText}`}
         aria-label={`${title} · ${statusText}`}
         onClick={() => {
           if (multiple) setExpanded((value) => !value)
@@ -70,9 +71,9 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
             {title}
           </span>
         </span>
-        {multiple && failed > 0 ? (
-          <span className="ds-task-activity-status text-ds-danger">
-            {t('taskActivityCountStatus', { count: failed, status: t(runStatusKey('failed')) })}
+        {multiple ? (
+          <span className={`ds-task-activity-status ${failed > 0 ? 'text-ds-danger' : ''}`}>
+            {failed > 0 ? t('taskActivityCountStatus', { count: failed, status: t(runStatusKey('failed')) }) : t(runStatusKey(status))}
           </span>
         ) : null}
         {stopped > 0 && status !== 'canceled' && status !== 'cancelled' ? <RunStatusMark status="canceled" /> : null}
@@ -84,7 +85,7 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
             <ul className="ds-task-activity-list">
               {items.map((item) => (
                 <li key={`${item.kind}:${item.id}`}>
-                  <button type="button" className="ds-task-activity-row" title={`${item.title} · ${t(item.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')} · ${t(runStatusKey(item.status))}`} onClick={() => onOpen({ kind: item.kind, id: item.id })}>
+                  <button type="button" className="ds-task-activity-row" title={`${item.summary || item.title} · ${t(item.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')} · ${t(runStatusKey(item.status))}`} onClick={() => onOpen({ kind: item.kind, id: item.id })}>
                     <RunStatusMark status={item.status} />
                     <span className="ds-task-activity-heading">
                       <span className="ds-task-activity-title">{item.title}</span>

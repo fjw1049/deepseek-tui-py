@@ -37,7 +37,8 @@ afterEach(async () => {
 
 it('opens a single run directly and stops its activity indicator on completion', async () => {
   await render([agent('a')])
-  expect(trigger().textContent).toContain('检查 a 的界面布局')
+  expect(trigger().title).toContain('检查 a 的界面布局')
+  expect(trigger().textContent).toContain('code 1')
   expect(trigger().getAttribute('aria-expanded')).toBeNull()
   await act(async () => trigger().click())
   expect(onOpen).toHaveBeenCalledWith({ kind: 'subagent', id: 'a' })
@@ -74,7 +75,7 @@ it('preserves disclosure and row order when runs finish or more work arrives', a
   await render([agent('a', 'completed'), agent('b', 'completed')])
   expect(trigger().getAttribute('aria-expanded')).toBe('true')
   expect([...container.querySelectorAll('.ds-task-activity-row .ds-task-activity-title')].map((row) => row.textContent))
-    .toEqual(['检查 a 的界面布局', '检查 b 的界面布局'])
+    .toEqual(['code 1', 'code 2'])
   await act(async () => trigger().click())
   await render([agent('a', 'completed'), agent('b', 'completed'), agent('c')])
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
