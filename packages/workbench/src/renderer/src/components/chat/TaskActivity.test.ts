@@ -97,3 +97,25 @@ it('resets expanded when the list dips to a single item, so a later click expand
   await act(async () => trigger().click())
   expect(trigger().getAttribute('aria-expanded')).toBe('true')
 })
+
+
+it('uses compact task labels while keeping assignments and targets available', async () => {
+  const tasks = [
+    { id: 'task-a', prompt: '分析仓库 /Users/user/Desktop/MyAgent', status: 'running' as const },
+    { id: 'task-b', prompt: '检查测试覆盖', status: 'completed' as const }
+  ]
+  await render([], tasks.slice(0, 1))
+  expect(trigger().textContent).toBe('后台任务 1')
+  expect(trigger().title).toContain(tasks[0].prompt)
+  await act(async () => trigger().click())
+  expect(onOpen).toHaveBeenLastCalledWith({ kind: 'task', id: 'task-a' })
+
+  await render([], tasks)
+  await act(async () => trigger().click())
+  const rows = [...container.querySelectorAll<HTMLButtonElement>('.ds-task-activity-row')]
+  expect(rows.map((row) => row.textContent)).toEqual(['后台任务 1', '后台任务 2'])
+  expect(rows[0].title).toContain(tasks[0].prompt)
+  expect(rows[1].title).toContain(tasks[1].prompt)
+  await act(async () => rows[1].click())
+  expect(onOpen).toHaveBeenLastCalledWith({ kind: 'task', id: 'task-b' })
+})

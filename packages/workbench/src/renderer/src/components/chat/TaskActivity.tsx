@@ -20,7 +20,7 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
   const [expanded, setExpanded] = useState(false)
   const listId = useId()
   const items = [
-    ...tasks.map((task) => ({ kind: 'task' as const, id: task.id, status: task.status, title: runDisplayTitle(taskListTitle(task, Infinity)), summary: '' })),
+    ...tasks.map((task, index) => ({ kind: 'task' as const, id: task.id, status: task.status, title: `${t('taskActivityBackground')} ${index + 1}`, summary: runDisplayTitle(taskListTitle(task, Infinity)) })),
     ...agents.map((agent, index) => ({ kind: 'subagent' as const, id: agent.agentId, status: agent.status, title: `${humanizeAgentType(agent.agentType) || subagentListTitle({ ...agent, prompt: undefined })} ${index + 1}`, summary: runDisplayTitle(subagentListTitle(agent, Infinity)) }))
   ]
   const first = items[0]
