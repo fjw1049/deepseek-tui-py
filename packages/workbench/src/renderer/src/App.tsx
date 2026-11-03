@@ -1,4 +1,6 @@
-import { Component, lazy, Suspense, type ReactNode } from 'react'
+import { BUNDLED_POPULAR_PETS } from '@shared/pet-popular'
+import { preloadPetThumbnails } from './lib/pet/pet-thumbnails'
+import { Component, lazy, Suspense, useEffect, type ReactNode } from 'react'
 import i18n from './i18n'
 import { StartupWindowDragRegions } from './components/StartupWindowDragRegions'
 
@@ -41,6 +43,13 @@ function StartupShell(): React.ReactElement {
 }
 
 export default function App(): React.ReactElement {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      preloadPetThumbnails(BUNDLED_POPULAR_PETS.map(pet => pet.slug))
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [])
+
   return (
     <AppErrorBoundary>
       <Suspense fallback={<StartupShell />}>

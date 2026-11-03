@@ -195,7 +195,6 @@ export function SettingsView(): ReactElement {
   const [petAiLines, setPetAiLines] = useState(() => readPetAiLines())
   const [petSlug, setPetSlug] = useState(() => readPetSlug())
   const [popularPets, setPopularPets] = useState<PetPopularEntry[]>(() => [...BUNDLED_POPULAR_PETS])
-  const [popularLoading, setPopularLoading] = useState(false)
   const petPopularRequested = useRef(false)
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
   const [logDirPath, setLogDirPath] = useState('~/.deepseek/caches/logs')
@@ -230,14 +229,13 @@ export function SettingsView(): ReactElement {
     })
   }, [])
 
-  const loadPopularPets = useCallback(async (force = false): Promise<void> => {
+  const loadPopularPets = useCallback(async (): Promise<void> => {
     if (typeof window.dsGui?.fetchPopularPets !== 'function') return
-    setPopularLoading(true)
     try {
-      const result = await window.dsGui.fetchPopularPets(force)
+      const result = await window.dsGui.fetchPopularPets()
       setPopularPets(result.pets)
-    } finally {
-      setPopularLoading(false)
+    } catch {
+      // Keep the bundled list available when the ranking cannot be fetched.
     }
   }, [])
 
@@ -798,8 +796,6 @@ export function SettingsView(): ReactElement {
                     selectedSlug={petSlug}
                     selectedPet={selectedPet}
                     popular={popularPets}
-                    popularLoading={popularLoading}
-                    onRefreshPopular={() => void loadPopularPets(true)}
                     onSelect={selectPetSlug}
                   />
                 </div>

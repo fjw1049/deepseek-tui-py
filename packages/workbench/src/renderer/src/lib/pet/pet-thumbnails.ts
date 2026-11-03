@@ -1,28 +1,47 @@
 import { useEffect, useState } from 'react'
 
-// Thumbnails are tiny and never change for a slug, so one cache serves the session.
-const cache = new Map<string, string | null>()
-const inflight = new Set<string>()
+// Successful thumbnails are reused throughout the session; failures can be retried.
+const cache = new Map<string, string>()
+const pending = new Set<string>()
+const queue: string[] = []
+const listeners = new Set<() => void>()
+let active = 0
 
-export function usePetThumbnails(slugs: string[]): Record<string, string | null | undefined> {
+export function preloadPetThumbnails(slugs: string[]): void {
+  const resolve = window.dsGui?.resolvePetThumbnails
+  if (!resolve) return
+  for (const slug of slugs) {
+    if (cache.has(slug) || pending.has(slug)) continue
+    pending.add(slug)
+    queue.push(slug)
+  }
+  const pump = (): void => {
+    while (active < 6 && queue.length) {
+      const slug = queue.shift()!
+      active++
+      // Resolve separately so a slow image cannot hold back ready thumbnails.
+      void Promise.resolve().then(() => resolve([slug])).then(result => {
+        if (result[slug]) cache.set(slug, result[slug]!)
+      }).catch(() => {
+        // A later settings visit or refresh may retry.
+      }).finally(() => {
+        pending.delete(slug)
+        active--
+        listeners.forEach(listener => listener())
+        pump()
+      })
+    }
+  }
+  pump()
+}
+
+export function usePetThumbnails(slugs: string[]): Record<string, string | undefined> {
   const [, setVersion] = useState(0)
-
   useEffect(() => {
-    const resolve = window.dsGui?.resolvePetThumbnails
-    const missing = slugs.filter((slug) => !cache.has(slug) && !inflight.has(slug))
-    if (!resolve || missing.length === 0) return
-    let cancelled = false
-    missing.forEach((slug) => inflight.add(slug))
-    void resolve(missing).then((result) => {
-      for (const slug of missing) cache.set(slug, result[slug] ?? null)
-    }, () => {
-      // Leave them uncached so a later render can retry.
-    }).finally(() => {
-      missing.forEach((slug) => inflight.delete(slug))
-      if (!cancelled) setVersion((version) => version + 1)
-    })
-    return () => { cancelled = true }
+    const update = (): void => setVersion(version => version + 1)
+    listeners.add(update)
+    preloadPetThumbnails(slugs)
+    return () => { listeners.delete(update) }
   }, [slugs])
-
-  return Object.fromEntries(slugs.map((slug) => [slug, cache.get(slug)]))
+  return Object.fromEntries(slugs.map(slug => [slug, cache.get(slug)]))
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
-import { Check, Heart, RefreshCw } from 'lucide-react'
+import { Check, Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { PetPopularEntry } from '@shared/pet-popular'
@@ -32,6 +32,8 @@ function PetPreview({ pet, slug }: { pet: PetPickerItem | null; slug: string }):
     let cancelled = false
     let revoke: (() => void) | null = null
     setFailed(false)
+    setSrc(null)
+    setState('idle')
     void resolvePetSpritesheetSrc(slug).then((result) => {
       if (cancelled) return result.revoke()
       revoke = result.revoke
@@ -51,9 +53,9 @@ function PetPreview({ pet, slug }: { pet: PetPickerItem | null; slug: string }):
 
   return (
     <div className="flex min-w-0 flex-col gap-2.5">
-      <div className="relative flex h-36 items-end justify-center overflow-hidden rounded-xl border border-ds-border-muted bg-ds-card dark:bg-white/[0.04]">
+      <div className="relative flex h-64 items-center justify-center overflow-hidden rounded-xl border border-ds-border-muted bg-ds-card dark:bg-white/[0.04]">
         {src ? (
-          <PetSprite src={src} stateId={state} playKey={playKey} scale={0.62} label={pet?.displayName ?? slug} />
+          <PetSprite src={src} stateId={state} playKey={playKey} scale={1.1} label={pet?.displayName ?? slug} />
         ) : (
           <span className="self-center text-[12px] text-ds-faint">
             {t(failed ? 'petMascotPreviewUnavailable' : 'petMascotPreviewLoading')}
@@ -147,8 +149,6 @@ export function PetPicker({
   selectedSlug,
   selectedPet,
   popular,
-  popularLoading,
-  onRefreshPopular,
   onSelect
 }: {
   enabled: boolean
@@ -156,35 +156,19 @@ export function PetPicker({
   /** Name and stats for the current pet, when the ranking knows them. */
   selectedPet: PetPickerItem | null
   popular: PetPickerItem[]
-  popularLoading: boolean
-  onRefreshPopular: () => void
   onSelect: (pet: PetPickerItem) => void
 }): ReactElement {
-  const { t } = useTranslation('settings')
   const thumbs = usePetThumbnails(useMemo(() => popular.map((pet) => pet.slug), [popular]))
 
   return (
     <fieldset
       disabled={!enabled}
-      className={`grid min-w-0 gap-4 transition sm:grid-cols-[200px_minmax(0,1fr)] ${
+      className={`grid min-w-0 gap-4 transition md:grid-cols-[260px_minmax(0,1fr)] ${
         enabled ? '' : 'pointer-events-none opacity-45 grayscale'
       }`}
     >
       <PetPreview pet={selectedPet} slug={selectedSlug} />
       <div className="flex min-w-0 flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[13px] font-semibold text-ds-ink">{t('petPickerPopularTitle')}</div>
-          <button
-            type="button"
-            onClick={onRefreshPopular}
-            disabled={popularLoading}
-            title={t('petPickerRefresh')}
-            aria-label={t('petPickerRefresh')}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-60"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${popularLoading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
         <div className="grid max-h-[300px] grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-1 overflow-y-auto pr-1">
           {popular.map((pet) => (
             <PetTile
