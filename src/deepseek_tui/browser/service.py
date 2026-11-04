@@ -1976,12 +1976,6 @@ class BrowserService:
             existing = next((tab for tab in before_tabs if tab.get("url") == a.url), None)
             if existing:
                 result = None if existing.get("active") else await s.switch_tab(existing["tab_id"])
-                # Opening a local page again after a code change means wanting the new build;
-                # a page that came from a form post is left alone rather than resent.
-                if (is_loopback(urlsplit(a.url).hostname or "")
-                        and (result is None or result.success)
-                        and not await self._form_submission_page(run)):
-                    result = await s.reload()
             elif own_tab is False:
                 # The shown tab is the user's page: open the site beside it, never over it.
                 result = await s.new_tab(force_new=True)

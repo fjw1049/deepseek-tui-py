@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 import uuid
 from collections import deque
@@ -108,34 +107,6 @@ _ROUND_BUDGET_NOTICE = 20
 # 22 of 22 such stops in 345 measured turns had announced work and not done it.
 _SHORT_STOP_MIN_ROUNDS = 5
 _SHORT_STOP_MAX_CHARS = 200
-# A stop whose last sentence plans the next step ("我先关掉登录框…", "Let me check…") ended
-# before doing it, however few rounds came first: 12 of the 20 UI turns users had to resume
-# with 继续 ended this way, most below _SHORT_STOP_MIN_ROUNDS. Questions and offers to the
-# user are not plans.
-_NEXT_STEP = re.compile(
-    r"^(?:现在(?!可以|已|是|就)|接下来|接着|下一步|然后|随后|马上|再|先|点开?|打开|切到?|换个?|试试?"
-    r"|直接(?:在|用|点|打开|搜))"
-    r"|我(?:先|再|来|去|马上|现在|重新|换|改|试)"
-    r"|^(?:let me|i'll|i will|i'm going to|now i|next,? i)\b",
-    re.IGNORECASE,
-)
-_OFFER = re.compile(r"如果|如需|需要我|需要的话|要不要|是否需要|随时|if you|would you|let me know",
-                    re.IGNORECASE)
-_NEXT_STEP_MAX_NUDGES = 2
-
-
-def _announces_next_step(text: str) -> bool:
-    text = text.strip()
-    sentences = [s.strip() for s in re.split(r"[。！!？?\n]|\.(?:\s|$)", text) if s.strip()]
-    if not sentences or text.endswith(("?", "？")):
-        return False
-    last = sentences[-1]
-    if _OFFER.search(last) or "吗" in last:
-        return False
-    # "控制权有变化，先读状态": the plan can open the last clause rather than the sentence.
-    clause = re.split(r"[，,；;：:]", last)[-1].strip()
-    return bool(_NEXT_STEP.search(last) or _NEXT_STEP.search(clause))
-
 # Same backstop for turn_end ("Stop") hooks. Unlike the checklist gate there is
 # no progress signal to release on, so a hook that blocks unconditionally used
 # to spin to the round-trip limit — re-sending the whole context every round.
@@ -3276,7 +3247,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         # tool → the stop was premature, keep working. The gate never judges
         # whether the work is done — see _next_checklist_gate_summary.
         checklist_gate_fires = 0
-        next_step_nudges = 0
         truncated_rounds = 0
         held_stop_result: TurnResult | None = None
         result = TurnResult(assistant_message=None)
@@ -3628,26 +3598,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     logger.info("pending_state_reminded pending=%s", pending)
                     continue
                 stop_text = result.assistant_message.text_content() if result.assistant_message else ""
-                if (next_step_nudges < _NEXT_STEP_MAX_NUDGES
-                        and (self.mode or "agent") == "agent"
-                        and len(stop_text.strip()) < _SHORT_STOP_MAX_CHARS
-                        and not result.error_message
-                        and round_idx < self.max_tool_round_trips
-                        and _announces_next_step(stop_text)):
-                    next_step_nudges += 1
-                    # This covers the short-stop question too; one turn pays for one of them.
-                    facts.short_stop_checked = True
-                    from deepseek_tui.engine import reminders
-
-                    messages.append(reminders.reminder_message(
-                        reminders.SHORT_STOP,
-                        "Your message announces a next step but made no tool call, so that step "
-                        "has not happened. Do it now with tool calls. If you decided against "
-                        "it, tell the user why and what remains.",
-                        reason="next_step_stop",
-                    ))
-                    logger.info("next_step_stop_reminded rounds=%d", tool_round_count)
-                    continue
                 if (tool_round_count >= _SHORT_STOP_MIN_ROUNDS
                         and len(stop_text.strip()) < _SHORT_STOP_MAX_CHARS
                         and not facts.short_stop_checked and not result.error_message

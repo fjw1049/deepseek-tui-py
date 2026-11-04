@@ -1171,3 +1171,19 @@ async def test_real_private_browser_keeps_page_opened_windows_with_the_user(tmp_
     finally:
         await service.close_all()
         httpd.shutdown()
+
+
+@pytest.mark.parametrize('active', [True, False])
+async def test_reopening_local_page_preserves_unsaved_state(browser, monkeypatch, active):
+    run = browser.runs['one']
+    run.session.reload = AsyncMock()
+    run.session.switch_tab = AsyncMock(return_value=SimpleNamespace(success=True, content='done', error=None))
+    monkeypatch.setattr(browser, '_refresh_tabs', AsyncMock(return_value=[
+        {'tab_id': 'local', 'url': 'http://localhost:5173/', 'active': active},
+    ]))
+    result = await browser.action('one', BrowserAction(action='open', url='http://localhost:5173/'))
+    assert result['success']
+    run.session.reload.assert_not_awaited()
+    run.session.navigate.assert_not_awaited()
+    if not active:
+        run.session.switch_tab.assert_awaited_once_with('local')

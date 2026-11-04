@@ -8,7 +8,6 @@ import hashlib
 import json
 import math
 import os
-import re
 import sys
 import time
 import uuid
@@ -33,27 +32,9 @@ _RUNTIMES: dict[tuple[str, bool], dict[str, Any]] = {}
 
 
 def _code_fingerprint(arguments: dict[str, Any]) -> str | None:
-    """Identifies a replay of the same code without storing the code itself."""
-    code = " ".join(str(arguments.get("code") or "").split())
+    """Record an exact-code digest for diagnostics, not an authorization decision."""
+    code = str(arguments.get("code") or "")
     return hashlib.sha256(code.encode()).hexdigest()[:16] if code else None
-
-
-# Runtime reads (bridge.mjs OBSERVATIONS plus discovery) and plain JavaScript helpers.
-# Code calling only these cannot have changed an app, so its interruption leaves nothing
-# for the user to review. Any other method call counts as a possible action.
-_READ_METHODS = frozenset({
-    "getState", "listApps", "getApp", "getAXState", "getScreenshot",
-    "getAXStateAndScreenshot", "rewriteDocumentation",
-    "write", "log", "filter", "map", "find", "some", "every", "slice", "join", "split",
-    "includes", "test", "match", "replace", "trim", "toLowerCase", "toUpperCase",
-    "startsWith", "endsWith", "indexOf", "keys", "values", "entries", "stringify", "parse",
-    "sort", "reverse", "at",
-})
-
-
-def _reads_only(arguments: dict[str, Any]) -> bool:
-    calls = re.findall(r"\.\s*([A-Za-z_$][\w$]*)\s*\(", str(arguments.get("code") or ""))
-    return bool(calls) and set(calls) <= _READ_METHODS
 
 
 def _runtime_key(config: Any) -> tuple[str, bool]:
@@ -177,18 +158,22 @@ class CuaSession:
         self.turn_used = False
         self.control_revision = 0
         self.control_lock = asyncio.Lock()
-        self.unresolved: dict[str, Any] | None = None
+        self._unresolved: list[dict[str, Any]] = []
         from deepseek_tui.config.paths import user_deepseek_dir
         self.receipt_path = user_deepseek_dir() / "state" / "cua" / (
             hashlib.sha256((owner_id or session_id).encode()).hexdigest() + ".json"
         )
         try:
             receipt = json.loads(self.receipt_path.read_text())
+            pending = receipt.get("unresolved", [])
+            if isinstance(pending, dict):
+                pending = [pending]
+            self._unresolved = pending
             if receipt.get("outcome") in {"unknown", "in_progress"}:
-                self.unresolved = {**receipt, "outcome": "unknown"}
-                self.unresolved.pop("unresolved", None)
-            elif isinstance(receipt.get("unresolved"), dict):
-                self.unresolved = receipt["unresolved"]
+                current = {k: v for k, v in receipt.items() if k != "unresolved"}
+                current["outcome"] = "unknown"
+                if not any(r["call_id"] == current["call_id"] for r in self._unresolved):
+                    self._unresolved.append(current)
         except FileNotFoundError:
             pass
         self.lock = asyncio.Lock()
@@ -203,14 +188,18 @@ class CuaSession:
         # The user changed the bound app outside a takeover; the next call observes first.
         self.outside_change = ""
         self.observation_generation = 0
-        # (turn, call) whose unknown outcome the model was last told about.
-        self._unresolved_noted: tuple[str, str] | None = None
+        # Pending calls the model was last told about in this turn.
+        self._unresolved_noted: tuple[str, tuple[str, ...]] | None = None
         # True once model code has run in this connection's REPL.
         self._bound = False
         # Large text blocks the runtime returned, newest last; outlives reconnects.
         self.large_texts: list[str] = []
         # Window counts already reported per app, so a multi-window note is not repeated.
         self.window_counts: dict[str, int] = {}
+
+    @property
+    def unresolved(self) -> dict[str, Any] | None:
+        return self._unresolved[0] if self._unresolved else None
 
     def heal_target(self) -> dict[str, str] | None:
         """The app the host can observe on the model's behalf (macOS observes by app)."""
@@ -286,15 +275,17 @@ class CuaSession:
                                    "outcome": outcome, "recorded_at": time.time()}
         if code:
             receipt["code"] = code
+        pending = [r for r in self._unresolved if r["call_id"] != call_id]
         if outcome == "unknown":
-            self.unresolved = receipt
-        elif outcome == "reviewed":
-            self.unresolved = None
-        elif self.unresolved:
-            # Later calls run on; the earlier uncertainty stays until the user reviews it.
-            receipt["unresolved"] = self.unresolved
+            pending.append(receipt.copy())
+        elif outcome != "reviewed":
+            pending = list(self._unresolved)
+        receipt["unresolved"] = pending
+        if outcome == "unknown":
+            self._unresolved = pending
         # fsync must not stall every conversation; the caller still awaits the write.
         await asyncio.to_thread(self._write_receipt, receipt)
+        self._unresolved = pending
         self.control_revision += 1
 
     def _write_receipt(self, receipt: dict[str, Any]) -> None:
@@ -572,12 +563,6 @@ class CuaSession:
             if self.human_reserved:
                 raise ToolError("The user controls the desktop. Wait for control to be returned.")
             code = _code_fingerprint(arguments) if name == "js" else None
-            # An uncertain call blocks only its own replay; other work goes on with a note.
-            if code and self.unresolved and self.unresolved.get("code") == code:
-                raise ToolError("Not executed: this is the same code as an earlier computer-use "
-                                "call whose outcome is unknown, so it may already have taken "
-                                "effect. Observe the app and act on what it shows; do not "
-                                "repeat the action.")
             if name == "js" and self.outside_change:
                 raise ToolError("Not executed: " + self.outside_change
                                 + " Use cua_observe to obtain a fresh observation before "
@@ -605,8 +590,7 @@ class CuaSession:
             try:
                 # Write before dispatch so a host crash cannot turn an uncertain
                 # submission into an apparently safe retry. Store no code or pixels.
-                reads_only = name == "js" and _reads_only(arguments)
-                if name == "js" and not reads_only:
+                if name == "js":
                     await self.record_outcome(turn_id, call_id, "in_progress", code=code)
                 self._bound = True
                 result = await self._request(
@@ -643,8 +627,8 @@ class CuaSession:
                 return result
             except BaseException:
                 try:
-                    # An interrupted read changed nothing: no review, and repeating it is safe.
-                    if name == "js" and not reads_only:
+                    # Arbitrary JavaScript may have sent input before the interruption.
+                    if name == "js":
                         await self.record_outcome(turn_id, call_id, "unknown", code=code)
                 finally:
                     # Even a receipt write failure must stop the native connection.
@@ -667,11 +651,13 @@ class CuaSession:
             if not result.get("isError") and any(
                     a.get("observe") and a.get("ok") for a in actions):
                 self.reset_reason = ""
-        if self.unresolved and self._unresolved_noted != (turn_id, self.unresolved["call_id"]):
-            self._unresolved_noted = (turn_id, self.unresolved["call_id"])
+        pending_ids = tuple(r["call_id"] for r in self._unresolved)
+        if pending_ids and self._unresolved_noted != (turn_id, pending_ids):
+            self._unresolved_noted = (turn_id, pending_ids)
             notes.append("[Host: an earlier computer-use call has an unknown outcome and may "
                          "already have taken effect. Check the app before repeating that "
-                         "effect; the user can mark it reviewed in the operation panel.]")
+                         "effect; the user can review each pending operation in the operation panel. "
+                         f"Pending call IDs: {pending_ids}.]")
         if notes:
             result.setdefault("content", []).append({"type": "text", "text": "\n".join(notes)})
 

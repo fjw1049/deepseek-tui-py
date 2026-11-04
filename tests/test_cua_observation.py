@@ -47,9 +47,6 @@ async def test_observing_unknown_outcome_preserves_receipt(session, tmp_path):
         result = await registry.get("cua_observe").execute({"app": "dev.fixture"}, context)
         assert result.success
         assert session.unresolved["call_id"] == "uncertain-click"
-        # Only a replay of the uncertain code is refused; other work continues with a note.
-        with pytest.raises(ToolError, match="outcome is unknown"):
-            await registry.get("cua_js").execute({"code": "click"}, context)
         other = await registry.get("cua_js").execute({"code": "read"}, context)
         assert other.success and "unknown outcome" in other.content
         again = await registry.get("cua_js").execute({"code": "read more"}, context)
@@ -214,7 +211,12 @@ async def test_app_that_cannot_be_observed_does_not_block_code_for_good(session,
 
 
 @pytest.mark.asyncio
-async def test_interrupted_read_leaves_nothing_to_review(session, monkeypatch):
+@pytest.mark.parametrize("code", [
+    'await app["click"]({x:1,y:2}); console.log("done")',
+    'await submit(); console.log("done")',
+    "const s = await cua.getState(); nodeRepl.write(s)",
+])
+async def test_interrupted_arbitrary_js_preserves_receipt(session, monkeypatch, code):
     await session.connect()
     original_request = session._request
 
@@ -226,12 +228,14 @@ async def test_interrupted_read_leaves_nothing_to_review(session, monkeypatch):
 
     monkeypatch.setattr(session, "_request", request)
     with pytest.raises(ToolError):
-        await session.call("js", {"code": "const s = await cua.getState(); nodeRepl.write(s)"},
+        await session.call("js", {"code": code},
                            "turn", "read")
-    assert session.unresolved is None
+    assert session.unresolved["call_id"] == "read"
     await session.connect()
     with pytest.raises(ToolError):
         await session.call("js", {"code": "await app.click(3)"}, "turn", "act")
+    assert session.unresolved["call_id"] == "read"
+    await session.acknowledge("read")
     assert session.unresolved["call_id"] == "act"
 
 

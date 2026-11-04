@@ -111,8 +111,9 @@ async def test_crash_during_dispatched_call_restores_uncertainty(desktop, tmp_pa
     assert session.unresolved is None
     recovered = CuaSession(CuaConfig(), tmp_path, 'different-session', owner_id='thread')
     assert recovered.unresolved['call_id'] == 'submit'
-    with pytest.raises(ToolError, match='outcome is unknown'):
-        await recovered.call('js', {'code': ' submit() '}, 'turn2', 'call2')
+    result = {}
+    recovered._annotate(result, 'turn2')
+    assert 'unknown outcome' in result['content'][0]['text']
 
 
 async def test_child_uncertainty_is_reviewable_from_parent(desktop, tmp_path):
@@ -362,3 +363,23 @@ async def test_panel_frame_comes_from_the_session_that_acted_last(desktop):
     assert await manager.cua_preview_frame('thread') == {'data': 'child'}
     state.active_turn = None
     assert await manager.cua_preview_frame('thread') is None
+
+
+async def test_multiple_unknown_outcomes_survive_restart_and_individual_review(desktop, tmp_path):
+    _, _, session = desktop
+    await session.record_outcome('t', 'first', 'unknown')
+    await session.record_outcome('t', 'second', 'unknown')
+    await session.record_outcome('t', 'third', 'in_progress')
+    import json
+    receipt = json.loads(session.receipt_path.read_text())
+    assert [r['call_id'] for r in receipt['unresolved']] == ['first', 'second']
+    recovered = CuaSession(session.config, tmp_path, session.session_id, owner_id=session.lease.owner)
+    for call_id in ('first', 'second', 'third'):
+        assert recovered.unresolved['call_id'] == call_id
+        await recovered.acknowledge(call_id)
+    assert recovered.unresolved is None
+
+
+def test_code_fingerprint_preserves_literal_whitespace():
+    assert _code_fingerprint({'code': 'await app.typeText("a  b")'}) != _code_fingerprint(
+        {'code': 'await app.typeText("a b")'})
