@@ -340,10 +340,20 @@ class TurnLoop:
                             )
                         state.context_recovery_attempts += 1
                         if self._compact_fn is not None:
+                            before_compact = estimated_input_tokens(request.messages)
                             _apply_compact_result(
                                 request,
                                 await self._compact_fn(request.messages),
                             )
+                            if estimated_input_tokens(request.messages) >= before_compact:
+                                msg = ("Context recovery made no progress; history was preserved. "
+                                       "Run /compact or /clear.")
+                                await emit(ErrorEvent(message=msg, retryable=False))
+                                return TurnResult(
+                                    assistant_message=None,
+                                    outcome=TurnOutcomeStatus.CONTEXT_OVERFLOW,
+                                    error_message=msg,
+                                )
                         continue
 
             stream_request = MessageRequest(
@@ -483,10 +493,20 @@ class TurnLoop:
                                 state.context_recovery_attempts,
                                 MAX_CONTEXT_RECOVERY_ATTEMPTS,
                             )
+                            before_compact = estimated_input_tokens(request.messages)
                             _apply_compact_result(
                                 request,
                                 await self._compact_fn(request.messages),
                             )
+                            if estimated_input_tokens(request.messages) >= before_compact:
+                                msg = ("Context recovery made no progress; history was preserved. "
+                                       "Run /compact or /clear.")
+                                await emit(ErrorEvent(message=msg, retryable=False))
+                                return TurnResult(
+                                    assistant_message=None,
+                                    outcome=TurnOutcomeStatus.CONTEXT_OVERFLOW,
+                                    error_message=msg,
+                                )
                             break  # retry with compacted history
                         # Transparent retry: only if no content received yet
                         # and the error is retryable. Local fail-fast errors

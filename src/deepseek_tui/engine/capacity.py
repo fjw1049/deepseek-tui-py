@@ -10,6 +10,7 @@ import json
 import asyncio
 import logging
 import re
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -413,6 +414,10 @@ def should_compact(
     return False
 
 
+class SummaryTruncatedError(ValueError):
+    """The output budget was exhausted; identical retries cannot help."""
+
+
 class CompactionBudgetError(ValueError):
     """A deterministic capacity failure; retrying the same request cannot help."""
 
@@ -519,6 +524,7 @@ async def compact_messages_safe(
     effective_model = model_override or config.model or "deepseek-chat"
 
     max_retries = 3
+    output_multiplier = 1
     for attempt in range(max_retries):
         try:
             summary = await _create_summary(
@@ -527,6 +533,7 @@ async def compact_messages_safe(
                 effective_model,
                 previous_summary=prev,
                 model_config=model_config,
+                output_multiplier=output_multiplier,
             )
             validation_error = validate_compaction_summary(summary)
             if validation_error:
@@ -579,6 +586,14 @@ async def compact_messages_safe(
                 success=True,
             )
 
+        except SummaryTruncatedError as exc:
+            if attempt < max_retries - 1:
+                output_multiplier *= 2
+                logger.warning("compact_output_truncated next_multiplier=%d", output_multiplier)
+                continue
+            return CompactionResult(
+                messages=messages, failure_reason=str(exc), retries_used=attempt + 1
+            )
         except CompactionBudgetError as exc:
             logger.warning("compact_budget_rejected: %s", exc)
             return CompactionResult(messages=messages, failure_reason=str(exc), retries_used=attempt)
@@ -597,7 +612,9 @@ async def compact_messages_safe(
                 max_retries,
                 exc_info=True,
             )
-            return CompactionResult(messages=messages, retries_used=attempt + 1)
+            return CompactionResult(
+                messages=messages, failure_reason=str(exc), retries_used=attempt + 1
+            )
 
     return CompactionResult(messages=messages)
 
@@ -609,6 +626,7 @@ async def _create_summary(
     *,
     previous_summary: str | None = None,
     model_config: object | None = None,
+    output_multiplier: int = 1,
 ) -> str:
     """Create a structured compaction handoff using the compact.md contract."""
     from deepseek_tui.engine.context_pressure import is_synthetic_user_message
@@ -685,7 +703,7 @@ async def _create_summary(
     request = MessageRequest(
         model=model,
         messages=[Message.user(user_prompt)],
-        max_tokens=limits.max_tokens,
+        max_tokens=limits.max_tokens * min(4, max(1, output_multiplier)),
         system_prompt=system_prompt,
     )
 
@@ -695,13 +713,14 @@ async def _create_summary(
     from deepseek_tui.protocol.responses import StreamDone, StreamError
 
     summary = ""
-    async for event in response:
-        if isinstance(event, StreamError):
-            raise ValueError(f"Compaction stream failed: {event.message}")
-        if isinstance(event, StreamDone) and event.truncated:
-            raise ValueError("Compaction stream was truncated")
-        if hasattr(event, "text"):
-            summary += event.text
+    async with aclosing(response):
+        async for event in response:
+            if isinstance(event, StreamError):
+                raise ValueError(f"Compaction stream failed: {event.message}")
+            if isinstance(event, StreamDone) and event.truncated:
+                raise SummaryTruncatedError("Compaction stream was truncated")
+            if hasattr(event, "text"):
+                summary += event.text
 
     return summary.strip()
 

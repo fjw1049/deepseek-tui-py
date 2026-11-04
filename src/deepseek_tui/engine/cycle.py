@@ -214,13 +214,16 @@ async def produce_briefing(
 
     validate_summary_request_budget(request, model_config)
     result_text: list[str] = []
-    async for event in client.stream_chat_completion(request):
-        if isinstance(event, StreamError):
-            raise ValueError(f"Cycle briefing stream failed: {event.message}")
-        if isinstance(event, StreamDone) and event.truncated:
-            raise ValueError("Cycle briefing stream was truncated")
-        if isinstance(event, StreamTextDelta):
-            result_text.append(event.text)
+    from contextlib import aclosing
+
+    async with aclosing(client.stream_chat_completion(request)) as stream:
+        async for event in stream:
+            if isinstance(event, StreamError):
+                raise ValueError(f"Cycle briefing stream failed: {event.message}")
+            if isinstance(event, StreamDone) and event.truncated:
+                raise ValueError("Cycle briefing stream was truncated")
+            if isinstance(event, StreamTextDelta):
+                result_text.append(event.text)
 
     raw = "".join(result_text)
     extracted = extract_carry_forward(raw)
