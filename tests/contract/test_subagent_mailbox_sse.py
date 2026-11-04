@@ -448,6 +448,13 @@ async def test_monitor_turn_reconciles_on_cancel(runtime_app: object) -> None:
             subagent_manager=fake_manager,
         )
     )
+    from deepseek_tui.engine.usage_ledger import TurnUsageLedger
+    from deepseek_tui.protocol.responses import Usage
+
+    stub_engine.turn_usage_ledger = TurnUsageLedger()
+    stub_engine.turn_usage_ledger.add(
+        model="test", source="agent_round", usage=Usage(input_tokens=31, output_tokens=17)
+    )
     engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
     async with manager._active_lock:
         manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
@@ -471,6 +478,7 @@ async def test_monitor_turn_reconciles_on_cancel(runtime_app: object) -> None:
         async with manager._active_lock:
             manager._active.pop(thread.id, None)
 
+    assert manager.store.load_turn(turn_id).usage["output_tokens"] == 17
     events = manager.events_since(thread.id, 0)
     mailbox_events = [e for e in events if e.event == "subagent.mailbox"]
     kinds = [e.payload["message"]["kind"] for e in mailbox_events]

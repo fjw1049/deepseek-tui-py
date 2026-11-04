@@ -5531,6 +5531,15 @@ class RuntimeThreadManager:
         if diff_snapshot is not _UNSET:
             turn.diff_snapshot = diff_snapshot
         latency_payload = self._finalize_turn_timing(turn)
+        # Every terminal path, including cancellation and answer recovery, settles
+        # the live ledger here rather than persisting an earlier usage snapshot.
+        async with self._active_lock:
+            active = self._active.get(thread_id)
+            active_engine = active.engine if active is not None else None
+        turn_usage = turn_usage_from_engine_or_event(
+            engine=active_engine, event=None,
+            model=self.store.load_thread(thread_id).model or "deepseek-chat",
+        ) or turn_usage
         turn.usage = turn_usage
         turn.error = turn_error
         if turn_usage is not None:
@@ -6019,6 +6028,7 @@ class RuntimeThreadManager:
             checkpoint_ready.set_result(None)
         turn_status = RuntimeTurnStatus.COMPLETED
         completion_note: str | None = None
+        completion_answer: str | None = None
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
         first_response = asyncio.Event()
@@ -6985,6 +6995,8 @@ class RuntimeThreadManager:
                     task_turn.task_outcome = event.task_outcome
                     self.store.save_turn(task_turn)
                 completion_note = event.completion_note
+                if event.assistant_message is not None:
+                    completion_answer = event.assistant_message.text_content().strip()
                 await flush_delta_batch()
                 first_response.set()
                 thread_model = self.store.load_thread(thread_id).model or "deepseek-chat"
@@ -7117,14 +7129,19 @@ class RuntimeThreadManager:
 
         if turn_status == RuntimeTurnStatus.COMPLETED:
             promoted = await self._promote_last_provisional_message_to_final_answer(
-                thread_id, turn_id
+                thread_id, turn_id, answer=completion_answer
             )
             if not promoted:
-                recovered_answer = await self._recover_missing_final_answer(
-                    thread_id, turn_id
-                )
-                if recovered_answer:
-                    await persist_final_answer_message(text=recovered_answer)
+                # Some terminal paths return an answer without streaming deltas.
+                if completion_answer:
+                    await persist_final_answer_message(text=completion_answer)
+                else:
+                    recovered_answer = await self._recover_missing_final_answer(
+                        thread_id, turn_id
+                    )
+                    if recovered_answer:
+                        await persist_final_answer_message(text=recovered_answer)
+
         if completion_note:
             await self._attach_completion_note(thread_id, turn_id, completion_note)
 
@@ -7142,7 +7159,7 @@ class RuntimeThreadManager:
     # --- helpers -------------------------------------------------------------
 
     async def _promote_last_provisional_message_to_final_answer(
-        self, thread_id: str, turn_id: str
+        self, thread_id: str, turn_id: str, *, answer: str | None = None,
     ) -> bool:
         """Promote the last no-tool provisional preface to ``final_answer``.
 
@@ -7160,6 +7177,13 @@ class RuntimeThreadManager:
             metadata = item.metadata if isinstance(item.metadata, dict) else {}
             text = (item.detail or item.summary or "").strip()
             if not text:
+                continue
+            if answer and text != answer:
+                if metadata.get(AGENT_SEGMENT_KEY) == FINAL_ANSWER:
+                    item.metadata = {**metadata, AGENT_SEGMENT_KEY: MID_TURN_PREFACE}
+                    self.store.save_item(item)
+                    await self._emit_event(thread_id, turn_id, item_id, "item.completed",
+                                           {"item": item.model_dump(mode="json")})
                 continue
             if metadata.get(AGENT_SEGMENT_KEY) == FINAL_ANSWER:
                 return True
