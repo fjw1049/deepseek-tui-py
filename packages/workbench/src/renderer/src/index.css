@@ -1473,39 +1473,7 @@ samp {
   line-height: 20px;
 }
 
-/* Folder branches: height-animated expand/collapse via the grid 0fr -> 1fr trick.
-   Children stay mounted while collapsed so both directions animate. */
-.ds-tree-branch {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 180ms ease-out;
-}
-
-.ds-tree-branch[data-open] {
-  grid-template-rows: 1fr;
-}
-
-.ds-tree-branch__inner {
-  position: relative;
-  min-height: 0;
-  overflow: hidden;
-  visibility: hidden;
-  transition: visibility 0s linear 180ms;
-}
-
-.ds-tree-branch[data-open] .ds-tree-branch__inner {
-  visibility: visible;
-  transition: visibility 0s;
-}
-
 .ds-tree-folder { color: var(--ds-text-faint); }
-
-@media (prefers-reduced-motion: reduce) {
-  .ds-tree-branch,
-  .ds-tree-branch__inner {
-    transition: none;
-  }
-}
 
 /* Tree row: unsaved-changes dot (replaces the text character ●). */
 .ds-tree-dirty-dot {

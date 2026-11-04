@@ -1,5 +1,5 @@
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronsDownUp, ChevronsUpDown, ChevronRight, RefreshCw, Folder, FolderOpen, Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
@@ -20,7 +20,6 @@ import { useWorkspaceViewPreferences } from '../../store/workspace-view-preferen
 
 type TreeNodeState = {
   entries: WorkspaceTreeEntry[]
-  loading: boolean
   loaded: boolean
   error: string | null
 }
@@ -38,10 +37,6 @@ type Props = {
 /** Tree keys: posix + lower-case so clicks and cache always agree. */
 function treeKey(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '').trim().toLowerCase()
-}
-
-function emptyNode(loading: boolean): TreeNodeState {
-  return { entries: [], loading, loaded: false, error: null }
 }
 
 async function fetchDirectory(
@@ -103,425 +98,376 @@ export function WorkspaceFileTree({
   const trimmedRootRef = useRef(trimmedRoot)
   trimmedRootRef.current = trimmedRoot
   const nodesRef = useRef<Record<string, TreeNodeState>>({})
-
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const restored = readExpandedDirs(trimmedRoot)
-    return new Set([...restored].map(treeKey))
-  })
   const [nodes, setNodes] = useState<Record<string, TreeNodeState>>({})
-  nodesRef.current = nodes
+  const [expanded, setExpanded] = useState(() => readExpandedDirs(trimmedRoot))
+  const expandedRef = useRef(expanded)
+  const operation = useRef(0)
+  const [expanding, setExpanding] = useState(false)
+  const expandIntent = useRef(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshPending = useRef(false)
+  const refreshRunning = useRef(false)
+  const filterRef = useRef(showAllFiles)
+  filterRef.current = showAllFiles
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const persistPending = useRef<(() => void) | null>(null)
 
-  const loadChildDirectory = useCallback((directoryPath: string): void => {
+  const updateExpanded = useCallback((next: Set<string>): void => {
+    expandedRef.current = next
+    setExpanded(next)
     const root = trimmedRootRef.current
+    persistPending.current = () => writeExpandedDirs(root, next)
+    if (persistTimer.current) clearTimeout(persistTimer.current)
+    persistTimer.current = setTimeout(() => {
+      persistPending.current?.()
+      persistPending.current = null
+      persistTimer.current = null
+    }, 250)
+  }, [])
+
+  // Share the limit across cancelled scans: already-issued IPC cannot be aborted.
+  const requests = useRef({ active: 0, waiting: [] as Array<() => void> })
+  const readDirectory = useCallback(async (root: string, path: string, version: number) => {
+    const queue = requests.current
+    await new Promise<void>((resolve) => {
+      const start = (): void => { queue.active += 1; resolve() }
+      if (queue.active < 4) start()
+      else queue.waiting.push(start)
+    })
+    try {
+      if (operation.current !== version) return null
+      return await fetchDirectory(root, path)
+    } finally {
+      queue.active -= 1
+      queue.waiting.shift()?.()
+    }
+  }, [])
+
+  const scan = useCallback(async (openAll = false): Promise<void> => {
+    const root = trimmedRootRef.current
+    const version = ++operation.current
+    expandIntent.current = openAll
+    setExpanding(openAll)
     if (!root) return
-
-    const key = treeKey(directoryPath)
-    const existing = nodesRef.current[key]
-    if (existing?.loading || existing?.loaded) return
-
-    setNodes((prev) => ({
-      ...prev,
-      [key]: emptyNode(true)
-    }))
-
-    void (async () => {
-      // Prefer the original relative path for IPC; key is only for state.
-      const result = await fetchDirectory(root, directoryPath)
-      if (trimmedRootRef.current !== root) return
-
-      setNodes((prev) => ({
-        ...prev,
-        [key]: {
-          entries: result.ok ? result.entries : [],
-          loading: false,
-          loaded: true,
+    const cache = { ...nodesRef.current }
+    nodesRef.current = cache
+    const expandedKeys = new Set(expandedRef.current)
+    let nodesChanged = true
+    let expansionChanged = false
+    const publish = (): void => {
+      if (nodesChanged) setNodes({ ...cache })
+      if (expansionChanged) updateExpanded(new Set(expandedKeys))
+      nodesChanged = false
+      expansionChanged = false
+    }
+    const queue = ['']
+    let cursor = 0
+    let lastYield = performance.now()
+    while (cursor < queue.length && operation.current === version) {
+      const paths = queue.slice(cursor, cursor + 4)
+      cursor += paths.length
+      const results = await Promise.all(paths.map(async (path) => {
+        const cached = cache[treeKey(path)]
+        if (cached?.loaded) return { path, node: cached, changed: false }
+        const result = await readDirectory(root, path, version)
+        if (!result) return null
+        return { path, changed: true, node: {
+          entries: result.ok ? result.entries : [], loaded: true,
           error: result.ok ? null : translateTreeError(result.message)
-        }
+        } }
       }))
-    })()
-  }, [])
-
-  const refreshLoadedDirectories = useCallback((): void => {
-    const root = trimmedRootRef.current
-    if (!root) return
-    const loadedKeys = Object.entries(nodesRef.current)
-      .filter(([, node]) => node.loaded)
-      .map(([key]) => key)
-    if (!loadedKeys.includes('')) loadedKeys.unshift('')
-
-    void (async () => {
-      const updates: Record<string, TreeNodeState> = {}
-      await Promise.all(
-        loadedKeys.map(async (key) => {
-          const result = await fetchDirectory(root, key)
-          if (trimmedRootRef.current !== root) return
-          updates[key] = {
-            entries: result.ok ? result.entries : [],
-            loading: false,
-            loaded: true,
-            error: result.ok ? null : translateTreeError(result.message)
+      if (operation.current !== version) return
+      for (const result of results) {
+        if (!result) continue
+        const { path, node, changed } = result
+        if (changed) {
+          cache[treeKey(path)] = node
+          nodesChanged = true
+        }
+        for (const entry of node.entries) {
+          if (entry.kind !== 'directory' || (!filterRef.current && isAuxiliaryWorkspaceEntry(entry))) continue
+          const key = treeKey(entry.path)
+          if (openAll && !expandedKeys.has(key)) {
+            expandedKeys.add(key)
+            expansionChanged = true
           }
-        })
-      )
-      if (trimmedRootRef.current !== root) return
-      setNodes((prev) => ({ ...prev, ...updates }))
-    })()
-  }, [])
+          if (expandedKeys.has(key)) queue.push(entry.path)
+        }
+      }
+      if (performance.now() - lastYield >= 16) {
+        publish()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        lastYield = performance.now()
+      }
+    }
+    if (operation.current === version) {
+      publish()
+      expandIntent.current = false
+      setExpanding(false)
+    }
+  }, [readDirectory, updateExpanded])
+
+  const refreshLoadedDirectories = useCallback(async (): Promise<void> => {
+    refreshPending.current = true
+    if (refreshRunning.current) return
+    refreshRunning.current = true
+    setRefreshing(true)
+    try {
+      while (refreshPending.current) {
+        refreshPending.current = false
+        // Hidden directories become stale; scan only follows expanded ancestors.
+        nodesRef.current = Object.fromEntries(Object.entries(nodesRef.current)
+          .map(([key, node]) => [key, { ...node, loaded: false }]))
+        await scan(expandIntent.current)
+      }
+    } finally {
+      refreshRunning.current = false
+      setRefreshing(false)
+    }
+  }, [scan])
 
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshLoadedDirectories)
 
   useEffect(() => {
-    let cancelled = false
-    const restored = new Set([...readExpandedDirs(trimmedRoot)].map(treeKey))
-    setExpanded(restored)
-
-    if (!trimmedRoot) {
-      setNodes({})
-      return () => {
-        cancelled = true
-      }
-    }
-
-    setNodes({ '': emptyNode(true) })
-
-    void (async () => {
-      const result = await fetchDirectory(trimmedRoot, '')
-      if (cancelled || trimmedRootRef.current !== trimmedRoot) return
-
-      setNodes({
-        '': {
-          entries: result.ok ? result.entries : [],
-          loading: false,
-          loaded: true,
-          error: result.ok ? null : translateTreeError(result.message)
-        }
-      })
-
-      for (const dir of restored) {
-        if (!dir) continue
-        loadChildDirectory(dir)
-      }
-    })()
-
+    nodesRef.current = {}
+    setNodes({})
+    expandedRef.current = new Set([...readExpandedDirs(trimmedRoot)].map(treeKey))
+    setExpanded(expandedRef.current)
+    void scan()
     return () => {
-      cancelled = true
+      operation.current += 1
+      refreshPending.current = false
+      if (persistTimer.current) clearTimeout(persistTimer.current)
+      persistPending.current?.()
+      persistPending.current = null
     }
-  }, [trimmedRoot, loadChildDirectory])
+  }, [trimmedRoot, scan])
 
-  // When the active editor file changes, reveal its ancestors once (VS Code).
-  // Do NOT expand every dirty path on git/patch refresh — that fights folder clicks.
+  const previousFilter = useRef(showAllFiles)
+  useEffect(() => {
+    if (previousFilter.current === showAllFiles) return
+    previousFilter.current = showAllFiles
+    void scan()
+  }, [showAllFiles, scan])
+
   const lastRevealedActiveRef = useRef('')
   useEffect(() => {
-    const active = (activePaths ?? []).map(treeKey).find(Boolean)
-    if (!active || active === lastRevealedActiveRef.current) return
-    lastRevealedActiveRef.current = active
+    const active = (activePaths ?? []).find(Boolean)
+    const identity = `${trimmedRoot}:${active ?? ''}`
+    if (!active || identity === lastRevealedActiveRef.current) return
+    lastRevealedActiveRef.current = identity
+    const parts = active.replace(/\\/g, '/').split('/').filter(Boolean)
+    const next = new Set(expandedRef.current)
+    for (let i = 1; i < parts.length; i += 1) next.add(treeKey(parts.slice(0, i).join('/')))
+    if (next.size === expandedRef.current.size) return
+    updateExpanded(next)
+    void scan()
+  }, [activePaths, trimmedRoot, updateExpanded, scan])
 
-    const parts = active.split('/').filter(Boolean)
-    const ancestors: string[] = []
-    let acc = ''
-    for (let i = 0; i < parts.length - 1; i += 1) {
-      acc = acc ? `${acc}/${parts[i]}` : parts[i]!
-      ancestors.push(acc)
-    }
-    if (ancestors.length === 0) return
+  const toggleDirectory = useCallback((path: string): void => {
+    const next = new Set(expandedRef.current)
+    const key = treeKey(path)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    updateExpanded(next)
+    void scan()
+  }, [updateExpanded, scan])
 
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      for (const dir of ancestors) next.add(dir)
-      writeExpandedDirs(trimmedRoot, next)
-      return next
-    })
-    for (const dir of ancestors) {
-      loadChildDirectory(dir)
-    }
-  }, [activePaths, loadChildDirectory, trimmedRoot])
-
-  const toggleDirectory = useCallback(
-    (path: string): void => {
-      const key = treeKey(path)
-      setExpanded((prev) => {
-        const next = new Set(prev)
-        const willExpand = !next.has(key)
-        if (willExpand) {
-          next.add(key)
-        } else {
-          next.delete(key)
-        }
-        writeExpandedDirs(trimmedRootRef.current, next)
-        if (willExpand) {
-          const node = nodesRef.current[key]
-          if (!node?.loaded && !node?.loading) {
-            queueMicrotask(() => loadChildDirectory(path))
-          }
-        }
-        return next
-      })
-    },
-    [loadChildDirectory]
-  )
-
-  const [refreshing, setRefreshing] = useState(false)
-
-  // New-file flash: entries that first appear after the tree has settled get a
-  // short accent highlight (agent just created them). The initial load — root
-  // plus restored expansion — must not flash, hence the settle window.
   const [flashPaths, setFlashPaths] = useState<Record<string, number>>({})
-  const seenPathsRef = useRef<Set<string> | null>(null)
-  const mountedAtRef = useRef(Date.now())
-
+  const previousNodes = useRef<Record<string, TreeNodeState>>({})
   useEffect(() => {
-    seenPathsRef.current = null
-    mountedAtRef.current = Date.now()
+    previousNodes.current = {}
     setFlashPaths({})
   }, [trimmedRoot])
-
   useEffect(() => {
-    const collectFilePaths = (): string[] => {
-      const paths: string[] = []
-      for (const node of Object.values(nodes)) {
-        if (!node.loaded) continue
-        for (const entry of node.entries) {
-          if (entry.kind === 'directory') continue
-          paths.push(treeKey(entry.path))
-        }
+    const fresh: Record<string, number> = {}
+    for (const [key, node] of Object.entries(nodes)) {
+      const previous = previousNodes.current[key]
+      // Expanding an existing directory is not a new-file event.
+      if (!previous || previous.entries === node.entries) continue
+      const seen = new Set(previous.entries.map((entry) => treeKey(entry.path)))
+      for (const entry of node.entries) {
+        const path = treeKey(entry.path)
+        if (entry.kind !== 'directory' && !seen.has(path)) fresh[path] = Date.now() + 2000
       }
-      return paths
     }
-
-    if (!seenPathsRef.current) {
-      if (Date.now() - mountedAtRef.current < 1200) return
-      seenPathsRef.current = new Set(collectFilePaths())
-      return
-    }
-
-    const seen = seenPathsRef.current
-    const fresh = collectFilePaths().filter((key) => !seen.has(key))
-    if (fresh.length === 0) return
-    for (const key of fresh) seen.add(key)
-    const expiry = Date.now() + 2000
-    setFlashPaths((prev) => {
-      const next = { ...prev }
-      for (const key of fresh) next[key] = expiry
-      return next
-    })
-    const timer = window.setTimeout(() => {
-      const now = Date.now()
-      setFlashPaths((prev) => {
-        const next: Record<string, number> = {}
-        for (const [key, value] of Object.entries(prev)) {
-          if (value > now) next[key] = value
-        }
-        return next
-      })
-    }, 2200)
-    return () => window.clearTimeout(timer)
+    previousNodes.current = nodes
+    if (Object.keys(fresh).length) setFlashPaths((previous) => ({ ...previous, ...fresh }))
   }, [nodes])
-
-  const handleManualRefresh = useCallback((): void => {
-    if (refreshing) return
-    setRefreshing(true)
-    refreshLoadedDirectories()
-    window.setTimeout(() => setRefreshing(false), 600)
-  }, [refreshing, refreshLoadedDirectories])
+  useEffect(() => {
+    if (!Object.keys(flashPaths).length) return
+    const timer = window.setTimeout(() => setFlashPaths({}), 2200)
+    return () => window.clearTimeout(timer)
+  }, [flashPaths])
 
   const collapseAll = useCallback((): void => {
-    const next = new Set<string>()
-    writeExpandedDirs(trimmedRootRef.current, next)
-    setExpanded(next)
-  }, [])
+    operation.current += 1
+    setExpanding(false)
+    updateExpanded(new Set())
+    void scan()
+  }, [updateExpanded, scan])
 
-  const anyExpanded = expanded.size > 0
+  const anyExpanded = expanding || [...expanded].some(Boolean)
 
-  // Recursive expand: fetch every directory level by level, mounting nodes
-  // and adding keys to the expanded set as results arrive. Only recurses into
-  // directories the tree would actually show (same filter as renderEntries).
-  // ponytail: unbounded recursion on very deep trees — cap with a max depth if
-  // huge repos make this stall.
-  const expandAll = useCallback((): void => {
-    const root = trimmedRootRef.current
-    if (!root) return
-    const collected = new Set<string>()
-    const walk = async (dirPath: string): Promise<void> => {
-      const result = await fetchDirectory(root, dirPath)
-      if (trimmedRootRef.current !== root) return
-      if (!result.ok) return
-      setNodes((prev) => ({
-        ...prev,
-        [treeKey(dirPath)]: { entries: result.entries, loading: false, loaded: true, error: null }
-      }))
-      if (dirPath) collected.add(treeKey(dirPath))
-      setExpanded(new Set(collected))
-      writeExpandedDirs(root, collected)
-      const visible = showAllFiles
-        ? result.entries
-        : result.entries.filter((entry) => !isAuxiliaryWorkspaceEntry(entry))
-      await Promise.all(
-        visible
-          .filter((entry) => entry.kind === 'directory')
-          .map((entry) => walk(entry.path))
-      )
-    }
-    void walk('')
-  }, [showAllFiles])
-
-  const renderEntries = (directoryPath: string, depth: number): ReactElement[] => {
-    const key = treeKey(directoryPath)
-    const node = nodes[key]
-
-    if (!node) {
-      return []
-    }
-    if (node.loading) {
-      return [
-        <div
-          key={`${key}__loading`}
-          className="ds-workspace-file-tree__row-pad flex flex-col gap-[5px] py-1.5"
-          style={{ paddingLeft: `${indentPx(depth)}px` }}
-        >
-          <div className="ds-editor-skeleton__bar h-2 w-[76%] rounded-sm" />
-          <div className="ds-editor-skeleton__bar ml-[22px] h-2 w-[52%] rounded-sm" />
-          <div className="ds-editor-skeleton__bar ml-[22px] h-2 w-[64%] rounded-sm" />
-        </div>
-      ]
-    }
-    if (node.error) {
-      return [
-        <div
-          key={`${key}__error`}
-          className="ds-workspace-file-tree__row-pad py-1 text-[12.5px] text-red-600 dark:text-red-300"
-          style={{ paddingLeft: `${indentPx(depth)}px` }}
-        >
-          {node.error}
-        </div>
-      ]
-    }
-
-    const visibleEntries = showAllFiles
-      ? node.entries
-      : node.entries.filter((entry) => !isAuxiliaryWorkspaceEntry(entry))
-    if (node.loaded && visibleEntries.length === 0) {
-      return [
-        <div
-          key={`${key}__empty`}
-          className="ds-workspace-file-tree__row-pad py-1 text-[12.5px] text-ds-faint"
-          style={{ paddingLeft: `${indentPx(depth)}px` }}
-        >
-          {t(node.entries.length ? 'workspaceTreeFilteredEmpty' : 'workspaceTreeEmpty')}
-        </div>
-      ]
-    }
-
-    return visibleEntries.flatMap((entry) => {
-      const entryKey = treeKey(entry.path)
-      const isDir = entry.kind === 'directory'
-      const isExpanded = expanded.has(entryKey)
-      const isDirty = dirtyPaths
-        ? [...dirtyPaths].some((p) => treeKey(p) === entryKey)
-        : false
-      const isChanged = patchMap ? pathHasChanges(patchMap, entry.path) : false
-      const dirHasChanges = isDir && patchMap ? directoryHasChanges(patchMap, entry.path) : false
-
-      if (isDir) {
-        // Children stay mounted once loaded so collapse can animate; the branch
-        // wrapper hides them (grid 0fr + visibility) until expanded.
-        const childMounted = Boolean(nodes[entryKey])
-        return [
-          <button
-            key={entryKey}
-            type="button"
-            aria-expanded={isExpanded}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              toggleDirectory(entry.path)
-            }}
-            onPointerEnter={() => loadChildDirectory(entry.path)}
-            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12.5px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-            style={{ paddingLeft: `${indentPx(depth)}px` }}
-          >
-            <ChevronRight
-              className={`pointer-events-none h-3.5 w-3.5 shrink-0 text-ds-faint transition ${
-                isExpanded ? 'rotate-90' : ''
-              }`}
-              strokeWidth={1.85}
-              aria-hidden
-            />
-            {isExpanded ? <FolderOpen className="ds-tree-folder h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden /> : <Folder className="ds-tree-folder h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden />}
-            <span className={`min-w-0 truncate ${dirHasChanges ? 'font-medium text-ds-ink' : ''}`}>
-              {entry.name}
-            </span>
-          </button>,
-          ...(childMounted ? (
-            [
-              <div
-                key={`${entryKey}__branch`}
-                className="ds-tree-branch"
-                data-open={isExpanded ? '' : undefined}
-              >
-                <div className="ds-tree-branch__inner">
-                  {renderEntries(entry.path, depth + 1)}
-                </div>
-              </div>
-            ]
-          ) : [])
-        ]
+  type Row = { key: string; depth: number; entry?: WorkspaceTreeEntry; message?: string; error?: boolean }
+  const rows = useMemo(() => {
+    const result: Row[] = []
+    const visit = (path: string, depth: number): void => {
+      const key = treeKey(path)
+      const node = nodes[key]
+      if (!node) {
+        result.push({ key: `${key}__loading`, depth, message: '…' })
+        return
       }
+      if (node.error) {
+        result.push({ key: `${key}__error`, depth, message: node.error, error: true })
+        return
+      }
+      const entries = showAllFiles ? node.entries : node.entries.filter((entry) => !isAuxiliaryWorkspaceEntry(entry))
+      if (!entries.length) result.push({ key: `${key}__empty`, depth,
+        message: t(node.entries.length ? 'workspaceTreeFilteredEmpty' : 'workspaceTreeEmpty') })
+      for (const entry of entries) {
+        result.push({ key: treeKey(entry.path), depth, entry })
+        if (entry.kind === 'directory' && expanded.has(treeKey(entry.path))) visit(entry.path, depth + 1)
+      }
+    }
+    if (trimmedRoot) visit('', 0)
+    return result
+  }, [nodes, expanded, showAllFiles, trimmedRoot, t])
 
-      const isActive = activeKeys.has(entryKey)
-      const isFlashing = (flashPaths[entryKey] ?? 0) > Date.now()
+  const dirtyKeys = useMemo(() => new Set([...(dirtyPaths ?? [])].map(treeKey)), [dirtyPaths])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [viewport, setViewport] = useState({ top: 0, height: 560 })
+  useLayoutEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+    const measure = (): void => setViewport({ top: element.scrollTop, height: element.clientHeight || 560 })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+    setViewport((previous) => ({ ...previous, top: 0 }))
+  }, [trimmedRoot])
+  const rowHeight = 28
+  const scrollTop = Math.min(viewport.top, Math.max(0, rows.length * rowHeight - viewport.height))
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - 8)
+  const end = Math.min(rows.length, Math.ceil((scrollTop + viewport.height) / rowHeight) + 8)
+  useLayoutEffect(() => {
+    if (scrollRef.current && viewport.top !== scrollTop) {
+      scrollRef.current.scrollTop = scrollTop
+      setViewport((previous) => ({ ...previous, top: scrollTop }))
+    }
+  }, [scrollTop, viewport.top])
 
-      return [
+  const pendingFocus = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (!pendingFocus.current) return
+    const button = [...(scrollRef.current?.querySelectorAll<HTMLButtonElement>('[data-tree-key]') ?? [])]
+      .find((element) => element.dataset.treeKey === pendingFocus.current)
+    if (button) {
+      button.focus({ preventScroll: true })
+      pendingFocus.current = null
+    }
+  }, [start, end, rows, viewport])
+
+  const renderRow = ({ key, entry, depth, message, error }: Row): ReactElement => {
+    if (!entry) return <div key={key} title={message}
+      className={`ds-workspace-file-tree__row-pad h-[28px] truncate py-1 text-[12.5px] ${error ? 'text-red-600 dark:text-red-300' : 'text-ds-faint'}`}
+      style={{ paddingLeft: indentPx(depth) }}>{message}</div>
+    const entryKey = key
+    const isDir = entry.kind === 'directory'
+    const isExpanded = expanded.has(entryKey)
+    const isDirty = dirtyKeys.has(entryKey)
+    const isChanged = patchMap ? pathHasChanges(patchMap, entry.path) : false
+    const dirHasChanges = isDir && patchMap ? directoryHasChanges(patchMap, entry.path) : false
+    if (isDir) {
+      return (
         <button
           key={entryKey}
+        data-tree-key={entryKey}
           type="button"
-          draggable
+          aria-expanded={isExpanded}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
-            onOpenFile(entry.path)
+            toggleDirectory(entry.path)
           }}
-          onDragStart={(event) => {
-            setWorkspacePathDragData(event.dataTransfer, entry.path)
-            // Drag ghost: same gray pill as the selected state (icon + name),
-            // not the platform's full-row snapshot.
-            const label = event.currentTarget.querySelector('.ds-workspace-file-tree__row-label')
-            if (!label) return
-            const ghost = document.createElement('div')
-            ghost.className = 'ds-workspace-file-tree__drag-ghost'
-            ghost.appendChild(label.cloneNode(true))
-            document.body.appendChild(ghost)
-            event.dataTransfer.setDragImage(ghost, 8, 14)
-            event.currentTarget.addEventListener('dragend', () => ghost.remove(), { once: true })
-          }}
-          onContextMenu={(event) => {
-            if (!onFileContextMenu) return
-            event.preventDefault()
-            event.stopPropagation()
-            onFileContextMenu(event, entry.path)
-          }}
-          aria-current={isActive ? 'page' : undefined}
-          className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12.5px] transition ${
-            isFlashing ? 'ds-tree-row-flash' : ''
-          } ${
-            isActive
-              ? 'ds-workspace-file-tree__row--active'
-              : isDirty
-                ? 'text-ds-ink hover:bg-ds-hover'
-                : isChanged
-                  ? 'text-ds-ink'
-                  : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-          }`}
-          style={{ paddingLeft: `${indentPx(depth) + 14}px` }}
-          title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
+          className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-[28px] w-full items-center gap-1.5 text-left text-[12.5px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+          style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
-          <span className="ds-workspace-file-tree__row-label flex min-w-0 items-center gap-1.5">
-            <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
-            <span className="min-w-0 truncate">{entry.name}</span>
-            {isDirty ? <span className="ds-tree-dirty-dot" aria-hidden /> : isChanged ? <span className="shrink-0 text-[11px] text-ds-muted" title={t('workspaceEditorChanged')}>•</span> : null}
+          <ChevronRight
+            className={`pointer-events-none h-3.5 w-3.5 shrink-0 text-ds-faint transition ${
+              isExpanded ? 'rotate-90' : ''
+            }`}
+            strokeWidth={1.85}
+            aria-hidden
+          />
+          {isExpanded ? <FolderOpen className="ds-tree-folder h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden /> : <Folder className="ds-tree-folder h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden />}
+          <span className={`min-w-0 truncate ${dirHasChanges ? 'font-medium text-ds-ink' : ''}`}>
+            {entry.name}
           </span>
         </button>
-      ]
-    })
+      )
+    }
+
+    const isActive = activeKeys.has(entryKey)
+    const isFlashing = (flashPaths[entryKey] ?? 0) > Date.now()
+
+    return (
+      <button
+        key={entryKey}
+        data-tree-key={entryKey}
+        type="button"
+        draggable
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onOpenFile(entry.path)
+        }}
+        onDragStart={(event) => {
+          setWorkspacePathDragData(event.dataTransfer, entry.path)
+          // Drag ghost: same gray pill as the selected state (icon + name),
+          // not the platform's full-row snapshot.
+          const label = event.currentTarget.querySelector('.ds-workspace-file-tree__row-label')
+          if (!label) return
+          const ghost = document.createElement('div')
+          ghost.className = 'ds-workspace-file-tree__drag-ghost'
+          ghost.appendChild(label.cloneNode(true))
+          document.body.appendChild(ghost)
+          event.dataTransfer.setDragImage(ghost, 8, 14)
+          event.currentTarget.addEventListener('dragend', () => ghost.remove(), { once: true })
+        }}
+        onContextMenu={(event) => {
+          if (!onFileContextMenu) return
+          event.preventDefault()
+          event.stopPropagation()
+          onFileContextMenu(event, entry.path)
+        }}
+        aria-current={isActive ? 'page' : undefined}
+        className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-[28px] w-full items-center gap-1.5 text-left text-[12.5px] transition ${
+          isFlashing ? 'ds-tree-row-flash' : ''
+        } ${
+          isActive
+            ? 'ds-workspace-file-tree__row--active'
+            : isDirty
+              ? 'text-ds-ink hover:bg-ds-hover'
+              : isChanged
+                ? 'text-ds-ink'
+                : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+        }`}
+        style={{ paddingLeft: `${indentPx(depth) + 14}px` }}
+        title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
+      >
+        <span className="ds-workspace-file-tree__row-label flex min-w-0 items-center gap-1.5">
+          <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
+          <span className="min-w-0 truncate">{entry.name}</span>
+          {isDirty ? <span className="ds-tree-dirty-dot" aria-hidden /> : isChanged ? <span className="shrink-0 text-[11px] text-ds-muted" title={t('workspaceEditorChanged')}>•</span> : null}
+        </span>
+      </button>
+    )
   }
 
   return (
@@ -548,7 +494,7 @@ export function WorkspaceFileTree({
               <Tooltip label={t('workspaceTreeRefresh')}>
                 <button
                   type="button"
-                  onClick={handleManualRefresh}
+                  onClick={() => { void refreshLoadedDirectories() }}
                   aria-label={t('workspaceTreeRefresh')}
                   className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.94]"
                 >
@@ -562,7 +508,7 @@ export function WorkspaceFileTree({
               <Tooltip label={anyExpanded ? t('workspaceTreeCollapseAll') : t('workspaceTreeExpandAll')}>
                 <button
                   type="button"
-                  onClick={anyExpanded ? collapseAll : expandAll}
+                  onClick={anyExpanded ? collapseAll : () => { void scan(true) }}
                   aria-label={anyExpanded ? t('workspaceTreeCollapseAll') : t('workspaceTreeExpandAll')}
                   className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.94]"
                 >
@@ -579,8 +525,27 @@ export function WorkspaceFileTree({
           <div className="text-[12.5px] leading-5 text-ds-faint">{t('workspaceTreeNoRoot')}</div>
         )}
       </div>
-      <div className="ds-workspace-file-tree__scroll min-h-0 flex-1 overflow-y-auto py-1">
-        {renderEntries('', 0)}
+      <div ref={scrollRef} className="ds-workspace-file-tree__scroll min-h-0 flex-1 overflow-y-auto" style={{ overflowAnchor: 'none' }}
+        onKeyDown={(event) => {
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(event.key)) return
+          const key = (event.target as HTMLElement).closest<HTMLElement>('[data-tree-key]')?.dataset.treeKey
+          if (!key) return
+          const direction = event.key === 'ArrowUp' || event.key === 'End' || (event.key === 'Tab' && event.shiftKey) ? -1 : 1
+          let index = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1
+            : rows.findIndex((row) => row.key === key) + direction
+          while (index >= 0 && index < rows.length && !rows[index]!.entry) index += direction
+          const row = rows[index]
+          if (!row?.entry) return
+          event.preventDefault()
+          pendingFocus.current = row.key
+          const top = Math.max(0, Math.min(index * rowHeight, Math.max(scrollTop, (index + 1) * rowHeight - viewport.height)))
+          event.currentTarget.scrollTop = top
+          setViewport((previous) => ({ ...previous, top }))
+        }}
+        onScroll={(event) => setViewport({ top: event.currentTarget.scrollTop, height: event.currentTarget.clientHeight || 560 })}>
+        <div style={{ height: start * rowHeight }} aria-hidden />
+        {rows.slice(start, end).map(renderRow)}
+        <div style={{ height: (rows.length - end) * rowHeight }} aria-hidden />
       </div>
     </div>
   )
