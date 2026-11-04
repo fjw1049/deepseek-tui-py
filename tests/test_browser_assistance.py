@@ -65,6 +65,9 @@ async def test_takeover_continue_preserves_turn_and_requires_verification(help_t
     assert "NOT guaranteed" in handle.resume_context
     assert "within its authorization" in handle.resume_context
     assert "Login still required" in handle.resume_context
+    import json
+    resumed = json.loads(handle.resume_context.split("Fresh browser observation:\n")[1])
+    assert resumed["page"]["owner"] == "agent"
     assert handle._op_queue.empty()
     with pytest.raises(ValueError, match="ended"):
         await manager.respond_browser_assistance("one", request["id"], "takeover")

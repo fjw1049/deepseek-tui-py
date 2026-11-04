@@ -51,6 +51,9 @@ def baseline(observation: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def resume_context(run: Any, observed: dict[str, Any], decision: str) -> str:
+    # The page was sampled before transfer; control ownership is runtime state, not page data.
+    if isinstance(observed.get("page"), dict):
+        observed = {**observed, "page": {**observed["page"], "owner": run.owner}}
     before = run.handoff_baseline
     after = baseline(observed.get("observation"))
     changes = {}

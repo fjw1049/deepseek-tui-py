@@ -97,7 +97,8 @@ class BrowserUseTool(ToolSpec):
             ),
             "shadow_path": (
                 "For observe, ordered CSS selectors of unique open shadow hosts in the selected "
-                "document/frame. Keep scope_shadow_path when continuing; act using returned refs."
+                "document/frame. Keep shadow_path and scope_ref when continuing; "
+                "act using returned refs."
             ),
             "level": ("interactive returns up to 120 elements, on-screen ones first; full "
                       "returns up to 250 in document order."),
@@ -106,9 +107,11 @@ class BrowserUseTool(ToolSpec):
                 "contenteditable selector, read its text, selection offsets and current block; "
                 "with check_text/wait on that selector, match its text. Ordinary field and "
                 "password values stay excluded. scope_ref continuations keep it."),
-            "text_offset": "Continue at next_text_offset, keeping scope_selector and frame_id.",
+            "text_offset": ("Continue at next_text_offset with the returned scope_ref; "
+                            "keep selector and frame_id if supplied."),
             "element_offset": (
-                "Continue at next_element_offset with the same scope_selector/frame_id; "
+                "Continue at next_element_offset with the returned scope_ref "
+                "and same selector/frame_id; "
                 "creates a new observation."
             ),
             "option_offset": (
@@ -208,10 +211,17 @@ class BrowserUseTool(ToolSpec):
         thread_id = context.metadata.get("runtime_thread_id")
         if browser is None or not thread_id:
             return ToolResult(False, "Browser operation requires a Workbench runtime thread.")
+        before = {}
         try:
             root = getattr(context, "working_directory", None)
             action = BrowserAction.model_validate(input_data, context={"local_root": root})
             if action.action == "request_assistance":
+                if context.metadata.get("unattended"):
+                    from deepseek_tui.tools.user_input import unattended_assistance
+
+                    return unattended_assistance(context, {
+                        "kind": "action", "surface": "browser", "reason": action.reason,
+                    })
                 request = context.metadata.get("request_browser_assistance")
                 if request is None:
                     return ToolResult(False, "Browser assistance is unavailable in this runtime.")
@@ -220,6 +230,14 @@ class BrowserUseTool(ToolSpec):
                 run = getattr(browser, "runs", {}).get(str(thread_id))
                 if run:
                     run.upload_root = root
+                    observation = getattr(run, "latest_observation", None) or {}
+                    before = {k: observation.get(k) for k in
+                              ("tab_id", "document_id", "frame_id", "frame_document_id")}
+                    targets = [e for e in observation.get("elements", []) if
+                               (action.ref and e.get("ref") == action.ref) or
+                               (action.selector and e.get("selector") == action.selector)]
+                    if len(targets) == 1 and targets[0].get("target_id"):
+                        before["target_id"] = targets[0]["target_id"]
                 result = await browser.action(str(thread_id), action, require_observation=True)
                 # A link on a workspace page can reach any file; its content stays out.
                 if not all(local_page_allowed((result.get(key) or {}).get("url", ""), root)
@@ -278,14 +296,15 @@ class BrowserUseTool(ToolSpec):
             return ToolResult(
                 result["success"],
                 json.dumps(result, ensure_ascii=False),
-                metadata={"browser": result, "browser_call": _call_signature(action)},
+                metadata={"browser": result, "browser_call": _call_signature(action),
+                          "browser_before": before},
                 images=images,
             )
         except BrowserActionError as exc:
             return ToolResult(False, json.dumps(exc.response, ensure_ascii=False),
-                              metadata={"browser": exc.response})
+                              metadata={"browser": exc.response, "browser_before": before})
         except (ValueError, TimeoutError, ConnectionError, RuntimeError) as exc:
             error = str(exc) or type(exc).__name__
             if isinstance(exc, TimeoutError):
                 error += "; action outcome may be unknown. Inspect status/page before retrying."
-            return ToolResult(False, error)
+            return ToolResult(False, error, metadata={"browser_before": before})
