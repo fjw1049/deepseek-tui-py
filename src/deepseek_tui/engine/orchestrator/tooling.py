@@ -85,13 +85,6 @@ def _allowed_tool_names(api_tools: list[dict[str, Any]]) -> set[str]:
     return names
 
 
-UNATTENDED_INPUT = (
-    "Nobody is watching this run, so no one can answer. Pick the most reasonable interpretation, "
-    "state it in your answer and continue; before anything irreversible, stop and report the "
-    "step that needs the user."
-)
-
-
 class ToolExecutionMixin:
     """Tool dispatch / approval / elevation methods shared into Engine."""
 
@@ -439,7 +432,7 @@ class ToolExecutionMixin:
         facts = self.tool_context.metadata.get("turn_facts")
         if facts:
             facts.record(tool_call.name, tool_call.arguments, success=result.success,
-                         error=result.content or "")
+                         error=result.content or "", metadata=result.metadata)
 
         if tool_call.name == "checklist" and result.success:
             capture_goal_checklist(self.tool_context)
@@ -716,6 +709,10 @@ class ToolExecutionMixin:
             interventions.record("tool_list", tool_call.name, outcome="not_in_catalog")
             raise ToolError(missing_tool_error_message(tool_call.name, api_tools))
         self._check_human_intervention()
+        facts = self.tool_context.metadata.get("turn_facts")
+        if facts is not None and facts.assistance_requests:
+            return ToolResult(False, "Not executed: this turn is awaiting human assistance.",
+                              metadata={"needs_assistance": facts.assistance_requests[0]})
         if is_task_call(tool_name, tool_call.arguments) and (
                 blocked := self._ui_progress.blocked_content(tool_name)):
             interventions.record("gate", "ui_no_progress", outcome="rejected")
@@ -1234,10 +1231,10 @@ class ToolExecutionMixin:
 
     async def _await_user_input(self, tool_call_id: str, input_data: dict[str, Any]) -> ToolResult:
         """Emit UserInputRequiredEvent and block until TUI resolves."""
-        from deepseek_tui.tools.user_input import validate_user_input_request
+        from deepseek_tui.tools.user_input import unattended_assistance, validate_user_input_request
 
         if self.tool_context.metadata.get("unattended"):
-            raise ToolError(UNATTENDED_INPUT)
+            return unattended_assistance(self.tool_context, input_data)
         kind = input_data.get("kind", "information")
         if not isinstance(kind, str) or kind not in {"information", "decision", "action"}:
             raise ToolError("Unknown user input kind")

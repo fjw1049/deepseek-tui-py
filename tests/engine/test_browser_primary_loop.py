@@ -206,9 +206,9 @@ async def test_answer_is_delivered_exactly_as_written(tmp_path, locale):
     engine.reply_locale = locale
     try:
         result = await engine._run_conversation([Message.user("Read total")], "test", "sys", None)
-        assert len(client.requests) == 2  # no model call to rewrite the answer
+        assert len(client.requests) == 2  # the first answer is final
         assert result.assistant_message.text_content() == "The total is 42."
-        assert result.task_outcome["status"] == "completed_with_evidence"
+        assert result.task_outcome["status"] == "completed_unverified"
         events = engine.handle.drain_events()
         assert any(isinstance(e, TextDeltaEvent) and e.text == "The total is 42."
                    for e in events)
@@ -235,7 +235,7 @@ async def test_browser_use_keeps_the_tool_list_for_the_whole_task(tmp_path):
         tool_results = {b.tool_use_id: b for m in client.requests[-1].messages
                         for b in m.content if b.type == "tool_result"}
         assert not tool_results["file"].is_error
-        assert result.task_outcome["status"] == "completed_with_evidence"
+        assert result.task_outcome["status"] == "completed_unverified"
         # Facts belong to one task, not the next conversation turn.
         client.replies = iter(["Hello"])
         result = await engine._run_conversation([Message.user("Hello")], "test", "sys", None)
@@ -252,7 +252,7 @@ async def test_answer_on_last_tool_round_still_reaches_user(tmp_path):
     try:
         result = await engine._run_conversation([Message.user("Read")], "test", "sys", None)
         assert len(client.requests) == 2
-        assert result.task_outcome["status"] == "completed_with_evidence"
+        assert result.task_outcome["status"] == "completed_unverified"
         assert result.assistant_message.text_content() == "The total is 42."
     finally:
         await engine.shutdown_session()

@@ -501,9 +501,7 @@ def build_system_prompt(
             "forward — a structured summary plus the recent verbatim "
             "messages will be in your next context. Managing this is not "
             "your job: do not wrap up early, drop planned work, or suggest "
-            "starting a new session because the conversation is long. Keep "
-            "working until the task is complete or you are blocked on input "
-            "only the user can provide."
+            "starting a new session because the conversation is long. "
         )
 
     # Each available surface brings its guide (browser.md, computer_use.md).
@@ -530,7 +528,8 @@ UNATTENDED_PROMPT = (
     "Nobody is watching this run, and no one can answer a question or an approval. When "
     "something is ambiguous, pick the most reasonable interpretation, state it at the top "
     "of your answer and carry on. For an irreversible decision, do the preparation, then "
-    "stop and report what needs the user."
+    "request_user_input to preserve what needs the user and stop this turn. "
+    "The request is saved for a later assisted run; it does not wait for a response."
 )
 
 # Injected as a user-role <system-reminder> when the model tries to end a
@@ -553,8 +552,9 @@ CHECKLIST_GATE_REMINDER = (
     "work you committed to, not a note to leave behind.\n"
     "- Removed from scope by the user: mark it `cancelled` and say why.\n"
     "- Blocked on necessary input, approval, or an unavailable capability: "
-    "finish independent work, then report the blocker, remaining scope, and "
-    "what would allow continuation. Do not treat a partial implementation "
+    "finish independent work. If user input can unblock it, use request_user_input; "
+    "use the approval mechanism for permissions. Otherwise report the terminal "
+    "limitation and remaining scope, respecting prior refusals. Do not treat a partial implementation "
     "or recoverable failure as a reason to cancel.\n"
     "Never mark an item completed with unmet required acceptance criteria. "
     "Report pre-existing or unrelated test failures separately. Items still "

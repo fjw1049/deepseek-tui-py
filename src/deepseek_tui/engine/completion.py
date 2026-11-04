@@ -6,12 +6,13 @@ facts are appended below that answer for the user and never enter model history.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any
 
-from deepseek_tui.surfaces import CUA_TOOLS, is_task_call
+from deepseek_tui.surfaces import CUA_TOOLS
 
 COMPLETION_NOTE_KEY = "completion_note"
 
@@ -20,7 +21,7 @@ _BROWSER_TOOLS = frozenset({"browser_use", "browser_skill"})
 # A failed read or search is usually exploration, not unfinished work.
 _ACTING_TOOLS = _FILE_TOOLS | _BROWSER_TOOLS | {"exec_shell", "cua_js"}
 _TARGET_KEYS = ("path", "file_path", "command", "title", "url")
-# Refs are renumbered by every observation, so a retry would never match by target.
+# UI refs are scoped to observations; action names alone are not target identities.
 _UI_TOOLS = _BROWSER_TOOLS | {"cua_js"}
 # Nothing runs these, so editing one after the last run leaves nothing unchecked.
 _NOT_RUNNABLE = frozenset({".md", ".txt", ".rst", ".csv", ".docx", ".xlsx", ".pptx", ".pdf"})
@@ -62,11 +63,31 @@ _LABELS = {
 }
 
 
-def _target(tool: str, arguments: Any) -> str:
+def _target(tool: str, arguments: Any, metadata: dict[str, Any] | None = None) -> str:
     if not isinstance(arguments, dict):
         return ""
     if tool in _UI_TOOLS:
-        return str(arguments.get("action") or "")
+        action = str(arguments.get("action") or "")
+        before = (metadata or {}).get("browser_before") or {}
+        identity = {k: v for k, v in arguments.items() if k != "timeout_ms"}
+        if arguments.get("operation_id"):
+            identity = {"action": action, "operation_id": arguments["operation_id"]}
+        elif action in {"open", "new_tab"} and before.get("tab_id"):
+            identity["tab_id"] = arguments.get("tab_id") or before["tab_id"]
+        elif before.get("document_id"):
+            identity["page"] = before
+            if before.get("target_id"):
+                identity.pop("ref", None)
+                identity.pop("selector", None)
+            # Bare refs/coordinates remain observation-bound unless the runtime
+            # identified a stable target. A fresh observation is not a new target.
+            if before.get("target_id") or not any(k in arguments for k in ("ref", "x", "y")):
+                identity.pop("observation_id", None)
+                identity.pop("generation", None)
+        digest = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+        return f"{action} [{digest}]"
     return next(
         (str(arguments[key])[:120] for key in _TARGET_KEYS if arguments.get(key)), ""
     )
@@ -92,6 +113,7 @@ def without_completion_note(text: str, metadata: dict[str, Any] | None) -> str:
 
 @dataclass
 class TurnFacts:
+    assistance_requests: list[dict[str, Any]] = field(default_factory=list)
     called_tools: bool = False
     browser_used: bool = False
     cua_used: bool = False
@@ -101,23 +123,36 @@ class TurnFacts:
     ran: bool = False
     edited_after_run: list[str] = field(default_factory=list)
     pending_reminded: bool = False
-    short_stop_checked: bool = False
     # Absolute paths from before the session; None until the first shell command.
     existing_files: dict[str, tuple[int, int]] | None = None
     approved_removals: set[str] = field(default_factory=set)
     gone_files: list[str] = field(default_factory=list)
 
-    def record(self, tool: str, arguments: Any, *, success: bool, error: str = "") -> None:
+    def record(self, tool: str, arguments: Any, *, success: bool, error: str = "",
+               metadata: dict[str, Any] | None = None) -> None:
         self.called_tools = True
         self.browser_used |= tool in _BROWSER_TOOLS
         self.cua_used |= tool in CUA_TOOLS
         if tool in _ACTING_TOOLS:
-            key = (tool, _target(tool, arguments))
+            key = (tool, _target(tool, arguments, metadata))
             if success:
-                self.failures.pop(key, None)
+                # Bare refs/selectors may refer to a different page on the next call.
+                identified = tool not in _UI_TOOLS or (
+                    isinstance(arguments, dict) and (
+                        any(arguments.get(k) for k in ("operation_id", "observation_id", "url"))
+                        or arguments.get("action") in {"wait", "check_text"}
+                        or (
+                            ((metadata or {}).get("browser_before") or {}).get("document_id")
+                            and (not any(k in arguments for k in ("ref", "x", "y"))
+                                 or ((metadata or {}).get("browser_before") or {}).get("target_id"))
+                        )
+                    )
+                )
+                if identified:
+                    self.failures.pop(key, None)
             else:
                 self.failures[key] = _error_text(error)
-        if tool == "exec_shell" or is_task_call(tool, arguments):
+        if tool == "exec_shell":
             # What a command writes is its output, not an edit made after it ran.
             self.ran = True
             self.edited_after_run.clear()
@@ -159,6 +194,10 @@ class TurnFacts:
     def outcome(
         self, pending: list[str], problems: list[str], locale: str = "zh",
     ) -> dict[str, Any] | None:
+        if self.assistance_requests:
+            return {"status": "needs_assistance", "remaining": [
+                str(r.get("reason") or r.get("questions")) for r in self.assistance_requests
+            ], "requests": list(self.assistance_requests)}
         if not self.called_tools and not problems:
             return None
         labels = _labels(locale)
@@ -176,6 +215,10 @@ class TurnFacts:
     def note(self, pending: list[str], problems: list[str], locale: str = "zh") -> str | None:
         labels = _labels(locale)
         lines = []
+        if self.assistance_requests:
+            lines.append(labels["pending"] + "; ".join(
+                str(r.get("reason") or r.get("questions")) for r in self.assistance_requests
+            ))
         if pending:
             lines.append(labels["pending"] + "; ".join(labels[key] for key in pending))
         if self.ran and self.edited_after_run:

@@ -588,3 +588,20 @@ async def test_continuation_conflict_does_not_pause_winning_user_turn(monkeypatc
         state.engine_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await state.engine_task
+
+
+async def test_assistance_pauses_goal_without_automatic_continuation(engine_ctx):
+    from deepseek_tui.engine.completion import TurnFacts
+
+    engine, _ = engine_ctx
+    engine.goal_service.create("Complete the workflow")
+    engine.tool_context.metadata["turn_facts"] = TurnFacts(
+        assistance_requests=[{"kind": "action", "surface": "browser", "reason": "login"}])
+    engine.tool_context.metadata["goal_continue_pending"] = True
+    engine.launch_goal_continuation = AsyncMock()
+    await engine._finish_goal_turn(cancelled=False, failed=False, error_message=None)
+    assert engine.goal_service.snapshot().status is GoalStatus.PAUSED
+    assert not engine.tool_context.metadata.get("goal_continue_pending")
+    engine.launch_goal_continuation.assert_not_awaited()
+    _, decision = engine.goal_service.resume()
+    assert decision.should_continue

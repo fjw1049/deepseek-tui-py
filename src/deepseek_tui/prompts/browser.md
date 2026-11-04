@@ -24,7 +24,8 @@ Start with `status`. If no page is active, open the intended URL; otherwise reus
 the relevant page without reloading unfinished input. If `status` shows owner=user,
 the user holds the browser: ask them to return control with
 `request_user_input(kind="action", surface="browser", reason=...)` instead of
-retrying browser actions, or finish as blocked. Use `tabs` when selecting
+retrying browser actions. If they decline or handoff is unavailable, report that limitation.
+Use `tabs` when selecting
 another page or investigating a popup, and only switch using fresh tab IDs.
 Before changing data, establish the intended account or workspace and specific
 target object from page evidence. Resolve ambiguous targets before acting; do
@@ -133,6 +134,8 @@ examples below are not an exhaustive list of trigger conditions.
 
 Use the shared `request_user_input` entry point for human collaboration:
 - `kind="information"`: ask for missing facts; omit options for free text.
+  Also use a question card for an external human step that needs no browser control transfer;
+  wait for the user's report, then observe the relevant result.
 - `kind="decision"`: ask for a necessary preference or ambiguous target.
 - `kind="action", surface="browser", reason=...`: request manual browser work.
 Make it the only call in the response. Manual action uses the browser takeover

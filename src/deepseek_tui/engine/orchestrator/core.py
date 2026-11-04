@@ -103,10 +103,6 @@ _CHECKLIST_GATE_MAX_FIRES = 1
 # Consecutive rounds cut off at the output cap before the fragment is reported as it stands.
 _MAX_TRUNCATED_ROUNDS = 2
 _ROUND_BUDGET_NOTICE = 20
-# Below this after this much work, the stop is unfinished more often than it is a report:
-# 22 of 22 such stops in 345 measured turns had announced work and not done it.
-_SHORT_STOP_MIN_ROUNDS = 5
-_SHORT_STOP_MAX_CHARS = 200
 # Same backstop for turn_end ("Stop") hooks. Unlike the checklist gate there is
 # no progress signal to release on, so a hook that blocks unconditionally used
 # to spin to the round-trip limit — re-sending the whole context every round.
@@ -609,6 +605,13 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             0,
             total_output_tokens - self._goal_accounted_output_tokens,
         )
+        facts = metadata.get("turn_facts")
+        if (getattr(facts, "assistance_requests", None) and snapshot is not None
+                and snapshot.status.value == "active"):
+            from deepseek_tui.goal.types import GoalActor
+
+            self.goal_service.pause("Awaiting human assistance; see saved task outcome.",
+                                    actor=GoalActor.RUNTIME)
         decision = self.goal_service.on_turn_ended(
             cancelled=cancelled,
             failed=failed,
@@ -617,7 +620,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             mode=self.mode,
             automatic=bool(self.tool_context.metadata.get("goal_automatic_turn")),
         )
-        if cancelled or failed:
+        if cancelled or failed or getattr(facts, "assistance_requests", None):
+            metadata.pop("goal_continue_pending", None)
             self.goal_service.discard_promoted()
             return
         promoted = self.goal_service.consume_promoted()
@@ -3592,28 +3596,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     messages.append(reminders.reminder_message(
                         reminders.PENDING_STATE,
                         "Still open at your stop: " + ", ".join(pending) + ". Resolve them "
-                        "if you can; otherwise tell the user what remains. Your work so far "
-                        "stands, and you may end the turn after this.",
+                        "if you can. If continuing requires user input or a manual action, "
+                        "use request_user_input when available. Otherwise report the remaining "
+                        "limitation. Respect prior refusals; do not ask again without new evidence.",
                     ))
                     logger.info("pending_state_reminded pending=%s", pending)
-                    continue
-                stop_text = result.assistant_message.text_content() if result.assistant_message else ""
-                if (tool_round_count >= _SHORT_STOP_MIN_ROUNDS
-                        and len(stop_text.strip()) < _SHORT_STOP_MAX_CHARS
-                        and not facts.short_stop_checked and not result.error_message
-                        and round_idx < self.max_tool_round_trips):
-                    # The length is a fact; whether the work is done is the model's call.
-                    facts.short_stop_checked = True
-                    from deepseek_tui.engine import reminders
-
-                    messages.append(reminders.reminder_message(
-                        reminders.SHORT_STOP,
-                        "That message is brief for a turn with this much work. If the request "
-                        "is not finished, or the message announces a next step, carry on now "
-                        "with tool calls. If it is finished, give the user the report: what "
-                        "was done, what was checked, what is left.",
-                    ))
-                    logger.info("short_stop_reminded rounds=%d", tool_round_count)
                     continue
                 # Checklist turn-end gate: if the model is about to stop with
                 # open checklist items, hold this stop and inject a reminder
@@ -3721,6 +3708,16 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                         await maybe
                 except Exception:  # noqa: BLE001 — never break the turn
                     logger.debug("on_turn_checkpoint_failed", exc_info=True)
+
+            if facts.assistance_requests:
+                answer = Message.assistant(
+                    "需要人工协助，当前执行已停止；请求内容已保存在任务结果中。"
+                )
+                messages.append(answer)
+                return TurnResult(
+                    assistant_message=answer,
+                    usage=result.usage, tool_calls=[], **closing_facts(),
+                )
 
             # Capacity error escalation
             if tool_errors > 0:

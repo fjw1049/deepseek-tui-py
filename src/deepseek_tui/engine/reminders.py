@@ -92,14 +92,6 @@ ROUND_BUDGET = ReminderSpec(
 )
 
 
-SHORT_STOP = ReminderSpec(
-    name="short_stop",
-    envelope=Envelope.ALERT,
-    placement=Placement.TAIL,
-    origin=MessageOrigin.SYSTEM_REMINDER,
-)
-
-
 # --- Head: session framing, injected ahead of the user's first turn --------
 
 GIT_SNAPSHOT = ReminderSpec(

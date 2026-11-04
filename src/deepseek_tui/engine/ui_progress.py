@@ -52,7 +52,9 @@ _STUCK = (
     "Do not act on what you cannot see. Choose one and state it before acting: "
     "(1) a way to observe or reach the target you have not tried yet; "
     "(2) request_user_input for the step that needs the person; "
-    "(3) stop and report the blocker and what remains.\n"
+    "(3) report a terminal limitation if no authorized route remains. "
+    "If continuing depends on the user, use request_user_input when available instead "
+    "of ending with a prose request. Respect prior refusals.\n"
     "</system-reminder>"
 )
 
@@ -60,14 +62,15 @@ _PAUSED = (
     "\n\n<system-reminder>\n"
     "The last {streak} observations on this interface were unchanged. Further calls on it "
     "are paused until the person acts: hand them the step (request_user_input when "
-    "available), or stop and report the blocker and what remains.\n"
+    "available). Report a terminal limitation if no permitted route remains; do not "
+    "repeat a declined request without new evidence.\n"
     "</system-reminder>"
 )
 
 _BLOCKED = (
     "Not executed: the last {streak} observations on this interface were unchanged. "
-    "Hand the step to the person (request_user_input when available), or stop and report "
-    "the blocker and what remains."
+    "Hand the step to the person (request_user_input when available). Report a terminal "
+    "limitation if no permitted route remains; respect prior refusals."
 )
 
 _CUA_PAUSED = (

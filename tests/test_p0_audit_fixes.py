@@ -42,12 +42,12 @@ async def test_collect_turn_events_drains_concurrently_with_emit() -> None:
         )
 
     flood = asyncio.create_task(_flood())
-    text, err = await asyncio.wait_for(
+    result = await asyncio.wait_for(
         _collect_turn_events(handle, cancel), timeout=5.0
     )
     await asyncio.wait_for(flood, timeout=5.0)
-    assert err is None
-    assert text == "done"
+    assert result.error is None
+    assert result.summary == "done"
 
 
 @pytest.mark.asyncio
@@ -63,11 +63,11 @@ async def test_collect_turn_events_bridges_cancel_to_handle() -> None:
 
     producer = asyncio.create_task(_produce())
     collect = asyncio.create_task(_collect_turn_events(handle, cancel))
-    text, err = await asyncio.wait_for(collect, timeout=2.0)
+    result = await asyncio.wait_for(collect, timeout=2.0)
     await producer
     assert handle.cancel_event.is_set()
-    assert err is None
-    assert text == ""
+    assert result.error is None
+    assert result.summary == ""
 
 
 @pytest.mark.asyncio
@@ -512,12 +512,12 @@ async def test_collect_turn_events_streams_live_text_to_task_record(tmp_path, mo
         )
 
     producer = asyncio.create_task(_produce())
-    text, err = await asyncio.wait_for(
+    result = await asyncio.wait_for(
         _collect_turn_events(handle, cancel, task=_Task()), timeout=2.0
     )
     await producer
-    assert err is None
-    assert text == "done"
+    assert result.error is None
+    assert result.summary == "done"
     assert recorded, "no live text reached record_live_text"
     assert recorded[0][0] == "task_live1"
     assert "第一段流式输出" in recorded[-1][1]

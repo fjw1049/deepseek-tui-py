@@ -1123,10 +1123,10 @@ async def test_unattended_runs_decline_app_access_instead_of_waiting(
         }
         assert not engine.handle.pending_user_inputs
         assert "unattended" in engine._cua_prompt()
-        with pytest.raises(ToolError, match="Nobody is watching"):
-            await engine._await_user_input(
-                "ask", {"kind": "action", "surface": "desktop", "reason": "approve"}
-            )
+        result = await engine._await_user_input(
+            "ask", {"kind": "action", "surface": "desktop", "reason": "approve"}
+        )
+        assert result.metadata["needs_assistance"]["surface"] == "desktop"
     finally:
         await engine._close_cua()
         cua_session.reset_runtime_cache()

@@ -1,7 +1,4 @@
-"""A long turn that ends on one line gets one chance to carry on or report properly.
-
-Measured on 345 real turns, every stop this catches had announced work it never did.
-"""
+"""Answer length does not authorize another model or tool round."""
 
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.protocol.responses import ToolCall
@@ -31,19 +28,19 @@ async def run(tmp_path, replies):
     return result, client, reminded
 
 
-async def test_announced_step_is_taken_instead_of_ending_the_turn(tmp_path):
+async def test_prose_does_not_authorize_another_tool_round(tmp_path):
     result, client, reminded = await run(tmp_path, [
         *reads(5), "接着补前端的撤销面板。", *reads(1, "more"), REPORT,
     ])
-    assert reminded == 1
-    assert len(client.requests) == 8
-    assert result.assistant_message.text_content() == REPORT
+    assert reminded == 0
+    assert len(client.requests) == 6
+    assert result.assistant_message.text_content() == "接着补前端的撤销面板。"
 
 
-async def test_it_asks_once_and_then_the_turn_may_end(tmp_path):
+async def test_short_answer_is_not_replaced_by_a_second_answer(tmp_path):
     result, _, reminded = await run(tmp_path, [*reads(5), "接着补页面。", "没有别的了。"])
-    assert reminded == 1
-    assert result.assistant_message.text_content() == "没有别的了。"
+    assert reminded == 0
+    assert result.assistant_message.text_content() == "接着补页面。"
 
 
 async def test_a_short_turn_may_answer_briefly(tmp_path):

@@ -67,7 +67,7 @@ async def test_ui_turn_ends_on_the_models_plain_answer(tmp_path):
         result = await engine._run_conversation([Message.user("Check Notes")], "test", "sys", None)
         assert len(client.requests) == 2
         assert result.assistant_message.text_content() == "Notes shows 42."
-        assert result.task_outcome == {"status": "completed_with_evidence", "remaining": []}
+        assert result.task_outcome == {"status": "completed_unverified", "remaining": []}
         assert result.completion_note is None
     finally:
         await engine.shutdown_session()
@@ -247,10 +247,10 @@ async def test_unattended_run_says_so_and_fails_questions_fast(tmp_path):
         result = await asyncio.wait_for(
             engine._run_conversation([Message.user("Summarize")], "test", "sys", None), 5)
         assert "Unattended run" in client.requests[0].system_prompt
-        refusal = next(b for m in client.requests[-1].messages for b in m.content
-                       if b.type == "tool_result" and b.tool_use_id == "ask")
-        assert refusal.is_error and "Nobody is watching" in str(refusal.content)
-        assert result.assistant_message.text_content() == "Assumed the latest report."
+        assert len(client.requests) == 1
+        assert result.task_outcome["status"] == "needs_assistance"
+        assert result.task_outcome["requests"][0] == question.arguments
+        assert "Which report?" in result.completion_note
     finally:
         await engine.shutdown_session()
 

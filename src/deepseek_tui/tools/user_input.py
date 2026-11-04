@@ -23,6 +23,33 @@ from deepseek_tui.tools.registry import ToolContext
 REQUEST_USER_INPUT_NAME = "request_user_input"
 
 
+def unattended_assistance(context: ToolContext, input_data: dict[str, Any]) -> ToolResult:
+    """Preserve a valid request for a later human-assisted turn without waiting."""
+    import json
+
+    kind = input_data.get("kind", "information")
+    if not isinstance(kind, str) or kind not in {"information", "decision", "action"}:
+        raise ToolError("Unknown user input kind")
+    if kind == "action":
+        reason = input_data.get("reason")
+        if (input_data.get("surface") not in {"browser", "desktop"}
+                or not isinstance(reason, str) or not reason.strip()):
+            raise ToolError("Manual action requires a surface and a non-empty reason")
+    else:
+        validate_user_input_request(input_data)
+    request = dict(input_data)
+    facts = context.metadata.get("turn_facts")
+    if facts is not None and request not in facts.assistance_requests:
+        facts.assistance_requests.append(request)
+    return ToolResult(
+        success=False,
+        content=json.dumps({"status": "needs_assistance", "request": request,
+                            "message": "Unattended run: request saved; resume with human input."},
+                           ensure_ascii=False),
+        metadata={"needs_assistance": request},
+    )
+
+
 class UserInputQuestion:
     """Validated question structure."""
 
@@ -99,14 +126,19 @@ class RequestUserInputTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Request information, a decision, or a manual browser or desktop action. "
+            "Ask the user and wait for their response in this task. Use this tool when "
+            "continuing requires information, a decision, or a manual action from the user; "
+            "do not replace the call with a question or a request to act in your final answer. "
+            "This interaction is available even when the webpage has no usable controls. "
+            "For a human step outside the browser/desktop, use questions to ask the user "
+            "to report back; do not request control transfer. Verify the result after their reply. "
             "Omit options for a free-text answer. For action, supply reason and surface: "
             "surface=browser uses the existing browser takeover UI, which pauses the task, "
             "without a second question card; surface=desktop (when computer use is "
             "available) releases the desktop and asks the user to do one step on their "
             "computer, after which you must observe again. "
-            "Never request passwords or verification codes in chat. Use as the only tool call. "
-            "Must be handled by the engine — direct execution is an error."
+            "Do not ask for optional follow-ups or repeat a declined request without new evidence. "
+            "Never request passwords or verification codes in chat. Use as the only tool call."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -153,7 +185,8 @@ class RequestUserInputTool(ToolSpec):
                                 "type": "string",
                                 "description": (
                                     "The question text, one sentence, in "
-                                    "the conversation language."
+                                    "the conversation language. Never request passwords or "
+                                    "verification codes; use manual action for authentication."
                                 ),
                             },
                             "description": {"type": "string", "description": "Optional brief context; do not repeat the question."},

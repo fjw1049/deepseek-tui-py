@@ -74,19 +74,20 @@ def test_a_document_edited_after_the_last_run_is_not_reported():
     assert facts.note([], []) is None
 
 
-def test_a_browser_retry_clears_a_failure_whatever_the_ref():
-    # Refs change with every observation, so the same click never has the same target.
+def test_a_different_browser_ref_does_not_clear_a_failure():
+    # Action names alone cannot establish that a failed target was retried.
     facts = TurnFacts()
     record(facts, "browser_use", {"action": "click", "ref": "e11"}, success=False, error="x")
     record(facts, "browser_use", {"action": "click", "ref": "e42"})
-    assert facts.failures == {}
+    assert len(facts.failures) == 1
 
 
 def test_a_browser_failure_is_reported_in_words_not_json():
     facts = TurnFacts()
     record(facts, "browser_use", {"action": "drag", "ref": "e1"}, success=False,
            error='{"success": false, "content": "target_obscured", "artifact": null}')
-    assert "browser_use drag: target_obscured" in facts.note([], [])
+    assert "browser_use drag" in facts.note([], [])
+    assert ": target_obscured" in facts.note([], [])
     assert "{" not in facts.note([], [])
 
 
