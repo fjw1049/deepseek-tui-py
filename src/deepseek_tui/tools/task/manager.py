@@ -391,6 +391,7 @@ class TaskManager:
             task.ended_at = None
             task.duration_ms = None
             task.result_summary = None
+            task.task_outcome = None
             task.timeline.append(
                 TaskTimelineEntry(
                     timestamp=now,
@@ -836,6 +837,7 @@ class TaskManager:
             task = self._tasks.get(task_id)
             if task is None:
                 return
+            task.task_outcome = result.task_outcome
             now = _utc_now_iso()
             task.ended_at = now
             task.live_text = None

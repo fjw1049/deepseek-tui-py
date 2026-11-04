@@ -186,6 +186,7 @@ class TaskRecord:
     live_text: str | None = None
     result_detail_path: str | None = None
     error: str | None = None
+    task_outcome: dict[str, Any] | None = None
     thread_id: str | None = None
     turn_id: str | None = None
     provider: str | None = None
@@ -216,6 +217,7 @@ class TaskRecord:
             ),
             thread_id=self.thread_id,
             turn_id=self.turn_id,
+            task_outcome=self.task_outcome,
         )
 
 
@@ -234,6 +236,7 @@ class TaskSummary:
     result_summary: str | None
     thread_id: str | None
     turn_id: str | None
+    task_outcome: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -303,6 +306,7 @@ class TaskExecutionResult:
     detail: str | None = None
     error: str | None = None
     timed_out: bool = False
+    task_outcome: dict[str, Any] | None = None
 
 
 ExecutorFunc = Callable[[ExecutionTask, asyncio.Event], Awaitable[TaskExecutionResult]]

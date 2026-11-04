@@ -624,8 +624,8 @@ async def _collect_turn_events(
     on_tool_event: Callable[..., Awaitable[None]] | None = None,
     *,
     task: "ExecutionTask | None" = None,
-) -> tuple[str, str | None]:
-    """Drain events until turn end. Returns (final_assistant_text, error_message).
+) -> "TaskExecutionResult":
+    """Drain events until turn end, retaining structured terminal outcomes.
 
     When ``on_tool_event`` is provided, the task's "run log" is streamed as
     ``(kind, summary[, detail])`` triples that read like a mini conversation:
@@ -640,8 +640,11 @@ async def _collect_turn_events(
     from deepseek_tui.automation.delivery import assistant_message_text
     from deepseek_tui.utils import summarize_text
 
+    from deepseek_tui.tools.task import TaskExecutionResult
+
     final_text = ""
     error_msg: str | None = None
+    task_outcome = None
     # tool_call_id -> arguments, captured at round-complete so the result
     # event (which omits arguments) can be rendered with its key parameter.
     pending_args: dict[str, dict[str, Any]] = {}
@@ -748,6 +751,11 @@ async def _collect_turn_events(
                     await bridge_background_approval(event, task=task)
             elif isinstance(event, TurnCompleteEvent):
                 final_text = assistant_message_text(event.assistant_message)
+                task_outcome = event.task_outcome
+                if (task_outcome or {}).get("status") == "needs_assistance":
+                    error_msg = "Needs human assistance: " + json.dumps(
+                        task_outcome.get("requests", []), ensure_ascii=False
+                    )
                 if history:
                     history.settle(final_text, final=True)
                 break
@@ -767,7 +775,7 @@ async def _collect_turn_events(
                 str(exc) or None,
             )
         raise
-    return final_text, error_msg
+    return TaskExecutionResult(summary=final_text, error=error_msg, task_outcome=task_outcome)
 
 
 async def _run_task_engine_turn(
@@ -997,9 +1005,8 @@ async def _run_task_engine_turn(
                     pass
             raise
         try:
-            result_text, error_msg = await asyncio.wait_for(
-                collect_task, timeout=30.0
-            )
+            result = await asyncio.wait_for(collect_task, timeout=30.0)
+            result_text = result.summary
         except asyncio.TimeoutError:
             collect_task.cancel()
             try:
@@ -1010,12 +1017,8 @@ async def _run_task_engine_turn(
                 summary="",
                 error="Task ended without a turn completion event",
             )
-        if error_msg:
-            return TaskExecutionResult(
-                summary=result_text or "Task failed",
-                detail=None,
-                error=error_msg,
-            )
+        if result.error:
+            return result
         if cancel.is_set():
             return TaskExecutionResult(summary=result_text, error="canceled")
         if completion_path is not None:
@@ -1023,7 +1026,7 @@ async def _run_task_engine_turn(
 
             await asyncio.to_thread(write_json_atomic, completion_path,
                                     {"task_id": task.id, "summary": result_text})
-        return TaskExecutionResult(summary=result_text, detail=None, error=None)
+        return result
     finally:
         bridge_task.cancel()
         try:

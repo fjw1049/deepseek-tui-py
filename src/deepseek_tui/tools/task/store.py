@@ -166,6 +166,7 @@ def _task_record_from_dict(data: dict[str, Any]) -> TaskRecord:
         ended_at=data.get("ended_at"),
         duration_ms=data.get("duration_ms"),
         result_summary=data.get("result_summary"),
+        task_outcome=data.get("task_outcome"),
         live_text=data.get("live_text"),
         result_detail_path=data.get("result_detail_path"),
         error=data.get("error"),

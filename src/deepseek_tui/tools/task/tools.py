@@ -140,6 +140,9 @@ class TaskCreateTool(ToolSpec):
                 record = await manager.get_task(resume_id)
                 if record is None:
                     raise KeyError(resume_id)
+                if (record.task_outcome or {}).get("status") == "needs_assistance":
+                    raise ToolError("This task needs human assistance. Resolve the saved request "
+                                    "and resume it from the Tasks panel.")
                 original = task_scope(record)
                 current = {
                     "workspace": str(context.working_directory.resolve()),
