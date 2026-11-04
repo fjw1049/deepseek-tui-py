@@ -509,10 +509,16 @@ async def test_status_without_start_and_during_takeover(browser):
         await browser.action("one", BrowserAction(action="reload"))
 
 
-@pytest.mark.parametrize("action", ["switch_tab", "hover", "wait"])
+@pytest.mark.parametrize("action", ["switch_tab", "hover"])
 def test_browser_requires_grounded_targets(action):
     with pytest.raises(ValidationError):
         BrowserAction(action=action)
+
+
+def test_bare_wait_is_a_pause_but_a_condition_needs_a_subject():
+    BrowserAction(action="wait")
+    with pytest.raises(ValidationError):
+        BrowserAction(action="wait", condition="title_contains")
 
 
 async def test_navigation_wait_and_tabs_use_owned_session(browser):

@@ -115,6 +115,36 @@ async def test_unknown_operation_blocks_new_mutation_and_requires_human_review(
     assert result["receipt"]["execution"] == "unknown"
 
 
+async def test_unknown_operation_still_lets_the_agent_read_and_scroll(tmp_path, monkeypatch):
+    service = BrowserService(tmp_path)
+    run = BrowserRun(
+        "t", tmp_path, session=SimpleNamespace(_internal=SimpleNamespace(client=object()))
+    )
+    service.runs["t"] = run
+    run.unresolved["earlier"] = {"action_id": "earlier", "action": "click", "execution": "unknown"}
+    monkeypatch.setattr("deepseek_tui.browser.service.observe", AsyncMock(return_value={}))
+    executed = []
+
+    async def act(run, action, actor):
+        executed.append(action.action)
+        return {"success": True, "content": "ok", "artifact": None,
+                "receipt": {"action_id": action._action_id, "action": action.action,
+                            "execution": "executed", "effect": "unchecked"}}
+
+    monkeypatch.setattr(service, "_execute_action", act)
+    await service.action("t", BrowserAction(action="scroll"))
+    for _ in range(3):
+        blocked = await service.action("t", BrowserAction(action="press", key="Enter"))
+    assert executed == ["scroll"]
+    assert "reviews it in the browser panel" in blocked["content"]
+    assert "change route" not in blocked["content"]
+
+
+async def test_reading_tabs_before_any_page_is_not_an_error(tmp_path):
+    result = await BrowserService(tmp_path).action("t", BrowserAction(action="tabs"))
+    assert result["success"] and result["tabs"] == []
+
+
 async def test_key_release_is_sent_even_when_down_acknowledgement_is_lost():
     from deepseek_tui.browser.input import press_key
 

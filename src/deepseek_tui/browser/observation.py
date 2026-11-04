@@ -19,20 +19,61 @@ VISIBLE = r"""e => {
     return !!e.getClientRects().length;
   }"""
 
-READ_TEXT = r"""(root, includeEditable=false) => {
+# Text as it reads on screen: inline runs of one block share a line, cells of one table row
+# share a line separated by " | ", and blocks start new lines. One line per text node split
+# "111 points by xx_ns" into five lines and flattened table rows into loose values.
+READ_TEXT = r"""(root, includeEditable=false, skip=null) => {
   if (!root) return '';
-  const texts=[], visible=__VISIBLE__;
+  // Callers pass this to Array.map, whose third argument is the array, not a node.
+  if (skip?.nodeType!==1) skip=null;
+  const visible=__VISIBLE__, blocks=new Map(), view=(root.ownerDocument || document).defaultView;
+  // The nearest ancestor that is not laid out inline; cached for every element passed.
+  const blockOf=start=>{
+    const passed=[];
+    let found=null;
+    for (let e=start; e && e!==root; e=e.parentElement) {
+      if (blocks.has(e)) { found=blocks.get(e); break; }
+      passed.push(e);
+      const d=window.getComputedStyle.call(view,e).display;
+      if (d!=='contents' && !/^inline/.test(d)) { found=e; break; }
+    }
+    found=found || root;
+    for (const e of passed) blocks.set(e,found);
+    return found;
+  };
+  // Between inline pieces, a space only where the page shows one: "<b>browser</b>, often"
+  // and "我<b>喜欢</b>你" stay tight, separate inline-block controls do not run together.
+  const cjk=/[⺀-鿿豈-﫿＀-￯]/;
+  const tight=(a,b)=>(cjk.test(a.slice(-1)) && cjk.test(b[0]))
+    || /^[,.;:!?)\]}%、，。；：！？）」』】]/.test(b) || /[(\[{（「『【]$/.test(a);
+  const boxOf=p=>p.closest('a,button,label,[role=button],[role=link]') || p;
+  let out='', last=null, gap=false;
   const walker=(root.ownerDocument || document).createTreeWalker(root,NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const n=walker.currentNode, p=n.parentElement;
-    if (!p || !visible(p) || p.closest('script,style,noscript,input,textarea')) continue;
+    if (p && !n.textContent.trim()) { gap=true; continue; }
+    if (!p || (skip && skip.contains(n)) || !visible(p)
+        || p.closest('script,style,noscript,input,textarea')) continue;
     let editable=false;
     for (let e=p; e; e=e.parentElement || e.getRootNode()?.host) {
       if (e.isContentEditable) { editable=true; break; }
     }
-    if ((!editable || includeEditable) && n.textContent.trim()) texts.push(n.textContent.trim());
+    if (editable && !includeEditable) continue;
+    const pre=/^pre/.test(window.getComputedStyle.call(view,p).whiteSpace);
+    const value=pre ? n.textContent.trim() : n.textContent.replace(/\s+/g,' ').trim();
+    if (!value) continue;
+    const block=blockOf(p), cell=p.closest('td,th'), row=cell?.parentElement, box=boxOf(p);
+    if (last && block!==last.block) {
+      out += row && row===last.row && cell!==last.cell ? ' | ' : '\n';
+    } else if (last) {
+      const shown=gap || /^\s/.test(n.textContent) || last.trailing;
+      if ((shown || box!==last.box) && !tight(out,value)) out += ' ';
+    }
+    out += value;
+    last={block,cell,row,box,trailing:/\s$/.test(n.textContent)};
+    gap=false;
   }
-  return texts.join('\n').trim();
+  return out.trim();
 }""".replace("__VISIBLE__", VISIBLE)
 
 LABEL_TEXT = r"""root => {
@@ -194,7 +235,16 @@ COLLECT = (
   const walk = root => {
     if (!root) return;
     watch(root.getRootNode());
-    texts.push(readText(root,includeEditable));
+    // A whole-page read leads with the page's one main region, so headers, menus and
+    // sidebars cannot use up the text budget before the content; their controls stay in
+    // elements and their text follows, marked.
+    const mains=root===document.body && !selector
+      ? Array.from(document.querySelectorAll('main,[role=main]')).filter(visible) : [];
+    if (mains.length===1 && mains[0]!==root) {
+      texts.push(readText(mains[0],includeEditable));
+      const rest=readText(root,includeEditable,mains[0]);
+      if (rest) texts.push('[Outside the main content]\n'+rest);
+    } else texts.push(readText(root,includeEditable));
     const view=(root.ownerDocument || document).defaultView;
     scrolls.push({node:view, x:view.scrollX, y:view.scrollY, window:true});
     for (const e of [...(root.nodeType===1?[root]:[]),...root.querySelectorAll('*')]) {

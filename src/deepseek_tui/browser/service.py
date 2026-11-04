@@ -301,7 +301,9 @@ class BrowserAction(BaseModel):
             raise ValueError("switch_tab requires tab_id from tabs")
         if self.action == "hover" and not self.ref:
             raise ValueError("hover requires ref from observe")
-        if self.action == "wait" and not (self.text.strip() or self.selector or self.url_contains):
+        # A bare wait is a plain pause (models use it so); a condition still needs its subject.
+        if (self.action == "wait" and self.condition
+                and not (self.text.strip() or self.selector or self.url_contains)):
             raise ValueError("wait requires text, selector, or url_contains")
         if self.action == "wait" and self.wait_state == "hidden" and not (
             self.text or self.selector
@@ -941,7 +943,8 @@ class BrowserService:
                         "observation_id": response["observation"].get("observation_id"),
                     }
                     run.unresolved.pop(pending_id)
-        if action_id not in run.operations:
+        # A refusal while an outcome awaits review is not a failed attempt at the page.
+        if action_id not in run.operations and receipt.get("reason") != "unresolved_operation":
             if not response["success"] or receipt.get("effect") == "not_confirmed":
                 run.consecutive_action_failures += 1
             elif receipt.get("action") not in {"observe", "describe", "screenshot", "tabs", "downloads", "console"}:
@@ -1553,9 +1556,10 @@ class BrowserService:
             "focus_not_active": "The page could not receive keyboard input. Inspect the active tab or request manual help.",
             "text_exceeds_maxlength": "The field accepts fewer characters than the text; nothing was entered. For a code split across boxes, use type on the first box: its keystrokes advance between boxes.",
             "reload_would_resubmit_form": "This page came from a form submission; reloading would send the form again. Observe the current page, or open a specific URL for fresh content.",
+            "unresolved_operation": "An earlier action's outcome is unknown (status lists it), so clicks, input and reload wait until the user reviews it in the browser panel. Reading, scrolling, back/forward and opening pages still work: check whether that action took effect. If the task needs more input, ask the user with request_user_input(kind=action, surface=browser, reason=...) to review it.",
         }
         content = reason + (": " + guidance[reason] if reason in guidance else "")
-        if run.failures[key] >= 3:
+        if run.failures[key] >= 3 and reason != "unresolved_operation":
             content += ": repeated without target or business progress; change route or request assistance"
         if reason == "screenshot_required":
             content += (
@@ -1643,8 +1647,13 @@ class BrowserService:
                 state["next_operation_offset"] = action.operation_offset + 8 if len(run.unresolved) > action.operation_offset + 8 else None
             return {"success": True, "content": state, "artifact": None}
         if run is None or run.session is None:
+            if action.action in {"tabs", "downloads", "console"}:
+                # Nothing open is an answer, not a failure.
+                return {"success": True, "artifact": None, "tabs": [],
+                        "content": "No browser page is open yet; open a URL to start."}
             if action.action not in {"open", "new_tab"}:
-                raise ValueError("Open a browser page first")
+                raise ValueError("No browser page is open yet; nothing was done. "
+                                 "Use open with a URL first.")
             run = await self.ensure(thread_id)
             if actor == "agent":
                 run.agent_task = True
@@ -1712,7 +1721,9 @@ class BrowserService:
                 run.requests[action.operation_id] = (fingerprint, action._action_id)
             if asyncio.get_running_loop().time() >= action._deadline:
                 return await self._reject_action(run, action, "deadline_expired")
-            if actor == "agent" and run.unresolved and action.action not in {"observe", "describe", "tabs", "downloads", "console", "handle_dialog", "wait", "check_text", "screenshot", "open", "new_tab", "switch_tab"}:
+            # Reading, scrolling and history moves cannot repeat the uncertain change; acting on
+            # the page can, and so can a reload (some sites change data on a GET).
+            if actor == "agent" and run.unresolved and action.action not in {"observe", "describe", "tabs", "downloads", "console", "handle_dialog", "wait", "check_text", "screenshot", "open", "new_tab", "switch_tab", "scroll", "hover", "back", "forward"}:
                 return await self._reject_action(run, action, "unresolved_operation")
             if actor == "agent" and len(run.unresolved) >= 8 and action.action in {"open", "new_tab", "switch_tab"}:
                 return await self._reject_action(run, action, "unresolved_operation_limit")
@@ -1965,6 +1976,12 @@ class BrowserService:
             existing = next((tab for tab in before_tabs if tab.get("url") == a.url), None)
             if existing:
                 result = None if existing.get("active") else await s.switch_tab(existing["tab_id"])
+                # Opening a local page again after a code change means wanting the new build;
+                # a page that came from a form post is left alone rather than resent.
+                if (is_loopback(urlsplit(a.url).hostname or "")
+                        and (result is None or result.success)
+                        and not await self._form_submission_page(run)):
+                    result = await s.reload()
             elif own_tab is False:
                 # The shown tab is the user's page: open the site beside it, never over it.
                 result = await s.new_tab(force_new=True)
@@ -2066,9 +2083,13 @@ class BrowserService:
         elif a.action == "wait":
             from deepseek_tui.browser.conditions import check_condition
 
-            deadline = min(a._deadline or float("inf"), asyncio.get_running_loop().time() +
-                           (a.timeout_ms or 10000) / 1000)
-            success = await check_condition(run, a, deadline)
+            if not (a.text.strip() or a.selector or a.url_contains):
+                await asyncio.sleep((a.timeout_ms or 1000) / 1000)
+                success = True
+            else:
+                deadline = min(a._deadline or float("inf"), asyncio.get_running_loop().time() +
+                               (a.timeout_ms or 10000) / 1000)
+                success = await check_condition(run, a, deadline)
             result = None
         elif a.action == "click":
             if a.x is not None and a.y is not None and (a.x >= run.width or a.y >= run.height):
@@ -2287,7 +2308,10 @@ class BrowserService:
         elif a.action == "check_text":
             content = ("PASS: " if success else "FAIL: ") + a.text
         elif a.action == "wait":
-            content = "Wait condition satisfied" if success else "Wait condition timed out"
+            content = ("Paused; the observation below is current. Wait on text, selector or "
+                       "url_contains to wait for a specific change"
+                       if not (a.text.strip() or a.selector or a.url_contains)
+                       else "Wait condition satisfied" if success else "Wait condition timed out")
         elif a.action in {"observe", "describe"}:
             content = "Observation collected"
         else:
@@ -2694,22 +2718,27 @@ class BrowserService:
 
     async def _settle(self, run: BrowserRun, *, frame_id: str = "") -> str | None:
         """Bounded DOM and network quiet period, rather than assuming CDP dispatch means
-        SPA readiness. Requests the action started extend the wait from 1.5s to 3s."""
+        SPA readiness. Requests the action started extend the wait up to 3s.
+
+        DOM changes alone end the wait at 0.6s without a warning: clocks, carousels and
+        feeds never go quiet, and on such pages every action used to wait out a fixed 1.5s
+        and then tell the model the page had not settled after a successful click."""
         loop = asyncio.get_running_loop()
         previous, started = None, loop.time()
         quiet_since = started
-        soft = min(started + 1.5, run.action_deadline or float("inf"))
+        soft = min(started + 0.6, run.action_deadline or float("inf"))
         hard = min(started + 3.0, run.action_deadline or float("inf"))
         client = run.observation_context if frame_id else await root_context(run)
         native, page = run.native_events, run.session._internal.client
         awaited_requests = False
+        requests_done = None
         while (now := loop.time()) < hard:
             # Long-lived requests from before the action (polling, streams) are not its effect.
             busy = bool(native) and native.pending_requests(page, started - 2.0)
-            awaited_requests = awaited_requests or busy
-            # After awaited requests finish, let their DOM update settle within the hard bound.
-            if now >= soft and not busy and not awaited_requests:
-                break
+            if busy:
+                awaited_requests, requests_done = True, None
+            elif awaited_requests and requests_done is None:
+                requests_done = now
             current = await evaluate(
                 client,
                 "[location.href,document.readyState,window.__deepseekPageRevision?.value || 0]",
@@ -2717,7 +2746,12 @@ class BrowserService:
             if not isinstance(current, list):
                 return
             now = loop.time()
-            if current != previous or current[1] == "loading" or busy:
+            loading = current[1] == "loading"
+            # Once the action's requests finish, allow 0.5s for the DOM update they cause.
+            if (not busy and not loading
+                    and now >= (requests_done + 0.5 if awaited_requests else soft)):
+                return None
+            if current != previous or loading or busy:
                 quiet_since, previous = now, current
             elif now - quiet_since >= 0.15:
                 return
