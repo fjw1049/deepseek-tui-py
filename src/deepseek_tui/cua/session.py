@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import time
 import uuid
@@ -29,6 +30,30 @@ LOCK_DIR = Path("/tmp")
 # expose the runtime's own tools without starting it, and a shared retry window
 # so every conversation and child does not wait on an unavailable runtime.
 _RUNTIMES: dict[tuple[str, bool], dict[str, Any]] = {}
+
+
+def _code_fingerprint(arguments: dict[str, Any]) -> str | None:
+    """Identifies a replay of the same code without storing the code itself."""
+    code = " ".join(str(arguments.get("code") or "").split())
+    return hashlib.sha256(code.encode()).hexdigest()[:16] if code else None
+
+
+# Runtime reads (bridge.mjs OBSERVATIONS plus discovery) and plain JavaScript helpers.
+# Code calling only these cannot have changed an app, so its interruption leaves nothing
+# for the user to review. Any other method call counts as a possible action.
+_READ_METHODS = frozenset({
+    "getState", "listApps", "getApp", "getAXState", "getScreenshot",
+    "getAXStateAndScreenshot", "rewriteDocumentation",
+    "write", "log", "filter", "map", "find", "some", "every", "slice", "join", "split",
+    "includes", "test", "match", "replace", "trim", "toLowerCase", "toUpperCase",
+    "startsWith", "endsWith", "indexOf", "keys", "values", "entries", "stringify", "parse",
+    "sort", "reverse", "at",
+})
+
+
+def _reads_only(arguments: dict[str, Any]) -> bool:
+    calls = re.findall(r"\.\s*([A-Za-z_$][\w$]*)\s*\(", str(arguments.get("code") or ""))
+    return bool(calls) and set(calls) <= _READ_METHODS
 
 
 def _runtime_key(config: Any) -> tuple[str, bool]:
@@ -161,6 +186,9 @@ class CuaSession:
             receipt = json.loads(self.receipt_path.read_text())
             if receipt.get("outcome") in {"unknown", "in_progress"}:
                 self.unresolved = {**receipt, "outcome": "unknown"}
+                self.unresolved.pop("unresolved", None)
+            elif isinstance(receipt.get("unresolved"), dict):
+                self.unresolved = receipt["unresolved"]
         except FileNotFoundError:
             pass
         self.lock = asyncio.Lock()
@@ -175,12 +203,21 @@ class CuaSession:
         # The user changed the bound app outside a takeover; the next call observes first.
         self.outside_change = ""
         self.observation_generation = 0
+        # (turn, call) whose unknown outcome the model was last told about.
+        self._unresolved_noted: tuple[str, str] | None = None
         # True once model code has run in this connection's REPL.
         self._bound = False
         # Large text blocks the runtime returned, newest last; outlives reconnects.
         self.large_texts: list[str] = []
         # Window counts already reported per app, so a multi-window note is not repeated.
         self.window_counts: dict[str, int] = {}
+
+    def heal_target(self) -> dict[str, str] | None:
+        """The app the host can observe on the model's behalf (macOS observes by app)."""
+        surface = self.last_surface or {}
+        if surface.get("kind") == "app" and surface.get("app_id") and sys.platform == "darwin":
+            return {"app": surface["app_id"]}
+        return None
 
     def invalidate_observation(self, reason: str) -> None:
         self.outside_change = reason
@@ -242,14 +279,22 @@ class CuaSession:
         self._clear_human()
         self.lease.release()
 
-    async def record_outcome(self, turn_id: str, call_id: str, outcome: str) -> None:
-        receipt = {"turn_id": turn_id, "call_id": call_id,
-                   "outcome": outcome, "recorded_at": time.time()}
+    async def record_outcome(
+        self, turn_id: str, call_id: str, outcome: str, *, code: str | None = None,
+    ) -> None:
+        receipt: dict[str, Any] = {"turn_id": turn_id, "call_id": call_id,
+                                   "outcome": outcome, "recorded_at": time.time()}
+        if code:
+            receipt["code"] = code
         if outcome == "unknown":
             self.unresolved = receipt
+        elif outcome == "reviewed":
+            self.unresolved = None
+        elif self.unresolved:
+            # Later calls run on; the earlier uncertainty stays until the user reviews it.
+            receipt["unresolved"] = self.unresolved
         # fsync must not stall every conversation; the caller still awaits the write.
         await asyncio.to_thread(self._write_receipt, receipt)
-        self.unresolved = receipt if outcome == "unknown" else None
         self.control_revision += 1
 
     def _write_receipt(self, receipt: dict[str, Any]) -> None:
@@ -526,20 +571,20 @@ class CuaSession:
             self.turn_used = True
             if self.human_reserved:
                 raise ToolError("The user controls the desktop. Wait for control to be returned.")
-            if self.unresolved and name == "js":
-                raise ToolError("A previous computer-use call has an unknown outcome. "
-                                "Use cua_observe to inspect it, then ask the user to review "
-                                "the uncertain operation in the operation panel; "
-                                "do not repeat the action.")
-            if name == "js" and (self.outside_change or self.reset_reason):
-                raise ToolError("Not executed: " + (self.outside_change or self.reset_reason)
+            code = _code_fingerprint(arguments) if name == "js" else None
+            # An uncertain call blocks only its own replay; other work goes on with a note.
+            if code and self.unresolved and self.unresolved.get("code") == code:
+                raise ToolError("Not executed: this is the same code as an earlier computer-use "
+                                "call whose outcome is unknown, so it may already have taken "
+                                "effect. Observe the app and act on what it shows; do not "
+                                "repeat the action.")
+            if name == "js" and self.outside_change:
+                raise ToolError("Not executed: " + self.outside_change
                                 + " Use cua_observe to obtain a fresh observation before "
                                 "further code execution. Old targets may be invalid.")
             # A cached catalog may predate this connection; report any change.
             known_instructions = self.instructions
             await self.connect()
-            if name == "js" and self.reset_reason:
-                raise ToolError(self.reset_reason)
             if self.turn_id is not None and self.turn_id != turn_id:
                 raise ToolError("Previous CUA turn has not been cleaned up")
             self.waiting = self.lease.fd is None
@@ -560,8 +605,9 @@ class CuaSession:
             try:
                 # Write before dispatch so a host crash cannot turn an uncertain
                 # submission into an apparently safe retry. Store no code or pixels.
-                if name == "js":
-                    await self.record_outcome(turn_id, call_id, "in_progress")
+                reads_only = name == "js" and _reads_only(arguments)
+                if name == "js" and not reads_only:
+                    await self.record_outcome(turn_id, call_id, "in_progress", code=code)
                 self._bound = True
                 result = await self._request(
                     "observe" if name == "observe" else "call",
@@ -577,6 +623,7 @@ class CuaSession:
                 )
                 if name == "js":
                     await self.record_outcome(turn_id, call_id, "returned")
+                    self._annotate(result, turn_id)
                 if name == "observe" and not result.get("isError"):
                     if self.observation_generation != observed_generation:
                         result["isError"] = True
@@ -596,8 +643,9 @@ class CuaSession:
                 return result
             except BaseException:
                 try:
-                    if name == "js":
-                        await self.record_outcome(turn_id, call_id, "unknown")
+                    # An interrupted read changed nothing: no review, and repeating it is safe.
+                    if name == "js" and not reads_only:
+                        await self.record_outcome(turn_id, call_id, "unknown", code=code)
                 finally:
                     # Even a receipt write failure must stop the native connection.
                     # Do not replay a possibly completed click or submission.
@@ -607,6 +655,25 @@ class CuaSession:
                     finally:
                         await self.close()
                 raise
+
+    def _annotate(self, result: dict[str, Any], turn_id: str) -> None:
+        """Tell the model what the host knows that its code result does not show."""
+        notes = []
+        if self.reset_reason:
+            notes.append(f"[Host: {self.reset_reason} Variables and element indices from "
+                         "before are gone; bind the app again from a documented entry point "
+                         "and act on the state it shows.]")
+            actions = (result.get("trace") or {}).get("actions") or []
+            if not result.get("isError") and any(
+                    a.get("observe") and a.get("ok") for a in actions):
+                self.reset_reason = ""
+        if self.unresolved and self._unresolved_noted != (turn_id, self.unresolved["call_id"]):
+            self._unresolved_noted = (turn_id, self.unresolved["call_id"])
+            notes.append("[Host: an earlier computer-use call has an unknown outcome and may "
+                         "already have taken effect. Check the app before repeating that "
+                         "effect; the user can mark it reviewed in the operation panel.]")
+        if notes:
+            result.setdefault("content", []).append({"type": "text", "text": "\n".join(notes)})
 
     async def preview_frame(self) -> dict[str, Any] | None:
         """The operated target as it is now, for the panel only; skipped while a call runs."""

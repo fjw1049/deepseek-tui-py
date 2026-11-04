@@ -1295,7 +1295,9 @@ class ToolExecutionMixin:
 
         from deepseek_tui.cua.tools import HANDOFF_NOTICE
 
-        if getattr(self, "_cua_session", None):
+        # Only a turn that used the desktop has bindings to lose; elsewhere the notice
+        # would send a browser or chat task looking for cua_observe.
+        if getattr(getattr(self, "_cua_session", None), "turn_used", False):
             response = {**response, "instructions": HANDOFF_NOTICE}
         return ToolResult(content=_json.dumps(response, ensure_ascii=False), success=True)
 

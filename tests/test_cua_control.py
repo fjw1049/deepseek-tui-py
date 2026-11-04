@@ -7,7 +7,7 @@ import pytest
 
 from deepseek_tui.config.models import CuaConfig
 from deepseek_tui.cua import session as sessions
-from deepseek_tui.cua.session import CuaSession, DesktopLease
+from deepseek_tui.cua.session import CuaSession, DesktopLease, _code_fingerprint
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.server.threads.manager import RuntimeThreadManager
 from deepseek_tui.tools.registry import ToolError
@@ -106,12 +106,13 @@ async def test_panel_continue_resolves_existing_manual_request(desktop):
 
 async def test_crash_during_dispatched_call_restores_uncertainty(desktop, tmp_path):
     _, _, session = desktop
-    await session.record_outcome('turn', 'submit', 'in_progress')
+    await session.record_outcome('turn', 'submit', 'in_progress',
+                                 code=_code_fingerprint({'code': 'submit()'}))
     assert session.unresolved is None
     recovered = CuaSession(CuaConfig(), tmp_path, 'different-session', owner_id='thread')
     assert recovered.unresolved['call_id'] == 'submit'
-    with pytest.raises(ToolError, match='unknown outcome'):
-        await recovered.call('js', {'code': 'submit again'}, 'turn2', 'call2')
+    with pytest.raises(ToolError, match='outcome is unknown'):
+        await recovered.call('js', {'code': ' submit() '}, 'turn2', 'call2')
 
 
 async def test_child_uncertainty_is_reviewable_from_parent(desktop, tmp_path):

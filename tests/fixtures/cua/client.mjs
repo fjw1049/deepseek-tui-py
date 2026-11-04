@@ -39,6 +39,9 @@ export function createCuaClient({ cwd, onElicitation }) {
       const capture = args.code?.match(/^await (globalThis\.__deepseekObservations\[.*\])\.getAXStateAndScreenshot/);
       if (capture) {
         const appId = observations.get(capture[1]);
+        if (appId === 'dev.unobservable') {
+          return { content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }], isError: true };
+        }
         const surface = typeof appId === 'object' ? {kind: 'browserUse'}
           : {kind: 'computerUse', app: {appId}};
         return { content: [{type: 'text', text: 'Window: Fixture\n0 button Save\n1 text Saved'}],

@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from deepseek_tui.cua.session import CuaSession, _code_fingerprint
 from deepseek_tui.cua.tools import CuaObserveTool, CuaTool, register_tools
 from deepseek_tui.engine.ui_progress import UiProgress
 from deepseek_tui.tools.registry import ToolContext, ToolError, ToolRegistry, ToolResult
@@ -12,6 +13,7 @@ from tests import test_cua as fixtures
 fresh_runtime_cache = fixtures.fresh_runtime_cache
 installation = fixtures.installation
 session = fixtures.session
+_calls = fixtures._calls
 
 
 @pytest.mark.asyncio
@@ -36,7 +38,8 @@ async def test_recovery_allows_observation_and_keeps_blocking_actions(session, t
 @pytest.mark.asyncio
 async def test_observing_unknown_outcome_preserves_receipt(session, tmp_path):
     await session.connect()
-    await session.record_outcome("old-turn", "uncertain-click", "unknown")
+    await session.record_outcome("old-turn", "uncertain-click", "unknown",
+                                 code=_code_fingerprint({"code": "click"}))
     context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
     registry = ToolRegistry(context)
     register_tools(registry, session)
@@ -44,8 +47,19 @@ async def test_observing_unknown_outcome_preserves_receipt(session, tmp_path):
         result = await registry.get("cua_observe").execute({"app": "dev.fixture"}, context)
         assert result.success
         assert session.unresolved["call_id"] == "uncertain-click"
-        with pytest.raises(ToolError, match="unknown outcome"):
-            await registry.get("cua_js").execute({"code": "click again"}, context)
+        # Only a replay of the uncertain code is refused; other work continues with a note.
+        with pytest.raises(ToolError, match="outcome is unknown"):
+            await registry.get("cua_js").execute({"code": "click"}, context)
+        other = await registry.get("cua_js").execute({"code": "read"}, context)
+        assert other.success and "unknown outcome" in other.content
+        again = await registry.get("cua_js").execute({"code": "read more"}, context)
+        assert "unknown outcome" not in again.content
+        # The uncertainty outlives later calls, in memory and on disk, until reviewed.
+        assert session.unresolved["call_id"] == "uncertain-click"
+        restored = CuaSession(session.config, tmp_path, "other", owner_id="session-a")
+        assert restored.unresolved["call_id"] == "uncertain-click"
+        await session.acknowledge("uncertain-click")
+        assert session.unresolved is None
     finally:
         await session.close()
 
@@ -166,14 +180,59 @@ async def test_observing_another_app_switches_target_and_releases_guard(session,
         tool = CuaTool(session, session.descriptors[0])
         await tool.execute({"code": "surface:dev.original"}, context)
         session.invalidate_observation("The original app changed")
-        with pytest.raises(ToolError, match="cua_observe"):
-            await tool.execute({"code": "click"}, context)
+        # The host observes the last app itself instead of refusing the code.
+        healed = await tool.execute({"code": "click"}, context)
+        assert not healed.success and "observed dev.original for you" in healed.content
+        assert healed.metadata["cua_observation"]["target"] == {"app": "dev.original"}
+        assert "click" not in [c["args"]["code"] for c in _calls(tmp_path)]
+        assert not session.outside_change
+        session.invalidate_observation("The original app quit")
         await CuaObserveTool(session).execute({"app": "dev.other"}, context)
         assert not session.outside_change
         assert session.last_surface == {"kind": "app", "app_id": "dev.other"}
         assert (await tool.execute({"code": "ok"}, context)).success
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+async def test_app_that_cannot_be_observed_does_not_block_code_for_good(session, tmp_path):
+    # Custom-drawn or windowless apps time out on observation; the guard must not deadlock.
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        tool = CuaTool(session, session.descriptors[0])
+        await tool.execute({"code": "surface:dev.unobservable"}, context)
+        session.invalidate_observation("CUA code failed; inspect its actual effects.")
+        held = await tool.execute({"code": "click"}, context)
+        assert not held.success and "Your next cua_js runs" in held.content
+        assert "click" not in [c["args"]["code"] for c in _calls(tmp_path)]
+        assert (await tool.execute({"code": "click"}, context)).success
+        assert "click" in [c["args"]["code"] for c in _calls(tmp_path)]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_read_leaves_nothing_to_review(session, monkeypatch):
+    await session.connect()
+    original_request = session._request
+
+    async def request(kind, **values):
+        if kind == "call" and not values["arguments"]["code"].startswith(
+                ("if (!globalThis.__deepseekTrace)", 'nodeRepl.write("__DEEPSEEK_TRACE__"')):
+            raise ToolError("connection lost")
+        return await original_request(kind, **values)
+
+    monkeypatch.setattr(session, "_request", request)
+    with pytest.raises(ToolError):
+        await session.call("js", {"code": "const s = await cua.getState(); nodeRepl.write(s)"},
+                           "turn", "read")
+    assert session.unresolved is None
+    await session.connect()
+    with pytest.raises(ToolError):
+        await session.call("js", {"code": "await app.click(3)"}, "turn", "act")
+    assert session.unresolved["call_id"] == "act"
 
 
 def test_canvas_pixels_are_preserved_and_cannot_override_missing_expectation(tmp_path, monkeypatch):
@@ -240,7 +299,6 @@ async def test_observation_accepts_window_ids_for_linux_and_windows(session, tmp
 
 def test_observation_resolves_localized_app_names_but_never_retries_a_denial():
     import json
-    import re
     import shutil
     import subprocess
     from pathlib import Path
@@ -249,33 +307,51 @@ def test_observation_resolves_localized_app_names_but_never_retries_a_denial():
     if not node:
         pytest.skip("Node required")
     bridge = Path(__file__).parents[1] / "src/deepseek_tui/cua/bridge.mjs"
-    open_app = re.search(r"const OPEN_APP = `(.*?)`;", bridge.read_text(), re.S).group(1)
     script = """
+const fs = await import('node:fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const [install, openApp] = (0, eval)(
+  src.slice(src.indexOf('const INPUTS'), src.indexOf('let observedTarget'))
+  + '\\n;[TRACE_INSTALL, OPEN_APP]');
 const calls = [];
+let listed = 0;
 globalThis.cua = {
   async getApp(name) {
     calls.push(name);
-    if (name === 'com.apple.TextEdit') return 'bound';
+    if (name === 'com.apple.TextEdit' || name === 'com.soda.music') return 'bound';
     if (name === 'Denied') throw new Error('Computer Use was not approved to use Denied');
     throw new Error('Invalid app: ' + name);
   },
   async listApps() {
+    listed += 1;
     return [{ id: 'com.apple.TextEdit', displayName: '文本编辑' },
+            { id: 'com.soda.music', displayName: '汽水音乐' },
             { id: 'a.one', displayName: 'Twin' }, { id: 'a.two', displayName: 'twin' }];
   },
 };
-const open = """ + open_app + """;
+const open = (0, eval)(openApp);
 const out = { localized: await open('文本编辑') };
 for (const name of ['Denied', 'Twin', 'Nope']) {
   try { await open(name); } catch (error) { out[name] = error.message; }
 }
-out.calls = calls;
+out.calls = calls.splice(0);
+// Model code binds through the traced entry point, which resolves the same way.
+await new (Object.getPrototypeOf(async () => {}).constructor)(install)();
+out.traced = await cua.getApp('汽水音乐');
+listed = 0;
+await cua.getApp('com.soda.music');
+out.tracedCalls = calls;
+out.listedForBundleId = listed;
 console.log(JSON.stringify(out));
 """
-    result = subprocess.run([node, "--input-type=module", "-e", script],
+    result = subprocess.run([node, "--input-type=module", "-e", script, str(bridge)],
                             capture_output=True, text=True, timeout=30, check=True)
     out = json.loads(result.stdout)
-    assert out["localized"] == "bound"
+    # A display name binds by its id, never through getApp's own name lookup.
+    assert out["localized"] == "bound" and out["calls"][0] == "com.apple.TextEdit"
+    assert out["traced"] == "bound"
+    assert out["tracedCalls"] == ["com.soda.music", "com.soda.music"]
+    assert out["listedForBundleId"] == 0
     # A refusal is not an unknown name: asking again would re-prompt the user.
     assert "not approved" in out["Denied"] and out["calls"].count("Denied") == 1
     # Two apps share the name: never guess between them.

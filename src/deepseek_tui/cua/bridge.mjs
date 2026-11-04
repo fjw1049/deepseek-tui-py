@@ -15,6 +15,19 @@ const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 const INPUTS = ['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'paste',
   'pressKey', 'typeText', 'typeCharacters', 'goto', 'back', 'forward', 'reload', 'close'];
 const OBSERVATIONS = ['getAXState', 'getScreenshot', 'getAXStateAndScreenshot'];
+// A display name (汽水音乐, Mail) is resolved to the runtime's own app id before binding:
+// some names make getApp wait out its timeout instead of failing. Bundle ids, other
+// platforms and ambiguous names go to getApp unchanged.
+const RESOLVE_APP = `async name => {
+  if (typeof name !== 'string' || /^[^\\s.]+(\\.[^\\s.]+)+$/.test(name)
+      || (cua.computer?.target ?? 'mac') !== 'mac') return name;
+  try {
+    const wanted = name.toLowerCase();
+    const found = (await cua.listApps({ emit: false })).filter(app =>
+      app.id.toLowerCase() === wanted || app.displayName?.toLowerCase() === wanted);
+    return found.length === 1 ? found[0].id : name;
+  } catch { return name; }
+}`;
 const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
   const trace = globalThis.__deepseekTrace = [];
   const api = globalThis.cua;
@@ -73,12 +86,16 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
     Object.defineProperty(target, '__deepseekTraced', { value: true });
     return target;
   };
+  const resolveApp = ${RESOLVE_APP};
   for (const name of ['getApp', 'getTab', 'createBrowserTab']) {
     const original = api?.[name];
     if (typeof original !== 'function') continue;
     api[name] = async function (...args) {
       // Binding prints the target's current state, so it is an observation too.
-      const target = await record({ action: name, observe: true }, () => original.apply(this, args));
+      const target = await record({ action: name, observe: true }, async () => {
+        if (name === 'getApp') args[0] = await resolveApp(args[0]);
+        return original.apply(this, args);
+      });
       // Only a tab that exists can take Playwright input outside the wrappers.
       if (name !== 'getApp') globalThis.__deepseekTabs = true;
       return (globalThis.__deepseekTarget = wrap(target));
@@ -97,6 +114,7 @@ const NATIVE_APP_HINT = 'On Linux and Windows, observe a window: pass window_id 
 // A localized display name (文本编辑 for TextEdit) is not an app id. Resolve it from the runtime's
 // own inventory, and only when the runtime rejected the name itself: a denial is never retried.
 const OPEN_APP = `async name => {
+  name = await (${RESOLVE_APP})(name);
   try { return await cua.getApp(name); } catch (error) {
     if (!/^Invalid app:/.test(String(error?.message))) throw error;
     const wanted = name.toLowerCase();

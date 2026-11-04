@@ -186,7 +186,9 @@ async def test_bridge_catalog_metadata_and_cleanup(session, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_idle_takeover_releases_lease_and_blocks_stale_code(session, tmp_path):
+async def test_idle_takeover_releases_lease_and_tells_code_its_bindings_are_gone(
+    session, tmp_path
+):
     await session.connect()
     pause = asyncio.Event()
     tool = CuaTool(session, session.descriptors[0], [pause])
@@ -199,11 +201,16 @@ async def test_idle_takeover_releases_lease_and_blocks_stale_code(session, tmp_p
         assert session.process is None
         assert session.lease.fd is None
         pause.clear()
-        with pytest.raises(ToolError, match="cua_observe"):
-            await tool.execute({"code": "oldApp.click()"}, context)
         entries = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
-        assert len([entry for entry in entries if "args" in entry]) == 1
         assert any(entry.get("end", {}).get("event") == "Interrupt" for entry in entries)
+        # The new REPL has no old variables, so the code runs and is told why it may fail.
+        stale = await tool.execute({"code": "oldApp.click()"}, context)
+        assert "bindings are gone" in stale.content and session.reset_reason
+        # Code that binds and reads the app again ends the notice.
+        rebound = await tool.execute(
+            {"code": 'actions:[{"action":"getApp","observe":true,"ok":true}]'}, context)
+        assert "bindings are gone" in rebound.content and not session.reset_reason
+        assert "bindings are gone" not in (await tool.execute({"code": "x"}, context)).content
         result = await CuaObserveTool(session, [pause]).execute({"app": "dev.fixture"}, context)
         assert result.success
     finally:
@@ -599,15 +606,15 @@ async def test_engine_recovers_after_idle_bridge_exit(installation, tmp_path, us
         await engine._prepare_cua()
         assert engine.tool_registry.contains("cua_js")
         if used:
-            # Old bindings remain unusable until a fresh observation.
-            with pytest.raises(ToolError, match="between calls"):
-                await tool.execute({"code": "oldApp.click()"}, context)
+            # Old bindings are gone; the call runs in the new REPL and says so.
+            stale = await tool.execute({"code": "oldApp.click()"}, context)
+            assert "between calls" in stale.content
             await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
         result = await tool.execute({"code": "fresh"}, context)
-        assert result.success
+        assert result.success and "between calls" not in result.content
         codes = [call["args"]["code"] for call in _calls(tmp_path)]
-        assert codes[-1] == "fresh" and "oldApp.click()" not in codes
-        assert len(codes) == (4 if used else 1)
+        assert codes[-1] == "fresh"
+        assert len(codes) == (5 if used else 1)
     finally:
         await engine._close_cua()
 
@@ -1027,6 +1034,33 @@ async def test_desktop_assistance_releases_desktop_and_requires_fresh_observatio
     assert "observe" in payload["instructions"] and "not a verified" in payload["instructions"]
 
 
+@pytest.mark.asyncio
+async def test_question_answers_mention_desktop_reset_only_after_desktop_use(installation, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
+
+    engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=ToolContext(tmp_path))
+    engine._app_config = Config(cua=installation)
+    session = engine._cua_session = CuaSession(installation, tmp_path, "question")
+    question = {"questions": [{"header": "Style", "id": "style", "question": "Which style?",
+                               "options": [{"label": "Minimal"}, {"label": "Bold"}]}]}
+    instructions = []
+    for used in (False, True):
+        session.turn_used = used
+        task = asyncio.create_task(engine._await_user_input(f"ask-{used}", question))
+        for _ in range(50):
+            if f"ask-{used}" in engine.handle.pending_user_inputs:
+                break
+            await asyncio.sleep(0.01)
+        engine.handle.pending_user_inputs[f"ask-{used}"].set_result(
+            {"answers": [{"question_id": "style", "label": "Minimal"}]})
+        instructions.append(json.loads((await asyncio.wait_for(task, 1)).content).get("instructions"))
+    assert instructions[0] is None
+    assert "CUA session reset" in instructions[1]
+
+
 def test_desktop_assistance_answers_map_to_choices():
     from deepseek_tui.cua.tools import desktop_action_question, desktop_action_result
 
@@ -1156,6 +1190,15 @@ async def test_results_flag_truncated_trees_and_unverified_coordinate_clicks(ses
         assert "coordinate click" in fallback.content
     finally:
         await session.close()
+
+
+def test_missing_window_is_named_apart_from_timeouts():
+    from deepseek_tui.cua.tools import runtime_error
+
+    kind, guidance = runtime_error("Computer Use server error -10005: noWindowsAvailable")
+    assert kind == "no_window" and "nothing was sent" in guidance
+    # The same numeric code also reports timeouts, which are not a missing window.
+    assert runtime_error("Computer Use server error -10005: timeoutReached") is None
 
 
 @pytest.mark.asyncio
@@ -1322,7 +1365,8 @@ async def test_information_handoff_drops_repl_and_tells_model(installation, tmp_
     from unittest.mock import AsyncMock
 
     engine = _engine(tmp_path, installation)
-    session = SimpleNamespace(end_turn=AsyncMock(), close=AsyncMock(), reset_reason="old")
+    session = SimpleNamespace(end_turn=AsyncMock(), close=AsyncMock(), reset_reason="old",
+                              turn_used=True)
     engine._cua_session = session
     task = asyncio.create_task(engine._await_user_input("ask", {
         "questions": [{"id": "next", "header": "Next", "question": "Which document?"}],
@@ -1387,8 +1431,8 @@ async def test_receipt_write_failure_still_closes_native_session(session, monkey
             raise ToolError("connection lost")
         return await original_request(kind, **values)
 
-    async def record(turn_id, call_id, outcome):
-        await original_record(turn_id, call_id, outcome)
+    async def record(turn_id, call_id, outcome, **values):
+        await original_record(turn_id, call_id, outcome, **values)
         if outcome == "unknown":
             raise OSError("receipt storage unavailable")
 

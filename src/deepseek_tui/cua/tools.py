@@ -93,6 +93,12 @@ _RUNTIME_ERRORS = (
      "This app has no screenshot in its current state, for example while a menu is open or its "
      "window is hidden or minimized. Use getAXState(), or close the menu or show the window "
      "first."),
+    # Shares -10005 with timeouts, so only its own text names it.
+    ("no_window", (), r"noWindowsAvailable",
+     "The app has no window the runtime can act on (closed, minimized, or on another "
+     "Space); nothing was sent. Bring a window up first: reopen it from the app's menu bar "
+     "(Window or File menu, or super+n where that opens one), then get fresh state. Do not "
+     "click coordinates while no window is listed."),
     ("unbound_name", (), r"^[A-Za-z_$][\w$]* is not defined$",
      "A name used here was never assigned in this REPL. Bindings persist across calls only when "
      "assigned (const app = await cua.getApp(...)); a reset or reconnect clears them."),
@@ -289,7 +295,7 @@ def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) 
 
 # Rejected while validating the request, before any input is sent.
 _PRE_DISPATCH = frozenset({"stale_element", "text_not_found", "invalid_key", "unsupported_form",
-                           "unknown_app", "state_changed"})
+                           "unknown_app", "state_changed", "no_window"})
 
 
 def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:
@@ -330,6 +336,9 @@ class CuaTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         context.metadata["cua_session"] = self.session
+        if (self.descriptor["name"] == "js" and self.session.outside_change
+                and (target := self.session.heal_target())):
+            return await self._observe_instead(target, context)
         result = await self._execute(input_data, context)
         if not result.success and self.descriptor["name"] == "js":
             kind = result.metadata.get("cua_error_kind")
@@ -339,6 +348,24 @@ class CuaTool(ToolSpec):
             elif not _sent_no_input(result.metadata.get("cua_trace"), kind):
                 self.session.invalidate_observation("CUA code failed; inspect its actual effects.")
         return result
+
+    async def _observe_instead(self, target: dict[str, str], context: ToolContext) -> ToolResult:
+        """Code waits on a fresh observation; take it now instead of refusing the call."""
+        reason = self.session.outside_change
+        observed = await CuaObserveTool(self.session, self.cancel_events).execute(target, context)
+        if not observed.success:
+            # Some apps cannot be observed at all (custom-drawn, windowless). Holding code
+            # until an observation succeeds would block them for good, so open the gate.
+            self.session.outside_change = ""
+            return replace(observed, content=(
+                f"Not executed: {reason} The host tried to observe {target['app']} for you and "
+                "could not:\n" + observed.content
+                + "\nYour next cua_js runs. Read the app's state in that code first "
+                "(bind it and get its state or a screenshot) and act only on what it shows."))
+        return replace(observed, success=False, content=(
+            f"Not executed: {reason} The host observed {target['app']} for you instead; the "
+            "state below is current. Re-issue your code against it: element indices from "
+            "before this observation may be stale.\n" + observed.content))
 
     async def _execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         from deepseek_tui.mcp.execute import mcp_response_to_tool_result

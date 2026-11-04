@@ -624,6 +624,92 @@ async def test_vision_helper_sees_latest_computer_use_code(monkeypatch):
     assert "await notes.click(3)" in stub.requests[0].messages[0].text_content()
 
 
+def _screens(count):
+    return [import_image(image_bytes(size=(40 + i, 30))).model_copy(
+        update={"source": {"kind": "cua"}}) for i in range(count)]
+
+
+async def test_helper_analyzes_each_screenshot_once_across_steps(monkeypatch):
+    stub = VisionStub()
+    monkeypatch.setattr("deepseek_tui.client.factory.build_llm_client", lambda cfg: stub)
+    config = helper_config()
+    first, second = _screens(2)
+    step = [Message.user("Rename the note"),
+            Message.tool_result("a", "screen one", images=[first])]
+    cache = {}
+    await prepare_media_request(MessageRequest(model="deepseek-chat", messages=step), config, cache)
+    later = step + [
+        Message.assistant_with_tools(
+            [ToolUseBlock(id="b", name="cua_js", input={"code": "await notes.click(3)"})]),
+        Message.tool_result("b", "screen two", images=[second]),
+    ]
+    projected = await prepare_media_request(
+        MessageRequest(model="deepseek-chat", messages=later), config, cache)
+    # The second step sends only its own new screenshot; the first keeps its analysis.
+    assert [len(message_images(r.messages[0])) for r in stub.requests] == [1, 1]
+    assert message_images(stub.requests[1].messages[0])[0].asset_id == second.asset_id
+    evidence = json.loads(projected.messages[-1].text_content().split("\n", 1)[1])
+    assert [i["asset_id"] for i in evidence["images"]] == [first.asset_id, second.asset_id]
+    assert "await notes.click(3)" in stub.requests[1].messages[0].text_content()
+
+
+class TruncatingVision(LLMClient):
+    def __init__(self, text):
+        super().__init__()
+        self.text, self.requests, self.close = text, [], AsyncMock()
+
+    async def stream_chat_completion(self, request):
+        self.requests.append(request)
+        if self.text:
+            yield StreamTextDelta(text=self.text)
+        yield StreamDone(truncated=True)
+
+
+@pytest.mark.parametrize("stub, expected", [
+    (TruncatingVision("Search field at 40,20"), "Search field at 40,20"),
+    (TruncatingVision(""), "No description of this screenshot"),
+    (VisionStub(fail=True), "No description of this screenshot"),
+    (VisionStub(block=True), "No description of this screenshot"),
+])
+async def test_tool_screenshots_never_fail_the_turn_on_their_description(
+    monkeypatch, stub, expected
+):
+    monkeypatch.setattr("deepseek_tui.client.factory.build_llm_client", lambda cfg: stub)
+    config = helper_config()
+    config.vision.timeout_seconds = 0.05
+    request = MessageRequest(model="deepseek-chat", messages=[
+        Message.user("Play the song"), Message.tool_result("c", "tree", images=_screens(1))])
+    projected = await prepare_media_request(request, config)
+    assert expected in projected.messages[-1].text_content()
+    # A user's own image still fails loudly: their question is about that image.
+    upload = MessageRequest(model="deepseek-chat", messages=[
+        Message.user("What is this?", images=[import_image(image_bytes(size=(21, 21)))])])
+    with pytest.raises((ValueError, TimeoutError)):
+        await prepare_media_request(upload, config)
+
+
+async def test_only_the_newest_desktop_screenshots_reach_any_model(monkeypatch):
+    upload = import_image(image_bytes(size=(20, 20)))
+    screens = _screens(4)
+    request = MessageRequest(model="vision", messages=[
+        Message.user("What changed?", images=[upload]),
+        *[Message.tool_result(f"c{i}", f"screen {i}", images=[img])
+          for i, img in enumerate(screens)],
+    ])
+    config = Config(providers={"deepseek": ProviderConfig(image_input=True)})
+    projected = await prepare_media_request(request, config)
+    kept = [img.asset_id for m in projected.messages for img in message_images(m)]
+    assert kept == [upload.asset_id, screens[2].asset_id, screens[3].asset_id]
+    assert f"media:{screens[0].asset_id}" in projected.messages[1].content[0].content
+    assert message_images(request.messages[1])  # the transcript keeps every screenshot
+
+    stub = VisionStub()
+    monkeypatch.setattr("deepseek_tui.client.factory.build_llm_client", lambda cfg: stub)
+    await prepare_media_request(request.model_copy(update={"model": "deepseek-chat"}),
+                                helper_config())
+    assert len(stub.requests) == 3
+
+
 def test_bounded_jpeg_preserves_original_wire_bytes():
     raw = image_bytes(format="JPEG", size=(1200, 760))
     block = import_image(raw)
