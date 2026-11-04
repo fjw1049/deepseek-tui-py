@@ -1336,3 +1336,30 @@ async def test_external_replacement_after_create_or_delete_is_preserved(
     report = await store.restore(["turn"], ws, force=True)
     assert report.conflicted == ["shared.txt"]
     assert path.read_text() == "external replacement\n"
+
+
+def test_git_pre_image_resolves_from_a_subfolder_workspace(tmp_path: Path) -> None:
+    repo = tmp_path / "mono"
+    sub = repo / "apps" / "web"
+    sub.mkdir(parents=True)
+    for args in (
+        ["init"],
+        ["config", "user.email", "t@e.com"],
+        ["config", "user.name", "T"],
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    (sub / "app.py").write_text("one\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "i"], cwd=repo, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    # A shell-edited file must keep its real "before" text; reading it as absent
+    # would make a later rewind delete the file instead of restoring it.
+    found = checkpoint_module._read_git_pre_image(sub, head, "app.py")
+    missing = checkpoint_module._read_git_pre_image(sub, head, "new.py")
+
+    assert isinstance(found, checkpoint_module._GitPreImage)
+    assert found.content == "one\n"
+    assert isinstance(missing, checkpoint_module._GitPathAbsent)

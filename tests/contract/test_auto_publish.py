@@ -48,6 +48,16 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _git_out(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def _seed_turn(manager, thread_id: str, turn_id: str) -> None:
     now = datetime.now(timezone.utc)
     manager.store.save_turn(
@@ -871,7 +881,8 @@ async def test_archiving_reclaims_clean_owned_worktree(
 
     assert archived.archived is True
     assert not tree.exists()
-    assert archived.env_mode == "local"
+    # Reclaiming the copy never downgrades the user's isolation choice.
+    assert archived.env_mode == "worktree"
     assert archived.worktree_path is None
     assert archived.associated_worktree_path is None
 
@@ -955,7 +966,7 @@ async def test_startup_reconciliation_clears_stale_path_and_merged_branch(
     manager._reconcile_missing_worktrees_on_boot()
 
     reconciled = manager.store.load_thread(thread.id)
-    assert reconciled.env_mode == "local"
+    assert reconciled.env_mode == "worktree"
     assert reconciled.worktree_path is None
     assert reconciled.associated_worktree_path is None
     with pytest.raises(subprocess.CalledProcessError):
@@ -2881,10 +2892,13 @@ async def test_idle_reclaim_removes_clean_worktree_and_keeps_thread(
     reloaded = manager.store.load_thread(prepared.id)
     assert reloaded.archived is False
     assert reloaded.worktree_path is None
-    assert reloaded.env_mode == "local"
+    assert reloaded.env_mode == "worktree"
 
-    # Resuming the thread rebuilds the worktree from the project.
+    # Resuming the thread rebuilds an isolated copy, not the project itself.
     resumed = await manager._prepare_isolated_workspace(reloaded)
+    assert resumed.env_mode == "worktree"
+    assert execution_root(resumed) == tree.resolve()
+    assert execution_root(resumed) != repo.resolve()
     assert execution_root(resumed).is_dir()
 
 
@@ -2922,3 +2936,356 @@ async def test_idle_reclaim_keeps_recent_and_unpublished_worktrees(
     assert removed == 0
     assert execution_root(recent).is_dir()
     assert execution_root(stale).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_prepare_follows_project_branch_switch(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    default = _git_out(repo, "branch", "--show-current")
+    _git(repo, "checkout", "-b", "feature")
+    (repo / "app.py").write_text("feature\n", encoding="utf-8")
+    _git(repo, "commit", "-am", "feature")
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    assert (tree / "app.py").read_text(encoding="utf-8") == "feature\n"
+
+    # The project moves to a commit that does not descend from the isolate.
+    _git(repo, "checkout", default)
+    synced = await manager._prepare_isolated_workspace(prepared)
+
+    assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert synced.worktree_base == _git_out(repo, "rev-parse", "HEAD")
+    assert synced.publish_blocked is False
+
+
+@pytest.mark.asyncio
+async def test_prepare_keeps_unreachable_isolate_commit(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("task commit\n", encoding="utf-8")
+    _git(tree, "-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-am", "task")
+    task_head = _git_out(tree, "rev-parse", "HEAD")
+
+    (repo / "other.py").write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "other.py")
+    _git(repo, "commit", "-m", "project moved")
+    await manager._prepare_isolated_workspace(prepared)
+
+    assert _git_out(tree, "rev-parse", "HEAD") == task_head
+    assert (tree / "app.py").read_text(encoding="utf-8") == "task commit\n"
+
+
+def _spawn_idle_process(cwd: Path) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(["sleep", "60"], cwd=str(cwd))
+
+
+@pytest.mark.asyncio
+async def test_delete_stops_leftover_processes_in_clean_worktree(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    proc = _spawn_idle_process(tree)
+    try:
+        # A clean copy held only by a leftover process is not unpublished
+        # code: no discard confirmation is needed.
+        await manager.delete_thread(prepared.id)
+        assert not tree.exists()
+        assert proc.wait(timeout=10) is not None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+@pytest.mark.asyncio
+async def test_publish_comparison_shows_project_to_task_diff(
+    runtime_app, client: AsyncClient, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    assert (await manager.publish_comparison(prepared.id)) == {"files": []}
+
+    (tree / "app.py").write_text("from-agent\n", encoding="utf-8")
+    (repo / "app.py").write_text("from-project\n", encoding="utf-8")
+    turn_id = "turn_compare"
+    _seed_turn(manager, prepared.id, turn_id)
+    _save_checkpoint(manager,
+        TurnCheckpoint(
+            turn_id=turn_id,
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "from-agent\n"},
+        )
+    )
+    blocked = await manager._publish_isolated_thread(prepared)
+    assert blocked.publish_conflicts == ["app.py"]
+
+    response = await client.get(f"/v1/threads/{prepared.id}/worktree/compare")
+    assert response.status_code == 200
+    comparison = response.json()
+
+    assert [item["path"] for item in comparison["files"]] == ["app.py"]
+    item = comparison["files"][0]
+    assert item["status"] == "modified"
+    patch = item["patch"]
+    assert patch.startswith("diff --git a/app.py b/app.py\n")
+    assert "--- a/app.py\n+++ b/app.py\n" in patch
+    assert "-from-project\n+from-agent\n" in patch
+    assert str(repo) not in patch and str(tree) not in patch
+    # Read-only: neither side changed.
+    assert (repo / "app.py").read_text(encoding="utf-8") == "from-project\n"
+    assert (tree / "app.py").read_text(encoding="utf-8") == "from-agent\n"
+
+
+def test_compare_working_paths_labels_added_binary_and_mode_changes(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    task = tmp_path / "task"
+    project.mkdir()
+    task.mkdir()
+    (task / "new.txt").write_text("hello\n", encoding="utf-8")
+    (project / "image.bin").write_bytes(b"\x00\x01")
+    (task / "image.bin").write_bytes(b"\x00\x02")
+    (project / "run.sh").write_text("echo\n", encoding="utf-8")
+    (task / "run.sh").write_text("echo\n", encoding="utf-8")
+    (task / "run.sh").chmod(0o755)
+
+    files = {
+        item["path"]: item
+        for item in managed_worktree.compare_working_paths(
+            project, task, ["new.txt", "image.bin", "run.sh", "../escape", "gone.txt"]
+        )
+    }
+
+    assert set(files) == {"new.txt", "image.bin", "run.sh"}
+    assert files["new.txt"]["status"] == "added"
+    assert "--- /dev/null\n+++ b/new.txt\n" in files["new.txt"]["patch"]
+    assert "Binary files a/image.bin and b/image.bin differ" in files["image.bin"]["patch"]
+    assert "old mode 100644\nnew mode 100755" in files["run.sh"]["patch"]
+
+
+@pytest.mark.asyncio
+async def test_missing_worktree_can_restart_from_project(
+    runtime_app, tmp_path: Path
+) -> None:
+    import shutil
+
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("from-agent\n", encoding="utf-8")
+    turn_id = "turn_lost"
+    _seed_turn(manager, prepared.id, turn_id)
+    _save_checkpoint(manager,
+        TurnCheckpoint(
+            turn_id=turn_id,
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "from-agent\n"},
+        )
+    )
+    shutil.rmtree(tree)
+    missing = await manager._prepare_isolated_workspace(
+        manager.store.load_thread(prepared.id)
+    )
+    assert missing.publish_issue == "missing"
+
+    result = await manager.request_publish_action(prepared.id, action="keep_project")
+
+    restarted = result["thread"]
+    assert result["status"] == "applied"
+    assert restarted.publish_issue is None
+    assert restarted.publish_blocked is False
+    assert restarted.env_mode == "worktree"
+    assert execution_root(restarted) == tree.resolve()
+    assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert manager._unpublished_checkpoints(restarted) == []
+
+
+@pytest.mark.asyncio
+async def test_missing_restart_never_discards_a_copy_that_came_back(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    offline = tree.with_name(f"{tree.name}-offline")
+    (tree / "only-in-task.txt").write_text("preserve me\n", encoding="utf-8")
+    tree.rename(offline)
+    missing = await manager._prepare_isolated_workspace(prepared)
+    assert missing.publish_issue == "missing"
+
+    offline.rename(tree)
+    result = await manager.request_publish_action(prepared.id, action="keep_project")
+
+    assert result["thread"].publish_issue == "recovery"
+    assert (tree / "only-in-task.txt").read_text(encoding="utf-8") == "preserve me\n"
+
+
+def _subfolder_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "mono"
+    sub = repo / "apps" / "web"
+    sub.mkdir(parents=True)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (sub / "app.py").write_text("one\n", encoding="utf-8")
+    (repo / "root.txt").write_text("root\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "init")
+    return repo, sub
+
+
+def _project_files(repo: Path) -> list[str]:
+    return sorted(
+        str(path.relative_to(repo))
+        for path in repo.rglob("*")
+        if path.is_file() and ".git" not in path.parts
+    )
+
+
+@pytest.mark.asyncio
+async def test_subfolder_project_runs_and_publishes_in_the_same_subfolder(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo, sub = _subfolder_repo(tmp_path)
+    (sub / "draft.txt").write_text("user draft\n", encoding="utf-8")
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(sub), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+
+    # The AI works in the copy's apps/web, seeing the user's unsaved draft there.
+    assert tree.parts[-2:] == ("apps", "web")
+    assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert (tree / "draft.txt").read_text(encoding="utf-8") == "user draft\n"
+
+    (tree / "app.py").write_text("from-agent\n", encoding="utf-8")
+    _seed_turn(manager, prepared.id, "turn_sub")
+    _save_checkpoint(manager,
+        TurnCheckpoint(
+            turn_id="turn_sub",
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "from-agent\n"},
+        )
+    )
+    published = await manager._publish_isolated_thread(prepared)
+
+    assert published.publish_blocked is False
+    assert (sub / "app.py").read_text(encoding="utf-8") == "from-agent\n"
+    assert _project_files(repo) == ["apps/web/app.py", "apps/web/draft.txt", "root.txt"]
+
+
+@pytest.mark.asyncio
+async def test_subfolder_project_conflict_choice_writes_the_real_file(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo, sub = _subfolder_repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(sub), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    assert tree.parts[-2:] == ("apps", "web")
+    (tree / "app.py").write_text("from-agent\n", encoding="utf-8")
+    (sub / "app.py").write_text("from-user\n", encoding="utf-8")
+    _seed_turn(manager, prepared.id, "turn_sub_conflict")
+    _save_checkpoint(manager,
+        TurnCheckpoint(
+            turn_id="turn_sub_conflict",
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "from-agent\n"},
+        )
+    )
+    blocked = await manager._publish_isolated_thread(prepared)
+    assert blocked.publish_conflicts == ["app.py"]
+
+    resolved = await manager.resolve_publish_conflicts(
+        prepared.id, action="use_agent", paths=["app.py"]
+    )
+
+    assert resolved.publish_blocked is False
+    assert (sub / "app.py").read_text(encoding="utf-8") == "from-agent\n"
+    assert _project_files(repo) == ["apps/web/app.py", "root.txt"]
+
+
+@pytest.mark.asyncio
+async def test_subfolder_project_idle_copy_is_reclaimed(
+    runtime_app, tmp_path: Path
+) -> None:
+    from datetime import timedelta
+
+    from deepseek_tui.server.threads.manager import IDLE_WORKTREE_RECLAIM_AFTER
+
+    manager = runtime_app.state.thread_manager
+    _repo_root, sub = _subfolder_repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(sub), model="deepseek-chat", env_mode="worktree")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    copy_root = Path(prepared.worktree_path or "")
+    prepared.updated_at = datetime.now(timezone.utc) - (
+        IDLE_WORKTREE_RECLAIM_AFTER + timedelta(hours=1)
+    )
+    manager.store.save_thread(prepared)
+
+    assert await manager.reclaim_idle_worktrees() == 1
+    assert not copy_root.exists()
+    resumed = await manager._prepare_isolated_workspace(
+        manager.store.load_thread(prepared.id)
+    )
+    assert execution_root(resumed).parts[-2:] == ("apps", "web")

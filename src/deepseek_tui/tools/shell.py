@@ -1011,6 +1011,21 @@ def _parse_command_tokens(command: str) -> list[str]:
         return [command]
 
 
+def _mentions_path(command: str, root: Path) -> bool:
+    """True when ``command`` names ``root`` itself or anything under it."""
+    spellings = {str(root)}
+    home = str(Path.home())
+    if str(root).startswith(home + os.sep):
+        spellings.add("~" + str(root)[len(home):])
+    if str(root).startswith("/private/"):
+        # macOS resolves /var and /tmp through /private; commands use the short form.
+        spellings.add(str(root)[len("/private"):])
+    return any(
+        re.search(re.escape(spelling) + r"(?=$|[/\s'\"`;:|&)])", command)
+        for spelling in spellings
+    )
+
+
 def check_command_policy(command: str, context: ToolContext) -> ToolResult | None:
     """Evaluate ``command`` against ``context.policy`` (execpolicy rules).
 
@@ -1029,6 +1044,20 @@ def check_command_policy(command: str, context: ToolContext) -> ToolResult | Non
                 success=False,
                 content=git_guard.reason,
                 metadata={"managed_worktree_git_denied": True},
+            )
+        project = context.isolated_project_root()
+        if project is not None and _mentions_path(command, project):
+            # File tools map project paths onto the copy; a shell command
+            # cannot be rewritten safely, so it must not reach the project.
+            return ToolResult(
+                success=False,
+                content=(
+                    "This conversation edits a copy of the project at "
+                    f"{context.working_directory}. Nothing was run: the command "
+                    f"names the original project path {project}. Use paths "
+                    "relative to the working directory instead."
+                ),
+                metadata={"managed_worktree_project_path_denied": True},
             )
     if not context.policy:
         return None

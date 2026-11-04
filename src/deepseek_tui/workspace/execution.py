@@ -7,6 +7,7 @@ the project itself in local mode, or a managed git worktree.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,38 @@ def project_root(thread: Any) -> Path:
     return Path(str(raw)).expanduser().resolve()
 
 
+_REPO_SUBDIRS: dict[Path, str] = {}
+
+
+def repo_subdir(project: Path) -> str:
+    """``project``'s path inside its Git checkout, e.g. ``apps/web/``.
+
+    Empty at the repository root (or outside Git). A managed copy always
+    checks out the whole repository, so a project that is a subfolder lives at
+    the same subfolder of the copy. Only successful lookups are cached.
+    """
+    root = project.expanduser().resolve()
+    cached = _REPO_SUBDIRS.get(root)
+    if cached is not None:
+        return cached
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-prefix"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    prefix = proc.stdout.strip()
+    _REPO_SUBDIRS[root] = prefix
+    return prefix
+
+
 def execution_root(thread: Any) -> Path:
     """Directory tools and restore must use. Raises if worktree is pending."""
     if normalize_env_mode(getattr(thread, "env_mode", None)) != ENV_WORKTREE:
@@ -43,7 +76,7 @@ def execution_root(thread: Any) -> Path:
     raw = getattr(thread, "worktree_path", None) or ""
     if not raw:
         raise WorktreePendingError()
-    path = Path(raw).expanduser()
+    path = Path(raw).expanduser() / repo_subdir(project_root(thread))
     if not path.is_dir():
         raise WorktreePendingError()
     return path.resolve()

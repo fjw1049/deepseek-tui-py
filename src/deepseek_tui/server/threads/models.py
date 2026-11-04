@@ -248,7 +248,8 @@ class ResolvePublishRequest(BaseModel):
 
     # ``apply`` performs the normal safe merge requested by the user.
     # ``use_agent`` overwrites the project with this thread's copies.
-    # ``keep_project`` keeps the project bytes and drops those isolate edits.
+    # ``keep_project`` keeps the project bytes and drops those isolate edits;
+    # for a missing isolate it starts over from the project.
     action: str
     paths: list[str] | None = None
     # Snapshot token shown with a recovery choice. The manager rejects stale

@@ -1658,11 +1658,12 @@ def _read_git_pre_image(
     try:
         _exact_checkpoint_path(root, rel)
         listed = subprocess.run(
+            # ``rel`` is relative to ``root``, which may be a repository
+            # subfolder; without --full-tree the pathspec resolves from there.
             [
                 "git",
                 "ls-tree",
                 "-z",
-                "--full-tree",
                 head,
                 "--",
                 f":(literal){rel}",

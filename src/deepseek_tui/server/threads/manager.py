@@ -127,6 +127,7 @@ from deepseek_tui.workspace.execution import (
     is_scratch_workspace,
     normalize_env_mode,
     project_root,
+    repo_subdir,
 )
 from deepseek_tui.server.threads.store import RuntimeThreadStore
 from deepseek_tui.server.threads.titles import (
@@ -361,8 +362,9 @@ class RuntimeThreadManager:
         thread.publish_waiting_on = None
 
     def _clear_worktree_state(self, thread: ThreadRecord) -> None:
+        """Forget the on-disk isolate. ``env_mode`` is the user's choice and
+        stays as is: a worktree thread rebuilds its copy on the next turn."""
         self.store.delete_worktree_baseline(thread.id)
-        thread.env_mode = ENV_LOCAL
         thread.worktree_path = None
         thread.worktree_base = None
         thread.worktree_owned = False
@@ -985,12 +987,18 @@ class RuntimeThreadManager:
                     # "kept" means the worktree still holds uncommitted work;
                     # clearing the record would orphan the directory and the
                     # next worktree prepare would collide with it.
+                    if status == "occupied":
+                        raise ValueError(
+                            "worktree is in use by running processes; "
+                            "stop them before switching to local"
+                        )
                     if status not in {"removed", "gone", "skipped"}:
                         raise ValueError(
                             "worktree has uncommitted changes; "
                             "commit or discard them before switching to local"
                         )
                     self._clear_worktree_state(thread)
+                    thread.env_mode = ENV_LOCAL
                 changed = True
                 changes["env_mode"] = normalized
         if req.archived is not None and thread.archived != req.archived:
@@ -1560,11 +1568,17 @@ class RuntimeThreadManager:
             thread.associated_worktree_path = str(created.path)
             thread.worktree_branch = created.branch or None
 
-        if dest is not None and not unpublished:
+        # The copy holds the whole repository; a project that is a subfolder
+        # is synced with (and runs in) the same subfolder of the copy.
+        scoped_dest = dest / repo_subdir(root) if dest is not None else None
+        if scoped_dest is not None:
+            scoped_dest.mkdir(parents=True, exist_ok=True)
+
+        if dest is not None and scoped_dest is not None and not unpublished:
             try:
                 async with self._hold_project_operation(root):
                     synced_head = await self._sync_isolate_with_baseline(
-                        thread, root, dest
+                        thread, root, scoped_dest
                     )
                 if synced_head:
                     thread.worktree_base = synced_head
@@ -1581,10 +1595,10 @@ class RuntimeThreadManager:
                 thread.publish_blocked = True
                 self._reset_publish_request(thread)
                 recovery_paths = await self._unknown_worktree_paths(
-                    thread.id, dest
+                    thread.id, scoped_dest
                 )
                 await self._record_worktree_recovery_snapshot(
-                    thread.id, dest
+                    thread.id, scoped_dest
                 )
                 thread.publish_issue = PUBLISH_ISSUE_RECOVERY
                 thread.publish_conflicts = recovery_paths
@@ -2156,6 +2170,10 @@ class RuntimeThreadManager:
                 "thread": thread,
                 "blocking_thread_id": thread.publish_waiting_on,
             }
+        if kind == "keep_project" and thread.publish_issue == PUBLISH_ISSUE_MISSING:
+            # Never writes the project, so it is not queued behind other turns.
+            updated = await self._discard_missing_worktree(thread.id)
+            return await self._publish_action_result(updated.id)
         root = project_root(thread)
         async with self._active_lock:
             blocking_thread = self._blocking_active_on_project(
@@ -2218,7 +2236,10 @@ class RuntimeThreadManager:
                 recovery_token=recovery_token,
             )
 
-        updated = self.store.load_thread(updated.id)
+        return await self._publish_action_result(updated.id)
+
+    async def _publish_action_result(self, thread_id: str) -> dict[str, Any]:
+        updated = self.store.load_thread(thread_id)
         if updated.publish_waiting_on:
             status = "queued"
         elif updated.publish_blocked:
@@ -2233,6 +2254,55 @@ class RuntimeThreadManager:
             "thread": updated,
             "blocking_thread_id": updated.publish_waiting_on,
         }
+
+    async def _discard_missing_worktree(self, thread_id: str) -> ThreadRecord:
+        """Give up a lost task copy after the user chose to start from the project.
+
+        Only acts while the copy is still absent. If it came back, the normal
+        safe preparation below re-checks it instead of discarding anything.
+        """
+        async with self._hold_thread_operation(thread_id):
+            thread = self.store.load_thread(thread_id)
+            path = thread.associated_worktree_path or thread.worktree_path or ""
+            still_missing = thread.publish_issue == PUBLISH_ISSUE_MISSING and not (
+                path and Path(path).expanduser().is_dir()
+            )
+            if still_missing:
+                root = project_root(thread)
+                for checkpoint in self._unpublished_checkpoints(thread):
+                    self.checkpoints.mark_recovery_resolved(
+                        checkpoint.turn_id,
+                        root,
+                        abandon_paths=list(checkpoint.mutated),
+                    )
+                self._clear_worktree_state(thread)
+                self._touch(thread)
+        return await self._prepare_isolated_workspace(
+            self.store.load_thread(thread_id)
+        )
+
+    async def publish_comparison(self, thread_id: str) -> dict[str, Any]:
+        """Per-file diff from the project to this task's version, for choosing."""
+        from deepseek_tui.workspace.managed_worktree import compare_working_paths
+
+        thread = self.store.load_thread(thread_id)
+        self._migrate_legacy_publish_issue(thread)
+        if not thread.publish_blocked or thread.publish_issue not in {
+            None,
+            PUBLISH_ISSUE_RECOVERY,
+        }:
+            return {"files": []}
+        try:
+            tree = execution_root(thread)
+        except WorktreePendingError:
+            return {"files": []}
+        root = project_root(thread)
+        if tree == root:
+            return {"files": []}
+        files = await asyncio.to_thread(
+            compare_working_paths, root, tree, list(thread.publish_conflicts)
+        )
+        return {"files": files}
 
     async def _after_turn_released(self, thread_id: str) -> None:
         try:
@@ -2530,12 +2600,24 @@ class RuntimeThreadManager:
                 removed += 1
         return removed
 
-    async def _reclaim_owned_worktree(self, thread: ThreadRecord) -> str:
+    async def _reclaim_owned_worktree(
+        self, thread: ThreadRecord, *, stop_processes: bool = False
+    ) -> str:
         async with self._hold_thread_operation(thread.id):
-            return await self._reclaim_owned_worktree_claimed(thread)
+            return await self._reclaim_owned_worktree_claimed(
+                thread, stop_processes=stop_processes
+            )
 
-    async def _reclaim_owned_worktree_claimed(self, thread: ThreadRecord) -> str:
-        from deepseek_tui.workspace.managed_worktree import reclaim_managed_worktree
+    async def _reclaim_owned_worktree_claimed(
+        self, thread: ThreadRecord, *, stop_processes: bool = False
+    ) -> str:
+        """Remove a clean owned copy. ``stop_processes`` is for explicit user
+        deletes: a clean copy held only by leftover dev servers or test
+        runners is freed instead of being reported as unpublished work."""
+        from deepseek_tui.workspace.managed_worktree import (
+            reclaim_managed_worktree,
+            terminate_processes_under,
+        )
 
         path = thread.worktree_path or thread.associated_worktree_path or ""
         if not path:
@@ -2552,6 +2634,11 @@ class RuntimeThreadManager:
                 status = await reclaim_managed_worktree(
                     root, Path(path), owned=bool(thread.worktree_owned)
                 )
+                if status == "occupied" and stop_processes:
+                    await terminate_processes_under(worktree)
+                    status = await reclaim_managed_worktree(
+                        root, Path(path), owned=bool(thread.worktree_owned)
+                    )
         except Exception:
             logger.debug(
                 "reclaim_worktree_failed thread=%s path=%s",
@@ -2567,7 +2654,10 @@ class RuntimeThreadManager:
 
     async def _discard_owned_worktree_claimed(self, thread: ThreadRecord) -> str:
         """Remove an owned worktree after explicit user authorization."""
-        from deepseek_tui.workspace.managed_worktree import remove_managed_worktree
+        from deepseek_tui.workspace.managed_worktree import (
+            remove_managed_worktree,
+            terminate_processes_under,
+        )
 
         path = thread.worktree_path or thread.associated_worktree_path or ""
         if not path:
@@ -2583,6 +2673,7 @@ class RuntimeThreadManager:
             return "gone"
         root = project_root(thread)
         async with self._hold_project_operation(root):
+            await terminate_processes_under(worktree)
             await remove_managed_worktree(root, worktree)
         self._clear_worktree_state(thread)
         self._touch(thread)
@@ -2615,7 +2706,13 @@ class RuntimeThreadManager:
             # Ensure the thread exists before eviction/cleanup.
             thread = self.store.load_thread(thread_id)
             await self._evict_active_thread(thread_id)
-            status = await self._reclaim_owned_worktree(thread)
+            status = await self._reclaim_owned_worktree(
+                thread, stop_processes=True
+            )
+            if status == "occupied":
+                raise ValueError(
+                    "cannot delete thread while processes it started are still running"
+                )
             if status == "kept":
                 if not discard_unpublished:
                     raise ValueError(
@@ -3024,7 +3121,10 @@ class RuntimeThreadManager:
             await self._evict_active_thread(thread_id)
         kept: list[str] = []
         for thread in list(self.store.list_threads()):
-            if await self._reclaim_owned_worktree(thread) == "kept":
+            status = await self._reclaim_owned_worktree(
+                thread, stop_processes=True
+            )
+            if status in {"kept", "occupied"}:
                 kept.append(thread.id)
         if kept:
             raise ValueError(

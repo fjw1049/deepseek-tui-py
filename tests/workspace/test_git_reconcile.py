@@ -141,3 +141,24 @@ async def test_reconcile_does_not_treat_added_dev_null_text_as_create(git_repo: 
     added = await reconcile_to_ledger(TurnMutationLedger("turn_null", throttle_ms=0), baseline)
     assert len(added) == 1
     assert added[0].op == "update"
+
+
+@pytest.mark.asyncio
+async def test_subfolder_workspace_sees_only_its_own_paths(git_repo: Path) -> None:
+    sub = git_repo / "apps" / "web"
+    sub.mkdir(parents=True)
+    (sub / "app.py").write_text("one\n", encoding="utf-8")
+    _git(git_repo, "add", ".")
+    _git(git_repo, "commit", "-m", "web")
+    (git_repo / "tracked.py").write_text("dirty outside\n", encoding="utf-8")
+    (sub / "pre.txt").write_text("dirty inside\n", encoding="utf-8")
+
+    baseline = await capture_baseline(sub)
+    assert baseline.dirty_at_start == {"pre.txt"}
+
+    (sub / "app.py").write_text("two\n", encoding="utf-8")
+    ledger = TurnMutationLedger("turn_sub", throttle_ms=0)
+    added = await reconcile_to_ledger(ledger, baseline)
+
+    assert [m.path for m in added] == ["app.py"]
+    assert "--- a/app.py" in added[0].unified_diff

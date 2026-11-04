@@ -158,6 +158,20 @@ paths:
           description: Environment view
         "404":
           description: Thread not found
+  /v1/threads/{thread_id}/worktree/compare:
+    get:
+      summary: Diff the files awaiting a version choice
+      description: >
+        Read-only. For each path in publish_conflicts, returns a unified diff
+        from the project's current bytes (-) to this session's version (+).
+        Empty when no version choice is pending.
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: "{files: [{path, status: added|deleted|modified, patch}]}"
+        "404":
+          description: Thread not found
   /v1/threads/{thread_id}/worktree/resolve:
     post:
       summary: Apply an isolated session draft or resolve merge conflicts
@@ -166,6 +180,9 @@ paths:
         keep_project keeps the project's current bytes for the listed paths.
         use_agent overwrites the project with this session's copies. If another
         session is active, the request is queued and returns 202.
+        While publish_issue is missing, keep_project gives up the lost session
+        copy and rebuilds it from the project; if the copy has reappeared it
+        is re-checked instead and nothing is discarded.
       parameters:
         - $ref: "#/components/parameters/threadId"
       requestBody:

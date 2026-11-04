@@ -191,6 +191,48 @@ class ToolContext:
     # per-engine: a shared registry would let one session's write mark another
     # session's stale read as current, which is the one error worth avoiding.
     file_reads: dict[Path, tuple[int, int]] = field(default_factory=dict)
+    # (working directory, (project root, copy root) or None) once looked up.
+    _isolated_project: tuple[Path, tuple[Path, Path] | None] | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def isolated_project_root(self) -> Path | None:
+        """The user's project when tools run in its managed copy, else None.
+
+        A copy-mode conversation must never edit the project directly: its
+        writes are published at turn end through the merge/conflict guards.
+        """
+        roots = self._isolation_roots()
+        return roots[0] if roots is not None else None
+
+    def _isolation_roots(self) -> tuple[Path, Path] | None:
+        """(project repository root, copy root) when running in a managed copy.
+
+        The copy checks out the whole repository even when the user picked a
+        subfolder, so roots (not working directories) line up path for path.
+        """
+        from deepseek_tui.config.paths import user_worktrees_dir
+        from deepseek_tui.workspace.managed_worktree import (
+            _project_from_worktree_sync,
+            is_managed_path,
+        )
+
+        workspace = self.working_directory.expanduser().resolve()
+        cached = self._isolated_project
+        if cached is not None and cached[0] == workspace:
+            return cached[1]
+        roots: tuple[Path, Path] | None = None
+        if is_managed_path(workspace):
+            managed = user_worktrees_dir().resolve()
+            parts = workspace.relative_to(managed).parts
+            if len(parts) >= 2:
+                # Copies live at <worktrees>/<repo slug>/<thread id>/...
+                copy_root = managed / parts[0] / parts[1]
+                project = _project_from_worktree_sync(copy_root)
+                if project is not None:
+                    roots = (project.resolve(), copy_root)
+        self._isolated_project = (workspace, roots)
+        return roots
 
     def note_file_content(self, path: Path) -> None:
         """Record the on-disk stamp of *path* as what this session last saw."""
@@ -286,6 +328,14 @@ class ToolContext:
             resolved = candidate.resolve()
         else:
             resolved = (workspace / candidate).resolve()
+        roots = self._isolation_roots() if candidate.is_absolute() else None
+        if (
+            roots is not None
+            and not self._within(resolved, workspace)
+            and self._within(resolved, roots[0])
+        ):
+            # The user's own project path means the same file in this copy.
+            resolved = roots[1] / resolved.relative_to(roots[0])
         if self.path_grants.allows(resolved, write=write):
             return PathAccess(resolved, write, allowed=True)
         if is_sensitive(resolved, write=write):

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from deepseek_tui.config.paths import user_worktrees_dir
+from deepseek_tui.workspace.execution import repo_subdir
 from deepseek_tui.utils import write_text_atomic
 
 logger = logging.getLogger(__name__)
@@ -578,7 +579,7 @@ async def worktree_changes_since_baseline(
     if baseline.head and current.head and baseline.head != current.head:
         diff = await _git(
             root,
-            ["diff", "--name-only", "-z", baseline.head, current.head],
+            ["diff", "--name-only", "--relative", "-z", baseline.head, current.head],
             check=True,
         )
         changed.update(_parse_git_paths(diff or ""))
@@ -803,12 +804,25 @@ async def sync_isolate_from_project(
             ["merge-base", "--is-ancestor", iso_head, proj_head],
             check=False,
         )
-        if reachable is None and not (discard_isolate_labor or reset_git_state):
-            # Preserve commits that have not reached the project branch.
+        # Preserve commits the isolate itself made that no ref protects. When
+        # the isolate HEAD is still the project HEAD we last synced, the project
+        # merely moved (branch switch, amend, rebase): follow it.
+        isolate_committed = baseline is None or iso_head != baseline.head
+        if (
+            reachable is None
+            and isolate_committed
+            and not (discard_isolate_labor or reset_git_state)
+            and (
+                branch
+                or await asyncio.to_thread(_detached_head_is_unreachable_sync, dst)
+            )
+        ):
             return iso_head
     if iso_head and proj_head and iso_head != proj_head:
         diff = await _git(
-            src, ["diff", "--name-only", "-z", iso_head, proj_head], check=True
+            src,
+            ["diff", "--name-only", "--relative", "-z", iso_head, proj_head],
+            check=True,
         )
         paths.update(_parse_git_paths(diff or ""))
     target_baseline = await capture_worktree_baseline(src)
@@ -920,7 +934,9 @@ async def _working_trees_match(project_root: Path, isolate: Path) -> bool:
     dst_head = ((await _git(dst, ["rev-parse", "HEAD"], check=False)) or "").strip()
     if src_head and dst_head and src_head != dst_head:
         diff = await _git(
-            src, ["diff", "--name-only", "-z", dst_head, src_head], check=True
+            src,
+            ["diff", "--name-only", "--relative", "-z", dst_head, src_head],
+            check=True,
         )
         paths.update(_parse_git_paths(diff or ""))
     return all(_raw_same(src, dst, rel) for rel in paths)
@@ -1874,7 +1890,8 @@ async def reclaim_managed_worktree(
 ) -> str:
     """Delete an owned, clean worktree. Dirty or unowned paths are left.
 
-    Returns ``removed``, ``kept``, ``skipped``, or ``gone``.
+    Returns ``removed``, ``kept``, ``skipped``, ``gone``, or ``occupied``
+    (clean, but a running process still has its cwd inside the copy).
     """
     dest = worktree_path.expanduser().resolve()
     if not owned:
@@ -1886,14 +1903,19 @@ async def reclaim_managed_worktree(
     if await worktree_has_labor(dest):
         if await asyncio.to_thread(_detached_head_is_unreachable_sync, dest):
             return "kept"
-        if not await _working_trees_match(project_root, dest):
+        # The project may be a repository subfolder; compare it with the same
+        # subfolder of the copy. Anything else in the copy keeps it as labor.
+        scoped = dest / repo_subdir(project_root)
+        if not scoped.is_dir() or not await _working_trees_match(project_root, scoped):
             return "kept"
         # A legacy isolate can look dirty only because its HEAD predates the
         # project. Move the baseline before reclaiming; identical project dirt
         # remains safe because the canonical copy is already in the project.
-        await sync_isolate_from_project(project_root, dest)
-        if not await _working_trees_match(project_root, dest):
+        await sync_isolate_from_project(project_root, scoped)
+        if not await _working_trees_match(project_root, scoped):
             return "kept"
+    if await asyncio.to_thread(_pids_with_cwd_under_sync, dest):
+        return "occupied"
     # The ordinary reclaim path must never force removal. Git's final clean-tree
     # check closes the window between our inspection above and deletion: if an
     # editor or tool creates a late file, removal fails and the copy is kept.
@@ -2042,6 +2064,113 @@ def worktree_path_signatures(root: Path, paths: list[str]) -> dict[str, str]:
             continue
         signatures[rel] = _path_signature(target)
     return signatures
+
+
+_MAX_COMPARE_PATCH_CHARS = 2 * 1024 * 1024
+
+
+def compare_working_paths(
+    project_root: Path, worktree: Path, paths: list[str]
+) -> list[dict[str, str]]:
+    """Read-only per-path diff from the project's bytes to the task copy.
+
+    ``-`` lines are what the project holds now and ``+`` lines are what
+    choosing the task version would write, so a user can decide by looking.
+    """
+    project = project_root.expanduser().resolve()
+    tree = worktree.expanduser().resolve()
+    files: list[dict[str, str]] = []
+    for raw in paths:
+        rel = _normalize_worktree_path(raw)
+        if not rel:
+            continue
+        try:
+            left = _exact_workspace_path(project, rel)
+            right = _exact_workspace_path(tree, rel)
+        except OSError:
+            continue
+        left_exists = left.exists() or left.is_symlink()
+        right_exists = right.exists() or right.is_symlink()
+        if not left_exists and not right_exists:
+            continue
+        status = (
+            "added"
+            if not left_exists
+            else "deleted"
+            if not right_exists
+            else "modified"
+        )
+        patch = ""
+        directory = any(
+            side.is_dir() and not side.is_symlink() for side in (left, right)
+        )
+        if not directory:
+            try:
+                proc = subprocess.run(
+                    [
+                        "git",
+                        "diff",
+                        "--no-index",
+                        "--no-color",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--",
+                        str(left) if left_exists else os.devnull,
+                        str(right) if right_exists else os.devnull,
+                    ],
+                    cwd=str(project),
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                proc = None
+            if proc is not None and proc.returncode in (0, 1):
+                text = proc.stdout.decode("utf-8", "replace")
+                if len(text) <= _MAX_COMPARE_PATCH_CHARS:
+                    patch = _relabel_no_index_patch(text, rel)
+        files.append({"path": rel, "status": status, "patch": patch})
+    return files
+
+
+def _relabel_no_index_patch(patch: str, rel: str) -> str:
+    """Replace the absolute paths ``git diff --no-index`` prints with ``rel``."""
+    lines: list[str] = []
+    header = False
+    for line in patch.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            header = True
+            line = f"diff --git a/{rel} b/{rel}\n"
+        elif header:
+            if line.startswith("--- "):
+                line = (
+                    "--- /dev/null\n"
+                    if line.rstrip("\n") == "--- /dev/null"
+                    else f"--- a/{rel}\n"
+                )
+            elif line.startswith("+++ "):
+                line = (
+                    "+++ /dev/null\n"
+                    if line.rstrip("\n") == "+++ /dev/null"
+                    else f"+++ b/{rel}\n"
+                )
+            elif line.startswith("Binary files "):
+                body = line.rstrip("\n")
+                old = (
+                    "/dev/null"
+                    if body.startswith("Binary files /dev/null and ")
+                    else f"a/{rel}"
+                )
+                new = (
+                    "/dev/null"
+                    if body.endswith(" and /dev/null differ")
+                    else f"b/{rel}"
+                )
+                line = f"Binary files {old} and {new} differ\n"
+            elif line.startswith("@@"):
+                header = False
+        lines.append(line)
+    return "".join(lines)
 
 
 def text_path_signature(content: str | None, mode: int | None) -> str | None:
@@ -2482,8 +2611,14 @@ def _branch_name(raw: str) -> str:
 
 
 async def _changed_paths(worktree: Path, base: str) -> list[str]:
+    """Changed paths under ``worktree``, relative to it.
+
+    ``ls-files`` already answers relative to the directory it runs in; ``diff``
+    needs ``--relative`` so a project that is a repository subfolder gets the
+    same path spelling (and scope) from both.
+    """
     diff = await _git(
-        worktree, ["diff", "--name-only", "-z", base], check=True
+        worktree, ["diff", "--name-only", "--relative", "-z", base], check=True
     )
     extra = await _git(
         worktree,

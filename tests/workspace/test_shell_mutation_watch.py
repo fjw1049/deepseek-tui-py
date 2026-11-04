@@ -272,3 +272,20 @@ def test_read_file_distinguishes_absence_from_permission_error(
     )
     assert _read_file(tmp_path, "missing.py") is None
     assert isinstance(_read_file(tmp_path, "gone.py"), _Unreadable)
+
+
+@pytest.mark.asyncio
+async def test_subfolder_workspace_reports_paths_relative_to_it(git_repo: Path) -> None:
+    sub = git_repo / "apps" / "web"
+    sub.mkdir(parents=True)
+    (sub / "app.py").write_text("one\n", encoding="utf-8")
+    _git(git_repo, "add", ".")
+    _git(git_repo, "commit", "-m", "web")
+
+    snapshot = await capture_shell_snapshot(sub)
+    (sub / "app.py").write_text("two\n", encoding="utf-8")
+    (git_repo / "tracked.py").write_text("outside\n", encoding="utf-8")
+    mutations = await detect_shell_mutations(snapshot)
+
+    assert [m["path"] for m in mutations] == ["app.py"]
+    assert mutations[0]["op"] == "update"

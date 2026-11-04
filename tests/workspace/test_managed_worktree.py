@@ -1040,7 +1040,7 @@ async def test_reclaim_preserves_git_paths_verbatim(
 @pytest.mark.parametrize(
     "failing_prefix",
     [
-        ["diff", "--name-only", "-z"],
+        ["diff", "--name-only", "--relative", "-z"],
         ["ls-files", "--others", "--exclude-standard", "-z"],
     ],
     ids=["diff", "ls-files"],
@@ -1075,3 +1075,73 @@ async def test_reclaim_fails_closed_when_git_path_enumeration_fails(
 
     assert created.path.is_dir()
     assert (created.path / "labor.py").read_text(encoding="utf-8") == "keep\n"
+
+
+@pytest.mark.asyncio
+async def test_copy_mode_tools_map_project_paths_onto_the_copy(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from deepseek_tui.tools.registry import ToolContext
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    created = await create_managed_worktree(git_repo, "thr_alias", copy_tracked_dirty=False)
+    copy = created.path.resolve()
+    context = ToolContext(working_directory=copy, trust_mode=True)
+
+    written = context.resolve_path(str(git_repo / "src" / "app.py"), write=True)
+    relative = context.resolve_path("tracked.py", write=True)
+    outside = context.check_path(str(tmp_path / "elsewhere.txt"), write=True)
+
+    # Even with trust mode, the project's own path never escapes the copy.
+    assert written == copy / "src" / "app.py"
+    assert relative == copy / "tracked.py"
+    assert outside.path == (tmp_path / "elsewhere.txt").resolve()
+    assert context.isolated_project_root() == git_repo.resolve()
+    assert ToolContext(working_directory=git_repo).isolated_project_root() is None
+
+
+@pytest.mark.asyncio
+async def test_copy_mode_shell_refuses_commands_naming_the_project(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from deepseek_tui.tools.registry import ToolContext
+    from deepseek_tui.tools.shell import check_command_policy
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    created = await create_managed_worktree(git_repo, "thr_shell", copy_tracked_dirty=False)
+    context = ToolContext(working_directory=created.path)
+    project = git_repo.resolve()
+
+    for command in (
+        f"sed -i '' s/v1/v2/ {project}/tracked.py",
+        f"cd '{project}' && ls",
+        f"cat {project}",
+    ):
+        refused = check_command_policy(command, context)
+        assert refused is not None and refused.success is False, command
+        assert refused.metadata["managed_worktree_project_path_denied"] is True
+
+    # A sibling folder sharing the prefix, and relative paths, are fine.
+    assert check_command_policy(f"ls {project}-backup", context) is None
+    assert check_command_policy("sed -i '' s/v1/v2/ tracked.py", context) is None
+    assert check_command_policy(f"cat {project}/x", ToolContext(working_directory=project)) is None
+
+
+@pytest.mark.asyncio
+async def test_copy_mode_tools_map_subfolder_project_paths(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from deepseek_tui.tools.registry import ToolContext
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    (git_repo / "apps" / "web").mkdir(parents=True)
+    created = await create_managed_worktree(
+        git_repo / "apps" / "web", "thr_sub", copy_tracked_dirty=False
+    )
+    copy_root = created.path.resolve()
+    context = ToolContext(working_directory=copy_root / "apps" / "web", trust_mode=True)
+
+    mapped = context.resolve_path(str(git_repo / "apps" / "web" / "app.py"), write=True)
+
+    assert mapped == copy_root / "apps" / "web" / "app.py"
+    assert context.isolated_project_root() == git_repo.resolve()

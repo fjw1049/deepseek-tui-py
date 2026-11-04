@@ -32,8 +32,14 @@ async def capture_baseline(workspace: Path) -> GitTurnBaseline:
     if not await _is_git_repo(root):
         return GitTurnBaseline(workspace=root, is_git=False)
     head = await _run_git(root, ["rev-parse", "HEAD"])
-    porcelain = await _run_git(root, ["status", "--porcelain", "-z", "-uall"]) or ""
-    dirty = _paths_from_porcelain(porcelain)
+    # Porcelain paths are always repository-relative; everything else here is
+    # relative to ``root``, which may be a subfolder of the repository.
+    prefix = (await _run_git(root, ["rev-parse", "--show-prefix"]) or "").strip()
+    porcelain = (
+        await _run_git(root, ["status", "--porcelain", "-z", "-uall", "--", "."])
+        or ""
+    )
+    dirty = _paths_from_porcelain(porcelain, prefix)
     # Also treat currently-untracked files as pre-existing dirt.
     for path in await _list_untracked(root):
         dirty.add((path.replace("\\", "/") if os.name == "nt" else path))
@@ -71,7 +77,14 @@ async def reconcile_to_ledger(
     # Pin comparison to the turn-start commit even if HEAD moved meanwhile.
     # Attribution remains best-effort; caller-provided exclusions still apply.
     revision = baseline.head
-    diff_args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"]
+    diff_args = [
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--no-renames",
+        "--relative",
+    ]
     if revision:
         diff_args.append(revision)
     else:
@@ -139,19 +152,27 @@ async def reconcile_to_ledger(
     return added
 
 
-def _paths_from_porcelain(porcelain: str) -> set[str]:
-    """Parse porcelain v1 -z; rename/copy stores destination then source."""
-    paths: set[str] = set()
+def _paths_from_porcelain(porcelain: str, prefix: str = "") -> set[str]:
+    """Parse porcelain v1 -z; rename/copy stores destination then source.
+
+    Porcelain names are repository-relative; with ``prefix`` (the workspace's
+    subfolder) only paths under it are kept, made relative to it.
+    """
+    raw: list[str] = []
     entries = iter(porcelain.split("\0"))
     for entry in entries:
         if len(entry) < 4:
             continue
-        paths.add(entry[3:])
+        raw.append(entry[3:])
         if "R" in entry[:2] or "C" in entry[:2]:
             previous = next(entries, "")
             if previous:
-                paths.add(previous)
-    return paths
+                raw.append(previous)
+    return {
+        path[len(prefix):]
+        for path in raw
+        if path.startswith(prefix) and path != prefix
+    }
 
 
 async def _is_git_repo(root: Path) -> bool:

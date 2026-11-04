@@ -153,7 +153,7 @@ async def detect_shell_mutations(
 
 async def _candidate_paths(root: Path) -> set[str]:
     """Tracked files differing from HEAD (staged+unstaged) plus untracked."""
-    out = await _run_git(root, ["diff", "--name-only", "-z", "HEAD"])
+    out = await _run_git(root, ["diff", "--name-only", "--relative", "-z", "HEAD"])
     paths = {
         _normalize_relative_path(p)
         for p in (out or "").split("\0")

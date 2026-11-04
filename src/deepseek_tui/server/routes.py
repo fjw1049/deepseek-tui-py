@@ -1824,6 +1824,16 @@ async def get_thread_environment(request: Request, thread_id: str) -> dict[str, 
         raise api_error(404, str(exc), error="thread_not_found") from exc
 
 
+@router_threads.get("/threads/{thread_id}/worktree/compare")
+async def compare_thread_publish(request: Request, thread_id: str) -> dict[str, Any]:
+    """Read-only project -> task diff for the files awaiting a version choice."""
+    mgr = manager(request)
+    try:
+        return await mgr.publish_comparison(thread_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+
+
 @router_threads.post("/threads/{thread_id}/worktree/resolve")
 async def resolve_thread_publish(request: Request, thread_id: str) -> JSONResponse:
     mgr = manager(request)
