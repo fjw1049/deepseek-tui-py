@@ -122,3 +122,48 @@ it('recognizes host authorization items without a tool payload', async () => {
   expect(sink.onTool).not.toHaveBeenCalled()
   expect(sink.onUserInput).toHaveBeenCalledWith({ itemId: id, requestId: id, questions })
 })
+
+it('hides marked verification notes on reload while preserving assistant-authored text', async () => {
+  const note = '---\n核验状态：cua_js timeoutReached'
+  vi.stubGlobal('dsGui', { runtimeRequest: async () => ({ ok: true, body: JSON.stringify({
+    thread: { id: 'thread', status: 'idle' }, latest_seq: 2, turns: [],
+    items: [
+      { id: 'answer', kind: 'agent_message', detail: `操作未完成。\n\n${note}`, metadata: { completion_note: note, agent_segment: 'final_answer' } },
+      { id: 'note-only', kind: 'agent_message', detail: note, metadata: { completion_note: note, agent_segment: 'final_answer' } },
+      { id: 'unmarked', kind: 'agent_message', detail: note }
+    ]
+  }) }) })
+  const detail = await new DeepseekRuntimeProvider().getThreadDetail('thread')
+  expect(detail.blocks).toContainEqual(expect.objectContaining({ id: 'answer', text: '操作未完成。' }))
+  expect(detail.blocks.some(block => block.id === 'note-only')).toBe(false)
+  expect(detail.blocks).toContainEqual(expect.objectContaining({ id: 'unmarked', text: note }))
+})
+
+it('keeps verification notes out of live final answers and process segments', async () => {
+  const controller = new AbortController()
+  let emit!: (event: SseEventPayload) => void
+  const sink: ThreadEventSink = {
+    onSeq: vi.fn(), onDeltas: vi.fn(), onUserMessage: vi.fn(), onTool: vi.fn(),
+    onApproval: vi.fn(), onUserInput: vi.fn(), onUserInputStatus: vi.fn(), onError: vi.fn(),
+    onFinalAnswer: vi.fn(), onLiveSegmentComplete: vi.fn(),
+    onTurnComplete: vi.fn(() => controller.abort())
+  }
+  const note = '---\nVerification status: cua_js timeoutReached'
+  vi.stubGlobal('dsGui', {
+    onSseEvent: (handler: typeof emit) => { emit = handler; return () => {} },
+    onSseEnd: () => () => {}, onSseError: () => () => {}, stopSse: async () => true,
+    startSse: async (_thread: string, _seq: number, streamId: string) => {
+      for (const agent_segment of ['final_answer', 'mid_turn_preface']) {
+        emit({ streamId, data: { event: 'item.completed', payload: { item: {
+          id: agent_segment, kind: 'agent_message', detail: `Still incomplete.\n\n${note}`,
+          metadata: { agent_segment, completion_note: note }
+        } } } })
+      }
+      emit({ streamId, data: { event: 'turn.completed', payload: { turn: { id: 'turn', thread_id: 'thread', status: 'completed' } } } })
+      return { streamId }
+    }
+  })
+  await new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 0, sink, controller.signal)
+  expect(sink.onFinalAnswer).toHaveBeenCalledWith('final_answer', 'Still incomplete.', undefined)
+  expect(sink.onLiveSegmentComplete).toHaveBeenCalledWith('agent_message', 'mid_turn_preface', undefined, 'Still incomplete.', undefined)
+})

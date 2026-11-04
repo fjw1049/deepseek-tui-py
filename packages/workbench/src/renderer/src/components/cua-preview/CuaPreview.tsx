@@ -344,7 +344,7 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
     {expanded ? <>
       {shown && hasFrame && <div ref={attachCanvas} className="relative max-h-[45vh] w-full bg-ds-subtle"
         style={{ aspectRatio: frameSize ? `${frameSize.width} / ${frameSize.height}` : `${FALLBACK_ASPECT}` }} />}
-      {(!shown || !hasFrame || problem) && <div role="status" className="space-y-2 bg-ds-subtle px-3 py-4 text-xs text-ds-muted">
+      {(!shown || !hasFrame || problem === 'permission') && <div role="status" className="space-y-2 bg-ds-subtle px-3 py-4 text-xs text-ds-muted">
         <p>{allowed === false ? t('cuaPreviewDisabled')
           : problem === 'permission' ? t('cuaPreviewPermission')
             : problem === 'lookup-failed' ? t('cuaPreviewLookupFailed')
@@ -353,7 +353,6 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
                 : phase === 'ended' ? t('cuaPreviewNoRecordedFrame')
                   : session.surface === 'browser' ? t('cuaPreviewNoFrame')
                     : live.status === 'unsupported' ? t('cuaPreviewUnsupported') : t('cuaPreviewWaitingFrame')}</p>
-        {problem && shown && hasFrame && <p>{t('cuaPreviewStillFallback')}</p>}
         {problem && problem !== 'permission' && shown && streaming && <button type="button"
           onClick={() => window.dispatchEvent(new Event('cua-preview-recheck'))}
           className="rounded-md border border-ds-border px-2.5 py-1 text-ds-ink hover:bg-ds-hover">{t('cuaPreviewRetry')}</button>}

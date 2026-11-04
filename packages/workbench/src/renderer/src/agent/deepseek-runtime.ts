@@ -692,6 +692,15 @@ function readActivePlugin(it: TurnItemJson): ActivePluginMeta | null | undefined
   }
 }
 
+/** Keep persisted diagnostics out of assistant prose, including older conversations. */
+function assistantDisplayText(it: TurnItemJson): string {
+  const text = it.detail ?? it.summary ?? ''
+  const note = it.metadata?.completion_note
+  return typeof note === 'string' && note && text.endsWith(note)
+    ? text.slice(0, -note.length).trimEnd()
+    : text
+}
+
 /** Plugin mount/unmount STATUS items drive the composer badge only — not the timeline. */
 function isPluginMountStatusItem(it: TurnItemJson): boolean {
   if (readActivePlugin(it) !== undefined) return true
@@ -1196,7 +1205,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         // Source phases use the same persisted segment contract as native replies.
         // Old imports without phases keep their prose visible; native legacy items
         // retain their existing routing. No text or positional heuristics.
-        const text = it.detail ?? it.summary
+        const text = assistantDisplayText(it)
         const agentSegment = readAgentSegment(it)
         const processIntent = readProcessIntent(it)
         if (text.trim() || processIntent) {
@@ -1943,7 +1952,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   readAgentSegment(it) === 'final_answer' &&
                   sink.onFinalAnswer
                 ) {
-                  const text = (it.detail ?? it.summary ?? '').trim()
+                  const text = assistantDisplayText(it).trim()
                   if (text) {
                     sink.onFinalAnswer(it.id, text, itemCreatedAt(it))
                     return
@@ -1958,7 +1967,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     it.kind,
                     it.id,
                     itemCreatedAt(it),
-                    (it.detail ?? it.summary ?? '').trim(),
+                    (it.kind === 'agent_message' ? assistantDisplayText(it) : it.detail ?? it.summary ?? '').trim(),
                     readProcessIntent(it)
                   )
                   return

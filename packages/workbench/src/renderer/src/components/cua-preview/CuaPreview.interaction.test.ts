@@ -345,12 +345,22 @@ it('auto-opens the compact preview on the first frame and respects manual dismis
   }
 })
 
-it('explains the fallback screenshot and offers a preview-only retry', async () => {
-  capture.status = 'lookup-failed'
+it.each(['lookup-failed', 'no-window', 'failed'])('keeps fallback screenshots quiet when live preview is %s', async (status) => {
+  capture.status = status
   capture.stillReady = true
   await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, revision: 1 } } }))
+  expect(document.body.textContent).toContain('cuaPreviewLastFrame')
+  expect(document.body.textContent).not.toContain('cuaPreviewStillFallback')
+  expect(document.body.textContent).not.toContain('cuaPreviewLookupFailed')
+  expect(document.body.textContent).not.toContain('cuaPreviewNoWindow')
+  expect(find('cuaPreviewRetry')).toBeUndefined()
+})
+
+it('offers a preview-only retry when no screenshot is available', async () => {
+  capture.status = 'lookup-failed'
+  await expand()
   expect(document.body.textContent).toContain('cuaPreviewLookupFailed')
-  expect(document.body.textContent).toContain('cuaPreviewStillFallback')
+  expect(document.body.textContent).not.toContain('cuaPreviewStillFallback')
   expect(document.body.textContent).not.toContain('cuaPreviewNoWindow')
   const recheck = vi.fn()
   window.addEventListener('cua-preview-recheck', recheck)
