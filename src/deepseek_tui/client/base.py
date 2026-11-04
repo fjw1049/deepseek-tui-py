@@ -215,18 +215,35 @@ class MeteredLLMClient(LLMClient):
         # caller's ``usage_source(...)`` scope has already been reset.
         source: str | None = None
         ledger = self._ledger.capture()
-        ledger_token = _media_ledger_context.set(ledger)
+        stream = self._inner.stream_chat_completion(request)
         try:
-            async for event in self._inner.stream_chat_completion(request):
+            while True:
+                # Never leave a ContextVar token suspended across a public yield:
+                # async generators may be closed in a different task/context.
+                token = _media_ledger_context.set(ledger)
+                try:
+                    event = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                finally:
+                    _media_ledger_context.reset(token)
                 if isinstance(event, StreamDone) and event.usage is not None:
                     last_usage = event.usage
                     source = current_usage_source()
                 yield event
         finally:
-            _media_ledger_context.reset(ledger_token)
-            if last_usage is not None:
-                ledger.add(
-                    model=request.model,
-                    source=source or "unknown",
-                    usage=last_usage,
-                )
+            try:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    token = _media_ledger_context.set(ledger)
+                    try:
+                        await close()
+                    finally:
+                        _media_ledger_context.reset(token)
+            finally:
+                if last_usage is not None:
+                    ledger.add(
+                        model=request.model,
+                        source=source or "unknown",
+                        usage=last_usage,
+                    )
