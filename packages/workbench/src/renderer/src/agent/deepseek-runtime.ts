@@ -10,6 +10,7 @@ import type {
   ChatBlock,
   NormalizedThread,
   PublishActionResult,
+  PublishComparisonFile,
   PublishIssue,
   ProcessIntentMeta,
   RestoreCodeResult,
@@ -1650,6 +1651,24 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       blockingThreadId:
         typeof parsed.blocking_thread_id === 'string' ? parsed.blocking_thread_id : null
     }
+  }
+
+  async getPublishComparison(threadId: string): Promise<PublishComparisonFile[]> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/worktree/compare`,
+      'GET'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'compare publish failed'))
+    const parsed = JSON.parse(r.body) as { files?: unknown }
+    if (!Array.isArray(parsed.files)) return []
+    return parsed.files.flatMap((raw): PublishComparisonFile[] => {
+      if (!raw || typeof raw !== 'object') return []
+      const item = raw as Record<string, unknown>
+      if (typeof item.path !== 'string' || typeof item.patch !== 'string') return []
+      const status =
+        item.status === 'added' || item.status === 'deleted' ? item.status : 'modified'
+      return [{ path: item.path, status, patch: item.patch }]
+    })
   }
 
   async resumeThread(threadId: string): Promise<void> {

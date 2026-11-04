@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 
 import { act, createElement } from 'react'
-import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NormalizedThread } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
+import { OPEN_CHANGES_PANEL_EVENT, type ChangeReviewRequest } from '../../lib/change-review'
 import { PublishConflictBanner } from './PublishConflictBanner'
 
 function thread(overrides: Partial<NormalizedThread> = {}): NormalizedThread {
@@ -23,7 +23,7 @@ function thread(overrides: Partial<NormalizedThread> = {}): NormalizedThread {
   }
 }
 
-describe('PublishConflictBanner recovery controls', () => {
+describe('PublishConflictBanner choices', () => {
   const initial = useChatStore.getState()
   let container: HTMLDivElement
   let root: Root
@@ -42,63 +42,26 @@ describe('PublishConflictBanner recovery controls', () => {
     vi.restoreAllMocks()
   })
 
-  it('offers a safe recheck for a missing task workspace', async () => {
-    const warmActiveThread = vi.fn(async () => undefined)
-    const refreshThreads = vi.fn(async () => undefined)
+  it('shows a lost copy and unknown leftovers as one way forward from the project', async () => {
     useChatStore.setState({
       activeThreadId: 'thread-a',
       busy: false,
-      threads: [
-        thread({
-          publishPending: true,
-          publishBlocked: true,
-          publishIssue: 'missing'
-        })
-      ],
-      warmActiveThread,
-      refreshThreads
+      threads: [thread({ publishPending: true, publishBlocked: true, publishIssue: 'missing' })]
     })
-
     await act(async () => root.render(createElement(PublishConflictBanner)))
-    const retry = container.querySelector<HTMLButtonElement>('[data-publish-missing-retry]')
-    expect(retry).not.toBeNull()
+    const missingText = container.textContent
+    const buttons = container.querySelectorAll('button')
 
-    await act(async () => retry?.click())
-    expect(warmActiveThread).toHaveBeenCalledWith('thread-a')
-    expect(refreshThreads).toHaveBeenCalledOnce()
-  })
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]?.getAttribute('data-publish-choice')).toBe('keep_project')
 
-  it('does not leak a late missing-workspace failure into another task', async () => {
-    let releaseWarmup: (() => void) | null = null
-    const warmActiveThread = vi.fn(
-      () => new Promise<void>((resolve) => { releaseWarmup = resolve })
-    )
-    const refreshThreads = vi.fn(async () => undefined)
-    const missing = {
-      publishPending: true,
-      publishBlocked: true,
-      publishIssue: 'missing' as const
-    }
-    useChatStore.setState({
-      activeThreadId: 'thread-a',
-      busy: false,
-      threads: [thread(missing), thread({ id: 'thread-b', title: 'Task B', ...missing })],
-      warmActiveThread,
-      refreshThreads
-    })
-
-    await act(async () => root.render(createElement(PublishConflictBanner)))
-    act(() => {
-      container.querySelector<HTMLButtonElement>('[data-publish-missing-retry]')?.click()
-    })
     await act(async () => {
-      useChatStore.setState({ activeThreadId: 'thread-b' })
-      releaseWarmup?.()
-      await Promise.resolve()
+      useChatStore.setState({
+        threads: [thread({ publishBlocked: true, publishIssue: 'recovery', publishConflicts: [] })]
+      })
     })
 
-    expect(warmActiveThread).toHaveBeenCalledWith('thread-a')
-    expect(container.querySelector('[data-publish-missing-retry-failed]')).toBeNull()
+    expect(container.textContent).toBe(missingText)
   })
 
   it('explains a queued safe sync without showing a decision prompt', async () => {
@@ -119,8 +82,7 @@ describe('PublishConflictBanner recovery controls', () => {
     await act(async () => root.render(createElement(PublishConflictBanner)))
 
     expect(container.querySelector('[data-publish-waiting]')).not.toBeNull()
-    expect(container.querySelector('[data-publish-recovery-banner]')).toBeNull()
-    expect(container.querySelector('[data-publish-conflict-banner]')).toBeNull()
+    expect(container.querySelector('[data-publish-choice-banner]')).toBeNull()
   })
 
   it('keeps an ordinary transient pending sync silent', async () => {
@@ -142,7 +104,124 @@ describe('PublishConflictBanner recovery controls', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('drops a confirmation when the runtime snapshot changes', async () => {
+  it('shows conflicts and recovery as the same version choice', async () => {
+    useChatStore.setState({
+      activeThreadId: 'thread-a',
+      busy: false,
+      threads: [thread({ publishBlocked: true, publishConflicts: ['src/app.ts'] })]
+    })
+    await act(async () => root.render(createElement(PublishConflictBanner)))
+    const conflictText = container.textContent
+
+    await act(async () => {
+      useChatStore.setState({
+        threads: [
+          thread({
+            publishBlocked: true,
+            publishIssue: 'recovery',
+            publishConflicts: ['src/app.ts']
+          })
+        ]
+      })
+    })
+
+    expect(container.querySelector('[data-publish-choice-banner="recovery"]')).not.toBeNull()
+    expect(container.textContent).toBe(conflictText)
+  })
+
+  it('asks once before replacing project files with the chat version', async () => {
+    const resolvePublishConflicts = vi.fn(async () => ({
+      status: 'applied' as const,
+      thread: thread()
+    }))
+    useChatStore.setState({
+      activeThreadId: 'thread-a',
+      busy: false,
+      threads: [thread({ publishBlocked: true, publishConflicts: ['src/app.ts'] })],
+      resolvePublishConflicts
+    })
+
+    await act(async () => root.render(createElement(PublishConflictBanner)))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-publish-choice="use_agent"]')?.click()
+    })
+
+    expect(resolvePublishConflicts).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-publish-confirm]')).not.toBeNull()
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-publish-confirm-action="use_agent"]')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    expect(resolvePublishConflicts).toHaveBeenCalledWith(
+      'use_agent',
+      undefined,
+      '2026-08-30T00:00:00Z'
+    )
+  })
+
+  it('opens the project-to-chat diff for all files or one file', async () => {
+    const requests: ChangeReviewRequest[] = []
+    const listener = (event: Event): void => {
+      requests.push((event as CustomEvent<ChangeReviewRequest>).detail)
+    }
+    window.addEventListener(OPEN_CHANGES_PANEL_EVENT, listener)
+    useChatStore.setState({
+      activeThreadId: 'thread-a',
+      busy: false,
+      threads: [thread({ publishBlocked: true, publishConflicts: ['src/app.ts'] })]
+    })
+
+    await act(async () => root.render(createElement(PublishConflictBanner)))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-publish-review]')?.click()
+      container.querySelector<HTMLButtonElement>('li button[title="src/app.ts"]')?.click()
+    })
+    window.removeEventListener(OPEN_CHANGES_PANEL_EVENT, listener)
+
+    expect(requests).toEqual([
+      { context: 'conflicts' },
+      { context: 'conflicts', path: 'src/app.ts' }
+    ])
+  })
+
+  it('lets a missing workspace start over from the project after one confirmation', async () => {
+    const resolvePublishConflicts = vi.fn(async () => ({
+      status: 'applied' as const,
+      thread: thread()
+    }))
+    useChatStore.setState({
+      activeThreadId: 'thread-a',
+      busy: false,
+      threads: [
+        thread({ publishPending: true, publishBlocked: true, publishIssue: 'missing' })
+      ],
+      resolvePublishConflicts
+    })
+
+    await act(async () => root.render(createElement(PublishConflictBanner)))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-publish-choice="keep_project"]')?.click()
+    })
+    expect(resolvePublishConflicts).not.toHaveBeenCalled()
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-publish-confirm-action="keep_project"]')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    expect(resolvePublishConflicts).toHaveBeenCalledWith(
+      'keep_project',
+      undefined,
+      '2026-08-30T00:00:00Z'
+    )
+  })
+
+  it('drops a confirmation and says why when the files change', async () => {
     useChatStore.setState({
       activeThreadId: 'thread-a',
       busy: false,
@@ -158,11 +237,9 @@ describe('PublishConflictBanner recovery controls', () => {
 
     await act(async () => root.render(createElement(PublishConflictBanner)))
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-publish-recovery-choice="use_agent"]')
-        ?.click()
+      container.querySelector<HTMLButtonElement>('[data-publish-choice="use_agent"]')?.click()
     })
-    expect(container.querySelector('[data-publish-recovery-confirm]')).not.toBeNull()
+    expect(container.querySelector('[data-publish-confirm]')).not.toBeNull()
 
     await act(async () => {
       useChatStore.setState({
@@ -172,16 +249,14 @@ describe('PublishConflictBanner recovery controls', () => {
             publishPending: true,
             publishBlocked: true,
             publishIssue: 'recovery',
-            publishConflicts: []
+            publishConflicts: ['src/app.ts', 'src/other.ts']
           })
         ]
       })
     })
 
-    expect(container.querySelector('[data-publish-recovery-confirm]')).toBeNull()
-    expect(
-      container.querySelector('[data-publish-recovery-choice="use_agent"]')
-    ).toBeNull()
+    expect(container.querySelector('[data-publish-confirm]')).toBeNull()
+    expect(container.querySelector('[data-publish-changed]')).not.toBeNull()
   })
 
   it('binds a destructive recovery choice to the snapshot being shown', async () => {
@@ -206,79 +281,25 @@ describe('PublishConflictBanner recovery controls', () => {
 
     await act(async () => root.render(createElement(PublishConflictBanner)))
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-publish-recovery-choice="use_agent"]')
-        ?.click()
+      container.querySelector<HTMLButtonElement>('[data-publish-choice="use_agent"]')?.click()
+    })
+    // An unrelated refresh of the same question keeps the confirmation open
+    // and the token of the state the user chose from.
+    await act(async () => {
+      useChatStore.setState({
+        threads: [{ ...shownThread, updatedAt: '2026-08-30T00:00:01Z' }]
+      })
     })
     await act(async () => {
       container
-        .querySelector<HTMLButtonElement>('[data-publish-recovery-action="use_agent"]')
+        .querySelector<HTMLButtonElement>('[data-publish-confirm-action="use_agent"]')
         ?.click()
       await Promise.resolve()
     })
 
-    expect(resolvePublishConflicts).toHaveBeenCalledWith(
-      'use_agent',
-      undefined,
-      shownAt
-    )
-  })
-
-  it('keeps the selected recovery token when a newer snapshot renders before confirmation', async () => {
-    const shownAt = '2026-08-30T00:00:00Z'
-    const refreshedAt = '2026-08-30T00:00:01Z'
-    const shownThread = thread({
-      updatedAt: shownAt,
-      publishPending: true,
-      publishBlocked: true,
-      publishIssue: 'recovery',
-      publishConflicts: ['src/app.ts']
-    })
-    const resolvePublishConflicts = vi.fn(async () => ({
-      status: 'conflict' as const,
-      thread: shownThread
-    }))
-    useChatStore.setState({
-      activeThreadId: 'thread-a',
-      busy: false,
-      threads: [shownThread],
-      resolvePublishConflicts
-    })
-
-    await act(async () => root.render(createElement(PublishConflictBanner)))
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-publish-recovery-choice="use_agent"]')
-        ?.click()
-    })
-
-    const confirm = container.querySelector<HTMLButtonElement>(
-      '[data-publish-recovery-action="use_agent"]'
-    )
-    expect(confirm).not.toBeNull()
-
-    act(() => {
-      flushSync(() => {
-        useChatStore.setState({
-          threads: [
-            thread({
-              updatedAt: refreshedAt,
-              publishPending: true,
-              publishBlocked: true,
-              publishIssue: 'recovery',
-              publishConflicts: ['src/app.ts']
-            })
-          ]
-        })
-      })
-      confirm?.click()
-    })
-    await act(async () => Promise.resolve())
-
-    expect(resolvePublishConflicts).toHaveBeenCalledWith(
-      'use_agent',
-      undefined,
-      shownAt
-    )
+    expect(resolvePublishConflicts).toHaveBeenCalledWith('use_agent', undefined, shownAt)
+    // The runtime refused the stale choice: the user is told, not left guessing.
+    expect(container.querySelector('[data-publish-changed]')).not.toBeNull()
+    expect(container.querySelector('[data-publish-confirm]')).toBeNull()
   })
 })

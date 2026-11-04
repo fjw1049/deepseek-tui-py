@@ -51,6 +51,7 @@ import {
   useGitWorkingChanges
 } from '../hooks/use-git-working-changes'
 import { useGitBranches } from '../hooks/use-git-branches'
+import { usePublishComparison } from '../hooks/use-publish-comparison'
 import { usePopExit } from '../hooks/use-pop-exit'
 import { useGitHubRepository } from '../hooks/use-github-repository'
 import { useWorkspaceDirtyGitRefresh } from '../hooks/use-workspace-dirty-git-refresh'
@@ -1003,7 +1004,7 @@ export function ChangeInspector({
   const isMutableGitContext =
     context === 'working-tree' || context === 'staged' || context === 'unstaged'
   const gitScope = gitScopeForContext(context)
-  const needsProjectGit = isGitContext || context === 'conflicts'
+  const needsProjectGit = isGitContext
   const {
     result: workingTreeChanges,
     loading: workingTreeLoading,
@@ -1027,8 +1028,18 @@ export function ChangeInspector({
   )
   const gitChanges = gitScope === 'working-tree' ? workingTreeChanges : scopedChanges
   const canMutateGit = Boolean(gitBranches?.ok && !gitBranches.detached)
+  const { files: comparisonFiles, loading: comparisonLoading } = usePublishComparison(
+    context === 'conflicts' ? activeThreadId : null,
+    [
+      activeThread?.updatedAt ?? '',
+      workspaceDirtyTick,
+      ...(activeThread?.publishConflicts ?? [])
+    ].join('\u0000')
+  )
   const gitLoading =
-    workingTreeLoading || (isGitContext && gitScope !== 'working-tree' && scopedLoading)
+    workingTreeLoading ||
+    (isGitContext && gitScope !== 'working-tree' && scopedLoading) ||
+    (context === 'conflicts' && comparisonLoading)
   const { result: remoteRepositoryResult } = useGitHubRepository(
     isGitContext ? changeRoot : ''
   )
@@ -1084,18 +1095,10 @@ export function ChangeInspector({
         }
         return gitChanges.files
       }
-      if (context === 'conflicts') {
-        if (!workingTreeChanges?.ok) return null
-        const conflictPaths = new Set(
-          (activeThread?.publishConflicts ?? []).map((path) => normalizeChangePath(path))
-        )
-        return workingTreeChanges.files.filter((file) =>
-          conflictPaths.has(normalizeChangePath(file.path))
-        )
-      }
+      if (context === 'conflicts') return comparisonFiles
       return null
     },
-    [activeThread?.publishConflicts, context, gitChanges, isGitContext, workingTreeChanges]
+    [comparisonFiles, context, gitChanges, isGitContext]
   )
 
   const isReview = variant === 'review'
@@ -1352,10 +1355,12 @@ export function ChangeInspector({
     let cancelled = false
     const load = async (): Promise<string | null> => {
       if (!selectedPath) return null
-      if (isGitContext || context === 'conflicts') {
+      // The comparison patch already spans the two versions being chosen between.
+      if (context === 'conflicts') return selectedPatch
+      if (isGitContext) {
         if (typeof window.dsGui?.getGitFileDiff !== 'function') return null
-        const scope = context === 'conflicts' ? 'working-tree'
-          : context === 'working-tree' ? (selectedStage === 'staged' ? 'staged' : 'unstaged')
+        const scope = context === 'working-tree'
+          ? (selectedStage === 'staged' ? 'staged' : 'unstaged')
             : gitScope
         const result = await window.dsGui.getGitFileDiff({
           workspaceRoot: changeRoot, path: selectedPath, scope,

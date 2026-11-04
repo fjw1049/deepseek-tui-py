@@ -530,6 +530,10 @@ export function FloatingComposer({
     ? t('runtimeActionNeedsConnection')
     : !hasActiveThread && !effectiveWorkspaceRoot
       ? t('workspaceRequiredToCreateThread')
+      : activeThreadPublishUnresolved
+        ? activePublishThread?.publishBlocked
+          ? t('composerPublishNeedsChoice')
+          : t('composerPublishSyncing')
       : busy
         ? t('composerQueuePlaceholder')
         : mode === 'goal' && !currentGoal

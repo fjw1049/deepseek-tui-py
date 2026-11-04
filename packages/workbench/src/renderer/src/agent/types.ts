@@ -51,6 +51,12 @@ export type GoalSnapshotJson = {
 
 export type PublishIssue = 'recovery' | 'failure' | 'missing' | null
 
+export type PublishComparisonFile = {
+  path: string
+  status: 'added' | 'deleted' | 'modified'
+  patch: string
+}
+
 export type NormalizedThread = {
   id: string
   title: string
@@ -571,6 +577,11 @@ export interface AgentProvider {
     paths?: string[],
     recoveryToken?: string
   ): Promise<PublishActionResult>
+  /**
+   * Read-only diff for the files awaiting a version choice: `-` is the
+   * project's current content, `+` is this conversation's version.
+   */
+  getPublishComparison?(threadId: string): Promise<PublishComparisonFile[]>
   resumeThread?(threadId: string): Promise<void>
   /** Runtime HTTP: POST /v1/tasks/{id}/resume */
   resumeTask?(taskId: string): Promise<void>

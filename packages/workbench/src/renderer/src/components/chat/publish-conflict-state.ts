@@ -11,13 +11,20 @@ export type PublishAttentionState =
   | { kind: 'missing'; conflicts: string[] }
   | { kind: 'conflict'; conflicts: string[] }
 
-/** Bind a destructive recovery confirmation to one runtime state snapshot. */
-export function publishRecoveryDecisionKey(
-  attention: PublishAttentionState,
-  updatedAt?: string
-): string | null {
-  if (attention.kind !== 'recovery') return null
-  return JSON.stringify(['recovery', updatedAt ?? null, ...attention.conflicts])
+/**
+ * Identity of the question the user is answering: which kind of choice and
+ * which files. A pending confirmation is dropped as soon as it changes. Byte
+ * level staleness is rejected by the runtime through the recovery token.
+ */
+export function publishDecisionKey(attention: PublishAttentionState): string | null {
+  if (
+    attention.kind !== 'recovery' &&
+    attention.kind !== 'conflict' &&
+    attention.kind !== 'missing'
+  ) {
+    return null
+  }
+  return JSON.stringify([attention.kind, ...attention.conflicts])
 }
 
 export function publishAttentionState(

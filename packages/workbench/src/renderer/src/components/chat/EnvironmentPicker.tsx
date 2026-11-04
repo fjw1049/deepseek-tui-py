@@ -182,10 +182,20 @@ export function EnvironmentPicker({
       <div className="min-h-0 pb-1">
         {(
           [
-            { mode: 'local' as const, icon: Laptop, label: t('envPickerLocal') },
-            { mode: 'worktree' as const, icon: FolderGit2, label: t('envPickerWorktree') }
+            {
+              mode: 'local' as const,
+              icon: Laptop,
+              label: t('envPickerLocal'),
+              description: t('envPickerLocalDescription')
+            },
+            {
+              mode: 'worktree' as const,
+              icon: FolderGit2,
+              label: t('envPickerWorktree'),
+              description: t('envPickerWorktreeDescription')
+            }
           ] as const
-        ).map(({ mode: itemMode, icon: Icon, label: itemLabel }) => (
+        ).map(({ mode: itemMode, icon: Icon, label: itemLabel, description }) => (
           <button
             key={itemMode}
             type="button"
@@ -193,7 +203,7 @@ export function EnvironmentPicker({
             className={`ds-project-context-menu__row ${
               mode === itemMode ? 'ds-project-context-menu__row--active' : ''
             }`}
-            title={locked ? undefined : itemLabel}
+            title={locked ? undefined : description}
             onClick={() => void selectMode(itemMode)}
           >
             <span className="ds-project-context-menu__icon" aria-hidden>
@@ -201,6 +211,7 @@ export function EnvironmentPicker({
             </span>
             <span className="min-w-0 flex-1">
               <span className="ds-project-context-menu__row-title">{itemLabel}</span>
+              <span className="ds-project-context-menu__row-path">{description}</span>
             </span>
             {mode === itemMode ? (
               <Check className="h-4 w-4 shrink-0 text-accent" strokeWidth={2.2} />
@@ -212,7 +223,11 @@ export function EnvironmentPicker({
   ) : null
 
   return (
-    <div ref={wrapRef} className="ds-no-drag relative min-w-0">
+    <div
+      ref={wrapRef}
+      className="ds-no-drag relative min-w-0"
+      title={locked ? t('envPickerLockedHint') : undefined}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -223,7 +238,7 @@ export function EnvironmentPicker({
             : 'ds-workspace-context-chip flex h-7 max-w-[140px] items-center gap-1.5 rounded-md px-2 py-1 text-left'
         }
         onClick={() => setOpen((v) => !v)}
-        title={label}
+        title={locked ? undefined : label}
         aria-expanded={open}
       >
         {mode === 'worktree' ? (

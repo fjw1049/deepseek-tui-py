@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   publishAttentionState,
-  publishRecoveryDecisionKey
+  publishDecisionKey
 } from './publish-conflict-state'
 
 describe('publishAttentionState', () => {
@@ -90,23 +90,26 @@ describe('publishAttentionState', () => {
   })
 })
 
-describe('publishRecoveryDecisionKey', () => {
-  it('changes when the runtime refreshes the same recovery paths', () => {
+describe('publishDecisionKey', () => {
+  it('stays stable when the runtime refreshes the same question', () => {
     const attention = publishAttentionState(['src/app.ts'], true, 'recovery')
 
-    expect(publishRecoveryDecisionKey(attention, '2026-08-30T01:00:00Z')).not.toBe(
-      publishRecoveryDecisionKey(attention, '2026-08-30T01:00:01Z')
+    expect(publishDecisionKey(attention)).toBe(
+      publishDecisionKey(publishAttentionState(['src/app.ts'], true, 'recovery'))
     )
   })
 
-  it('changes with the exact path set and disappears outside recovery', () => {
+  it('changes with the kind or exact path set and disappears without a choice', () => {
     const first = publishAttentionState(['src/a.ts'], true, 'recovery')
     const second = publishAttentionState(['src/b.ts'], true, 'recovery')
+    const conflict = publishAttentionState(['src/a.ts'], true, null)
     const hidden = publishAttentionState([], false, null)
+    const failure = publishAttentionState([], true, 'failure')
 
-    expect(publishRecoveryDecisionKey(first, 'same')).not.toBe(
-      publishRecoveryDecisionKey(second, 'same')
-    )
-    expect(publishRecoveryDecisionKey(hidden, 'same')).toBeNull()
+    expect(publishDecisionKey(first)).not.toBe(publishDecisionKey(second))
+    expect(publishDecisionKey(first)).not.toBe(publishDecisionKey(conflict))
+    expect(publishDecisionKey(publishAttentionState([], true, 'missing'))).not.toBeNull()
+    expect(publishDecisionKey(hidden)).toBeNull()
+    expect(publishDecisionKey(failure)).toBeNull()
   })
 })

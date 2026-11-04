@@ -141,3 +141,18 @@ it.each([
     expect(onSend.mock.calls[0][0]).toBe(`${i18n.t('computerUseTaskPrefix')} Open Notes`)
   }
 })
+
+it('says why sending is paused while file versions wait for a choice', async () => {
+  const blocked = {
+    id: 'paste-a', title: 'A', createdAt: '', updatedAt: '', model: 'm', mode: 'agent' as const,
+    workspace: '/repo', envMode: 'worktree' as const, publishBlocked: true, publishConflicts: ['a.ts']
+  }
+  useChatStore.setState({ threads: [blocked] })
+  await act(async () => root.render(createElement(FloatingComposer, props)))
+  expect(host.querySelector('textarea')!.placeholder).toBe(i18n.t('composerPublishNeedsChoice'))
+
+  await act(async () => useChatStore.setState({
+    threads: [{ ...blocked, publishBlocked: false, publishConflicts: [], publishPending: true }]
+  }))
+  expect(host.querySelector('textarea')!.placeholder).toBe(i18n.t('composerPublishSyncing'))
+})
