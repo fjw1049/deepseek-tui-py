@@ -136,6 +136,8 @@ class StreamTextDelta(BaseModel):
 class StreamThinkingDelta(BaseModel):
     type: Literal[StreamEventType.THINKING_DELTA] = StreamEventType.THINKING_DELTA
     thinking: str
+    # Opaque provider reasoning state to replay with this message (OpenAI Responses).
+    signature: str | None = None
 
 
 class StreamToolCallDelta(BaseModel):

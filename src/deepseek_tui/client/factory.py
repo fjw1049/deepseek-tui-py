@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from deepseek_tui.client.anthropic import AnthropicCompatClient
 from deepseek_tui.client.deepseek import DeepSeekClient
+from deepseek_tui.client.openai_responses import OpenAIResponsesClient, is_openai_host
 from deepseek_tui.client.reasoning import is_deepseek_reasoning_model
 
 if TYPE_CHECKING:
@@ -92,7 +93,9 @@ def build_llm_client(config: Config) -> LLMClient:
         # served via third-party hosts).
         thinking = _infer_thinking_supported(base_url, model)
 
-        client = DeepSeekClient(
+        # OpenAI's reasoning models take tools with reasoning only on /v1/responses.
+        client_class = OpenAIResponsesClient if is_openai_host(base_url) else DeepSeekClient
+        client = client_class(
             api_key=api_key,
             base_url=base_url,
             timeout_seconds=float(pc.timeout),

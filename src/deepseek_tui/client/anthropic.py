@@ -14,6 +14,7 @@ from httpx_sse import aconnect_sse
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
+from deepseek_tui.client.openai_responses import SIGNATURE_PREFIX as OPENAI_RESPONSES_SIGNATURE
 from deepseek_tui.client.reasoning import anthropic_reasoning_fields, sent_reasoning_fields
 from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import AnthropicStreamParser
@@ -277,7 +278,11 @@ def _build_anthropic_messages(
                     blocks.append({"type": "text", "text": block.text})
             elif isinstance(block, ImageBlock):
                 blocks.append(image_content(block))
-            elif isinstance(block, ThinkingBlock) and block.signature:
+            elif (
+                isinstance(block, ThinkingBlock)
+                and block.signature
+                and not block.signature.startswith(OPENAI_RESPONSES_SIGNATURE)
+            ):
                 blocks.append(
                     {
                         "type": "thinking",

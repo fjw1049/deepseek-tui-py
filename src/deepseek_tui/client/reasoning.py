@@ -101,6 +101,7 @@ _REASONING_KEYS = (
     "enable_thinking",
     "thinking_budget",
     "output_config",
+    "reasoning",
 )
 
 

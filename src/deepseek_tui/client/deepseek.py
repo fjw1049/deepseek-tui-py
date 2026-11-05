@@ -122,7 +122,7 @@ class DeepSeekClient(LLMClient):
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         request = await self.prepare_media(request)
-        parser = OpenAIStreamParser()
+        parser = self._new_parser(request)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -135,14 +135,14 @@ class DeepSeekClient(LLMClient):
         # before the first byte of the response body is consumed; once SSE
         # chunks start flowing the engine's transparent-retry layer takes
         # over.
-        url = self._chat_completions_url()
+        url = self._request_url()
         body_bytes = len(json.dumps(payload).encode())
         logger.info(
             "http_request method=POST url=%s model=%s msg_count=%d body_bytes=%d "
             "reasoning_effort=%s reasoning_sent=%s",
             url,
             request.model,
-            len(payload.get("messages", [])),
+            len(payload.get("messages") or payload.get("input") or []),
             body_bytes,
             request.reasoning_effort,
             sent_reasoning_fields(payload),
@@ -159,6 +159,12 @@ class DeepSeekClient(LLMClient):
             url,
             int((time.monotonic() - request_started) * 1000),
         )
+
+    def _new_parser(self, request: MessageRequest) -> OpenAIStreamParser:
+        return OpenAIStreamParser()
+
+    def _request_url(self) -> str:
+        return self._chat_completions_url()
 
     def _chat_completions_url(self) -> str:
         """Build the chat-completions URL without doubling the version prefix.

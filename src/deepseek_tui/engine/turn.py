@@ -452,6 +452,10 @@ class TurnLoop:
                             await emit(TextDeltaEvent(text=cleaned))
                     elif isinstance(stream_event, StreamThinkingDelta):
                         any_content_received = True
+                        if stream_event.signature:
+                            buffer.signature = stream_event.signature
+                        if not stream_event.thinking:
+                            continue
                         content_bytes += len(stream_event.thinking.encode())
                         logger.debug(
                             "sse_chunk type=thinking_delta bytes=%d",

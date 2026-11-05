@@ -365,6 +365,7 @@ class FakeWrapperFilter:
 class AssistantResponseBuffer:
     text_parts: list[str] = field(default_factory=list)
     thinking_parts: list[str] = field(default_factory=list)
+    signature: str | None = None
 
     def append_text(self, text: str) -> None:
         self.text_parts.append(text)
@@ -376,11 +377,13 @@ class AssistantResponseBuffer:
         return bool(self.text_parts or self.thinking_parts)
 
     def build_message(self) -> Message | None:
-        if not self.text_parts and not self.thinking_parts:
+        if not self.text_parts and not self.thinking_parts and not self.signature:
             return None
         blocks: list[ContentBlock] = []
-        if self.thinking_parts:
-            blocks.append(ThinkingBlock(thinking="".join(self.thinking_parts)))
+        if self.thinking_parts or self.signature:
+            blocks.append(
+                ThinkingBlock(thinking="".join(self.thinking_parts), signature=self.signature)
+            )
         if self.text_parts:
             blocks.append(TextBlock(text="".join(self.text_parts)))
         return Message(role=Role.ASSISTANT, content=blocks)
