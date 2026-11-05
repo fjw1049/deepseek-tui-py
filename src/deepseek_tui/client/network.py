@@ -44,11 +44,14 @@ class NetworkSettings(BaseModel):
         if self.mode == "direct":
             return {"mounts": {"all://": None, "http://": None, "https://": None}}
         host = _url_host(url)
-        if host and _system_bypasses(host):
+        if host and (_system_bypasses(host) or urllib.request.proxy_bypass_environment(host)):
             # Following the system proxy includes its exception list, as the
             # Workbench connection test (Electron) does.
             hosts[f"all://{f'[{host}]' if ':' in host else host}"] = None
-        return {"mounts": hosts}
+        options: dict = {"mounts": hosts}
+        if proxy := _hidden_os_proxy(url):
+            options["proxy"] = proxy
+        return options
 
 
 def _url_host(url: str) -> str:
@@ -56,6 +59,32 @@ def _url_host(url: str) -> str:
         return httpx.URL(url).host if url else ""
     except Exception:  # noqa: BLE001 — an invalid URL fails on the request itself
         return ""
+
+
+def _os_proxies() -> dict[str, str]:
+    reader = getattr(urllib.request, "getproxies_macosx_sysconf", None) or getattr(
+        urllib.request, "getproxies_registry", None
+    )
+    try:
+        return reader() if reader else {}
+    except Exception:  # noqa: BLE001 — unreadable OS settings mean no proxy
+        return {}
+
+
+def _hidden_os_proxy(url: str) -> str | None:
+    """The OS proxy for ``url`` when the environment hides it from httpx.
+
+    urllib, and so httpx, reads the OS proxy settings only while no
+    ``*_proxy`` variable is set. The browser service sets ``NO_PROXY`` to keep
+    CDP on loopback, which on its own would send every later request direct.
+    """
+    if set(urllib.request.getproxies_environment()) - {"no"}:
+        return None  # Explicit proxy variables: httpx applies them itself.
+    try:
+        scheme = httpx.URL(url).scheme if url else ""
+    except Exception:  # noqa: BLE001 — an invalid URL fails on the request itself
+        return None
+    return _os_proxies().get(scheme) or None
 
 
 def _system_bypasses(host: str) -> bool:

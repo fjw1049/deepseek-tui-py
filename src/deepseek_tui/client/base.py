@@ -74,7 +74,7 @@ class LLMClient(ABC):
         self.extra_headers = dict(extra_headers or {})
         self._http_client: httpx.AsyncClient | None = None
         self._network_clients: dict[
-            tuple[NetworkSettings, frozenset[str]], httpx.AsyncClient
+            tuple[NetworkSettings, frozenset[str], str | None], httpx.AsyncClient
         ] = {}
         self.media_config = None
         self._vision_cache: dict[str, str] = {}
@@ -100,7 +100,7 @@ class LLMClient(ABC):
         """
         network = read_network_settings()
         options = network.http_options(self.base_url)
-        key = (network, frozenset(options["mounts"]))
+        key = (network, frozenset(options["mounts"]), options.get("proxy"))
         self._http_client = self._network_clients.get(key)
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
