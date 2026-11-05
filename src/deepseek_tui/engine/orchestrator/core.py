@@ -3711,6 +3711,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
 
             if facts.assistance_requests:
                 answer = Message.assistant(
+                    "Human assistance is needed; this run has stopped and the request is "
+                    "saved in the task result."
+                    if getattr(self, "reply_locale", "zh") == "en" else
                     "需要人工协助，当前执行已停止；请求内容已保存在任务结果中。"
                 )
                 messages.append(answer)

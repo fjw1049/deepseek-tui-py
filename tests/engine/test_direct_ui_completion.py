@@ -82,7 +82,11 @@ async def test_unavailable_question_tool_does_not_trigger_review(tmp_path):
         await engine.shutdown_session()
 
 
-async def test_unattended_explicit_request_is_saved_without_waiting(tmp_path):
+@pytest.mark.parametrize(
+    ("locale", "closing"),
+    [("zh", "需要人工协助"), ("en", "Human assistance is needed")],
+)
+async def test_unattended_explicit_request_is_saved_without_waiting(tmp_path, locale, closing):
     ask = ToolCall(
         id="ask",
         name="request_user_input",
@@ -90,12 +94,14 @@ async def test_unattended_explicit_request_is_saved_without_waiting(tmp_path):
     )
     engine, client = await desktop_engine(tmp_path, [look(), ask])
     engine.tool_context.metadata["unattended"] = True
+    engine.reply_locale = locale
     try:
         result = await asyncio.wait_for(
             engine._run_conversation([Message.user("检查界面")], "test", "sys", None), 5
         )
         assert result.task_outcome["status"] == "needs_assistance"
         assert result.task_outcome["requests"] == [ask.arguments]
+        assert result.assistant_message.text_content().startswith(closing)
         assert len(client.requests) == 2
     finally:
         await engine.shutdown_session()
