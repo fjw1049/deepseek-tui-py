@@ -9,6 +9,7 @@ import unicodedata
 from dataclasses import replace
 from typing import Any
 
+from deepseek_tui.cua.ax_text import is_listing, shorten
 from deepseek_tui.cua.session import CuaSession
 from deepseek_tui.surfaces import CUA_TOOLS  # noqa: F401 - re-exported for CUA wiring
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
@@ -37,6 +38,26 @@ WINDOWS_NOTE = (
     "only the front one. To work in another window, choose it from the app's Window menu or "
     "press super+grave to cycle windows, then get fresh state.]"
 )
+NOT_SENT_NOTE = "[Host: nothing reached the app; once the call is fixed, running it is safe.]"
+UNCERTAIN_NOTE = (
+    "[Host: this call may have changed the app before it failed. Check its state with "
+    "cua_observe before repeating anything.]"
+)
+UNCERTAIN_OBSERVED_NOTE = (
+    "[Host: this call may have changed the app before it failed. The host observed {app} "
+    "just now; the state below is current. Decide from it and do not repeat an action that "
+    "already took effect. Element indices from before may be stale.]"
+)
+SHORTENED_NOTE = (
+    "[Host: this accessibility listing was too large to show whole, so long lists are "
+    "shortened. Each '… N more items here not shown' line stands for elements that still "
+    "exist, with their index range. {saved}]"
+)
+# Ever shorter runs until the listing fits: (members kept at the start, at the end).
+_SHORTEN_STEPS = ((8, 4), (4, 2), (2, 1), (1, 1))
+# Waits poll the accessibility text this often; a screenshot comes only with the final read.
+WAIT_POLL_SECONDS = 0.5
+MAX_WAIT_MS = 30_000
 HANDOFF_NOTICE = (
     "[CUA session reset for desktop handoff. Old JavaScript variables and element references "
     "are invalid. Use cua_observe before rebuilding bindings and acting.]"
@@ -276,6 +297,58 @@ def add_documentation_reminder(messages) -> None:
     messages.append(Message.user(text, origin=MessageOrigin.SYSTEM_REMINDER))
 
 
+def _text_bytes(blocks: list[Any]) -> int:
+    return sum(len(str(b.get("text", "")).encode("utf-8")) for b in blocks
+               if isinstance(b, dict) and b.get("type") == "text")
+
+
+async def _shorten_listings(payload: dict[str, Any], call_id: str) -> dict[str, Any] | None:
+    """Fit an oversized result by shortening its accessibility listings in place.
+
+    Returns the note for the model and how many elements were left out, or None when the
+    result already fits or cannot be made to fit this way (it then spills as before).
+    """
+    blocks = payload.get("content") or []
+    if _text_bytes(blocks) <= MAX_CUA_TEXT_BYTES:
+        return None
+    listings = [b for b in blocks if isinstance(b, dict) and b.get("type") == "text"
+                and is_listing(str(b.get("text", "")))]
+    originals = [b["text"] for b in listings]
+    # Leave room for the note and the host's own notes.
+    budget = MAX_CUA_TEXT_BYTES - 2048
+    for first, last in _SHORTEN_STEPS if listings else ():
+        omitted = 0
+        for block, text in zip(listings, originals, strict=True):
+            block["text"], count = shorten(text, first, last)
+            omitted += count
+        if omitted and _text_bytes(blocks) <= budget:
+            break
+    else:
+        for block, text in zip(listings, originals, strict=True):
+            block["text"] = text
+        return None
+    from deepseek_tui.tools.runtime import write_spillover
+
+    try:
+        path = await asyncio.to_thread(write_spillover, call_id, "\n\n".join(originals))
+        saved = (f"The full listing is saved to {path}; read the part you need with "
+                 "read_file, or scroll or search the app, before acting on a hidden item.")
+    except OSError:
+        saved = "Scroll or search the app to reach a hidden item before acting on it."
+    return {"note": SHORTENED_NOTE.format(saved=saved), "omitted": omitted}
+
+
+def _call_ids(context: ToolContext) -> tuple[str, str]:
+    return (context.metadata.get("cua_turn_id") or current_turn(),
+            context.metadata.get("cua_call_id") or current_tool())
+
+
+def _with_stats(result: ToolResult, **values: Any) -> ToolResult:
+    """Add to the per-call record kept for measuring computer use (never model-visible)."""
+    stats = {**result.metadata.get("cua_stats", {}), **values}
+    return replace(result, metadata={**result.metadata, "cua_stats": stats})
+
+
 def _inputs(trace: dict[str, Any]) -> list[dict[str, Any]]:
     return [action for action in trace.get("actions", []) if not action.get("observe")]
 
@@ -347,7 +420,30 @@ class CuaTool(ToolSpec):
                     "The user operated the app during the last call; inspect its actual state.")
             elif not _sent_no_input(result.metadata.get("cua_trace"), kind):
                 self.session.invalidate_observation("CUA code failed; inspect its actual effects.")
+            else:
+                return _with_stats(replace(result, content=result.content + "\n" + NOT_SENT_NOTE),
+                                   delivery="not_sent")
+            return await self._observe_after_failure(result, context)
         return result
+
+    async def _observe_after_failure(self, result: ToolResult, context: ToolContext) -> ToolResult:
+        """A failure that may have reached the app comes back with the app's current state,
+        so the model decides from it at once instead of spending a call to look."""
+        target = self.session.heal_target()
+        observed = (await CuaObserveTool(self.session, self.cancel_events).execute(target, context)
+                    if target else None)
+        if observed is None or not observed.success:
+            # The guard stays: the next cua_js call observes first.
+            return _with_stats(replace(result, content=result.content + "\n" + UNCERTAIN_NOTE),
+                               delivery="uncertain")
+        return _with_stats(replace(
+            result,
+            content=(result.content + "\n" + UNCERTAIN_OBSERVED_NOTE.format(app=target["app"])
+                     + "\n" + observed.content),
+            images=[*result.images, *observed.images],
+            metadata={**result.metadata, "cua_observed": True},
+        ), delivery="uncertain", observed_after_failure=True,
+            observe_runtime_ms=observed.metadata.get("cua_stats", {}).get("runtime_ms"))
 
     async def _observe_instead(self, target: dict[str, str], context: ToolContext) -> ToolResult:
         """Code waits on a fresh observation; take it now instead of refusing the call."""
@@ -357,21 +453,22 @@ class CuaTool(ToolSpec):
             # Some apps cannot be observed at all (custom-drawn, windowless). Holding code
             # until an observation succeeds would block them for good, so open the gate.
             self.session.outside_change = ""
-            return replace(observed, content=(
+            return _with_stats(replace(observed, content=(
                 f"Not executed: {reason} The host tried to observe {target['app']} for you and "
                 "could not:\n" + observed.content
                 + "\nYour next cua_js runs. Read the app's state in that code first "
-                "(bind it and get its state or a screenshot) and act only on what it shows."))
-        return replace(observed, success=False, content=(
+                "(bind it and get its state or a screenshot) and act only on what it shows.")),
+                replaced_by_observation=True)
+        return _with_stats(replace(observed, success=False, content=(
             f"Not executed: {reason} The host observed {target['app']} for you instead; the "
             "state below is current. Re-issue your code against it: element indices from "
-            "before this observation may be stale.\n" + observed.content))
+            "before this observation may be stale.\n" + observed.content)),
+            replaced_by_observation=True)
 
     async def _execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         from deepseek_tui.mcp.execute import mcp_response_to_tool_result
 
-        turn = context.metadata.get("cua_turn_id") or current_turn()
-        call_id = context.metadata.get("cua_call_id") or current_tool()
+        turn, call_id = _call_ids(context)
         payload = await self.session.run(
             lambda: self.session.call(self.descriptor["name"], input_data, turn, call_id),
             self.cancel_events,
@@ -381,6 +478,7 @@ class CuaTool(ToolSpec):
             if isinstance(text, str) and len(text.encode("utf-8")) >= REPEATED_TEXT_MIN_BYTES:
                 texts = self.session.large_texts
                 texts[:] = [t for t in texts if t != text][-(MAX_REMEMBERED_TEXTS - 1):] + [text]
+        shortened = await _shorten_listings(payload, f"{call_id}-{self.descriptor['name']}")
         # Runtime failures are not argument errors: build without the generic MCP schema hint.
         result = mcp_response_to_tool_result(self.name(), {**payload, "isError": False})
         result = replace(result, success=not payload.get("isError"))
@@ -399,12 +497,13 @@ class CuaTool(ToolSpec):
             )
             for image in result.images
         ]
-        metadata = {**result.metadata, "cua_runtime_content": True}
+        metadata = {**result.metadata, "cua_runtime_content": True,
+                    "cua_stats": dict(payload.get("stats") or {})}
         if self.descriptor["name"] == "observe":
             observation = payload.get("observation")
             if isinstance(observation, dict):
                 text = str(observation.get("text", ""))
-                observation["complete"] = ax_complete(text)
+                observation["complete"] = ax_complete(text) and not shortened
                 observation["expectations"] = [
                     {"text": expected, "matched": text_observed(text, expected)}
                     for expected in input_data.get("expect", [])
@@ -423,8 +522,11 @@ class CuaTool(ToolSpec):
             # though its printed text is still no completion evidence.
             metadata["cua_observed"] = _ends_observed(trace)
         content = result.content
+        if shortened:
+            content += "\n" + shortened["note"]
+            metadata["cua_stats"]["shortened_items"] = shortened["omitted"]
         if not result.success and (named := runtime_error(content)):
-            metadata["cua_error_kind"] = named[0]
+            metadata["cua_error_kind"] = metadata["cua_stats"]["error"] = named[0]
             content += f"\n[Host: {named[0]}] {named[1]}"
         result = replace(result, content=content, images=images, metadata=metadata)
         if not result.success and "is not a function" in result.content:
@@ -444,6 +546,8 @@ class CuaTool(ToolSpec):
                 notes.append(windows)
             if notes:
                 result = replace(result, content="\n".join([result.content, *notes]))
+        result = _with_stats(result, text_bytes=len(result.content.encode("utf-8")),
+                             images=len(result.images))
         if len(result.content.encode("utf-8")) > MAX_CUA_TEXT_BYTES:
             from deepseek_tui.tools.runtime import write_spillover
 
@@ -498,6 +602,9 @@ class CuaObserveTool(CuaTool):
             "For text-verifiable changes, supply expect with exact visible text fragments "
             "that would show success; width, quote style, case and spacing are ignored. "
             "A missing fragment means not yet verified, not absent. "
+            "While an app is loading or finishing an action, add wait_ms (up to 30000) "
+            "instead of observing repeatedly: the host returns one fresh observation after "
+            "that long, or as soon as every expect fragment appears. "
             "Works after a reset; does not restore old JavaScript bindings. "
             "An unknown submission remains unresolved even when inspection succeeds."
         )
@@ -510,13 +617,17 @@ class CuaObserveTool(CuaTool):
             "tab_id": {"type": "string", "minLength": 1},
             "expect": {"type": "array", "maxItems": 8,
                        "items": {"type": "string", "minLength": 1}},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_MS},
         }, "additionalProperties": False,
             "oneOf": [{"required": ["app"]}, {"required": ["window_id"]},
                       {"required": ["browser", "tab_id"]}]}
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
-        target = {k: v for k, v in input_data.items() if k != "expect"}
+        target = {k: v for k, v in input_data.items() if k not in {"expect", "wait_ms"}}
         expected = input_data.get("expect", [])
+        wait_ms = input_data.get("wait_ms", 0)
+        if type(wait_ms) is not int or not 0 <= wait_ms <= MAX_WAIT_MS:
+            raise ToolError(f"wait_ms must be a whole number from 0 to {MAX_WAIT_MS}.")
         window = target.get("window_id")
         if (set(target) not in ({"app"}, {"window_id"}, {"browser", "tab_id"})
                 or (set(target) == {"window_id"}
@@ -527,14 +638,48 @@ class CuaObserveTool(CuaTool):
                 or any(not isinstance(v, str) or not v.strip() or len(v) > 2048 for v in expected)):
             raise ToolError(
                 "Supply app, window_id, or browser and tab_id; no code or other fields.")
+        waited = 0.0
+        if wait_ms and not expected:
+            # Nothing to watch for: let the app settle, then observe once.
+            await asyncio.sleep(wait_ms / 1000)
+            waited = wait_ms / 1000
         result = await super().execute(input_data, context)
         checks = result.metadata.get("cua_observation", {}).get("expectations", [])
+        if wait_ms and expected and result.success and not all(c["matched"] for c in checks):
+            started = time.monotonic()
+            await self._wait_for(target, expected, started + wait_ms / 1000, context)
+            waited = time.monotonic() - started
+            # One fresh observation after the wait, whatever the polls saw.
+            result = await super().execute(input_data, context)
+            checks = result.metadata.get("cua_observation", {}).get("expectations", [])
+            result = replace(result, content=result.content
+                             + f"\nWaited {waited:.1f}s for the expected text.")
+        if wait_ms:
+            result = _with_stats(result, waited_ms=round(waited * 1000))
+            if expected:
+                result = _with_stats(result, expect_met=all(c["matched"] for c in checks))
         if checks:
             summary = "\n".join(
                 ("Observed: " if check["matched"] else "Not verified: ") + check["text"]
                 for check in checks)
             result = replace(result, content=result.content + "\nExpected text checks:\n" + summary)
         return result
+
+    async def _wait_for(
+        self, target: dict[str, Any], expected: list[str], deadline: float, context: ToolContext,
+    ) -> None:
+        """Poll accessibility text only, so a wait costs no screenshots or model calls."""
+        turn, call_id = _call_ids(context)
+        while (remaining := deadline - time.monotonic()) > 0:
+            await asyncio.sleep(min(WAIT_POLL_SECONDS, remaining))
+            payload = await self.session.run(
+                lambda: self.session.call("observe", {**target, "poll": True}, turn,
+                                          f"{call_id}:poll"),
+                self.cancel_events,
+            )
+            text = str((payload.get("observation") or {}).get("text", ""))
+            if payload.get("isError") or all(text_observed(text, e) for e in expected):
+                return
 
 
 def register_tools(

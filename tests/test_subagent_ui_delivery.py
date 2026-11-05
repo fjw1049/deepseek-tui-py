@@ -98,3 +98,39 @@ async def test_structured_child_keeps_partial_status_through_store_and_payload(t
         assert restored.task_outcome == result.task_outcome
     finally:
         await manager.shutdown()
+
+
+class _ActingDesktop(RepeatingScreen):
+    """A desktop REPL whose trace shows one click for each code call."""
+
+    async def execute(self, input_data, context):
+        from deepseek_tui.tools.registry import ToolResult
+
+        self.calls += 1
+        if input_data.get("completion_summary"):
+            return ToolResult(True, "Completion summary received.")
+        return ToolResult(True, "clicked", metadata={
+            "cua_trace": {"ready": True, "actions": [{"action": "click", "ok": True}]}})
+
+
+@pytest.mark.parametrize("summarized", [False, True])
+async def test_parent_learns_when_a_childs_desktop_steps_were_not_wrapped_up(
+        tmp_path, monkeypatch, summarized):
+    from deepseek_tui.tools import registry
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    build = registry.build_subagent_registry
+
+    def with_desktop(*args, **kwargs):
+        result = build(*args, **kwargs)
+        result.register(_ActingDesktop())
+        return result
+
+    monkeypatch.setattr(registry, "build_subagent_registry", with_desktop)
+    scripts = [call("cua_js", "act", code="await app.click(3)")]
+    if summarized:
+        scripts.append(call("cua_js", "done", completion_summary="Saved the file"))
+    snap = await _run([*scripts, REPORT], tmp_path, [])
+    assert snap.status.kind == SubAgentStatusKind.COMPLETED
+    assert ("the desktop steps were not wrapped up" in snap.result) is not summarized
+    assert (snap.task_outcome["status"] == "partial") is not summarized

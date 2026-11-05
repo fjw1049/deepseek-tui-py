@@ -254,7 +254,54 @@ def session_metrics(session: Session) -> dict[str, float]:
         }
         for row in session.interventions
     )
+    metrics.update(cua_metrics(session))
     return metrics
+
+
+def _seconds(stamp: str | None) -> float | None:
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def cua_metrics(session: Session) -> dict[str, float]:
+    """Where computer-use time goes: the desktop runtime, waiting for the desktop, or the
+    model between calls (which includes any vision helper). Empty without CUA calls."""
+    metrics: Counter[str] = Counter()
+    previous_end: tuple[str, float] | None = None
+    for item in session.items:
+        name, _ = _tool(item)
+        if name not in {"cua_js", "cua_js_reset", "cua_observe"}:
+            # Narration between calls is the model's time; another tool's run is not.
+            previous_end = previous_end if name is None else None
+            continue
+        stats = (item.get("metadata") or {}).get("cua_stats") or {}
+        start, end = _seconds(item.get("started_at")), _seconds(item.get("ended_at"))
+        metrics["cua_calls"] += 1
+        metrics["cua_failures"] += item.get("status") == "failed"
+        if previous_end and previous_end[0] == item["turn_id"] and start is not None:
+            metrics["cua_model_gap_ms"] += max(0.0, (start - previous_end[1]) * 1000)
+        previous_end = (item["turn_id"], end) if end is not None else None
+        if start is not None and end is not None:
+            metrics["cua_tool_ms"] += max(0.0, (end - start) * 1000)
+        metrics["cua_runtime_ms"] += stats.get("runtime_ms") or 0
+        metrics["cua_runtime_ms"] += stats.get("observe_runtime_ms") or 0
+        metrics["cua_lease_wait_ms"] += stats.get("lease_wait_ms") or 0
+        metrics["cua_text_bytes"] += stats.get("text_bytes") or 0
+        metrics["cua_images"] += stats.get("images") or 0
+        metrics["cua_not_sent"] += stats.get("delivery") == "not_sent"
+        metrics["cua_uncertain"] += stats.get("delivery") == "uncertain"
+        metrics["cua_observed_after_failure"] += bool(stats.get("observed_after_failure"))
+        metrics["cua_replaced_by_observation"] += bool(stats.get("replaced_by_observation"))
+        metrics["cua_waits"] += "waited_ms" in stats
+        metrics["cua_waits_met"] += bool(stats.get("expect_met"))
+        metrics["cua_wait_ms"] += stats.get("waited_ms") or 0
+        if stats.get("error"):
+            metrics[f"cua_error.{stats['error']}"] += 1
+    return {name: float(value) for name, value in metrics.items()}
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -276,3 +323,39 @@ def aggregate(rows: list[dict[str, float]]) -> dict[str, dict[str, float]]:
             "max": max(values),
         }
     return output
+
+
+def cua_summary(root: Path) -> str:
+    """Per-call averages over every session in a store that used computer use."""
+    total: Counter[str] = Counter()
+    for session in load_sessions(root):
+        total.update(cua_metrics(session))
+    calls = total["cua_calls"]
+    if not calls:
+        return "No computer-use calls found."
+    lines = [
+        f"CUA calls: {calls:.0f} (failed {total['cua_failures']:.0f})",
+        f"Per call: tool {total['cua_tool_ms'] / calls:.0f} ms "
+        f"(runtime {total['cua_runtime_ms'] / calls:.0f} ms), "
+        f"desktop wait {total['cua_lease_wait_ms'] / calls:.0f} ms, "
+        f"model between calls {total['cua_model_gap_ms'] / calls:.0f} ms, "
+        f"{total['cua_text_bytes'] / calls / 1024:.1f} KB text, "
+        f"{total['cua_images'] / calls:.2f} images",
+        f"Failures: nothing sent {total['cua_not_sent']:.0f}, may have acted "
+        f"{total['cua_uncertain']:.0f} "
+        f"(observed at once {total['cua_observed_after_failure']:.0f}), "
+        f"code replaced by an observation {total['cua_replaced_by_observation']:.0f}",
+        f"Waits: {total['cua_waits']:.0f} (expected text met {total['cua_waits_met']:.0f}, "
+        f"{total['cua_wait_ms'] / 1000:.1f} s in total)",
+    ]
+    errors = sorted((k.split(".", 1)[1], v) for k, v in total.items() if k.startswith("cua_error."))
+    if errors:
+        lines.append("Errors: " + ", ".join(f"{kind} {count:.0f}" for kind, count in errors))
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    import sys
+
+    root = sys.argv[1] if len(sys.argv) > 1 else "~/.deepseek/threads"
+    print(cua_summary(Path(root).expanduser()))

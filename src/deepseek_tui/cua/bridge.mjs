@@ -110,6 +110,8 @@ const TRACE_READ = `nodeRepl.write(${JSON.stringify(TRACE_MARK)} + JSON.stringif
   ? { ready: Boolean(globalThis.__deepseekTraceReady), tabs: Boolean(globalThis.__deepseekTabs),
       playwright_traced: Boolean(globalThis.__deepseekPlaywrightTraced),
       actions: globalThis.__deepseekTrace.splice(0) } : null));`;
+// Runtime accessibility listings start this way (cua/ax_text.py reads the same headers).
+const LISTING = /^(Window: |The following is a diff from the previous accessibility tree)/;
 const NATIVE_APP_HINT = 'On Linux and Windows, observe a window: pass window_id from cua.getState().';
 // A localized display name (文本编辑 for TextEdit) is not an app id. Resolve it from the runtime's
 // own inventory, and only when the runtime rejected the name itself: a denial is never retried.
@@ -203,12 +205,17 @@ async function handle(request) {
               await client.call('js', { code: `delete ${slot};` },
                 { ...context, toolCallId: `${context.toolCallId}:unbind` }).catch(() => {});
             }
+            // A wait poll only checks text; its screenshot is dropped, never shown or stored.
+            if (request.arguments.poll) result.content = (result.content ?? []).filter(b => b.type !== 'image');
             const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
             const images = (result.content ?? []).filter(b => b.type === 'image');
             // The observation is captured before joining documentation/entry-point output.
             // The host judges completeness and expected text from it (cua/tools.py).
             result.observation = { target, text };
-            result.content = [...printed(first), ...(result.content ?? [])];
+            // Binding prints the target's state too; the observation below is the current copy,
+            // so keep only what else binding printed (first-use documentation).
+            const bound = printed(first).filter(b => b.type === 'text' && !LISTING.test(b.text));
+            result.content = [...bound, ...(result.content ?? [])];
             if (!text.trim() && !images.length) {
               result.isError = true;
               result.content.push({ type: 'text', text: 'No observation returned. Do not act on old state.' });

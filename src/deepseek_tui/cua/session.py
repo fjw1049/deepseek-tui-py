@@ -573,12 +573,14 @@ class CuaSession:
             if self.turn_id is not None and self.turn_id != turn_id:
                 raise ToolError("Previous CUA turn has not been cleaned up")
             self.waiting = self.lease.fd is None
+            waited = time.monotonic()
             try:
                 # A person taking over must not sit behind this call's wait.
                 await self.lease.acquire(
                     timeout=ACTION_LEASE_WAIT_SECONDS, give_up=lambda: self.human_reserved)
             finally:
                 self.waiting = False
+            lease_wait_ms = round((time.monotonic() - waited) * 1000)
             if self.human_reserved:
                 raise ToolError("The user is taking control of the desktop. Nothing was executed.")
             if self.turn_id is None:
@@ -593,6 +595,7 @@ class CuaSession:
                 if name == "js":
                     await self.record_outcome(turn_id, call_id, "in_progress", code=code)
                 self._bound = True
+                started = time.monotonic()
                 result = await self._request(
                     "observe" if name == "observe" else "call",
                     name=name,
@@ -605,6 +608,9 @@ class CuaSession:
                     },
                     timeout=max(150, float(arguments.get("timeout_ms", 0)) / 1000 + 60),
                 )
+                # Runtime time includes any permission prompt answered during the call.
+                result["stats"] = {"lease_wait_ms": lease_wait_ms,
+                                   "runtime_ms": round((time.monotonic() - started) * 1000)}
                 if name == "js":
                     await self.record_outcome(turn_id, call_id, "returned")
                     self._annotate(result, turn_id)

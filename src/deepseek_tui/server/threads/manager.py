@@ -6603,6 +6603,7 @@ class RuntimeThreadManager:
                             "occurrences",
                             "images",
                             "cua_surface",
+                            "cua_stats",
                             "agent_id",
                             "agent_type",
                             "nickname",

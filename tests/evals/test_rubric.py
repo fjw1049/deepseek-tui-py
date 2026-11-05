@@ -319,3 +319,22 @@ def test_the_run_record_is_labelled_as_not_the_assistants_word() -> None:
     packet = build_packet(fake, ["好了"], "产物", "工具调用：exec_shell 1 次")
     assert "不是助手自述" in packet and "exec_shell 1 次" in packet
     assert "运行记录" not in build_packet(fake, ["好了"], "产物")
+
+
+def test_computer_use_time_splits_into_runtime_and_model_gaps() -> None:
+    def cua(started: str, ended: str, **stats) -> dict:
+        item = _item("t", metadata={"tool_name": "cua_js", "cua_stats": stats})
+        return {**item, "started_at": started, "ended_at": ended}
+
+    narration = _item("t", "agent_message", detail="正在查看", metadata={})
+    metrics = session_metrics(session(
+        cua("2026-11-04T10:00:00Z", "2026-11-04T10:00:01Z", runtime_ms=900, text_bytes=100),
+        narration,
+        cua("2026-11-04T10:00:05Z", "2026-11-04T10:00:06Z", runtime_ms=800,
+            delivery="uncertain", observed_after_failure=True, error="stale_element"),
+    ))
+
+    assert metrics["cua_calls"] == 2 and metrics["cua_runtime_ms"] == 1700
+    # Narration between the calls is the model's time.
+    assert metrics["cua_model_gap_ms"] == 4000 and metrics["cua_tool_ms"] == 2000
+    assert metrics["cua_observed_after_failure"] == 1 and metrics["cua_error.stale_element"] == 1

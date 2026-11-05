@@ -470,3 +470,155 @@ console.log(JSON.stringify({app, tab, chained}));
     result = subprocess.run([node, '--input-type=module', '-e', script, str(bridge)],
                             capture_output=True, text=True, check=True, timeout=30)
     assert json.loads(result.stdout) == {'app': 'A', 'tab': 'T', 'chained': 'T'}
+
+
+@pytest.mark.asyncio
+async def test_failure_that_may_have_acted_arrives_with_current_state(session, tmp_path):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        tool = CuaTool(session, session.descriptors[0])
+        await tool.execute({"code": "surface:dev.fixture"}, context)
+        failed = await tool.execute(
+            {"code": 'actions:[{"action":"pressKey","ok":true},{"action":"click","ok":false}]'},
+            context)
+        assert not failed.success
+        assert "observed dev.fixture just now" in failed.content
+        assert "1 text Saved" in failed.content
+        assert failed.metadata["cua_stats"]["delivery"] == "uncertain"
+        # The model already has the state, so its next code runs instead of being replaced.
+        assert not session.outside_change
+        assert (await tool.execute({"code": "next"}, context)).success
+        assert "next" in [c["args"]["code"] for c in _calls(tmp_path)]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_failure_on_an_app_that_cannot_be_observed_keeps_the_guard(session, tmp_path):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        tool = CuaTool(session, session.descriptors[0])
+        await tool.execute({"code": "surface:dev.unobservable"}, context)
+        failed = await tool.execute(
+            {"code": 'actions:[{"action":"pressKey","ok":true},{"action":"click","ok":false}]'},
+            context)
+        assert "Check its state with cua_observe" in failed.content
+        assert session.outside_change
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_polls_text_until_expected_then_observes_once(session, tmp_path, monkeypatch):
+    from deepseek_tui.cua import tools
+
+    monkeypatch.setattr(tools, "WAIT_POLL_SECONDS", 0.01)
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        observe = CuaObserveTool(session)
+        result = await observe.execute(
+            {"app": "dev.loading", "expect": ["Done"], "wait_ms": 5000}, context)
+        assert result.success and "Waited" in result.content and "Observed: Done" in result.content
+        assert result.metadata["cua_stats"]["expect_met"] is True
+        reads = [c for c in _calls(tmp_path) if "getAXStateAndScreenshot" in c["args"]["code"]]
+        # First read, one poll still loading, one poll done, then the returned observation.
+        assert len(reads) == 4
+        missed = await observe.execute(
+            {"app": "dev.loading", "expect": ["Never"], "wait_ms": 50}, context)
+        assert "Not verified: Never" in missed.content
+        assert missed.metadata["cua_stats"]["expect_met"] is False
+        # Without expect, wait_ms lets the app settle and then observes once.
+        settled = await observe.execute({"app": "dev.fixture", "wait_ms": 50}, context)
+        assert settled.success and settled.metadata["cua_stats"]["waited_ms"] >= 50
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_returns_at_once_when_expected_text_is_already_there(session, tmp_path):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        result = await CuaObserveTool(session).execute(
+            {"app": "dev.fixture", "expect": ["Saved"], "wait_ms": 5000}, context)
+        assert result.success and "Waited" not in result.content
+        reads = [c for c in _calls(tmp_path) if "getAXStateAndScreenshot" in c["args"]["code"]]
+        assert len(reads) == 1
+    finally:
+        await session.close()
+
+
+def _open_panel(rows: int) -> str:
+    lines = ['Window: "Open", App: Fixture.', "0 standard window Open", "\t1 browser", "\t\t2 list"]
+    for i in range(rows):
+        first = 10 + i * 3
+        lines += [f"\t\t\t{first} container", f"\t\t\t\t{first + 1} image",
+                  f"\t\t\t\t{first + 2} text field Value: file-{i}.txt"]
+    return "\n".join([*lines, "\t900 button Cancel", "\t901 button Open", "",
+                      "Selected:", "\t40 container", ""])
+
+
+def test_shortening_cuts_only_long_sibling_runs_and_keeps_the_selection():
+    from deepseek_tui.cua.ax_text import shorten
+
+    text, omitted = shorten(_open_panel(200), 3, 2)
+    lines = text.split("\n")
+    # Headers, the controls after the list, and the selected row all stay.
+    assert lines[:4] == _open_panel(0).split("\n")[:4]
+    assert "\t900 button Cancel" in lines and "\t901 button Open" in lines
+    assert "\t\t\t40 container" in lines and "\t\t\t\t42 text field Value: file-10.txt" in lines
+    # Rows 0-2 and the last two remain; the gaps around the selected row are named.
+    assert "\t\t\t… 7 more items here not shown, indices 19-39" in lines
+    assert "\t\t\t… 187 more items here not shown, indices 43-603" in lines
+    assert omitted == (7 + 187) * 3 and len(text) < len(_open_panel(200)) // 10
+
+
+def test_shortening_leaves_short_lists_and_diff_markers_intact():
+    from deepseek_tui.cua.ax_text import shorten
+
+    small = _open_panel(5)
+    assert shorten(small, 3, 2) == (small, 0)
+    diff = ("The following is a diff from the previous accessibility tree for Window: \"\"\n"
+            "+0 list\n" + "\n".join(f"+\t{i} row r{i}" for i in range(1, 30)))
+    text, omitted = shorten(diff, 2, 1)
+    assert text.split("\n")[:4] == diff.split("\n")[:4]
+    assert "\t… 26 more items here not shown, indices 3-28" in text and omitted == 26
+
+
+@pytest.mark.asyncio
+async def test_oversized_listing_is_shortened_instead_of_failing(session, tmp_path, monkeypatch):
+    from deepseek_tui.tools import runtime
+
+    monkeypatch.setattr(runtime, "spillover_root", lambda: tmp_path / "spill")
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        acted = await CuaTool(session, session.descriptors[0]).execute({"code": "huge"}, context)
+        assert acted.success and "more items here not shown" in acted.content
+        assert "3701 button Open" in acted.content and "1510 container" in acted.content
+        assert len(acted.content.encode()) < 64 * 1024
+        saved = next((tmp_path / "spill").glob("*.txt")).read_text()
+        assert "file-1199.txt" in saved and str(tmp_path / "spill") in acted.content
+        assert acted.metadata["cua_stats"]["shortened_items"] > 3000
+        observed = await CuaObserveTool(session).execute(
+            {"app": "dev.huge", "expect": ["file-700.txt"]}, context)
+        # The host checks the whole listing; the model is told it saw a shortened one.
+        assert observed.success and "Observed: file-700.txt" in observed.content
+        assert observed.metadata["cua_observation"]["complete"] is False
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_first_observation_keeps_documentation_but_not_a_second_state_copy(session, tmp_path):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        result = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
+        assert "Original observation documentation" in result.content
+        assert "printed by binding" not in result.content and "1 text Saved" in result.content
+    finally:
+        await session.close()

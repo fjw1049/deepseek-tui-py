@@ -1159,7 +1159,9 @@ async def run_subagent_loop(
                     )
                     ok = not output.startswith("Error:")
                     # Here, not inside: denials and hook blocks return early as "Error:" text.
-                    facts.record(tc.name, tc.arguments, success=ok, error=output)
+                    facts.record(tc.name, tc.arguments, success=ok, error=output,
+                                 metadata=context.metadata.get("tool_result_metadata", {})
+                                 .get(tc.id))
                 if runtime.mailbox is not None:
                     runtime.mailbox.send(
                         MailboxMessage.tool_call_completed(

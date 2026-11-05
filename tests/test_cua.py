@@ -1219,24 +1219,29 @@ async def test_runtime_failures_are_named_without_argument_hints(session, tmp_pa
         assert stale.metadata["cua_error_kind"] == "stale_element"
         # The runtime rejected the only input before sending it.
         assert not session.outside_change
+        assert "nothing reached the app" in stale.content
+        assert stale.metadata["cua_stats"]["delivery"] == "not_sent"
         acted = await tool.execute({"code": 'actions:[{"action":"pressKey","ok":true},'
                                             '{"action":"click","coordinate":false,"ok":false}]'},
                                    context)
         assert acted.metadata["cua_error_kind"] == "stale_element"
-        # An earlier input was dispatched: its effect is unknown until observed.
+        # An earlier input was dispatched: its effect is unknown until observed. No app has
+        # been touched yet, so the host cannot observe for the model and the guard stays.
         assert session.outside_change
+        assert "Check its state with cua_observe" in acted.content
         with pytest.raises(ToolError, match="cua_observe"):
             await tool.execute({"code": "listApps"}, context)
         assert (await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)).success
         stopped = await tool.execute({"code": "throw:Computer Use server error -10016: x"}, context)
         assert stopped.metadata["cua_error_kind"] == "user_intervened"
-        assert "user operated the app" in session.outside_change
-        await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
+        # The app is known now, so the failure arrives with its current state at once.
+        assert "observed dev.fixture just now" in stopped.content
+        assert stopped.metadata["cua_observed"] and not session.outside_change
         await tool.execute({"code": "untraced"}, context)
         unknown = await tool.execute({"code": "throw:boom"}, context)
         assert "cua_error_kind" not in unknown.metadata
-        # Without a record, any failure still requires an observation.
-        assert session.outside_change
+        # Without a record, any failure still counts as possibly acted.
+        assert unknown.metadata["cua_stats"]["observed_after_failure"]
     finally:
         await session.close()
 
