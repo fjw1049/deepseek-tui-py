@@ -1,48 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildEndpointProbeBody,
-  buildEndpointProbeUrl,
-  responseHasProbeToolCall,
-  shouldRetryProbeWithAutoToolChoice
-} from './endpoint-compat-probe'
+import { buildEndpointProbeBody, buildEndpointProbeUrl, isEndpointProbeResponse } from './endpoint-compat-probe'
 
-describe('endpoint-compat-probe', () => {
-  it('builds openai chat completions url for versioned coding base', () => {
-    expect(
-      buildEndpointProbeUrl('openai', 'https://ark.cn-beijing.volces.com/api/coding/v3')
-    ).toBe('https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions')
+describe('endpoint connectivity probe', () => {
+  it('preserves versioned provider paths', () => {
+    expect(buildEndpointProbeUrl('openai', 'https://example.com/api/coding/v3'))
+      .toBe('https://example.com/api/coding/v3/chat/completions')
   })
 
-  it('uses auto tool_choice string for openai auto probe', () => {
-    const body = buildEndpointProbeBody('openai', 'kimi-k2.7-code', 'auto')
-    expect(body.tool_choice).toBe('auto')
-    expect(body.model).toBe('kimi-k2.7-code')
-  })
-
-  it('uses forced function tool_choice for openai forced probe', () => {
-    const body = buildEndpointProbeBody('openai', 'glm-5.2', 'forced')
-    expect(body.tool_choice).toEqual({
-      type: 'function',
-      function: { name: 'compat_probe' }
+  it('sends a minimal OpenAI request without tool or token-limit restrictions', () => {
+    expect(buildEndpointProbeBody('openai', 'example-model')).toEqual({
+      model: 'example-model', messages: [{ role: 'user', content: 'Reply with OK.' }], stream: false
     })
   })
 
-  it('detects openai tool calls', () => {
-    expect(responseHasProbeToolCall('openai', {
-      choices: [{
-        message: {
-          tool_calls: [{ function: { name: 'compat_probe' } }]
-        }
-      }]
-    })).toBe(true)
-    expect(responseHasProbeToolCall('openai', {
-      choices: [{ message: { content: 'hi' } }]
-    })).toBe(false)
+  it('includes the required Anthropic token limit without requesting tools', () => {
+    const body = buildEndpointProbeBody('anthropic', 'example-model')
+    expect(body.max_tokens).toBe(1024)
+    expect(body).not.toHaveProperty('tools')
+    expect(body).not.toHaveProperty('tool_choice')
   })
 
-  it('retries only on HTTP 400', () => {
-    expect(shouldRetryProbeWithAutoToolChoice(400)).toBe(true)
-    expect(shouldRetryProbeWithAutoToolChoice(401)).toBe(false)
-    expect(shouldRetryProbeWithAutoToolChoice(200)).toBe(false)
+  it('accepts ordinary replies without tool calls', () => {
+    expect(isEndpointProbeResponse('openai', { choices: [{ message: { content: 'OK' } }] })).toBe(true)
+    expect(isEndpointProbeResponse('anthropic', { type: 'message', content: [{ type: 'text', text: 'OK' }] })).toBe(true)
+  })
+
+  it('rejects errors and unrelated successful HTTP responses', () => {
+    for (const body of [null, {}, { error: 'bad key' }, { choices: [] }, { choices: [null] }]) {
+      expect(isEndpointProbeResponse('openai', body)).toBe(false)
+    }
+    expect(isEndpointProbeResponse('anthropic', { content: [] })).toBe(false)
   })
 })

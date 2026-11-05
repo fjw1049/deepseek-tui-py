@@ -1543,7 +1543,7 @@ function CustomProviderDetailSheet({
             ? {
                 ...model,
                 testStatus: result.ok ? ('passed' as const) : ('failed' as const),
-                toolCalling: result.ok,
+                toolCalling: undefined,
                 lastTestedAt: new Date().toISOString()
               }
             : model

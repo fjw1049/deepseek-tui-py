@@ -224,6 +224,10 @@ class DeepSeekClient(LLMClient):
                             )[:512]
                         except Exception:  # noqa: BLE001
                             pass
+                        from deepseek_tui.client.token_compat import adapt_completion_tokens
+
+                        if adapt_completion_tokens(status, body, payload):
+                            continue
                         message = f"HTTP {status} from {url}: {body}"
                         if status in (401, 403):
                             message += (

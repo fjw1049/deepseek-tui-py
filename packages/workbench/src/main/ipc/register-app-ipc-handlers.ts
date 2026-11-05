@@ -1,5 +1,6 @@
+import { fetchEndpointProbe } from './endpoint-probe-fetch'
 import { redactRuntimeCommand } from '../../shared/redact-runtime-command'
-import { dialog, ipcMain, session, shell, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, net, session, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
@@ -21,8 +22,7 @@ import type {
 import {
   buildEndpointProbeBody,
   buildEndpointProbeUrl,
-  responseHasProbeToolCall,
-  shouldRetryProbeWithAutoToolChoice
+  isEndpointProbeResponse
 } from './endpoint-compat-probe'
 import {
   deepseekConfigContentSchema,
@@ -1191,30 +1191,24 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
           'Content-Type': 'application/json'
         }
 
-    const postProbe = async (toolChoice: 'forced' | 'auto'): Promise<Response> => {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 15_000)
-      try {
-        return await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(buildEndpointProbeBody(protocol, model, toolChoice)),
-          signal: controller.signal
-        })
-      } finally {
-        clearTimeout(timeout)
-      }
+    const postProbe = async (): Promise<Response> => {
+      const body = buildEndpointProbeBody(protocol, model)
+      return fetchEndpointProbe(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      }, net.fetch.bind(net), fetch)
     }
 
     const evaluateOkResponse = async (resp: Response) => {
       const latencyMs = Date.now() - start
       const body = await resp.json() as Record<string, unknown>
-      if (!responseHasProbeToolCall(protocol, body)) {
+      if (!isEndpointProbeResponse(protocol, body)) {
         return {
           ok: false as const,
           model,
           latencyMs,
-          message: '连接成功，但模型未返回必需的工具调用'
+          message: '服务已响应，但返回格式不符合所选接口协议'
         }
       }
       const respModel = typeof body.model === 'string' ? body.model : model
@@ -1222,27 +1216,23 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
         ok: true as const,
         model: respModel,
         latencyMs,
-        message: `文本与工具协议兼容 (模型: ${respModel}, 延迟: ${latencyMs}ms)`
+        message: `连接成功 (模型: ${respModel}, 延迟: ${latencyMs}ms)`
       }
     }
 
     try {
-      let resp = await postProbe('forced')
-      if (!resp.ok && shouldRetryProbeWithAutoToolChoice(resp.status)) {
-        // kimi-k2.7-code (and similar) reject forced tool_choice; retry with auto.
-        resp = await postProbe('auto')
-      }
+      const resp = await postProbe()
       const latencyMs = Date.now() - start
       if (resp.ok) {
         return await evaluateOkResponse(resp)
       }
-      const bodyText = (await resp.text()).slice(0, 200)
-      return { ok: false, model, latencyMs, message: `HTTP ${resp.status}: ${bodyText}` }
+      const errorText = await resp.text()
+      return { ok: false, model, latencyMs, message: `HTTP ${resp.status}: ${errorText.slice(0, 200)}` }
     } catch (error) {
       const latencyMs = Date.now() - start
       const msg = error instanceof Error ? error.message : String(error)
-      if (msg.includes('abort')) {
-        return { ok: false, model, latencyMs, message: `连接超时 (15s)` }
+      if (/abort|timeout/i.test(msg)) {
+        return { ok: false, model, latencyMs, message: '连接超时（已尝试系统网络与直连）' }
       }
       return { ok: false, model, latencyMs, message: `连接失败: ${msg.slice(0, 100)}` }
     }

@@ -186,6 +186,10 @@ async def test_endpoint(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, json=payload, headers=headers)
+            from deepseek_tui.client.token_compat import adapt_completion_tokens
+
+            if protocol == "openai" and adapt_completion_tokens(resp.status_code, resp.text, payload):
+                resp = await client.post(url, json=payload, headers=headers)
         latency = int((time.monotonic() - start) * 1000)
 
         if resp.status_code == 200:
