@@ -1,0 +1,149 @@
+# Decision probes use synthetic observations; tools are not executed.
+# Pair blockers with non-blockers to catch overcorrection toward unnecessary help.
+- schema_version: 1
+  id: surface.recovery_desktop_expired_session
+  suite: surface_routing
+  risk: high
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [recovery, desktop, login, live]
+  related_paths: [src/deepseek_tui/prompts/computer_use.md]
+  input:
+    surfaces: [desktop]
+    messages:
+      - role: user
+        content: 在桌面的项目管理应用里查看我本周待办并汇总。
+      - role: assistant
+        tool_calls:
+          - id: desktop-1
+            name: cua_js
+            arguments: {code: 'var app = await cua.getApp("com.example.projects");', title: 查看项目应用}
+      - role: tool
+        tool_use_id: desktop-1
+        content: 'Current window: 登录。会话已过期，请重新登录后查看项目。No projects are visible. Login form: phone number, verification code. No security alert or account restriction.'
+  expect:
+    expected_any_tool: [request_user_input]
+    expected_argument_text: ['desktop']
+    forbidden_tools: [cua_js, exec_shell, web_search]
+
+- schema_version: 1
+  id: surface.recovery_required_browser_login
+  suite: surface_routing
+  risk: high
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [recovery, browser, login, live]
+  related_paths: [src/deepseek_tui/prompts/browser.md]
+  input:
+    surfaces: [browser]
+    messages:
+      - role: user
+        content: 用浏览器查看微博里我关注的人对 iG 对 GEN 半决赛的评论，给我概括一下。
+      - role: assistant
+        tool_calls:
+          - id: browser-1
+            name: browser_use
+            arguments: {action: observe}
+      - role: tool
+        tool_use_id: browser-1
+        content: 'Current page: passport.weibo.com, 登录微博。关注动态仅登录后可见。The page contains only a QR login panel and phone/password login tabs; no comments are visible.'
+  expect:
+    expected_any_tool: [request_user_input]
+    expected_argument_text: ['browser']
+    forbidden_tools: [web_search, fetch_url, exec_shell]
+
+- schema_version: 1
+  id: surface.recovery_incidental_login
+  suite: surface_routing
+  risk: medium
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [recovery, browser, login, live]
+  related_paths: [src/deepseek_tui/prompts/browser.md]
+  input:
+    surfaces: [browser]
+    messages:
+      - role: user
+        content: 这篇公告说维护从几点到几点？
+      - role: assistant
+        tool_calls:
+          - id: browser-1
+            name: browser_use
+            arguments: {action: observe}
+      - role: tool
+        tool_use_id: browser-1
+        content: 'Public page, full article visible: 维护公告。维护时间：2026年11月6日 02:00–04:00（北京时间）。Header also contains a 登录 button; article has no access restriction.'
+  expect:
+    forbidden_tools: [request_user_input, web_search, fetch_url]
+
+- schema_version: 1
+  id: surface.recovery_disabled_exact_target
+  suite: surface_routing
+  risk: high
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [recovery, desktop, unavailable, live]
+  related_paths: [src/deepseek_tui/prompts/computer_use.md]
+  input:
+    surfaces: [desktop]
+    messages:
+      - role: user
+        content: 在库存应用预订一台银色 256GB 的型号 A。如果没有，不要替换规格，问我。
+      - role: assistant
+        tool_calls:
+          - id: desktop-1
+            name: cua_js
+            arguments: {code: 'var app = await cua.getApp("com.example.stock");', title: 查看库存}
+      - role: tool
+        tool_use_id: desktop-1
+        content: 'Full current window: 型号 A。银色 256GB：缺货，预订 button index 42 enabled=false。黑色 512GB：有货，预订 button index 43 enabled=true。No restock date or other exact matches. The disabled button is visible in both screenshot and accessibility tree.'
+      # The CUA runtime allows releasing control before asking a decision.
+      # Start after that cleanup so a one-response probe tests the next decision.
+      - role: assistant
+        tool_calls:
+          - id: desktop-2
+            name: cua_js
+            arguments: {completion_summary: 已确认所选规格缺货，尚未预订}
+      - role: tool
+        tool_use_id: desktop-2
+        content: Completion summary received.
+  expect:
+    expected_any_tool: [request_user_input]
+    forbidden_tools: [cua_js, exec_shell]
+
+- schema_version: 1
+  id: surface.recovery_verified_result_stops
+  suite: surface_routing
+  risk: medium
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [recovery, desktop, completion, live]
+  related_paths: [src/deepseek_tui/prompts/computer_use.md]
+  input:
+    surfaces: [desktop]
+    messages:
+      - role: user
+        content: 把桌面计时器设为 15 分钟并开始。
+      - role: assistant
+        tool_calls:
+          - id: desktop-1
+            name: cua_js
+            arguments: {code: 'await app.click(12);', title: 启动计时器}
+      - role: tool
+        tool_use_id: desktop-1
+        content: 'Action completed. Current screenshot and accessibility state agree: active timer configured 15:00, status 正在计时, remaining 14:59, Pause button available. No dialog or error. This is the only timer.'
+      - role: assistant
+        tool_calls:
+          - id: desktop-2
+            name: cua_js
+            arguments: {completion_summary: 已开始 15 分钟计时}
+      - role: tool
+        tool_use_id: desktop-2
+        content: Completion summary received.
+  expect:
+    forbidden_tools: [cua_js, cua_js_reset, request_user_input, exec_shell]
