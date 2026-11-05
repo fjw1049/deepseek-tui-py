@@ -3005,10 +3005,41 @@ async def test_delete_preserves_process_in_clean_worktree(
     tree = execution_root(prepared)
     proc = _spawn_idle_process(tree)
     try:
-        with pytest.raises(ValueError, match="running process"):
+        # The error names the process so the user can stop it.
+        with pytest.raises(ValueError, match=rf"running process.*\(PID {proc.pid}\)"):
             await manager.delete_thread(prepared.id)
         assert tree.is_dir()
         assert proc.poll() is None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+@pytest.mark.asyncio
+async def test_purge_archived_skips_occupied_thread_and_deletes_the_rest(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    busy = await manager._prepare_isolated_workspace(await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    ))
+    idle = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    for thread_id in (busy.id, idle.id):
+        record = manager.store.load_thread(thread_id)
+        record.archived = True
+        manager.store.save_thread(record)
+    proc = _spawn_idle_process(execution_root(busy))
+    try:
+        result = await manager.purge_archived_threads()
+        assert result["requested"] == 2 and result["deleted"] == 1
+        assert [item["thread_id"] for item in result["failed"]] == [busy.id]
+        assert f"PID {proc.pid}" in result["failed"][0]["error"]
+        assert manager.store.load_thread(busy.id).archived is True
+        with pytest.raises(FileNotFoundError):
+            manager.store.load_thread(idle.id)
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -3302,8 +3333,9 @@ async def test_project_path_cannot_follow_copy_symlink_to_original(runtime_app, 
     (tree / "docs").symlink_to(repo / "docs", target_is_directory=True)
     for trusted in (False, True):
         context = ToolContext(tree, trust_mode=trusted)
-        with pytest.raises(ValueError, match="outside the task copy"):
-            context.resolve_path(str(repo / "docs" / "new.txt"), write=True)
+        for path in (str(repo / "docs" / "new.txt"), "docs/new.txt"):
+            with pytest.raises(ValueError, match="outside the task copy"):
+                context.resolve_path(path, write=True)
 
 
 @pytest.mark.asyncio
@@ -3319,3 +3351,9 @@ async def test_subfolder_sync_preserves_dirty_sibling_on_head_change(tmp_path):
         await managed_worktree.sync_isolate_from_project(sub, tree / "apps/web")
     assert _git_out(tree, "rev-parse", "HEAD") == old_head
     assert (tree / "root.txt").read_text() == "my draft"
+    # An explicit discard is the user's way out; it must not stay blocked.
+    await managed_worktree.sync_isolate_from_project(
+        sub, tree / "apps/web", discard_isolate_labor=True
+    )
+    assert _git_out(tree, "rev-parse", "HEAD") == _git_out(repo, "rev-parse", "HEAD")
+    assert (tree / "apps/web/app.py").read_text() == "new version"

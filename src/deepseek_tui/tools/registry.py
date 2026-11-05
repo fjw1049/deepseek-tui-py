@@ -328,7 +328,8 @@ class ToolContext:
             resolved = candidate.resolve()
         else:
             resolved = (workspace / candidate).resolve()
-        roots = self._isolation_roots() if candidate.is_absolute() else None
+        # Relative paths too: a symlink in the copy can lead back to the project.
+        roots = self._isolation_roots()
         if (
             roots is not None
             and not self._within(resolved, workspace)

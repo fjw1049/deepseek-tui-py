@@ -557,6 +557,7 @@
   "archiveDeleteAllAction": "全部删除",
   "archiveDeleteOneConfirm": "确定永久删除会话「{{title}}」吗？此操作无法撤销。",
   "archiveDeleteAllConfirm": "确定永久删除全部 {{count}} 个已归档任务吗？此操作无法撤销。",
+  "archiveDeleteAllPartial": "有 {{count}} 个任务未删除，其余已删除。原因：",
   "archiveDeleteAllDone": "已永久删除 {{count}} 个任务。",
   "archiveLegacyHint": "共 {{count}} 条。以前侧栏「删除」实际是软归档，所以会积累在这里；可用「全部删除」清空。",
   "archiveEmptyTitle": "暂无已归档任务",

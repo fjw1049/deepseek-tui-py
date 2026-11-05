@@ -548,7 +548,8 @@ export interface AgentProvider {
     options?: { discardUnpublished?: boolean }
   ): Promise<void>
   /** Permanently delete every soft-archived thread. */
-  purgeArchivedThreads?(): Promise<{ deleted: number; requested: number }>
+  /** `failed` holds the reason for each archived task that had to stay. */
+  purgeArchivedThreads?(): Promise<{ deleted: number; requested: number; failed: string[] }>
   forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
   /** Truncate a thread in place: drop `beforeItemId` and everything after it. */
   rewindThread?(

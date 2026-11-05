@@ -557,6 +557,7 @@
   "archiveDeleteAllAction": "Delete all",
   "archiveDeleteOneConfirm": "Permanently delete \"{{title}}\"? This cannot be undone.",
   "archiveDeleteAllConfirm": "Permanently delete all {{count}} archived tasks? This cannot be undone.",
+  "archiveDeleteAllPartial": "{{count}} tasks were kept; the rest were deleted. Reason:",
   "archiveDeleteAllDone": "Permanently deleted {{count}} tasks.",
   "archiveLegacyHint": "{{count}} items total. Older sidebar “delete” was soft-archive, so leftovers collect here — use Delete all to clear them.",
   "archiveEmptyTitle": "No archived tasks",

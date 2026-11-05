@@ -989,8 +989,9 @@ class RuntimeThreadManager:
                     # next worktree prepare would collide with it.
                     if status == "occupied":
                         raise ValueError(
-                            "worktree is in use by running processes; "
-                            "stop them before switching to local"
+                            "worktree is in use by running processes ("
+                            + await self._describe_worktree_processes(thread)
+                            + "); stop them before switching to local"
                         )
                     if status not in {"removed", "gone", "skipped"}:
                         raise ValueError(
@@ -2692,7 +2693,8 @@ class RuntimeThreadManager:
             status = await self._reclaim_owned_worktree(thread)
             if status == "occupied":
                 raise ValueError(
-                    "cannot delete thread while a running process is using its worktree"
+                    "cannot delete thread while a running process is using its worktree: "
+                    + await self._describe_worktree_processes(thread)
                 )
             if status == "kept":
                 if not discard_unpublished:
@@ -2705,17 +2707,35 @@ class RuntimeThreadManager:
             delete_thread_tree(self.store, self.checkpoints, thread_id)
             await asyncio.to_thread(self._prune_orphaned_worktrees)
 
-    async def purge_archived_threads(self) -> dict[str, int]:
-        """Permanently delete every soft-archived thread. Returns delete counts."""
+    async def _describe_worktree_processes(self, thread: ThreadRecord) -> str:
+        from deepseek_tui.workspace.managed_worktree import describe_processes_under_sync
+
+        path = thread.worktree_path or thread.associated_worktree_path or ""
+        if not path:
+            return "unknown process"
+        busy = await asyncio.to_thread(
+            lambda: describe_processes_under_sync(Path(path).expanduser().resolve())
+        )
+        return busy or "unknown process"
+
+    async def purge_archived_threads(self) -> dict[str, Any]:
+        """Permanently delete every soft-archived thread.
+
+        One thread that must stay (unpublished code, a running process) does
+        not stop the rest; it is reported in ``failed`` with its reason.
+        """
         targets = [t.id for t in self.store.list_threads() if t.archived]
         deleted = 0
+        failed: list[dict[str, str]] = []
         for thread_id in targets:
             try:
                 await self.delete_thread(thread_id)
                 deleted += 1
             except FileNotFoundError:
                 continue
-        return {"deleted": deleted, "requested": len(targets)}
+            except ValueError as exc:
+                failed.append({"thread_id": thread_id, "error": str(exc)})
+        return {"deleted": deleted, "requested": len(targets), "failed": failed}
 
     async def resolve_user_input(
         self,

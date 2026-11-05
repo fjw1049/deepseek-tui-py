@@ -1521,15 +1521,21 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
-  async purgeArchivedThreads(): Promise<{ deleted: number; requested: number }> {
+  async purgeArchivedThreads(): Promise<{ deleted: number; requested: number; failed: string[] }> {
     const r = await window.dsGui.runtimeRequest('/v1/threads/purge-archived', 'POST', '{}')
     if (!r.ok) {
       throw toRuntimeError(readRuntimeError(r.body, `purge archived failed: ${r.status}`))
     }
-    const body = JSON.parse(r.body || '{}') as { deleted?: number; requested?: number }
+    const body = JSON.parse(r.body || '{}') as { deleted?: number; requested?: number; failed?: unknown }
     return {
       deleted: typeof body.deleted === 'number' ? body.deleted : 0,
-      requested: typeof body.requested === 'number' ? body.requested : 0
+      requested: typeof body.requested === 'number' ? body.requested : 0,
+      failed: Array.isArray(body.failed)
+        ? body.failed.flatMap((item: unknown) => {
+            const error = (item as { error?: unknown } | null)?.error
+            return typeof error === 'string' ? [error] : []
+          })
+        : []
     }
   }
 

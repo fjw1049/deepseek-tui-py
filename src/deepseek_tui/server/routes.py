@@ -1717,7 +1717,7 @@ async def threads_summary(request: Request) -> dict[str, Any]:
 
 
 @router_threads.post("/threads/purge-archived")
-async def purge_archived_threads(request: Request) -> dict[str, int]:
+async def purge_archived_threads(request: Request) -> dict[str, Any]:
     """Permanently delete all soft-archived threads (Settings → Archive)."""
     mgr = manager(request)
     return await mgr.purge_archived_threads()

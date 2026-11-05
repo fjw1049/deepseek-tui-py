@@ -290,6 +290,30 @@ def _pids_with_cwd_under_sync(directory: Path) -> list[int]:
     return pids
 
 
+def describe_processes_under_sync(directory: Path, *, limit: int = 5) -> str:
+    """Name the processes keeping ``directory`` busy, e.g. ``node (PID 123)``."""
+    pids = _pids_with_cwd_under_sync(directory)
+    if not pids:
+        return ""
+    shown = pids[:limit]
+    names: dict[int, str] = {}
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "pid=,comm=", "-p", ",".join(map(str, shown))],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        out = ""
+    for line in out.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        if pid.isdigit() and command.strip():
+            names[int(pid)] = Path(command.strip()).name
+    parts = [f"{names.get(pid, 'process')} (PID {pid})" for pid in shown]
+    if len(pids) > limit:
+        parts.append(f"{len(pids) - limit} more")
+    return ", ".join(parts)
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -349,8 +373,10 @@ async def remove_managed_worktree(project_root: Path, worktree_path: Path) -> No
     dest = worktree_path.expanduser().resolve()
     if not is_managed_path(dest):
         raise WorktreeError("refusing to remove a worktree outside ~/.deepseek/worktrees")
-    if dest.is_dir() and await asyncio.to_thread(_pids_with_cwd_under_sync, dest):
-        raise WorktreeError("worktree is occupied by running processes; keeping it")
+    if dest.is_dir():
+        busy = await asyncio.to_thread(describe_processes_under_sync, dest)
+        if busy:
+            raise WorktreeError(f"worktree is occupied by running processes ({busy}); keeping it")
     branch = await current_worktree_branch(dest) if dest.is_dir() else ""
     if await is_git_repo(root):
         try:
@@ -830,7 +856,7 @@ async def sync_isolate_from_project(
         _path_signatures, src, sorted(paths)
     )
     moving_head = bool(proj_head and (iso_head != proj_head or branch))
-    if moving_head:
+    if moving_head and not discard_isolate_labor:
         prefix = (await _git(dst, ["rev-parse", "--show-prefix"]) or "").rstrip("\n")
         if prefix:
             # Checkout acts on the entire copy, even when tools run in a subfolder.

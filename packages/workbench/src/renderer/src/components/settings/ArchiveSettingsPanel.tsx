@@ -329,7 +329,14 @@ export function ArchiveSettingsPanel(): ReactElement {
     void (async () => {
       try {
         if (typeof provider.purgeArchivedThreads === 'function') {
-          await provider.purgeArchivedThreads()
+          const { failed } = await provider.purgeArchivedThreads()
+          if (failed.length > 0) {
+            // The rest were deleted; show what stayed and why instead of an empty list.
+            reportActionError(`${t('archiveDeleteAllPartial', { count: failed.length })}\n${failed[0]}`)
+            await refresh()
+            await refreshThreads()
+            return
+          }
         } else if (typeof provider.purgeThread === 'function') {
           for (const thread of threads) {
             await provider.purgeThread(thread.id)
