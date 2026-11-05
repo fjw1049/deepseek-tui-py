@@ -90,7 +90,7 @@ async function check() {
     const api = window.fontAudit
     const host = document.querySelector('#samples')
     const rows = []
-    for (const lang of ['zh-CN', 'en']) for (const theme of ['light', 'dark']) for (const preset of api.listThemePresetsForVariant(theme)) for (const [scale, factor] of [['small', '.83'], ['medium', '.88'], ['large', '.95']]) {
+    for (const lang of ['zh-CN', 'en']) for (const theme of ['light', 'dark']) for (const preset of api.listThemePresetsForVariant(theme)) for (const [scale, factor] of [['small', '.88'], ['medium', '.94'], ['large', '1']]) {
       document.documentElement.lang = lang
       document.documentElement.dataset.theme = theme
       api.applyUiFontScale(scale)
