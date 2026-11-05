@@ -112,8 +112,23 @@ async def test_crash_during_dispatched_call_restores_uncertainty(desktop, tmp_pa
     recovered = CuaSession(CuaConfig(), tmp_path, 'different-session', owner_id='thread')
     assert recovered.unresolved['call_id'] == 'submit'
     result = {}
-    recovered._annotate(result, 'turn2')
+    assert recovered._annotate(result)
     assert 'unknown outcome' in result['content'][0]['text']
+
+
+async def test_unknown_outcome_settles_once_the_model_is_told(desktop, tmp_path):
+    _, _, session = desktop
+    await session.record_outcome('turn', 'submit', 'unknown')
+    result = {}
+    assert session._annotate(result)
+    assert 'operation panel' not in result['content'][0]['text']
+    await session.record_outcome('turn2', 'next', 'returned', settle=True)
+    assert session.unresolved is None
+    # Settled for good: a restart does not bring it back, and later results stay quiet.
+    reloaded = CuaSession(CuaConfig(), tmp_path, 'different-session', owner_id='thread')
+    assert reloaded.unresolved is None
+    later = {}
+    assert not reloaded._annotate(later) and 'content' not in later
 
 
 async def test_child_uncertainty_is_reviewable_from_parent(desktop, tmp_path):

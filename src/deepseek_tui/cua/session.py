@@ -188,8 +188,6 @@ class CuaSession:
         # The user changed the bound app outside a takeover; the next call observes first.
         self.outside_change = ""
         self.observation_generation = 0
-        # Pending calls the model was last told about in this turn.
-        self._unresolved_noted: tuple[str, tuple[str, ...]] | None = None
         # True once model code has run in this connection's REPL.
         self._bound = False
         # Large text blocks the runtime returned, newest last; outlives reconnects.
@@ -270,6 +268,7 @@ class CuaSession:
 
     async def record_outcome(
         self, turn_id: str, call_id: str, outcome: str, *, code: str | None = None,
+        settle: bool = False,
     ) -> None:
         receipt: dict[str, Any] = {"turn_id": turn_id, "call_id": call_id,
                                    "outcome": outcome, "recorded_at": time.time()}
@@ -279,7 +278,7 @@ class CuaSession:
         if outcome == "unknown":
             pending.append(receipt.copy())
         elif outcome != "reviewed":
-            pending = list(self._unresolved)
+            pending = [] if settle else list(self._unresolved)
         receipt["unresolved"] = pending
         if outcome == "unknown":
             self._unresolved = pending
@@ -612,8 +611,10 @@ class CuaSession:
                 result["stats"] = {"lease_wait_ms": lease_wait_ms,
                                    "runtime_ms": round((time.monotonic() - started) * 1000)}
                 if name == "js":
-                    await self.record_outcome(turn_id, call_id, "returned")
-                    self._annotate(result, turn_id)
+                    # Once this result tells the model about earlier unknown outcomes,
+                    # checking them is its job: they no longer wait on anyone.
+                    told = self._annotate(result)
+                    await self.record_outcome(turn_id, call_id, "returned", settle=told)
                 if name == "observe" and not result.get("isError"):
                     if self.observation_generation != observed_generation:
                         result["isError"] = True
@@ -646,8 +647,11 @@ class CuaSession:
                         await self.close()
                 raise
 
-    def _annotate(self, result: dict[str, Any], turn_id: str) -> None:
-        """Tell the model what the host knows that its code result does not show."""
+    def _annotate(self, result: dict[str, Any]) -> bool:
+        """Tell the model what the host knows that its code result does not show.
+
+        Returns whether it was told about earlier calls with unknown outcomes.
+        """
         notes = []
         if self.reset_reason:
             notes.append(f"[Host: {self.reset_reason} Variables and element indices from "
@@ -658,14 +662,13 @@ class CuaSession:
                     a.get("observe") and a.get("ok") for a in actions):
                 self.reset_reason = ""
         pending_ids = tuple(r["call_id"] for r in self._unresolved)
-        if pending_ids and self._unresolved_noted != (turn_id, pending_ids):
-            self._unresolved_noted = (turn_id, pending_ids)
+        if pending_ids:
             notes.append("[Host: an earlier computer-use call has an unknown outcome and may "
                          "already have taken effect. Check the app before repeating that "
-                         "effect; the user can review each pending operation in the operation panel. "
-                         f"Pending call IDs: {pending_ids}.]")
+                         f"effect. Pending call IDs: {pending_ids}.]")
         if notes:
             result.setdefault("content", []).append({"type": "text", "text": "\n".join(notes)})
+        return bool(pending_ids)
 
     async def preview_frame(self) -> dict[str, Any] | None:
         """The operated target as it is now, for the panel only; skipped while a call runs."""

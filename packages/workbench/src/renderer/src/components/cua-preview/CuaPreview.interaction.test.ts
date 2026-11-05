@@ -151,19 +151,17 @@ it('keeps controls available when preview is disabled', async () => {
   expect(find('cuaControlStop')).toBeTruthy()
 })
 
-it('closes an ended card only once nothing on it awaits review', async () => {
+it('lets an unresolved outcome neither hold the card open nor warn about it', async () => {
   const dismiss = () => document.querySelector('[aria-label="cuaPreviewDismiss"]') as HTMLElement | null
   expect(dismiss()).toBeNull()
-  let unresolved: { call_id: string; turn_id: string } | null = { call_id: 'submit', turn_id: 'turn' }
   request.mockImplementation(async () => ({ ok: true, body: JSON.stringify({
     used: true, active: false, available: true, turn_id: 'turn', revision: 2,
-    owner: 'idle', waiting: false, paused: false, unresolved
+    owner: 'idle', waiting: false, paused: false, unresolved: { call_id: 'submit', turn_id: 'turn' }
   }) }))
-  await act(async () => { noteCuaTurnEnded('thread') })
+  await act(async () => { noteCuaTurnEnded('thread', 'completed') })
   await act(async () => { await vi.advanceTimersByTimeAsync(1100) })
-  expect(dismiss()).toBeNull()
-  unresolved = null
-  await act(async () => { await vi.advanceTimersByTimeAsync(1100) })
+  expect(document.body.textContent).not.toContain('cuaControlUnknown')
+  expect(document.querySelector('.lucide-circle-check')).not.toBeNull()
   await act(async () => { dismiss()!.click() })
   expect(useCuaPreviewStore.getState().sessions.thread).toBeUndefined()
 })
@@ -192,16 +190,6 @@ it('shows verified success briefly, then collapses once and permits reopening', 
   await expand()
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
   expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
-})
-
-it('keeps an unresolved result open without a success check', async () => {
-  await expand()
-  request.mockResolvedValue({ ok: true, body: JSON.stringify({ used: true, active: false, available: true, turn_id: 'turn', unresolved: { call_id: 'unknown', turn_id: 'turn' } }) })
-  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-  await act(async () => noteCuaTurnEnded('thread', 'completed'))
-  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-  expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
-  expect(document.querySelector('.lucide-circle-check')).toBeNull()
 })
 
 it('expands inside the same rail slot instead of moving to a fixed overlay', async () => {
@@ -424,14 +412,4 @@ it('leaves Escape to a text field being typed in', async () => {
   await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
   expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
   field.remove()
-})
-
-it('does not alarm about a review before the host has answered', async () => {
-  let answer!: (value: unknown) => void
-  request.mockImplementation(() => new Promise(resolve => { answer = resolve }))
-  await act(async () => root.render(createElement(CuaPreview, { threadId: 'other' })))
-  await act(async () => useCuaPreviewStore.setState({ sessions: { other: { ...session, phase: 'ended', outcome: 'completed' } } }))
-  expect(document.body.textContent).not.toContain('cuaControlUnknown')
-  expect(document.querySelector('[aria-label="cuaPreviewDismiss"]')).toBeNull()
-  await act(async () => answer({ ok: true, body: JSON.stringify({ active: false, available: true, unresolved: null }) }))
 })

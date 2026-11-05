@@ -116,14 +116,8 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     }
   }, [compactRail, slot, peeking, height, collapse])
   const [permissionFor, setPermissionFor] = useState<string | null>(null)
-  // An ended card may close once nothing on it still needs the user's review. Null until
-  // the host answers for this thread: not closable yet, but nothing to alarm about either.
   const [stopTarget, setStopTarget] = useState<HTMLSpanElement | null>(null)
-  const [reviewState, setReviewPending] = useState<boolean | null>(null)
-  const reviewPending = reviewState === true
-  const reviewOpen = reviewState !== false
   const hasSession = !!threadId && !!session
-  useEffect(() => setReviewPending(null), [threadId])
   // Read once per task: turning the preview off applies from the next task. Nothing is
   // captured or fetched until the setting is known to allow it.
   const [allowed, setAllowed] = useState<boolean | null>(null)
@@ -137,10 +131,10 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     return () => { cancelled = true }
   }, [hasSession, permissionKey])
   useEffect(() => {
-    if (session?.phase !== 'ended' || reviewOpen) return
+    if (session?.phase !== 'ended') return
     const timer = window.setTimeout(() => { setAnimate(true); collapse() }, 1400)
     return () => window.clearTimeout(timer)
-  }, [session?.phase, permissionKey, reviewOpen, collapse])
+  }, [session?.phase, permissionKey, collapse])
   useEffect(() => {
     if (!expanded) return
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -186,11 +180,11 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     <div ref={contentRef} className="max-h-[calc(100vh-7rem)] overflow-y-auto">
     <CuaPreviewSessionView key={`${threadId}:${session.turnId ?? ''}:${session.surface ?? ''}:${session.appId ?? ''}`}
       setStopTarget={setStopTarget} threadId={threadId} session={session} expanded={expanded} allowed={allowed}
-      autoPreview={collapsedFor !== permissionKey} onFrameReady={onFrameReady} reviewPending={reviewPending}
+      autoPreview={collapsedFor !== permissionKey} onFrameReady={onFrameReady}
       onExpand={() => { setAnimate(true); setExpandedFor(permissionKey) }} onCollapse={() => { setAnimate(true); collapse() }}
       onPermissionRequired={requestPermission} onOpenPermissions={() => setPermissionFor(permissionKey)}
-      onDismiss={session.phase === 'ended' && !reviewOpen ? () => dismissEndedCuaPreview(threadId) : undefined} />
-    <CuaControlBar key={threadId} threadId={threadId} compact stopTarget={stopTarget} onReviewPending={setReviewPending} />
+      onDismiss={session.phase === 'ended' ? () => dismissEndedCuaPreview(threadId) : undefined} />
+    <CuaControlBar key={threadId} threadId={threadId} stopTarget={stopTarget} />
     </div>
   </section>
   // The fallback belongs to the conversation layout, never to the whole window.
@@ -202,8 +196,8 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
         aria-label={t('cuaPreviewShow')} title={t('cuaPreviewShow')} aria-expanded={peeking}
         onClick={() => { setAnimate(true); peeking ? collapse() : setPeekFor(permissionKey) }}>
         <Monitor className="h-4 w-4" aria-hidden />
-        {(session.phase !== 'ended' || reviewPending) && <span aria-hidden
-          className={`absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ${reviewPending || session.control ? 'bg-amber-500' : 'bg-emerald-500'}`} />}
+        {session.phase !== 'ended' && <span aria-hidden
+          className={`absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ${session.control ? 'bg-amber-500' : 'bg-emerald-500'}`} />}
       </button>, slot)}
     </> : slotUsable ? null : <div ref={setConversationSlot}
       className="ds-no-drag mx-3 mb-3 flex max-h-[45vh] min-w-0 shrink-0 justify-end overflow-y-auto"
@@ -212,9 +206,9 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
   </>
 }
 
-function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, allowed, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady, reviewPending }: {
+function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, allowed, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady }: {
   setStopTarget: (element: HTMLSpanElement | null) => void
-  autoPreview: boolean; onFrameReady: () => void; reviewPending: boolean; allowed: boolean | null
+  autoPreview: boolean; onFrameReady: () => void; allowed: boolean | null
   expanded: boolean; onExpand: () => void; onCollapse: () => void; onDismiss?: () => void
   threadId: string; session: CuaPreviewSession; onPermissionRequired: () => void; onOpenPermissions: () => void
 }): ReactElement | null {
@@ -299,7 +293,7 @@ function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, all
   }, [expanded, shown, phase, problem, threadId, session.turnId, session.surface, onPermissionRequired])
   const appName = live.appName ?? t(session.surface === 'browser' ? 'cuaPreviewBrowser' : 'cuaPreviewComputer')
   const status = phase === 'ended'
-    ? t(reviewPending ? 'cuaControlUnknown' : session.outcome === 'stopped' ? 'cuaPreviewStopped' : session.outcome === 'failed' ? 'cuaPreviewIncomplete' : session.outcome === 'completed' ? 'cuaPreviewDone' : 'cuaPreviewEnded')
+    ? t(session.outcome === 'stopped' ? 'cuaPreviewStopped' : session.outcome === 'failed' ? 'cuaPreviewIncomplete' : session.outcome === 'completed' ? 'cuaPreviewDone' : 'cuaPreviewEnded')
     : session.control === 'user' ? t('cuaControlHuman')
       : session.control === 'paused' ? t('cuaControlPaused')
         : t('cuaPreviewWorking', { app: appName })
@@ -308,7 +302,7 @@ function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, all
   const attachCanvas = (element: HTMLDivElement | null): void => {
     if (element && canvas.parentElement !== element) element.prepend(canvas)
   }
-  const outcomeIcon = phase === 'ended' && !reviewPending
+  const outcomeIcon = phase === 'ended'
     ? session.outcome === 'completed' ? <CheckCircle2 className="h-4 w-4 shrink-0 fill-emerald-600 text-white" aria-hidden />
       : session.outcome === 'failed' ? <CircleAlert className="h-4 w-4 shrink-0 fill-amber-500 text-white" aria-hidden /> : null
     : null

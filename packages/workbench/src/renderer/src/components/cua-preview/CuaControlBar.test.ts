@@ -13,9 +13,10 @@ let host: HTMLDivElement
 let state: CuaControlState
 let request: ReturnType<typeof vi.fn>
 const render = () => act(async () => root.render(createElement(CuaControlBar, { threadId: 'thread' })))
-const click = async (text: string) => act(async () => {
-  const button = [...host.querySelectorAll('button')].find(b => b.textContent === text)
-  expect(button).toBeTruthy(); button!.click()
+const button = (label: string) => [...document.querySelectorAll('button')]
+  .find(b => b.textContent === label || b.getAttribute('aria-label') === label)
+const click = async (label: string) => act(async () => {
+  expect(button(label)).toBeTruthy(); button(label)!.click()
 })
 beforeEach(() => {
   vi.useFakeTimers()
@@ -27,78 +28,62 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers() })
 
-it('does not claim human control before the host acknowledges transfer', async () => {
+it('shows only Stop, whatever the host reports about the task', async () => {
+  state = { ...state, owner: 'user', paused: true, waiting: true, awaiting_permission: true,
+    transferring: true, human_reason: 'Please sign in to continue.',
+    unresolved: { call_id: 'submit', turn_id: 'turn' } }
   await render()
-  let finish!: (value: unknown) => void
-  request.mockImplementation(async (_path, method) => method === 'POST'
-    ? new Promise(resolve => { finish = resolve }) : { ok: true, body: JSON.stringify(state) })
-  await click('cuaControlTakeover')
-  expect(host.textContent).toContain('cuaControlTransferring')
-  expect(host.textContent).not.toContain('cuaControlHuman')
-  state = { ...state, owner: 'user', paused: true, revision: 4 }
-  await act(async () => finish({ ok: true, body: JSON.stringify(state) }))
-  expect(host.textContent).toContain('cuaControlHuman')
+  expect(host.textContent).toBe('')
+  expect([...host.querySelectorAll('button')].map(b => b.getAttribute('aria-label'))).toEqual(['cuaControlStop'])
+})
+
+it('stops the task only after confirmation', async () => {
+  useCuaPreviewStore.setState({ sessions: { thread: { phase: 'live', turnId: 'turn', appId: null, surface: null,
+    label: null, still: null, revision: 0 } } })
+  await render()
+  await click('cuaControlStop')
+  expect(request.mock.calls.some(c => c[1] === 'POST')).toBe(false)
+  state = { ...state, active: false }
+  await click('cuaControlStopConfirm')
   const payload = JSON.parse(request.mock.calls.find(c => c[1] === 'POST')![2])
-  expect(payload).toEqual({ owner: 'user', revision: 3, turn_id: 'turn' })
+  expect(payload).toEqual({ owner: 'stopped', revision: 3, turn_id: 'turn' })
+  expect(useCuaPreviewStore.getState().sessions.thread).toMatchObject({ phase: 'ended', outcome: 'stopped' })
+  useCuaPreviewStore.setState({ sessions: {} })
 })
 
-it('requires taking control before confirming an unknown operation', async () => {
-  state.unresolved = { call_id: 'submit', turn_id: 'turn' }
-  await render()
-  expect(host.textContent).toContain('cuaControlUnknownHint')
-  expect(host.textContent).not.toContain('cuaControlReviewed')
-  state = { ...state, owner: 'user', paused: true, revision: 4 }
-  await click('cuaControlTakeover')
-  await click('cuaControlReviewed')
-  const payload = JSON.parse(request.mock.calls.filter(c => c[1] === 'POST').at(-1)![2])
-  expect(payload).toMatchObject({ owner: 'assistant', reviewed_call_id: 'submit', revision: 4 })
-})
-
-it('retains stop when polling loses connection and disables stale takeover', async () => {
+it('keeps Stop usable while polls fail', async () => {
   await render()
   request.mockRejectedValue(new Error('offline'))
-  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-  // One lost request is not a lost connection.
-  expect(host.textContent).not.toContain('cuaControlDisconnected')
-  expect([...host.querySelectorAll('button')].find(b => b.textContent === 'cuaControlTakeover')!.disabled).toBe(false)
-  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-  const buttons = [...host.querySelectorAll('button')]
-  expect(buttons.find(b => b.textContent === 'cuaControlTakeover')!.disabled).toBe(true)
-  expect(buttons.find(b => b.textContent === 'cuaControlStop')!.disabled).toBe(false)
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(button('cuaControlStop')!.disabled).toBe(false)
 })
 
-it('shows permission waiting instead of claiming the assistant is operating', async () => {
-  state.awaiting_permission = true
-  await render()
-  expect(host.querySelector('[role="status"]')!.textContent).toBe('cuaControlPermission')
-})
-
-it('keeps lengthy manual instructions collapsed without hiding continue', async () => {
-  state.owner = 'user'
-  state.human_reason = 'Inspect the document before continuing. '.repeat(30)
-  await render()
-  expect(host.querySelector('details')!.open).toBe(false)
-  expect(host.querySelector('summary')!.textContent).toBe('cuaControlHelpDetails')
-  expect([...host.querySelectorAll('button')].some(b => b.textContent === 'cuaControlContinue')).toBe(true)
-})
-
-
-it('shows required human instructions directly in the compact entry', async () => {
-  state.owner = 'user'
-  state.human_reason = 'Please sign in to continue.'
-  await act(async () => root.render(createElement(CuaControlBar, { threadId: 'thread', compact: true })))
-  expect(host.querySelector('details')).toBeNull()
-  expect(host.textContent).toContain(state.human_reason)
-  expect(host.textContent).toContain('cuaControlContinue')
-})
-
-it('offers no desktop controls for a running turn that has not used computer control', async () => {
+it('offers no controls for a running turn that has not used computer control', async () => {
   state = { ...state, used: false, owner: 'idle' }
   await render()
   expect(host.querySelectorAll('button')).toHaveLength(0)
   state = { ...state, used: true, owner: 'assistant' }
   await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-  expect([...host.querySelectorAll('button')].map(b => b.textContent)).toContain('cuaControlTakeover')
+  expect(button('cuaControlStop')).toBeTruthy()
+})
+
+it('says nothing until the host has answered', async () => {
+  let answer!: (value: unknown) => void
+  request.mockImplementation(() => new Promise(resolve => { answer = resolve }))
+  await render()
+  expect(host.innerHTML).toBe('')
+  await act(async () => answer({ ok: true, body: JSON.stringify(state) }))
+  expect(button('cuaControlStop')).toBeTruthy()
+})
+
+it('offers no controls once the card shows the task as ended', async () => {
+  useCuaPreviewStore.setState({ sessions: { thread: { phase: 'live', turnId: 'turn', appId: null, surface: null,
+    label: null, still: null, revision: 0 } } })
+  await render()
+  expect(button('cuaControlStop')).toBeTruthy()
+  await act(async () => noteCuaTurnEnded('thread', 'completed'))
+  expect(host.innerHTML).toBe('')
+  useCuaPreviewStore.setState({ sessions: {} })
 })
 
 it('publishes who holds the task so every surface can show it', async () => {
@@ -117,32 +102,6 @@ it('publishes who holds the task so every surface can show it', async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
   expect(control()).toBeUndefined()
   useCuaPreviewStore.setState({ sessions: {} })
-})
-
-it('shows why the host refused a transfer', async () => {
-  await render()
-  request.mockImplementation(async (_path, method) => method === 'POST'
-    ? { ok: false, body: JSON.stringify({ detail: { message: 'The desktop is in use' } }) }
-    : { ok: true, body: JSON.stringify(state) })
-  await click('cuaControlTakeover')
-  expect(host.querySelector('[role=alert]')?.textContent).toBe('The desktop is in use')
-})
-
-it('falls back to a generic message when the host gave no reason', async () => {
-  await render()
-  request.mockImplementation(async (_path, method) => method === 'POST'
-    ? { ok: false, body: 'bad gateway' } : { ok: true, body: JSON.stringify(state) })
-  await click('cuaControlTakeover')
-  expect(host.querySelector('[role=alert]')?.textContent).toBe('cuaControlRetry')
-})
-
-it('says nothing until the host has answered', async () => {
-  let answer!: (value: unknown) => void
-  request.mockImplementation(() => new Promise(resolve => { answer = resolve }))
-  await render()
-  expect(host.textContent).toBe('')
-  await act(async () => answer({ ok: true, body: JSON.stringify(state) }))
-  expect(host.textContent).toContain('cuaControlTakeover')
 })
 
 it('re-reads control the moment a call or handoff is noted, without doubling the poll', async () => {
@@ -179,46 +138,4 @@ it('slows down between tasks', async () => {
   expect(reads()).toBe(1)
   await act(async () => { await vi.advanceTimersByTimeAsync(1) })
   expect(reads()).toBe(2)
-})
-
-it('lets Stop overtake a transfer that is still running, without reporting the transfer failing', async () => {
-  await render()
-  const finish: Array<(value: unknown) => void> = []
-  const posted: string[] = []
-  request.mockImplementation(async (_path, method, body) => {
-    if (method !== 'POST') return { ok: true, body: JSON.stringify(state) }
-    posted.push(JSON.parse(body).owner)
-    return new Promise(resolve => { finish.push(resolve) })
-  })
-  await click('cuaControlTakeover')
-  expect(host.textContent).toContain('cuaControlTransferring')
-  await click('cuaControlStop')
-  await act(async () => { ([...document.querySelectorAll('button')].find(button => button.textContent === 'cuaControlStopConfirm') as HTMLButtonElement).click() })
-  expect(posted).toEqual(['user', 'stopped'])
-  state = { ...state, active: false }
-  await act(async () => {
-    finish[0]({ ok: false, body: JSON.stringify({ detail: { message: 'The original task ended during transfer' } }) })
-    finish[1]({ ok: true, body: JSON.stringify(state) })
-  })
-  expect(host.querySelector('[role=alert]')).toBeNull()
-})
-
-it('clears a refusal instead of leaving it on the card for the rest of the task', async () => {
-  await render()
-  request.mockImplementation(async (_path, method) => method === 'POST'
-    ? { ok: false, body: JSON.stringify({ detail: { message: 'busy' } }) } : { ok: true, body: JSON.stringify(state) })
-  await click('cuaControlTakeover')
-  expect(host.querySelector('[role=alert]')).not.toBeNull()
-  await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
-  expect(host.querySelector('[role=alert]')).toBeNull()
-})
-
-it('offers no controls once the card shows the task as ended', async () => {
-  useCuaPreviewStore.setState({ sessions: { thread: { phase: 'live', turnId: 'turn', appId: null, surface: null,
-    label: null, still: null, revision: 0 } } })
-  await render()
-  expect(host.textContent).toContain('cuaControlTakeover')
-  await act(async () => noteCuaTurnEnded('thread', 'completed'))
-  expect(host.textContent).toBe('')
-  useCuaPreviewStore.setState({ sessions: {} })
 })

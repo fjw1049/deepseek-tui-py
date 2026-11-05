@@ -36,7 +36,7 @@ async def test_recovery_allows_observation_and_keeps_blocking_actions(session, t
 
 
 @pytest.mark.asyncio
-async def test_observing_unknown_outcome_preserves_receipt(session, tmp_path):
+async def test_unknown_outcome_survives_observation_and_settles_once_told(session, tmp_path):
     await session.connect()
     await session.record_outcome("old-turn", "uncertain-click", "unknown",
                                  code=_code_fingerprint({"code": "click"}))
@@ -51,12 +51,10 @@ async def test_observing_unknown_outcome_preserves_receipt(session, tmp_path):
         assert other.success and "unknown outcome" in other.content
         again = await registry.get("cua_js").execute({"code": "read more"}, context)
         assert "unknown outcome" not in again.content
-        # The uncertainty outlives later calls, in memory and on disk, until reviewed.
-        assert session.unresolved["call_id"] == "uncertain-click"
-        restored = CuaSession(session.config, tmp_path, "other", owner_id="session-a")
-        assert restored.unresolved["call_id"] == "uncertain-click"
-        await session.acknowledge("uncertain-click")
+        # Told once, it is the model's to check: gone in memory and on disk.
         assert session.unresolved is None
+        restored = CuaSession(session.config, tmp_path, "other", owner_id="session-a")
+        assert restored.unresolved is None
     finally:
         await session.close()
 
