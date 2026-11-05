@@ -90,6 +90,8 @@ class DeepSeekClient(LLMClient):
         )
         self.thinking_supported = thinking_supported
         self.dynamic_thinking = False
+        # Learned from the endpoint's first rejection; later requests use the new name.
+        self._uses_max_completion_tokens = False
 
     @classmethod
     def from_config(cls, config: object) -> DeepSeekClient:
@@ -221,13 +223,16 @@ class DeepSeekClient(LLMClient):
                         try:
                             body = (await response.aread()).decode(
                                 "utf-8", errors="replace"
-                            )[:512]
+                            )
                         except Exception:  # noqa: BLE001
                             pass
                         from deepseek_tui.client.token_compat import adapt_completion_tokens
 
+                        # Parse the whole error body; only the message is shortened.
                         if adapt_completion_tokens(status, body, payload):
+                            self._uses_max_completion_tokens = True
                             continue
+                        body = body[:512]
                         message = f"HTTP {status} from {url}: {body}"
                         if status in (401, 403):
                             message += (
@@ -325,7 +330,8 @@ class DeepSeekClient(LLMClient):
             if mapped is not None:
                 payload["tool_choice"] = mapped
         if request.max_tokens is not None:
-            payload["max_tokens"] = request.max_tokens
+            key = "max_completion_tokens" if self._uses_max_completion_tokens else "max_tokens"
+            payload[key] = request.max_tokens
         if request.temperature is not None:
             payload["temperature"] = request.temperature
         if request.top_p is not None:
