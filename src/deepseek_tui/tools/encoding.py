@@ -118,14 +118,26 @@ def _safe_hex_to_char(hex_str: str) -> str | None:
 #   - ``required`` entries not present in ``properties``
 #   - single-element ``oneOf`` / ``allOf`` wrappers
 #
+# OpenAI rejects ``oneOf``/``anyOf``/``allOf``/``enum``/``const``/``not`` at
+# the top level of function parameters, and Anthropic rejects the composition
+# ones. Those are dropped from the wire copy, keeping every variant's fields;
+# the registry still validates calls against the tool's original schema.
+#
 # This normalizes schemas in-place so tool definitions work without
 # hand-editing.
 #
 
 
 def sanitize(schema: dict[str, Any]) -> dict[str, Any]:
-    """Normalize *schema* for DeepSeek compatibility. Idempotent."""
+    """Normalize *schema* for provider compatibility. Idempotent."""
     _walk(schema)
+    for key in ("oneOf", "anyOf", "allOf"):
+        for variant in schema.pop(key, None) or []:
+            if isinstance(variant, dict) and isinstance(variant.get("properties"), dict):
+                for name, prop in variant["properties"].items():
+                    schema.setdefault("properties", {}).setdefault(name, prop)
+    for key in ("enum", "const", "not"):
+        schema.pop(key, None)
     return schema
 
 
