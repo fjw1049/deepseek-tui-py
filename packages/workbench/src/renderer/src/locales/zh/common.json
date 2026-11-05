@@ -1571,7 +1571,7 @@
   "send": "发送",
   "queueMessage": "排队发送",
   "queuedMessagesTitle": "已排队 {{count}} 条",
-  "queuedMessagesHint": "当前回复结束后会按顺序自动发送；立即发送会先停止当前回复",
+  "queuedMessagesHint": "当前回复结束后会按顺序自动发送；立即发送可向当前任务补充指令",
   "queuedMessagesPausedHint": "回复已停止，队列随之暂停；继续发送前不会自动发出",
   "queuedMessagesResume": "继续发送",
   "queuedMessageRemove": "删除",

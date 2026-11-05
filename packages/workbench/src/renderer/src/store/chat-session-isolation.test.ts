@@ -10,6 +10,7 @@ const provider = vi.hoisted(() => ({
 }))
 vi.mock('../agent/registry', () => ({ getProvider: () => provider }))
 import { createChatSessionStore } from './chat-store'
+import { useCuaPreviewStore } from './cua-preview-store'
 
 const sessions: ReturnType<typeof createChatSessionStore>[] = []
 function session() {
@@ -306,37 +307,25 @@ it('preserves queued input when the current task is selected again', async () =>
   expect(provider.sendUserMessage).not.toHaveBeenCalled()
 })
 
-it.each([true, false])('sends once, right after the stop is acknowledged (completion before acknowledgement: %s)', async (completeEarly) => {
-  provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }])
+it('steers once while keeping the same live task', async () => {
   const pane = session()
   await pane.store.getState().selectThread('a')
   await pane.store.getState().sendMessage('next', 'agent')
+  const preview = { phase: 'live' as const, turnId: 'turn-a', appId: 'app', surface: 'app' as const, label: null, still: null, revision: 1 }
+  useCuaPreviewStore.setState({ sessions: { a: preview } })
   const id = pane.store.getState().queuedMessages[0].id
   let acknowledge!: () => void
-  provider.interruptTurn.mockImplementation(() => new Promise<void>(resolve => { acknowledge = resolve }))
-  // The old turn is still tearing down; the runtime, not the client, waits for it.
-  Object.assign(provider, { isThreadTurnActive: vi.fn().mockResolvedValue(true) })
-  provider.sendUserMessage.mockResolvedValue({ turnId: 'turn-next' })
+  provider.steerUserMessage.mockImplementation(() => new Promise<void>(resolve => { acknowledge = resolve }))
   const sending = pane.store.getState().sendQueuedMessageNow(id)
   await pane.store.getState().sendQueuedMessageNow(id)
-  expect(provider.interruptTurn).toHaveBeenCalledTimes(1)
-  const sink = provider.subscribeThreadEvents.mock.calls[0][2] as ThreadEventSink
-  if (completeEarly) sink.onTurnComplete({ turnId: 'turn-a', status: 'cancelled' })
-  await Promise.resolve()
-  expect(provider.sendUserMessage).not.toHaveBeenCalled()
-  // "Send now" stops the turn on purpose; the queue is not shown as paused meanwhile.
-  expect(pane.store.getState().queuePaused).toBe(false)
+  expect(provider.steerUserMessage).toHaveBeenCalledExactlyOnceWith('a', 'turn-a', 'next')
   acknowledge()
   await sending
-  expect(provider.sendUserMessage).toHaveBeenCalledTimes(1)
+  expect(useCuaPreviewStore.getState().sessions.a).toBe(preview)
+  expect(provider.interruptTurn).not.toHaveBeenCalled()
+  expect(provider.sendUserMessage).not.toHaveBeenCalled()
+  expect(pane.store.getState()).toMatchObject({ queuedMessages: [], busy: true, currentTurnId: 'turn-a' })
   expect(pane.store.getState().blocks.some(b => b.kind === 'user' && b.text === 'next')).toBe(true)
-  // A late completion of the stopped turn must not end the new one.
-  if (!completeEarly) sink.onTurnComplete({ turnId: 'turn-a', status: 'cancelled' })
-  await vi.advanceTimersByTimeAsync(500)
-  expect(provider.sendUserMessage).toHaveBeenCalledTimes(1)
-  expect(pane.store.getState()).toMatchObject({
-    queuedMessages: [], busy: true, currentTurnId: 'turn-next', queuePaused: false
-  })
 })
 
 it('keeps queued messages stopped after a late completion event', async () => {
@@ -352,31 +341,33 @@ it('keeps queued messages stopped after a late completion event', async () => {
   expect(pane.store.getState().queuedMessages).toHaveLength(1)
 })
 
-it('does not stop or drain the newly selected chat after a slow interrupt', async () => {
+it('does not stop or drain the newly selected chat after a slow steer', async () => {
   const pane = session()
   await pane.store.getState().selectThread('a')
   await pane.store.getState().sendMessage('next', 'agent')
   let acknowledge!: () => void
-  provider.interruptTurn.mockImplementation(() => new Promise<void>(resolve => { acknowledge = resolve }))
+  provider.steerUserMessage.mockImplementation(() => new Promise<void>(resolve => { acknowledge = resolve }))
   const sending = pane.store.getState().sendQueuedMessageNow(pane.store.getState().queuedMessages[0].id)
   await pane.store.getState().selectThread('b')
   acknowledge()
   await sending
   expect(pane.store.getState()).toMatchObject({ activeThreadId: 'b', currentTurnId: 'turn-b', busy: true })
   expect(provider.sendUserMessage).not.toHaveBeenCalled()
+  await pane.store.getState().selectThread('a')
+  expect(pane.store.getState().queuedMessages).toEqual([])
 })
 
-it('retains queued input when interrupt fails', async () => {
+it('retains queued input when steer fails', async () => {
   const pane = session()
   await pane.store.getState().selectThread('a')
   await pane.store.getState().sendMessage('next', 'agent')
-  provider.interruptTurn.mockRejectedValue(new Error('network unavailable'))
+  provider.steerUserMessage.mockRejectedValue(new Error('network unavailable'))
   await pane.store.getState().sendQueuedMessageNow(pane.store.getState().queuedMessages[0].id)
   expect(provider.sendUserMessage).not.toHaveBeenCalled()
   expect(pane.store.getState().queuedMessages).toHaveLength(1)
   expect(pane.store.getState().busy).toBe(true)
-  // The stopped queue is visible, so the user can resume it later.
-  expect(pane.store.getState().queuePaused).toBe(true)
+  expect(pane.store.getState().error).toContain('network unavailable')
+  expect(provider.interruptTurn).not.toHaveBeenCalled()
 })
 
 it('shows a stopped queue as paused, keeps that with its chat, and resumes on request', async () => {

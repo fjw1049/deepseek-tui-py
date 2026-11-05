@@ -2604,7 +2604,7 @@ const store = create<ChatState>((set, get) => ({
   },
 
   drainQueuedMessages: async () => {
-    if (drainingQueuedMessages) return
+    if (drainingQueuedMessages || (get().activeThreadId && sendingQueuedNow.has(get().activeThreadId!))) return
     drainingQueuedMessages = true
     const threadId = get().activeThreadId
     try {
@@ -2648,7 +2648,26 @@ const store = create<ChatState>((set, get) => ({
     set({ queuedMessages: reordered })
     sendingQueuedNow.add(threadId)
     try {
-      const { busy, currentTurnId, blocks } = get()
+      const { busy, currentTurnId, blocks, providerId } = get()
+      const provider = getProvider(providerId)
+      const message = reordered[0]
+      if (currentTurnId && provider.steerUserMessage && !message.hidden) {
+        // Keep the live task and its browser/CUA session when adding instructions.
+        await provider.steerUserMessage(threadId, currentTurnId, message.text)
+        if (!disposed && get().activeThreadId === threadId) {
+          set(s => ({
+            queuedMessages: s.queuedMessages.filter(item => item.id !== id),
+            blocks: [...s.blocks, { kind: 'user' as const, id: `steer-${id}`,
+              createdAt: new Date().toISOString(), text: message.displayText ?? message.text,
+              turnId: currentTurnId }],
+            error: null
+          }))
+        } else {
+          const parked = parkedQueues.get(threadId)
+          if (parked) parkedQueues.set(threadId, parked.filter(item => item.id !== id))
+        }
+        return
+      }
       if (busy || currentTurnId || blocks.some(hasPendingRuntimeWork)) {
         await get().interrupt()
       }
@@ -2657,10 +2676,15 @@ const store = create<ChatState>((set, get) => ({
         setQueuePaused(threadId, false)
         await get().drainQueuedMessages()
       }
+    } catch (e) {
+      if (!disposed && get().activeThreadId === threadId) set({ error: formatRuntimeError(e) })
     } finally {
       sendingQueuedNow.delete(threadId)
       // A failed interrupt leaves the queue stopped; show it so it can be resumed.
       if (stoppedQueues.has(threadId)) setQueuePaused(threadId, true)
+      if (!disposed && get().activeThreadId === threadId && !get().busy && !get().error) {
+        await get().drainQueuedMessages()
+      }
     }
   },
 
