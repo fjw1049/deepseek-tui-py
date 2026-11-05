@@ -1699,6 +1699,7 @@
   "inspectorEmptyStaged": "暂存区为空。使用文件旁的加号把修改加入下一次提交。",
   "inspectorEmptyUnstaged": "没有未暂存的修改。",
   "inspectorEmptyBranch": "基准分支与当前工作区没有代码差异。",
+  "publishComparisonFailed": "差异加载失败，请重试。",
   "inspectorEmptyConflicts": "没有需要选择版本的文件。",
   "inspectorSelectHint": "选择一个变更文件查看 diff。",
   "inspectorResizeSplit": "调整文件列表与差异区域大小",

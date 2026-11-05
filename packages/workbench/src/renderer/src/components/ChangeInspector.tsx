@@ -1028,7 +1028,7 @@ export function ChangeInspector({
   )
   const gitChanges = gitScope === 'working-tree' ? workingTreeChanges : scopedChanges
   const canMutateGit = Boolean(gitBranches?.ok && !gitBranches.detached)
-  const { files: comparisonFiles, loading: comparisonLoading } = usePublishComparison(
+  const { files: comparisonFiles, loading: comparisonLoading, failed: comparisonFailed, retry: retryComparison } = usePublishComparison(
     context === 'conflicts' ? activeThreadId : null,
     [
       activeThread?.updatedAt ?? '',
@@ -1793,7 +1793,14 @@ export function ChangeInspector({
         </div>
       ) : null}
       <div ref={stackViewportRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {gitLoading && fileChanges.length === 0 ? (
+        {context === 'conflicts' && comparisonFailed ? (
+          <div className="m-auto p-6 text-center text-sm">
+            <p role="alert">{t('publishComparisonFailed')}</p>
+            <button type="button" className="mt-2 underline" onClick={retryComparison}>
+              {t('publishSyncRetry')}
+            </button>
+          </div>
+        ) : gitLoading && fileChanges.length === 0 ? (
           isList || isDiff || isReview ? (
             <EditorListSkeleton rows={isDiff ? 12 : 8} />
           ) : (

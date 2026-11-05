@@ -198,15 +198,15 @@ async function handle(request) {
           if (first.isError) result = first;
           else {
             result = await client.call('js', {
-              code: `await ${slot}.getAXStateAndScreenshot({disableDiffing: true});`,
+              code: request.arguments.poll
+                ? `await ${slot}.getAXState({disableDiffing: true});`
+                : `await ${slot}.getAXStateAndScreenshot({disableDiffing: true});`,
             }, context);
             if (result.isError) {
               // A closed tab or window must not stay cached.
               await client.call('js', { code: `delete ${slot};` },
                 { ...context, toolCallId: `${context.toolCallId}:unbind` }).catch(() => {});
             }
-            // A wait poll only checks text; its screenshot is dropped, never shown or stored.
-            if (request.arguments.poll) result.content = (result.content ?? []).filter(b => b.type !== 'image');
             const text = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
             const images = (result.content ?? []).filter(b => b.type === 'image');
             // The observation is captured before joining documentation/entry-point output.

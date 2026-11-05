@@ -1660,7 +1660,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'compare publish failed'))
     const parsed = JSON.parse(r.body) as { files?: unknown }
-    if (!Array.isArray(parsed.files)) return []
+    if (!Array.isArray(parsed.files)) throw new Error('Invalid publish comparison response')
     return parsed.files.flatMap((raw): PublishComparisonFile[] => {
       if (!raw || typeof raw !== 'object') return []
       const item = raw as Record<string, unknown>

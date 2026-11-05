@@ -1715,6 +1715,7 @@
   "inspectorEmptyStaged": "Nothing is staged. Use the plus button beside a file to include it in the next commit.",
   "inspectorEmptyUnstaged": "There are no unstaged changes.",
   "inspectorEmptyBranch": "There are no code differences between the base branch and current workspace.",
+  "publishComparisonFailed": "Could not load the file differences. Please try again.",
   "inspectorEmptyConflicts": "No files need a version choice.",
   "inspectorSelectHint": "Select a changed file to view its diff.",
   "inspectorResizeSplit": "Resize file list and diff panel",

@@ -12,7 +12,8 @@ let root: Root
 let container: HTMLDivElement
 
 function Probe({ threadId, refreshKey }: { threadId: string | null; refreshKey: string }) {
-  const { files, loading } = usePublishComparison(threadId, refreshKey)
+  const { files, loading, failed, retry } = usePublishComparison(threadId, refreshKey)
+  if (failed) return createElement('button', { onClick: retry }, 'retry')
   return createElement(
     'div',
     null,
@@ -57,6 +58,15 @@ describe('usePublishComparison', () => {
 
     expect(getPublishComparison).toHaveBeenCalledTimes(2)
     expect(container.textContent).toBe('b.ts:unstaged')
+  })
+
+  it('distinguishes a failed comparison from an empty one and retries', async () => {
+    getPublishComparison.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([])
+    await act(async () => root.render(createElement(Probe, { threadId: 't1', refreshKey: 'a' })))
+    expect(container.textContent).toBe('retry')
+    await act(async () => container.querySelector('button')!.click())
+    expect(getPublishComparison).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toBe('')
   })
 
   it('does nothing outside the conflicts view', async () => {

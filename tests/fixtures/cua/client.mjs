@@ -52,7 +52,7 @@ export function createCuaClient({ cwd, onElicitation }) {
           ? 'Original browser documentation' : 'Original observation documentation' },
           { type: 'text', text: 'Window: Fixture (printed by binding)' }] };
       }
-      const capture = args.code?.match(/^await (globalThis\.__deepseekObservations\[.*\])\.getAXStateAndScreenshot/);
+      const capture = args.code?.match(/^await (globalThis\.__deepseekObservations\[.*\])\.getAXState(?:AndScreenshot)?\(/);
       if (capture) {
         const appId = observations.get(capture[1]);
         if (appId === 'dev.loading') {

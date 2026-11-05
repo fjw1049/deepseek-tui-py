@@ -524,8 +524,8 @@ async def test_wait_polls_text_until_expected_then_observes_once(session, tmp_pa
         assert result.success and "Waited" in result.content and "Observed: Done" in result.content
         assert result.metadata["cua_stats"]["expect_met"] is True
         reads = [c for c in _calls(tmp_path) if "getAXStateAndScreenshot" in c["args"]["code"]]
-        # First read, one poll still loading, one poll done, then the returned observation.
-        assert len(reads) == 4
+        assert len(reads) == 2
+        assert sum(".getAXState(" in c["args"]["code"] for c in _calls(tmp_path)) == 2
         missed = await observe.execute(
             {"app": "dev.loading", "expect": ["Never"], "wait_ms": 50}, context)
         assert "Not verified: Never" in missed.content

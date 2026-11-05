@@ -2993,7 +2993,7 @@ def _spawn_idle_process(cwd: Path) -> subprocess.Popen[bytes]:
 
 
 @pytest.mark.asyncio
-async def test_delete_stops_leftover_processes_in_clean_worktree(
+async def test_delete_preserves_process_in_clean_worktree(
     runtime_app, tmp_path: Path
 ) -> None:
     manager = runtime_app.state.thread_manager
@@ -3005,11 +3005,10 @@ async def test_delete_stops_leftover_processes_in_clean_worktree(
     tree = execution_root(prepared)
     proc = _spawn_idle_process(tree)
     try:
-        # A clean copy held only by a leftover process is not unpublished
-        # code: no discard confirmation is needed.
-        await manager.delete_thread(prepared.id)
-        assert not tree.exists()
-        assert proc.wait(timeout=10) is not None
+        with pytest.raises(ValueError, match="running process"):
+            await manager.delete_thread(prepared.id)
+        assert tree.is_dir()
+        assert proc.poll() is None
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -3289,3 +3288,34 @@ async def test_subfolder_project_idle_copy_is_reclaimed(
         manager.store.load_thread(prepared.id)
     )
     assert execution_root(resumed).parts[-2:] == ("apps", "web")
+
+
+@pytest.mark.asyncio
+async def test_project_path_cannot_follow_copy_symlink_to_original(runtime_app, tmp_path):
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
+    )
+    tree = execution_root(await manager._prepare_isolated_workspace(thread))
+    (repo / "docs").mkdir()
+    (tree / "docs").symlink_to(repo / "docs", target_is_directory=True)
+    for trusted in (False, True):
+        context = ToolContext(tree, trust_mode=trusted)
+        with pytest.raises(ValueError, match="outside the task copy"):
+            context.resolve_path(str(repo / "docs" / "new.txt"), write=True)
+
+
+@pytest.mark.asyncio
+async def test_subfolder_sync_preserves_dirty_sibling_on_head_change(tmp_path):
+    repo, sub = _subfolder_repo(tmp_path)
+    tree = tmp_path / "copy"
+    _git(repo, "worktree", "add", "--detach", str(tree))
+    (tree / "root.txt").write_text("my draft")
+    (sub / "app.py").write_text("new version")
+    _git(repo, "commit", "-am", "advance project")
+    old_head = _git_out(tree, "rev-parse", "HEAD")
+    with pytest.raises(managed_worktree.UnpublishedWorktreeError, match="outside"):
+        await managed_worktree.sync_isolate_from_project(sub, tree / "apps/web")
+    assert _git_out(tree, "rev-parse", "HEAD") == old_head
+    assert (tree / "root.txt").read_text() == "my draft"

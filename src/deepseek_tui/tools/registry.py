@@ -335,7 +335,9 @@ class ToolContext:
             and self._within(resolved, roots[0])
         ):
             # The user's own project path means the same file in this copy.
-            resolved = roots[1] / resolved.relative_to(roots[0])
+            resolved = (roots[1] / resolved.relative_to(roots[0])).resolve()
+            if not self._within(resolved, roots[1]):
+                raise ValueError(f"Project path points outside the task copy: {path}")
         if self.path_grants.allows(resolved, write=write):
             return PathAccess(resolved, write, allowed=True)
         if is_sensitive(resolved, write=write):

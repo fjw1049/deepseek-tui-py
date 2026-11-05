@@ -829,6 +829,18 @@ async def sync_isolate_from_project(
     target_signatures = await asyncio.to_thread(
         _path_signatures, src, sorted(paths)
     )
+    moving_head = bool(proj_head and (iso_head != proj_head or branch))
+    if moving_head:
+        prefix = (await _git(dst, ["rev-parse", "--show-prefix"]) or "").rstrip("\n")
+        if prefix:
+            # Checkout acts on the entire copy, even when tools run in a subfolder.
+            outside = await _git(dst, [
+                "status", "--porcelain", "-z", "--untracked-files=all",
+                "--ignore-submodules=none", "--", ":(top)",
+                f":(top,exclude,literal){prefix.rstrip('/')}",
+            ])
+            if outside:
+                raise UnpublishedWorktreeError("worktree has changes outside the project subfolder")
     if before_mutation is not None:
         journal_baseline = baseline
         if journal_baseline is None:
@@ -851,8 +863,8 @@ async def sync_isolate_from_project(
                 "checkout_target_head": proj_head,
             },
         )
-    if proj_head and (iso_head != proj_head or branch):
-        await _git(dst, ["checkout", "--detach", "--force", proj_head])
+    if moving_head and proj_head:
+        await _git(dst, ["checkout", "--detach", "--force", "--no-overwrite-ignore", proj_head])
         if branch:
             await _delete_merged_internal_branch(src, dst, branch)
     await overlay_working_paths_async(

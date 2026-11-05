@@ -2601,23 +2601,15 @@ class RuntimeThreadManager:
         return removed
 
     async def _reclaim_owned_worktree(
-        self, thread: ThreadRecord, *, stop_processes: bool = False
+        self, thread: ThreadRecord
     ) -> str:
         async with self._hold_thread_operation(thread.id):
-            return await self._reclaim_owned_worktree_claimed(
-                thread, stop_processes=stop_processes
-            )
+            return await self._reclaim_owned_worktree_claimed(thread)
 
     async def _reclaim_owned_worktree_claimed(
-        self, thread: ThreadRecord, *, stop_processes: bool = False
+        self, thread: ThreadRecord
     ) -> str:
-        """Remove a clean owned copy. ``stop_processes`` is for explicit user
-        deletes: a clean copy held only by leftover dev servers or test
-        runners is freed instead of being reported as unpublished work."""
-        from deepseek_tui.workspace.managed_worktree import (
-            reclaim_managed_worktree,
-            terminate_processes_under,
-        )
+        from deepseek_tui.workspace.managed_worktree import reclaim_managed_worktree
 
         path = thread.worktree_path or thread.associated_worktree_path or ""
         if not path:
@@ -2634,11 +2626,6 @@ class RuntimeThreadManager:
                 status = await reclaim_managed_worktree(
                     root, Path(path), owned=bool(thread.worktree_owned)
                 )
-                if status == "occupied" and stop_processes:
-                    await terminate_processes_under(worktree)
-                    status = await reclaim_managed_worktree(
-                        root, Path(path), owned=bool(thread.worktree_owned)
-                    )
         except Exception:
             logger.debug(
                 "reclaim_worktree_failed thread=%s path=%s",
@@ -2654,10 +2641,7 @@ class RuntimeThreadManager:
 
     async def _discard_owned_worktree_claimed(self, thread: ThreadRecord) -> str:
         """Remove an owned worktree after explicit user authorization."""
-        from deepseek_tui.workspace.managed_worktree import (
-            remove_managed_worktree,
-            terminate_processes_under,
-        )
+        from deepseek_tui.workspace.managed_worktree import remove_managed_worktree
 
         path = thread.worktree_path or thread.associated_worktree_path or ""
         if not path:
@@ -2673,7 +2657,6 @@ class RuntimeThreadManager:
             return "gone"
         root = project_root(thread)
         async with self._hold_project_operation(root):
-            await terminate_processes_under(worktree)
             await remove_managed_worktree(root, worktree)
         self._clear_worktree_state(thread)
         self._touch(thread)
@@ -2706,12 +2689,10 @@ class RuntimeThreadManager:
             # Ensure the thread exists before eviction/cleanup.
             thread = self.store.load_thread(thread_id)
             await self._evict_active_thread(thread_id)
-            status = await self._reclaim_owned_worktree(
-                thread, stop_processes=True
-            )
+            status = await self._reclaim_owned_worktree(thread)
             if status == "occupied":
                 raise ValueError(
-                    "cannot delete thread while processes it started are still running"
+                    "cannot delete thread while a running process is using its worktree"
                 )
             if status == "kept":
                 if not discard_unpublished:
@@ -3121,15 +3102,13 @@ class RuntimeThreadManager:
             await self._evict_active_thread(thread_id)
         kept: list[str] = []
         for thread in list(self.store.list_threads()):
-            status = await self._reclaim_owned_worktree(
-                thread, stop_processes=True
-            )
+            status = await self._reclaim_owned_worktree(thread)
             if status in {"kept", "occupied"}:
                 kept.append(thread.id)
         if kept:
             raise ValueError(
                 "cannot clear conversation history while threads contain "
-                f"unpublished code: {', '.join(sorted(kept))}"
+                f"unpublished code or occupied worktrees: {', '.join(sorted(kept))}"
             )
         # Live sessions write state while closing; end them before their data is removed.
         for thread_id in list(self.browser_service.runs):

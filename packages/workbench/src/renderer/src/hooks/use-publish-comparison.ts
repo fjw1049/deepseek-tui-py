@@ -15,21 +15,22 @@ type ComparisonState = {
 export function usePublishComparison(
   threadId: string | null,
   refreshKey: string
-): { files: GitWorkingChangeFile[] | null; loading: boolean } {
-  const key = threadId ? `${threadId}\u0000${refreshKey}` : ''
+) {
+  const [attempt, setAttempt] = useState(0)
+  const retry = () => setAttempt((value) => value + 1)
+  const key = threadId ? `${threadId}\u0000${refreshKey}\u0000${attempt}` : ''
   const [state, setState] = useState<ComparisonState>({ key: '', files: null })
 
   useEffect(() => {
     if (!threadId) return
     const provider = getProvider(useChatStore.getState().providerId)
     if (typeof provider.getPublishComparison !== 'function') {
-      setState({ key, files: [] })
+      setState({ key, files: null })
       return
     }
     let cancelled = false
     void provider
       .getPublishComparison(threadId)
-      .catch(() => [])
       .then((files) => {
         if (cancelled) return
         setState({
@@ -42,13 +43,19 @@ export function usePublishComparison(
           }))
         })
       })
+      .catch(() => {
+        if (!cancelled) setState({ key, files: null })
+      })
     return () => {
       cancelled = true
     }
   }, [key, threadId])
 
-  if (!threadId) return { files: null, loading: false }
-  return state.key === key
-    ? { files: state.files, loading: false }
-    : { files: null, loading: true }
+  const current = Boolean(threadId) && state.key === key
+  return {
+    files: current ? state.files : null,
+    loading: Boolean(threadId) && !current,
+    failed: current && state.files === null,
+    retry
+  }
 }
