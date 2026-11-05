@@ -328,6 +328,25 @@ it('steers once while keeping the same live task', async () => {
   expect(pane.store.getState().blocks.some(b => b.kind === 'user' && b.text === 'next')).toBe(true)
 })
 
+it('stops and sends a queued message whose mode differs from the live turn instead of steering it', async () => {
+  provider.getThreadDetail.mockImplementation(async (id: string) => ({ ...snapshot(id), latestTurnId: 'turn-first' }))
+  provider.getThreadDetail.mockImplementationOnce(async (id: string) => ({ ...snapshot(id), threadStatus: 'idle', latestTurnId: null }))
+  provider.listThreads.mockResolvedValue([{ id: 'c', title: 'C' }])
+  provider.sendUserMessage.mockResolvedValueOnce({ turnId: 'turn-first' }).mockResolvedValueOnce({ turnId: 'turn-plan' })
+  const pane = session()
+  await pane.store.getState().selectThread('c')
+  await pane.store.getState().sendMessage('first', 'agent')
+  expect(pane.store.getState().currentTurnId).toBe('turn-first')
+  await pane.store.getState().sendMessage('plan this', 'plan')
+  const queued = pane.store.getState().queuedMessages[0]
+  expect(queued.mode).toBe('plan')
+  await pane.store.getState().sendQueuedMessageNow(queued.id)
+  await vi.advanceTimersByTimeAsync(500)
+  expect(provider.steerUserMessage).not.toHaveBeenCalled()
+  expect(provider.interruptTurn).toHaveBeenCalledWith('c', 'turn-first')
+  expect(provider.sendUserMessage).toHaveBeenLastCalledWith('c', 'plan this', expect.objectContaining({ mode: 'plan' }))
+})
+
 it('keeps queued messages stopped after a late completion event', async () => {
   provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }])
   const pane = session()

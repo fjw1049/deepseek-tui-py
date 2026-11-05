@@ -251,6 +251,14 @@ const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
 const stoppedQueues = new Set<string>()
 const sendingQueuedNow = new Set<string>()
+/** Mode and model each turn was sent with, so "send now" steers only a queued message that fits. */
+const turnSendSettings = new Map<string, { mode: string; model: string }>()
+function queuedFitsTurn(message: QueuedUserMessage, turnId: string): boolean {
+  const sent = turnSendSettings.get(turnId)
+  // A turn this view did not start (resumed after reload, automation) keeps the steer default.
+  if (!sent) return true
+  return (!message.mode || message.mode === sent.mode) && (!message.model || message.model === sent.model)
+}
 /** Keep the visible pause flag in step with the stopped-queue set. */
 function setQueuePaused(threadId: string, paused: boolean): void {
   if (paused) stoppedQueues.add(threadId)
@@ -2651,8 +2659,10 @@ const store = create<ChatState>((set, get) => ({
       const { busy, currentTurnId, blocks, providerId } = get()
       const provider = getProvider(providerId)
       const message = reordered[0]
-      if (currentTurnId && provider.steerUserMessage && !message.hidden) {
+      if (currentTurnId && provider.steerUserMessage && !message.hidden &&
+          queuedFitsTurn(message, currentTurnId)) {
         // Keep the live task and its browser/CUA session when adding instructions.
+        // A different mode or model cannot join the live turn: stop it and send as queued.
         await provider.steerUserMessage(threadId, currentTurnId, message.text)
         if (!disposed && get().activeThreadId === threadId) {
           set(s => ({
@@ -2971,6 +2981,7 @@ const store = create<ChatState>((set, get) => ({
         ...(overrides?.autoApprove !== undefined ? { autoApprove: overrides.autoApprove } : {}),
         ...(overrides?.trustMode !== undefined ? { trustMode: overrides.trustMode } : {})
       })
+      turnSendSettings.set(turnId, { mode: resolvedMode, model: composerModel })
       if (get().activeThreadId !== activeThreadId) {
         // The runtime accepted the message for the original task while the user
         // navigated elsewhere. Leave the newly active task's blocks/SSE alone.
