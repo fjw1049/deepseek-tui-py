@@ -1,16 +1,11 @@
-/** Some private gateways require direct access while public APIs need the system proxy. */
-export async function fetchEndpointProbe(
-  url: string,
-  init: RequestInit,
-  systemFetch: (url: string, init: RequestInit) => Promise<Response>,
-  directFetch: (url: string, init: RequestInit) => Promise<Response>
-): Promise<Response> {
+import type { NetworkSettings } from '../../shared/network-settings'
+
+/** Same rule as the runtime: direct mode and listed hosts skip the system proxy. */
+export function probeGoesDirect(url: string, network: NetworkSettings): boolean {
+  if (network.mode === 'direct') return true
   try {
-    const response = await systemFetch(url, { ...init, signal: AbortSignal.timeout(15_000) })
-    if (![502, 503, 504].includes(response.status)) return response
-    await response.body?.cancel()
+    return network.bypassHosts.includes(new URL(url).hostname)
   } catch {
-    // Retry the same endpoint once using the original Node network path.
+    return false // An invalid address is reported by the request itself.
   }
-  return directFetch(url, { ...init, signal: AbortSignal.timeout(15_000) })
 }

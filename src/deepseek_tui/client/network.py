@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import urllib.request
 from typing import Literal
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from deepseek_tui.config.paths import user_deepseek_dir
@@ -36,12 +38,32 @@ class NetworkSettings(BaseModel):
             result.append(host)
         return tuple(dict.fromkeys(result))
 
-    def http_options(self) -> dict:
+    def http_options(self, url: str = "") -> dict:
         # An explicit direct mount retains environment CA/certificate settings.
         hosts = {f"all://{host}": None for host in self.bypassHosts}
         if self.mode == "direct":
             return {"mounts": {"all://": None, "http://": None, "https://": None}}
+        host = _url_host(url)
+        if host and _system_bypasses(host):
+            # Following the system proxy includes its exception list, as the
+            # Workbench connection test (Electron) does.
+            hosts[f"all://{f'[{host}]' if ':' in host else host}"] = None
         return {"mounts": hosts}
+
+
+def _url_host(url: str) -> str:
+    try:
+        return httpx.URL(url).host if url else ""
+    except Exception:  # noqa: BLE001 — an invalid URL fails on the request itself
+        return ""
+
+
+def _system_bypasses(host: str) -> bool:
+    """Whether the OS proxy settings exempt ``host`` (macOS: "Bypass proxy settings for")."""
+    try:
+        return bool(urllib.request.proxy_bypass(host))
+    except Exception:  # noqa: BLE001 — unreadable OS settings mean no exemption
+        return False
 
 
 def read_network_settings() -> NetworkSettings:

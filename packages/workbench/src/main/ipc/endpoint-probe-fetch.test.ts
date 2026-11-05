@@ -1,21 +1,14 @@
-import { expect, it, vi } from 'vitest'
-import { fetchEndpointProbe } from './endpoint-probe-fetch'
+import { expect, it } from 'vitest'
+import { probeGoesDirect } from './endpoint-probe-fetch'
 
-it.each([200, 400, 401, 403, 429])('does not retry HTTP %s', async (status) => {
-  const response = new Response('', { status })
-  const system = vi.fn<typeof fetch>().mockResolvedValue(response)
-  const direct = vi.fn<typeof fetch>()
-  expect(await fetchEndpointProbe('https://example.test', {}, system, direct)).toBe(response)
-  expect(direct).not.toHaveBeenCalled()
-})
-
-it.each([502, 503, 504, 'network'])('falls back for %s without changing the request', async (failure) => {
-  const system = vi.fn<typeof fetch>()
-  if (typeof failure === 'number') system.mockResolvedValue(new Response('', { status: failure }))
-  else system.mockRejectedValue(new TypeError('fetch failed'))
-  const response = new Response('{}')
-  const direct = vi.fn<typeof fetch>().mockResolvedValue(response)
-  const init = { method: 'POST', headers: { Authorization: 'Bearer test-only' }, body: '{}' }
-  expect(await fetchEndpointProbe('https://example.test', init, system, direct)).toBe(response)
-  expect(direct).toHaveBeenCalledExactlyOnceWith('https://example.test', expect.objectContaining(init))
+it('routes like the runtime: listed hosts and direct mode connect directly', () => {
+  const system = { mode: 'system' as const, bypassHosts: ['gw.internal.example', '10.1.2.3', '[::1]'] }
+  expect(probeGoesDirect('https://gw.internal.example:8443/v1/chat/completions', system)).toBe(true)
+  expect(probeGoesDirect('http://10.1.2.3/v1/messages', system)).toBe(true)
+  expect(probeGoesDirect('http://[::1]:8080/v1/chat/completions', system)).toBe(true)
+  expect(probeGoesDirect('https://GW.Internal.Example/v1', system)).toBe(true)
+  // Exact hosts only, as in the runtime: subdomains and other hosts follow the system proxy.
+  expect(probeGoesDirect('https://api.gw.internal.example/v1', system)).toBe(false)
+  expect(probeGoesDirect('https://api.openai.com/v1/chat/completions', system)).toBe(false)
+  expect(probeGoesDirect('https://api.openai.com/v1', { mode: 'direct', bypassHosts: [] })).toBe(true)
 })

@@ -1,4 +1,5 @@
-import { fetchEndpointProbe } from './endpoint-probe-fetch'
+import { probeGoesDirect } from './endpoint-probe-fetch'
+import { readNetworkSettings } from '../network-settings'
 import { redactRuntimeCommand } from '../../shared/redact-runtime-command'
 import { dialog, ipcMain, net, session, shell, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
@@ -1191,13 +1192,17 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
           'Content-Type': 'application/json'
         }
 
+    // Route exactly as the runtime will: no silent fallback to another network path.
+    const direct = probeGoesDirect(url, await readNetworkSettings())
+    const route = direct ? '直连' : '系统代理'
     const postProbe = async (): Promise<Response> => {
       const body = buildEndpointProbeBody(protocol, model)
-      return fetchEndpointProbe(url, {
+      return (direct ? fetch : net.fetch.bind(net))(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(body)
-      }, net.fetch.bind(net), fetch)
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000)
+      })
     }
 
     const evaluateOkResponse = async (resp: Response) => {
@@ -1232,9 +1237,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       const latencyMs = Date.now() - start
       const msg = error instanceof Error ? error.message : String(error)
       if (/abort|timeout/i.test(msg)) {
-        return { ok: false, model, latencyMs, message: '连接超时（已尝试系统网络与直连）' }
+        return { ok: false, model, latencyMs, message: `连接超时（15 秒，${route}）` }
       }
-      return { ok: false, model, latencyMs, message: `连接失败: ${msg.slice(0, 100)}` }
+      return { ok: false, model, latencyMs, message: `连接失败（${route}）: ${msg.slice(0, 100)}` }
     }
   })
 

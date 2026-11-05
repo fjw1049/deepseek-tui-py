@@ -184,7 +184,11 @@ async def test_endpoint(
 
     start = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        from deepseek_tui.client.network import read_network_settings
+
+        # Same routing as model requests: bypass hosts and direct mode skip the proxy.
+        network = read_network_settings().http_options(url)
+        async with httpx.AsyncClient(timeout=timeout, **network) as client:
             resp = await client.post(url, json=payload, headers=headers)
             from deepseek_tui.client.token_compat import adapt_completion_tokens
 

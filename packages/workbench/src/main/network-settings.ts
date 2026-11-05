@@ -1,4 +1,4 @@
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { normalizeNetworkSettings, type NetworkSettings } from '../shared/network-settings'
@@ -13,5 +13,15 @@ export async function writeNetworkSettings(settings?: NetworkSettings): Promise<
     await rename(temporary, join(home, 'network.json'))
   } finally {
     await rm(temporary, { force: true })
+  }
+}
+
+/** The routing the runtime reads for model requests (client/network.py). */
+export async function readNetworkSettings(): Promise<NetworkSettings> {
+  try {
+    const raw = await readFile(join(resolveUserDeepseekDir(), 'network.json'), 'utf8')
+    return normalizeNetworkSettings(JSON.parse(raw) as NetworkSettings)
+  } catch {
+    return normalizeNetworkSettings()
   }
 }

@@ -73,7 +73,9 @@ class LLMClient(ABC):
         self.transport = transport
         self.extra_headers = dict(extra_headers or {})
         self._http_client: httpx.AsyncClient | None = None
-        self._network_clients: dict[NetworkSettings, httpx.AsyncClient] = {}
+        self._network_clients: dict[
+            tuple[NetworkSettings, frozenset[str]], httpx.AsyncClient
+        ] = {}
         self.media_config = None
         self._vision_cache: dict[str, str] = {}
 
@@ -97,7 +99,9 @@ class LLMClient(ABC):
         stalls still surface promptly.
         """
         network = read_network_settings()
-        self._http_client = self._network_clients.get(network)
+        options = network.http_options(self.base_url)
+        key = (network, frozenset(options["mounts"]))
+        self._http_client = self._network_clients.get(key)
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(
@@ -107,10 +111,10 @@ class LLMClient(ABC):
                     pool=self.timeout_seconds,
                 ),
                 transport=self.transport,
-                **network.http_options(),
+                **options,
             )
             # Keep previous clients alive until close so in-flight streams finish.
-            self._network_clients[network] = self._http_client
+            self._network_clients[key] = self._http_client
         return self._http_client
 
     async def close(self) -> None:

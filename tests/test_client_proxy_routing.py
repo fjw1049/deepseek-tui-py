@@ -30,3 +30,32 @@ async def test_devpilot_bypasses_system_proxy_only_for_exact_host(monkeypatch, u
         assert (transport is http_client._transport) is direct
     finally:
         await client.close()
+
+
+@pytest.mark.parametrize(
+    ("url", "direct"),
+    [
+        ("http://10.1.2.3:8000/v1/messages", True),
+        ("https://api.anthropic.com/v1/messages", False),
+    ],
+)
+async def test_system_mode_follows_os_proxy_exceptions(monkeypatch, url, direct):
+    monkeypatch.setattr(
+        "httpx._client.get_environment_proxies",
+        lambda: {"http://": "http://127.0.0.1:7890", "https://": "http://127.0.0.1:7890"},
+    )
+    # As if System Settings → Proxies → "Bypass proxy settings for" lists 10.*.
+    monkeypatch.setattr(
+        "deepseek_tui.client.network.urllib.request.proxy_bypass",
+        lambda host: host.startswith("10."),
+    )
+    monkeypatch.setattr(
+        "deepseek_tui.client.base.read_network_settings", lambda: NetworkSettings()
+    )
+    client = AnthropicCompatClient(api_key="test", base_url=url)
+    try:
+        http_client = client._get_http_client()
+        transport = http_client._transport_for_url(httpx.URL(url))
+        assert (transport is http_client._transport) is direct
+    finally:
+        await client.close()
