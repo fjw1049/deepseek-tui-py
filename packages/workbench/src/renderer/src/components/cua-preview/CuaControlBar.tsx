@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { ConfirmDialog } from '../workspace-editor/ConfirmDialog'
+import { Square } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { noteCuaControl, noteCuaTurnEnded, restoreCuaPreview, useCuaPreviewStore } from '../../store/cua-preview-store'
 
@@ -47,13 +50,14 @@ function refusal(body: string): string | null {
 }
 
 /** Control truth comes from the host, never from the preview's visibility. */
-export function CuaControlBar({ threadId, compact = false, onReviewPending }: {
-  threadId: string; compact?: boolean
+export function CuaControlBar({ threadId, compact = false, stopTarget, onReviewPending }: {
+  threadId: string; compact?: boolean; stopTarget?: HTMLElement | null
   /** Whether an uncertain outcome still waits for the user's review. */
   onReviewPending?: (pending: boolean) => void
 }): React.JSX.Element | null {
   const { t } = useTranslation('common')
   const [state, setState] = useState<CuaControlState | null>(null)
+  const [confirmStopTurn, setConfirmStopTurn] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [fresh, setFresh] = useState(false)
   const [pending, setPending] = useState<string | null>(null)
@@ -171,7 +175,20 @@ export function CuaControlBar({ threadId, compact = false, onReviewPending }: {
             : state?.waiting ? 'cuaControlWaiting'
               : state?.paused ? 'cuaControlPaused' : state?.active ? 'cuaControlAgent' : 'cuaPreviewEnded'
   const returning = state?.owner === 'user' || (!!state?.paused && !state?.unresolved) || (!state?.active && !!state?.unresolved)
-  return <div className="border-t border-ds-border px-3 py-2 text-xs" onPointerDown={event => event.stopPropagation()}>
+  const inline = stopTarget !== undefined
+  const stop = <button type="button" hidden={!state.active} disabled={pending === 'stopped'}
+    aria-label={t('cuaControlStop')} title={t('cuaControlStop')}
+    className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ds-muted hover:bg-ds-hover disabled:opacity-40 focus-visible:outline focus-visible:outline-2"
+    onClick={() => setConfirmStopTurn(state.turn_id)}><Square className="h-3 w-3 fill-current" strokeWidth={0} aria-hidden /></button>
+  const needsAttention = returning || state.unresolved || state.waiting || state.awaiting_permission || state.transferring || error || !fresh
+  return <>
+    {confirmStopTurn && state.active && state.turn_id === confirmStopTurn && <ConfirmDialog
+      title={t('cuaControlStopConfirmTitle')} body={t('cuaControlStopConfirmBody')}
+      confirmLabel={t('cuaControlStopConfirm')} cancelLabel={t('cancel')}
+      onCancel={() => setConfirmStopTurn(null)}
+      onConfirm={() => { setConfirmStopTurn(null); void transfer('stopped') }} />}
+    {inline && stopTarget && createPortal(stop, stopTarget)}
+    {(!inline || needsAttention) && <div className="border-t border-ds-border px-3 py-2 text-xs" onPointerDown={event => event.stopPropagation()}>
     {(!compact || status !== 'cuaControlAgent') && <p role="status" className="text-ds-ink">{t(status)}</p>}
     {state?.human_reason && compact ? <p className="mt-1 max-h-24 overflow-y-auto text-ds-ink">{state.human_reason}</p> : state?.human_reason ? <details className="mt-1 text-ds-muted"><summary className="cursor-pointer">{t('cuaControlHelpDetails')}</summary><p className="mt-1 max-h-24 overflow-y-auto">{state.human_reason}</p></details> : null}
     {state?.unresolved ? <p className="mt-1 text-ds-danger">{t('cuaControlUnknownHint')}</p> : null}
@@ -182,8 +199,9 @@ export function CuaControlBar({ threadId, compact = false, onReviewPending }: {
         onClick={() => void transfer(returning ? 'assistant' : 'user')}>
         {t(state.unresolved && returning ? 'cuaControlReviewed' : returning ? 'cuaControlContinue' : 'cuaControlTakeover')}
       </button>
-      <button type="button" hidden={!state.active} disabled={pending === 'stopped'} className="ml-auto rounded-full border border-ds-border bg-white dark:bg-ds-card px-3 py-1 text-ds-ink hover:bg-ds-hover disabled:opacity-40"
-        onClick={() => void transfer('stopped')}>{t('cuaControlStop')}</button>
+      {!inline && <button type="button" hidden={!state.active} disabled={pending === 'stopped'} className="ml-auto rounded-full border border-ds-border bg-white dark:bg-ds-card px-3 py-1 text-ds-ink hover:bg-ds-hover disabled:opacity-40"
+        onClick={() => setConfirmStopTurn(state.turn_id)}>{t('cuaControlStop')}</button>}
     </div> : null}
-  </div>
+  </div>}
+  </>
 }

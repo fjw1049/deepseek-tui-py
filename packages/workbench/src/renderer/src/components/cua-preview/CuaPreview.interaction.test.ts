@@ -22,7 +22,7 @@ let host: HTMLDivElement
 let request: ReturnType<typeof vi.fn>
 let session: CuaPreviewSession
 const resizeObservers = new Set<() => void>()
-const find = (text: string) => [...document.querySelectorAll('button')].find(button => button.textContent === text)!
+const find = (text: string) => [...document.querySelectorAll('button')].find(button => button.textContent === text || button.getAttribute('aria-label') === text)!
 const expand = () => act(async () => { (document.querySelector('[aria-expanded="false"]') as HTMLElement).click() })
 const collapse = () => act(async () => { (document.querySelector('[aria-label="cuaPreviewCollapse"]') as HTMLElement).click() })
 
@@ -62,19 +62,26 @@ it('waits for a frame while capturing and keeps controls after a manual collapse
   expect(document.querySelector('[title="Fill shipping address"]')).not.toBeNull()
   expect(document.body.textContent).not.toContain('cuaPreviewPermission')
   expect(document.body.textContent).not.toContain('cuaControlAgent')
-  const takeover = find('cuaControlTakeover')
-  expect(takeover).toBeTruthy()
+  const stop = find('cuaControlStop')
+  expect(stop).toBeTruthy()
+  expect(find('cuaControlTakeover')).toBeUndefined()
   await expand()
   expect(capture.enabled).toBe(true)
-  expect(document.body.textContent).toContain('Fill shipping address')
+  expect(document.body.textContent).not.toContain('Fill shipping address')
   expect(document.body.textContent).toContain('cuaPreviewPermission')
   await collapse()
   expect(capture.enabled).toBe(false)
-  expect(find('cuaControlTakeover')).toBe(takeover)
+  expect(find('cuaControlStop')).toBeTruthy()
   expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0)
-  await act(async () => { takeover.click() })
-  expect(document.body.textContent).toContain('cuaControlHuman')
-  expect(find('cuaControlContinue')).toBeTruthy()
+  await act(async () => { find('cuaControlStop').click() })
+  expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+  expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0)
+  await act(async () => { find('cancel').click() })
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+  expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0)
+  await act(async () => { find('cuaControlStop').click() })
+  await act(async () => { find('cuaControlStopConfirm').click() })
+  expect(JSON.parse(request.mock.calls.find(call => call[1] === 'POST')![2])).toMatchObject({ owner: 'stopped', turn_id: 'turn' })
 })
 
 it('opens the bound app without transferring desktop control and reports launch failures', async () => {
@@ -105,10 +112,10 @@ it('opens the bound app without transferring desktop control and reports launch 
 
 it('keeps viewing and controls stable across targets, and preserves the ended viewer until closed', async () => {
   await expand()
-  const takeover = find('cuaControlTakeover')
+  expect(find('cuaControlStop')).toBeTruthy()
   await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, appId: 'B' } } }))
   expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
-  expect(find('cuaControlTakeover')).toBe(takeover)
+  expect(find('cuaControlStop')).toBeTruthy()
   await act(async () => noteCuaTurnEnded('thread'))
   expect(capture.enabled).toBe(false)
   expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
@@ -139,7 +146,7 @@ it('keeps controls available when preview is disabled', async () => {
   await expand()
   expect(capture.enabled).toBe(false)
   expect(document.body.textContent).toContain('cuaPreviewDisabled')
-  expect(find('cuaControlTakeover')).toBeTruthy()
+  expect(find('cuaControlStop')).toBeTruthy()
   await collapse()
   expect(find('cuaControlStop')).toBeTruthy()
 })
@@ -349,7 +356,7 @@ it.each(['lookup-failed', 'no-window', 'failed'])('keeps fallback screenshots qu
   capture.status = status
   capture.stillReady = true
   await act(async () => useCuaPreviewStore.setState({ sessions: { thread: { ...session, revision: 1 } } }))
-  expect(document.body.textContent).toContain('cuaPreviewLastFrame')
+  expect(document.body.textContent).not.toContain('cuaPreviewLastFrame')
   expect(document.body.textContent).not.toContain('cuaPreviewStillFallback')
   expect(document.body.textContent).not.toContain('cuaPreviewLookupFailed')
   expect(document.body.textContent).not.toContain('cuaPreviewNoWindow')
@@ -396,14 +403,15 @@ it('keeps the same card and canvas when the sidebar changes where it lives', asy
     await act(async () => root.render(createElement('div', null,
       createElement(CuaPreviewRailSlot), createElement(CuaPreview, { threadId: 'thread' }))))
     const card = document.querySelector('[data-cua-preview]')!
-    const takeover = find('cuaControlTakeover')
+    const stop = find('cuaControlStop')
     expect(card.closest('.ds-cua-preview-slot')).not.toBeNull()
     width.mockReturnValue(36)
     await act(async () => { window.dispatchEvent(new Event('resize')); resizeObservers.forEach(run => run()) })
     expect(document.querySelector('[data-cua-preview]')).toBe(card)
     expect(card.closest('.ds-cua-preview-slot')).toBeNull()
-    expect(find('cuaControlTakeover')).toBe(takeover)
-    await act(async () => { takeover.click() })
+    expect(find('cuaControlStop')).toBe(stop)
+    await act(async () => { find('cuaControlStop').click() })
+  await act(async () => { find('cuaControlStopConfirm').click() })
     expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1)
   } finally {
     Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent')

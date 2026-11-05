@@ -193,6 +193,7 @@ it('lets Stop overtake a transfer that is still running, without reporting the t
   await click('cuaControlTakeover')
   expect(host.textContent).toContain('cuaControlTransferring')
   await click('cuaControlStop')
+  await act(async () => { ([...document.querySelectorAll('button')].find(button => button.textContent === 'cuaControlStopConfirm') as HTMLButtonElement).click() })
   expect(posted).toEqual(['user', 'stopped'])
   state = { ...state, active: false }
   await act(async () => {

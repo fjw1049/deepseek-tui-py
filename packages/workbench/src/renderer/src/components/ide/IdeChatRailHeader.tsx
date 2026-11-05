@@ -264,7 +264,7 @@ export function IdeChatRailHeader({
                             if (!active) void selectThread(thread.id)
                           }}
                         >
-                          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">
+                          <span className="min-w-0 flex-1 truncate text-[12.5px] font-normal">
                             {thread.title}
                           </span>
                           <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">

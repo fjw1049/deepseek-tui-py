@@ -118,6 +118,7 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
   const [permissionFor, setPermissionFor] = useState<string | null>(null)
   // An ended card may close once nothing on it still needs the user's review. Null until
   // the host answers for this thread: not closable yet, but nothing to alarm about either.
+  const [stopTarget, setStopTarget] = useState<HTMLSpanElement | null>(null)
   const [reviewState, setReviewPending] = useState<boolean | null>(null)
   const reviewPending = reviewState === true
   const reviewOpen = reviewState !== false
@@ -184,12 +185,12 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     }`}>
     <div ref={contentRef} className="max-h-[calc(100vh-7rem)] overflow-y-auto">
     <CuaPreviewSessionView key={`${threadId}:${session.turnId ?? ''}:${session.surface ?? ''}:${session.appId ?? ''}`}
-      threadId={threadId} session={session} expanded={expanded} allowed={allowed}
+      setStopTarget={setStopTarget} threadId={threadId} session={session} expanded={expanded} allowed={allowed}
       autoPreview={collapsedFor !== permissionKey} onFrameReady={onFrameReady} reviewPending={reviewPending}
       onExpand={() => { setAnimate(true); setExpandedFor(permissionKey) }} onCollapse={() => { setAnimate(true); collapse() }}
       onPermissionRequired={requestPermission} onOpenPermissions={() => setPermissionFor(permissionKey)}
       onDismiss={session.phase === 'ended' && !reviewOpen ? () => dismissEndedCuaPreview(threadId) : undefined} />
-    <CuaControlBar key={threadId} threadId={threadId} compact onReviewPending={setReviewPending} />
+    <CuaControlBar key={threadId} threadId={threadId} compact stopTarget={stopTarget} onReviewPending={setReviewPending} />
     </div>
   </section>
   // The fallback belongs to the conversation layout, never to the whole window.
@@ -211,7 +212,8 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
   </>
 }
 
-function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady, reviewPending }: {
+function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, allowed, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady, reviewPending }: {
+  setStopTarget: (element: HTMLSpanElement | null) => void
   autoPreview: boolean; onFrameReady: () => void; reviewPending: boolean; allowed: boolean | null
   expanded: boolean; onExpand: () => void; onCollapse: () => void; onDismiss?: () => void
   threadId: string; session: CuaPreviewSession; onPermissionRequired: () => void; onOpenPermissions: () => void
@@ -301,8 +303,7 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
     : session.control === 'user' ? t('cuaControlHuman')
       : session.control === 'paused' ? t('cuaControlPaused')
         : t('cuaPreviewWorking', { app: appName })
-  // The step the assistant named is what the person is watching for. The control bar
-  // right below says who holds the desktop, so the card does not say it a second time.
+  // Keep the step as context only when the preview is collapsed.
   const step = phase !== 'ended' ? session.label : null
   const attachCanvas = (element: HTMLDivElement | null): void => {
     if (element && canvas.parentElement !== element) element.prepend(canvas)
@@ -314,25 +315,20 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
   const placeholder = <Monitor className="h-5 w-5 text-ds-muted" aria-hidden />
 
   return <>
-    {expanded ? <div className="flex min-h-12 items-center gap-2 px-3 py-2 text-xs">
+    {expanded ? <div className="flex h-9 items-center gap-1 px-2 text-xs">
       {session.surface === 'app' && session.appId && window.dsGui.platform === 'darwin' && <button
         type="button" onClick={() => void openApp()} disabled={openingApp}
         aria-label={t('cuaPreviewOpenApp')} title={t('cuaPreviewOpenApp')}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 disabled:opacity-40 focus-visible:outline focus-visible:outline-2">
-        <Monitor className="h-5 w-5 fill-emerald-500/15" strokeWidth={2.25} aria-hidden />
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ds-muted hover:bg-ds-hover disabled:opacity-40 focus-visible:outline focus-visible:outline-2">
+        <Monitor className="h-4 w-4" strokeWidth={1.75} aria-hidden />
       </button>}
-      <div className="min-w-0 flex-1">
-        {hasFrame && !step && !openAppFailed && <span className="block truncate font-medium">{live.hasFrame && streaming && live.status === 'ok'
-          ? t('cuaPreviewLive') : t('cuaPreviewLastFrame')}</span>}
+      <div className="min-w-0 flex-1 text-right">
         {openAppFailed && <span role="status" aria-label={t('cuaPreviewOpenAppFailed')}
           title={t('cuaPreviewOpenAppFailed')} className="flex min-w-0 items-center gap-1 text-ds-muted">
           <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="truncate">{t('cuaPreviewOpenAppFailedShort')}</span>
         </span>}
-        {!openAppFailed && step && <span title={step} className="block truncate text-ds-muted">{step}</span>}
       </div>
-      {hasFrame && step && <span className="shrink-0 text-ds-muted">{live.hasFrame && streaming && live.status === 'ok'
-        ? t('cuaPreviewLive') : t('cuaPreviewLastFrame')}</span>}
       {phase === 'ended' && <span role="status" title={status} className="flex min-w-0 items-center gap-1.5 text-ds-muted">
         {outcomeIcon}<span className="truncate">{status}</span>
       </span>}
@@ -340,6 +336,7 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
         className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ds-muted hover:bg-ds-hover focus-visible:outline focus-visible:outline-2">
         <ChevronDown className="h-4 w-4" aria-hidden />
       </button>
+      <span ref={setStopTarget} className="flex shrink-0 items-center" />
     </div> : null}
     {expanded ? <>
       {shown && hasFrame && <div ref={attachCanvas} className="relative max-h-[45vh] w-full bg-ds-subtle"
@@ -369,6 +366,7 @@ function CuaPreviewSessionView({ threadId, session, expanded, allowed, onExpand,
         <span title={step ?? status} className="min-w-0 truncate text-xs leading-relaxed">{step ?? status}</span>
         <Eye className="ml-auto h-4 w-4 shrink-0 text-ds-muted" aria-hidden />
       </button>
+      <span ref={setStopTarget} className="flex shrink-0 items-center" />
       {onDismiss ? <button type="button" onClick={onDismiss} aria-label={t('cuaPreviewDismiss')} title={t('cuaPreviewDismiss')}
         className="mr-2 grid h-7 w-7 shrink-0 place-items-center rounded-md text-ds-muted hover:bg-ds-hover focus-visible:outline focus-visible:outline-2">
         <X className="h-4 w-4" aria-hidden />
