@@ -924,7 +924,7 @@
   "composerReasoningWarning": "消耗更快",
   "composerReasoningAria": "推理强度",
   "composerReasoningDesc": "向左更快，向右更强。",
-  "composerConfigureModels": "配置自定义模型",
+  "composerConfigureModels": "自定义配置",
   "composerNoMatchingModels": "没有匹配的模型。",
   "composerModelSettingsAria": "模型设置",
   "composerVoiceInput": "语音输入",

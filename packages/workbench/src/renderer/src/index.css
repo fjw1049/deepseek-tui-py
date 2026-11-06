@@ -1710,6 +1710,10 @@ samp {
   background-color: var(--ds-bg-canvas) !important;
 }
 
+:root {
+  --composer-menu-selected: color-mix(in srgb, var(--ds-text) 7%, transparent);
+}
+
 /* Apple menu chrome — shared by project menus and settings selects. */
 .ds-project-context-menu {
   font-family: var(--font-ui);
@@ -1933,6 +1937,52 @@ samp {
 [data-theme='dark'] .ds-project-context-menu__row--highlight:not(:disabled),
 [data-theme='dark'] .ds-combobox-row--highlight {
   background: rgba(255, 255, 255, 0.07);
+}
+
+/* Composer menus follow the context usage panel. */
+.ds-project-context-menu.ds-composer-picker {
+  background: var(--ds-surface-elevated);
+  border: 1px solid var(--ds-border-muted);
+  border-radius: 12px;
+  box-shadow: var(--ds-shadow-panel);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ds-composer-picker .ds-project-context-menu__search,
+.ds-composer-picker .ds-project-context-menu__row {
+  gap: 6px;
+}
+
+.ds-composer-picker .ds-project-context-menu__row {
+  min-height: 32px;
+  padding-block: 6px;
+}
+
+.ds-composer-picker .ds-project-context-menu__icon {
+  background: transparent;
+  box-shadow: none;
+  height: 20px;
+  width: auto;
+}
+
+.ds-composer-picker .ds-project-context-menu__row-title,
+.ds-composer-picker .ds-project-context-menu__search-input {
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.5;
+  color: var(--ds-text);
+}
+
+.ds-composer-picker .ds-project-context-menu__row-path {
+  color: var(--ds-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: normal;
+}
+
+.ds-composer-picker .ds-project-context-menu__row--active:not(:disabled) {
+  background: var(--composer-menu-selected);
 }
 
 /* BeUI-like morph: panel grows out of the trigger, spring settle. */
@@ -2256,10 +2306,6 @@ samp {
 .ds-composer-input::placeholder {
   font-family: var(--font-ui);
   letter-spacing: -0.011em;
-}
-
-.ds-composer-approval-description {
-  font-size: 12px;
 }
 
 .ds-composer-model-label {
@@ -12394,7 +12440,7 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-chat-rail-modal .text-\[13px\] 
 .ds-ide-chat-rail .ds-markdown code,
 body:has(.ds-workbench-shell[data-ide-mode]) :is(.ds-subagent-dialog, .ds-code-fullscreen, .ds-chat-rail-modal) [class*="text-["],
 body:has(.ds-workbench-shell[data-ide-mode]) :is(.ds-subagent-dialog, .ds-code-fullscreen) :is(code, .ds-code-block-language),
-body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input, button, [class*="ds-project-context-menu__"]) {
+body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu:not(.ds-composer-picker) :is(input, button, [class*="ds-project-context-menu__"]) {
   font-size: 13px;
 }
 

@@ -50,7 +50,7 @@ export function ComposerPlusMenu({ groups, onClose }: {
     <div
       role="dialog"
       aria-label={t('composerPlusMenu')}
-      className="ds-composer-plus-menu ds-morph-pop absolute inset-x-0 bottom-full z-40 mb-2 flex max-h-[min(400px,50vh)] flex-col overflow-hidden rounded-[20px] border border-ds-border bg-ds-card shadow-[0_8px_28px_rgba(0,0,0,0.10)]"
+      className="ds-composer-plus-menu ds-morph-pop absolute inset-x-0 bottom-full z-40 mb-2 flex max-h-[min(400px,50vh)] flex-col overflow-hidden rounded-[12px] border border-ds-border-muted text-[13px] leading-[1.5] shadow-panel"
       onKeyDown={event => {
         if (event.key === 'Escape') {
           event.preventDefault()
@@ -59,7 +59,7 @@ export function ComposerPlusMenu({ groups, onClose }: {
         }
       }}
     >
-      <div className="flex shrink-0 items-center gap-3 border-b border-ds-border-muted px-4 py-2.5">
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-ds-border-muted px-4 py-2.5">
         <Search className="h-[18px] w-[18px] shrink-0 text-ds-faint" strokeWidth={1.7} />
         <input
           ref={searchRef}
@@ -76,13 +76,13 @@ export function ComposerPlusMenu({ groups, onClose }: {
             if (event.nativeEvent.isComposing) return
             nav.onKeyDown(event, index => { if (selectable[index]) choose(selectable[index]) })
           }}
-          className="ds-composer-plus-menu__search min-w-0 flex-1 bg-transparent text-[14px] text-ds-ink outline-none placeholder:text-ds-faint"
+          className="ds-composer-plus-menu__search min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink outline-none placeholder:text-ds-faint"
         />
       </div>
       <div ref={listRef} id={`${id}-list`} role="listbox" aria-label={t('composerPlusMenu')} className="ds-scroll-surface min-h-0 overflow-y-auto p-1.5">
         {visible.map(group => (!needle || group.items.length > 0) && (
-          <div key={group.id} role="group" aria-labelledby={`${id}-${group.id}-heading`} className="mb-0.5">
-            <div id={`${id}-${group.id}-heading`} className="ds-composer-plus-menu__heading flex items-center gap-2 px-3 pb-1 pt-1.5">
+          <div key={group.id} role="group" aria-labelledby={`${id}-${group.id}-heading`} className="mb-2 last:mb-0">
+            <div id={`${id}-${group.id}-heading`} className="ds-composer-plus-menu__heading flex items-center gap-1.5 px-3 pb-1 pt-1.5">
               {group.label}
               {group.loading && <Loader2 className="h-3 w-3 animate-spin" aria-label={t('loading')} />}
             </div>
@@ -99,11 +99,11 @@ export function ComposerPlusMenu({ groups, onClose }: {
                 onMouseDown={event => event.preventDefault()}
                 onMouseEnter={() => { if (!item.disabled) nav.setHighlighted(selectable.indexOf(item)) }}
                 onClick={() => choose(item)}
-                className={`ds-composer-plus-menu__row flex h-7 w-full items-center gap-2.5 rounded-xl px-3 py-1 text-left text-[13px] transition-colors ${item.disabled ? 'text-ds-faint opacity-50' : active?.id === item.id ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted hover:bg-ds-hover'}`}
+                className={`ds-composer-plus-menu__row flex h-8 w-full items-center gap-1.5 rounded-xl px-3 py-1 text-left text-[13px] transition-colors ${item.disabled ? 'text-ds-faint opacity-50' : active?.id === item.id ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted hover:bg-ds-hover'}`}
               >
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center">{item.icon}</span>
-                <span className="ds-composer-plus-menu__label ds-sidebar-title-fade max-w-[65%] shrink-0 overflow-hidden whitespace-nowrap pr-6 -mr-6 font-medium">{item.label}</span>
-                <span className="ds-composer-plus-menu__description ds-sidebar-title-fade ml-1 min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[12px]">{item.description}</span>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-end">{item.icon}</span>
+                <span className="ds-composer-plus-menu__label max-w-[65%] shrink-0 truncate font-normal">{item.label}</span>
+                <span className="ds-composer-plus-menu__description min-w-0 flex-1 truncate text-[12px]">{item.description}</span>
                 {item.selected && <Check className="h-4 w-4 shrink-0 text-ds-muted" aria-label={t('slashCommandCurrent')} />}
               </button>
             ))}

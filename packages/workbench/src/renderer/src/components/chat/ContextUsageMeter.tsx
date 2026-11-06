@@ -278,7 +278,7 @@ export function ContextUsageMeter({
 
             <ul className="mt-3">
               {rows.map((row) => (
-                <li key={row.key} className="grid min-h-8 grid-cols-[10px_minmax(0,1fr)_auto_4em] items-center gap-x-2.5">
+                <li key={row.key} className="grid min-h-8 grid-cols-[10px_minmax(0,1fr)_auto_4em] items-center gap-x-1.5">
                   <span
                     aria-hidden="true"
                     className="h-2.5 w-2.5 shrink-0 rounded-[3px]"

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { EnvironmentPicker } from './EnvironmentPicker'
 import { GitBranchPicker } from './GitBranchPicker'
 import { ProjectContextPicker } from './ProjectContextPicker'
@@ -10,12 +10,13 @@ import {
 
 type Props = {
   workspaceRoot: string
+  children?: ReactNode
   /** `tray` tucks under the composer card (home + conversation). `embedded` is IDE compact only. */
   variant?: 'tray' | 'embedded'
 }
 
 /** Project / env / branch row under the composer. */
-export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props): ReactElement {
+export function WorkspaceContextBar({ workspaceRoot, variant = 'tray', children }: Props): ReactElement {
   const barRef = useRef<HTMLDivElement>(null)
   const [barWidth, setBarWidth] = useState<number | null>(null)
   const [branchState, setBranchState] = useState<{
@@ -129,6 +130,7 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
           </div>
         </>
       ) : null}
+      {children && <div className="ml-auto shrink-0">{children}</div>}
     </div>
   )
 }

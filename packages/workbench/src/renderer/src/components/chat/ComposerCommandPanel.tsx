@@ -281,7 +281,7 @@ function McpPanel({ runtimeReady }: { runtimeReady: boolean }): ReactElement {
     <div className="space-y-3">
       {servers.map((server) => (
         <button key={server.id} type="button" onClick={() => void toggle(server.id, !server.enabled)} className="flex w-full items-center justify-between rounded-xl bg-ds-subtle px-3 py-3 text-left">
-          <span className="min-w-0"><span className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><Plug className="h-4 w-4" />{server.id}</span><span className="mt-1 block truncate font-mono text-[10px] text-ds-faint">{server.summary}</span></span>
+          <span className="min-w-0"><span className="flex items-center gap-1.5 text-[13px] font-medium text-ds-ink"><Plug className="h-4 w-4" />{server.id}</span><span className="mt-1 block truncate font-mono text-[10px] text-ds-faint">{server.summary}</span></span>
           <span className={server.enabled ? 'text-emerald-600' : 'text-ds-faint'}>{server.enabled ? 'On' : 'Off'}</span>
         </button>
       ))}
@@ -328,7 +328,7 @@ function SkillsPanel({
           onClick={() => pick(skill.name)}
           className="block w-full rounded-xl bg-ds-subtle px-3 py-2.5 text-left transition hover:bg-ds-hover"
         >
-          <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><Package className="h-4 w-4" />{skill.name}</div>
+          <div className="flex items-center gap-1.5 text-[13px] font-medium text-ds-ink"><Package className="h-4 w-4" />{skill.name}</div>
           {skill.description ? <div className="mt-1 text-[11px] text-ds-faint">{skill.description}</div> : null}
         </button>
       ))}
@@ -346,7 +346,7 @@ function DiffPanel({ blocks, onOpenDiff }: { blocks: ChatBlock[]; onOpenDiff: ()
     <div className="space-y-3">
       {changes.map((change) => (
         <div key={change.id} className="flex items-center justify-between rounded-xl bg-ds-subtle px-3 py-2.5">
-          <span className="flex min-w-0 items-center gap-2 truncate text-[12px] text-ds-ink">
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-[12px] text-ds-ink">
             {change.path ? (
               <FileChip path={change.path} variant="list" skipValidation />
             ) : (
@@ -369,7 +369,7 @@ function ForkPanel({ activeThread, busy, runtimeReady, onFork, onClose }: Props)
   return (
     <div className="space-y-4">
       <div className="rounded-xl bg-ds-subtle px-3 py-3">
-        <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><GitFork className="h-4 w-4" />{activeThread?.title ?? 'No active thread'}</div>
+        <div className="flex items-center gap-1.5 text-[13px] font-medium text-ds-ink"><GitFork className="h-4 w-4" />{activeThread?.title ?? 'No active thread'}</div>
         {activeThread ? <div className="mt-1 text-[11px] text-ds-faint">{activeThread.model}</div> : null}
       </div>
       <button type="button" disabled={!activeThread || busy || !runtimeReady || working} onClick={() => {
@@ -394,7 +394,7 @@ function HooksPanel(): ReactElement {
   return (
     <div className="space-y-3">
       <div className="rounded-xl bg-ds-subtle px-3 py-3">
-        <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink"><Settings2 className="h-4 w-4" />Hooks configuration</div>
+        <div className="flex items-center gap-1.5 text-[13px] font-medium text-ds-ink"><Settings2 className="h-4 w-4" />Hooks configuration</div>
         <div className="mt-2 break-all font-mono text-[10px] text-ds-faint">{paths?.configPath ?? 'Loading…'} · [hooks]</div>
         <div className="mt-1 break-all font-mono text-[10px] text-ds-faint">{paths?.hooksDir ?? ''}</div>
       </div>

@@ -198,8 +198,8 @@ export function ComposerApprovalPolicySelector({
         type="button"
         disabled={disabled || saving}
         onClick={() => setMenuOpen(!open)}
-        className={`ds-no-drag inline-flex shrink-0 select-none items-center px-1 font-medium transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${
-          dense ? 'h-7 gap-1 text-[13px]' : 'h-9 gap-1.5 text-[13px]'
+        className={`ds-no-drag inline-flex shrink-0 select-none items-center gap-1.5 px-1 text-[13px] font-medium transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${
+          dense ? 'h-7' : 'h-9'
         }`}
         style={triggerAccent ? { color: triggerAccent } : undefined}
         aria-haspopup="menu"
@@ -219,8 +219,8 @@ export function ComposerApprovalPolicySelector({
 
       {open ? (
         <div className="absolute bottom-full left-0 z-40 mb-2 w-[min(100vw-2rem,320px)]">
-          <div className="ds-glass ds-morph-pop overflow-hidden rounded-2xl p-2 shadow-[0_18px_48px_rgba(15,23,42,0.18)]">
-            <div className="ds-morph-stagger space-y-0.5">
+          <div role="menu" aria-label={t('settings:approvalPolicy')} className="ds-project-context-menu ds-composer-picker ds-morph-pop overflow-hidden p-1.5">
+            <div className="ds-morph-stagger">
               {options.map((option, index) => {
                 const selected = policy === option.id
                 const OptionIcon = option.Icon
@@ -234,30 +234,20 @@ export function ComposerApprovalPolicySelector({
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setHighlighted(index)}
                     onClick={() => void selectPolicy(option.id)}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition ${
-                      selected || highlighted === index ? 'bg-ds-hover' : 'hover:bg-ds-hover/70'
-                    }`}
+                    className={`ds-project-context-menu__row ${selected ? 'ds-project-context-menu__row--active' : ''} ${highlighted === index ? 'ds-project-context-menu__row--highlight' : ''}`}
                   >
-                    <OptionIcon
-                      className="mt-0.5 h-4 w-4 shrink-0"
-                      strokeWidth={1.9}
-                      style={{ color: option.accent }}
-                      aria-hidden
-                    />
+                    <span className="ds-project-context-menu__icon" aria-hidden>
+                      <OptionIcon className="h-3.5 w-3.5" strokeWidth={1.85} style={{ color: option.accent }} />
+                    </span>
                     <span className="min-w-0 flex-1">
-                      <span
-                        className="block text-[13px] font-medium leading-5"
-                        style={{ color: option.accent }}
-                      >
-                        {option.title}
-                      </span>
-                      <span className="ds-composer-approval-description mt-0.5 block leading-[18px] text-ds-muted">
+                      <span className="ds-project-context-menu__row-title">{option.title}</span>
+                      <span className="ds-project-context-menu__row-path whitespace-normal">
                         {option.description}
                       </span>
                     </span>
                     {selected ? (
                       <Check
-                        className="mt-0.5 h-4 w-4 shrink-0 text-ds-ink"
+                        className="h-4 w-4 shrink-0 text-accent"
                         strokeWidth={2.2}
                         aria-hidden
                       />

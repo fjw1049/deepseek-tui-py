@@ -25,7 +25,7 @@ import {
   Plus,
   Plug,
   Puzzle,
-  Send,
+  ArrowUp,
   Settings2,
   Shrink,
   Square,
@@ -1597,6 +1597,20 @@ export function FloatingComposer({
     }
   ]
 
+  const workspaceStatus = (
+    <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} variant={compactChrome ? 'embedded' : 'tray'}>
+      {footerPlan.showContextMeter ? (
+        <ContextUsageMeter
+          busy={busy}
+          blocks={blocks}
+          model={activeModelId}
+          hasActiveThread={hasActiveThread}
+          threadId={activeThreadId}
+        />
+      ) : null}
+    </WorkspaceContextBar>
+  )
+
   return (
     <div
       className={`pointer-events-auto w-full ${
@@ -1750,7 +1764,7 @@ export function FloatingComposer({
                         type="button"
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => applyPetSlashCommand(command.command)}
-                        className={`flex w-full items-center gap-2.5 rounded-[15px] px-2.5 py-2 text-left transition ${
+                        className={`flex w-full items-center gap-1.5 rounded-[15px] px-2.5 py-2 text-left transition ${
                           active
                             ? 'bg-accent/10 text-ds-ink shadow-[inset_0_0_0_1px_rgba(0,136,255,0.14)]'
                             : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
@@ -1793,7 +1807,7 @@ export function FloatingComposer({
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => applySlashCommand(command)}
-                      className={`flex w-full items-center gap-2.5 rounded-[15px] px-2.5 py-2 text-left transition ${
+                      className={`flex w-full items-center gap-1.5 rounded-[15px] px-2.5 py-2 text-left transition ${
                         active
                           ? 'bg-accent/10 text-ds-ink shadow-[inset_0_0_0_1px_rgba(0,136,255,0.14)]'
                           : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
@@ -1931,11 +1945,11 @@ export function FloatingComposer({
             </div>
           ) : null}
 
-          <div className="flex min-w-0 items-start gap-1">
+          <div className={`flex min-w-0 flex-wrap items-center gap-1 empty:hidden ${compactChrome ? 'px-1' : 'px-2'}`}>
           {/* A plugin mounted for this chat applies to every message, so keep it visible. */}
           {activePlugin && !focusPlugin && <span data-composer-mounted-plugin
             title={t('composerPluginMounted', { name: displayPluginName(activePlugin.name), path: activePlugin.path })}
-            className={`ds-no-drag flex max-w-[30%] shrink-0 items-center gap-1 rounded-md bg-ds-hover px-1.5 text-[12px] text-ds-muted ${compactChrome ? 'mt-0.5 h-[22px]' : 'mt-1.5 h-[26px]'}`}>
+            className={`ds-no-drag flex max-w-full shrink-0 items-center gap-1 rounded-md bg-ds-hover px-1.5 text-[12px] text-ds-muted ${compactChrome ? 'h-[22px]' : 'h-[26px]'}`}>
             <Puzzle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
             <span className="truncate">{displayPluginName(activePlugin.name)}</span>
             <button type="button" onClick={() => { void sendMessage('@plugin:off'); focusComposer() }}
@@ -1945,7 +1959,7 @@ export function FloatingComposer({
               <X className="h-3 w-3" aria-hidden />
             </button>
           </span>}
-          {focusName && <span data-composer-focus className={`ds-no-drag group flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-ds-hover px-1.5 text-[12px] text-ds-muted ${compactChrome ? 'mt-0.5 h-[22px]' : 'mt-1.5 h-[26px]'}`}>
+          {focusName && <span data-composer-focus className={`ds-no-drag group flex max-w-full shrink-0 items-center gap-1 rounded-md bg-ds-hover px-1.5 text-[12px] text-ds-muted ${compactChrome ? 'h-[22px]' : 'h-[26px]'}`}>
             <button type="button" title={focusName} aria-haspopup="dialog" aria-expanded={plusMenuOpen}
               onClick={() => setPlusMenuOpen(true)}
               className="flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline focus-visible:outline-2">
@@ -1964,10 +1978,11 @@ export function FloatingComposer({
               <X className="h-3 w-3" aria-hidden />
             </button>
           </span>}
+          </div>
           <textarea
             ref={textareaRef}
             rows={1}
-            className={`ds-composer-input ds-no-drag block min-w-0 w-full flex-1 resize-none break-words bg-transparent text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
+            className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
               compactChrome ? 'px-1 py-0.5' : 'px-2 py-1.5'
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={
@@ -2050,8 +2065,6 @@ export function FloatingComposer({
             }}
           />
 
-          </div>
-
           <ComposerVoiceBar
             phase={voicePhase}
             levels={audioRecorder.levels}
@@ -2091,13 +2104,13 @@ export function FloatingComposer({
                   }
                   setPlusMenuOpen((open) => !open)
                 }}
-                className={`ds-no-drag inline-flex items-center justify-center rounded-full text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`ds-no-drag inline-flex items-center justify-center rounded-full text-ds-muted transition aria-expanded:bg-ds-hover aria-expanded:text-ds-ink hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-50 ${
                   compactChrome ? 'h-7 w-7' : 'h-8 w-8'
                 }`}
                 aria-label={t('composerPlusMenu')}
                 title={t('composerPlusMenu')}
               >
-                <Plus className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2} />
+                <Plus className={`${compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} ${plusMenuOpen ? 'rotate-45' : ''} motion-safe:transition-transform`} strokeWidth={2} />
               </button>
 
             </div>
@@ -2144,17 +2157,8 @@ export function FloatingComposer({
 
             </div>
 
-            {/* Middle: meter + model — progressive hide (meter → effort → model). */}
+            {/* Model selector. */}
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-              {footerPlan.showContextMeter ? (
-                <ContextUsageMeter
-                  busy={busy}
-                  blocks={blocks}
-                  model={activeModelId}
-                  hasActiveThread={hasActiveThread}
-                  threadId={activeThreadId}
-                />
-              ) : null}
               {footerPlan.showModel ? (
                 <div className="flex min-w-0 max-w-[min(100%,250px)] items-center">
                   <ReasoningEffortSelector
@@ -2192,7 +2196,7 @@ export function FloatingComposer({
                   } ${
                     voicePhase === 'recording'
                       ? 'border-red-500/45 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-300'
-                      : 'border-transparent bg-transparent text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                      : 'border-ds-border-muted bg-transparent text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                   }`}
                 >
                   {voicePhase === 'recording' ? (
@@ -2225,29 +2229,22 @@ export function FloatingComposer({
                     type="button"
                     disabled={primaryActionDisabled}
                     onClick={handleSendClick}
-                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-accent-foreground shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-ds-faint disabled:shadow-none ${
+                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-accent-foreground shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-ds-faint disabled:shadow-none ${
                       compactChrome ? 'h-7 w-7' : 'h-8 w-8'
                     }`}
                     aria-label={primaryActionLabel}
                     title={primaryActionLabel}
                   >
-                    <Send className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2.2} />
+                    <ArrowUp className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2.2} />
                   </button>
                 )
               ) : null}
             </div>
           </div>
-          {compactChrome ? (
-            <WorkspaceContextBar
-              workspaceRoot={effectiveWorkspaceRoot}
-              variant="embedded"
-            />
-          ) : null}
+          {compactChrome && workspaceStatus}
         </div>
       </div>
-      {!compactChrome ? (
-        <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
-      ) : null}
+      {!compactChrome && workspaceStatus}
       {!compactChrome && !runtimeReady ? (
         <p className="px-3 pb-1 text-right text-[11.5px] text-amber-700 dark:text-amber-200 sm:px-4">
           {t('composerOfflineHint')}

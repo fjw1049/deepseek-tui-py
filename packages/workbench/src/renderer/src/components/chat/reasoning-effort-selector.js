@@ -71,11 +71,11 @@ class ChatGPTModelSelector extends HTMLElement {
         --ink-3: var(--ds-text-faint, #9CA3AF);
         --track: var(--ds-chip-muted-bg, #E5E7EB);
         --pill-bg-hover: var(--ds-surface-hover, #E8E9EB);
-        --card: var(--ds-card-strong, #FFFFFF);
+        --card: var(--ds-surface-elevated, #FFFFFF);
         --hairline: color-mix(in srgb, var(--ds-border, #E5E7EB) 88%, transparent);
         --row-hover: color-mix(in srgb, var(--ink) 5.5%, transparent);
-        --row-active: color-mix(in srgb, var(--blue) 12%, transparent);
-        --r-card: 18px;
+        --row-active: var(--composer-menu-selected, var(--row-hover));
+        --r-card: 12px;
         --r-row: 11px;
         --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
         --ease-swap: cubic-bezier(0.2, 0, 0, 1);
@@ -108,7 +108,7 @@ class ChatGPTModelSelector extends HTMLElement {
         display: none !important;
       }
       :host([compact]) .pill-lead {
-        gap: 4px;
+        gap: 6px;
       }
       :host([compact]) .pill .label {
         gap: 0;
@@ -127,8 +127,8 @@ class ChatGPTModelSelector extends HTMLElement {
         padding: 0 8px 0 7px;
       }
       :host([dense]) .pill-icon {
-        width: 16px;
-        height: 16px;
+        width: 13px;
+        height: 13px;
         border-radius: 5px;
       }
       :host([dense]) .pill-icon svg {
@@ -197,8 +197,8 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       .pill-icon {
         flex: none;
-        width: 20px;
-        height: 20px;
+        width: 16px;
+        height: 16px;
         border-radius: 6px;
         display: grid;
         place-items: center;
@@ -207,7 +207,7 @@ class ChatGPTModelSelector extends HTMLElement {
         color: var(--icon-color, var(--ink-2));
       }
       .pill-icon.is-colored {
-        background: color-mix(in srgb, var(--icon-color, var(--ink-2)) 10%, transparent);
+        background: transparent;
         color: inherit;
       }
       .pill-icon.is-colored:has(image) {
@@ -261,16 +261,12 @@ class ChatGPTModelSelector extends HTMLElement {
         bottom: calc(100% + 10px);
         left: 0;
         width: 300px;
-        /* Material: thicker blur + catch-light edge (Apple materials). */
-        background: color-mix(in srgb, var(--ds-card-strong, #fff) 78%, transparent);
-        backdrop-filter: blur(40px) saturate(190%);
-        -webkit-backdrop-filter: blur(40px) saturate(190%);
+        background: var(--card);
+        border: 1px solid var(--ds-border-muted, var(--hairline));
         border-radius: var(--r-card);
-        box-shadow:
-          inset 0 0.5px 0 rgba(255, 255, 255, 0.55),
-          0 0 0 0.5px rgba(0, 0, 0, 0.08),
-          0 4px 16px rgba(0, 0, 0, 0.08),
-          0 22px 56px rgba(0, 0, 0, 0.22);
+        box-shadow: var(--ds-shadow-panel);
+        font-size: 13px;
+        line-height: 1.5;
         /* Anchor to the pill — enter/exit along the same path. */
         transform-origin: 28px calc(100% + 18px);
         overflow: hidden;
@@ -321,7 +317,7 @@ class ChatGPTModelSelector extends HTMLElement {
         margin-bottom: 6px;
       }
       .intensity-title {
-        font-size: var(--ds-selector-font-size, 13px);
+        font-size: 13px;
         font-weight: 600;
         line-height: 1.15;
         color: var(--ink);
@@ -349,9 +345,9 @@ class ChatGPTModelSelector extends HTMLElement {
         translate: 0 0;
       }
       .intensity-value {
-        font-size: var(--ds-selector-font-size, 12px);
+        font-size: 12px;
         font-weight: 500;
-        letter-spacing: -0.01em;
+        letter-spacing: normal;
         color: var(--ink-2);
       }
       .intensity-value.is-ultra { color: var(--ultra-text); font-weight: 600; }
@@ -365,7 +361,7 @@ class ChatGPTModelSelector extends HTMLElement {
       .intensity-warning {
         font-size: var(--ds-selector-font-size, 11px);
         font-weight: 600;
-        letter-spacing: -0.01em;
+        letter-spacing: normal;
         color: var(--ultra-text);
         white-space: nowrap;
       }
@@ -377,7 +373,7 @@ class ChatGPTModelSelector extends HTMLElement {
         color: var(--ink-3);
       }
       .model-list {
-        max-height: calc(38px * 5 + 4px);
+        max-height: calc(32px * 5 + 4px);
         overflow-y: auto;
         overscroll-behavior: contain;
         padding: 2px 0;
@@ -387,15 +383,15 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       .model-item {
         width: 100%;
-        min-height: 38px;
+        min-height: 32px;
         border-radius: var(--r-row);
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 6px;
         padding: 0 10px;
-        font-size: var(--ds-selector-font-size, 13px);
+        font-size: 13px;
         font-weight: 400;
-        letter-spacing: -0.01em;
+        letter-spacing: normal;
         color: var(--ink);
         text-align: left;
         transition:
@@ -416,17 +412,17 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       .model-icon {
         flex: none;
-        width: 24px;
-        height: 24px;
+        width: 18px;
+        height: 18px;
         border-radius: 6px;
         display: grid;
         place-items: center;
         overflow: hidden;
-        background: color-mix(in srgb, var(--icon-color, var(--ink-2)) 14%, transparent);
+        background: transparent;
         color: var(--icon-color, var(--ink-2));
       }
       .model-icon.is-colored {
-        background: color-mix(in srgb, var(--icon-color, var(--ink-2)) 10%, transparent);
+        background: transparent;
         color: inherit;
       }
       .model-icon.is-colored:has(image) {
@@ -451,9 +447,12 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       .model-effort {
         flex: none;
-        font-size: var(--ds-selector-font-size, 12px);
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: var(--track);
+        font-size: 12px;
         font-weight: 400;
-        letter-spacing: -0.01em;
+        letter-spacing: normal;
         color: var(--ink-2);
       }
       .model-effort.is-ultra { color: var(--ultra-text); font-weight: 400; }
@@ -467,6 +466,7 @@ class ChatGPTModelSelector extends HTMLElement {
       .model-item.is-active .model-check {
         opacity: 1;
         transform: scale(1);
+
       }
 
       .divider {
@@ -484,19 +484,24 @@ class ChatGPTModelSelector extends HTMLElement {
         margin: 7px 4px 1px;
       }
       .configure-btn {
-        width: 32px;
+        min-width: 0;
         justify-content: center;
         min-height: 32px;
         border-radius: var(--r-row);
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 6px;
         padding: 0 10px;
-        font-size: var(--ds-selector-font-size, 13px);
+        font-size: 13px;
         font-weight: 400;
-        letter-spacing: -0.01em;
+        letter-spacing: normal;
         color: var(--ink);
         transition: background-color 100ms var(--ease-out), transform 100ms ease-out;
+      }
+      .configure-btn span {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .configure-btn:hover { background: var(--row-hover); }
       .configure-btn:active { transform: scale(0.985); }
@@ -648,14 +653,14 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       @media (prefers-reduced-transparency: reduce) {
         .popover {
-          background: var(--ds-card-strong, #fff);
+          background: var(--card);
           backdrop-filter: none;
           -webkit-backdrop-filter: none;
         }
       }
       @media (prefers-contrast: more) {
         .popover {
-          background: var(--ds-card-strong, #fff);
+          background: var(--card);
           box-shadow: 0 0 0 1px var(--ink);
         }
         .model-item.is-active {
@@ -714,13 +719,13 @@ class ChatGPTModelSelector extends HTMLElement {
 
         <div class="footer">
           <button type="button" class="configure-btn effort-btn" aria-expanded="false" aria-controls="intensity-panel">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg><span></span>
           </button>
           <button type="button" class="configure-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 20h9" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
               <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+            </svg><span></span>
           </button>
         </div>
       </div>
@@ -851,6 +856,7 @@ class ChatGPTModelSelector extends HTMLElement {
   #applyLabels() {
     const L = this.#labels;
     if (this.$effortBtn) {
+      this.$effortBtn.querySelector('span').textContent = L.title;
       this.$effortBtn.title = `${L.title}: ${this.#tiers[this.#index].key}`;
       this.$effortBtn.setAttribute('aria-label', this.$effortBtn.title);
     }
@@ -863,6 +869,7 @@ class ChatGPTModelSelector extends HTMLElement {
     if (this.$sliderDesc) this.$sliderDesc.textContent = L.desc;
     if (this.$popover) this.$popover.setAttribute('aria-label', L.dialog);
     if (this.$configureBtn) {
+      this.$configureBtn.querySelector('span').textContent = L.configure;
       this.$configureBtn.setAttribute('aria-label', L.configure);
       this.$configureBtn.title = L.configure;
     }
@@ -919,6 +926,7 @@ class ChatGPTModelSelector extends HTMLElement {
       );
       labelEl.textContent = sameName ? fullName : (m.compactLabel || fullName);
       btn.title = fullName;
+      btn.setAttribute('aria-pressed', String(active));
 
       btn.appendChild(iconEl);
       btn.appendChild(labelEl);

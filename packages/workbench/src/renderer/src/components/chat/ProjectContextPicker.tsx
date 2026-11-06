@@ -51,19 +51,6 @@ type ProjectOption = {
   label: string
 }
 
-function projectPathHint(path: string): string {
-  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
-  const parts = normalized.split('/').filter(Boolean)
-  if (parts.length <= 1) return normalized
-  const parent = parts.slice(0, -1).join('/')
-  const withSlash = normalized.startsWith('/') ? `/${parent}` : parent
-  // Truncate long parents from the left while keeping the end readable.
-  if (withSlash.length > 42) {
-    return `…${withSlash.slice(-40)}`
-  }
-  return withSlash
-}
-
 /** Body zooms with the UI scale, while trigger rectangles use viewport pixels. */
 function readUiScale(): number {
   const scale = parseFloat(
@@ -275,7 +262,7 @@ export function ProjectContextPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className={`ds-project-context-menu ds-morph-pop z-50 flex flex-col overflow-hidden ${
+      className={`ds-project-context-menu ds-composer-picker ds-morph-pop z-50 flex flex-col overflow-hidden ${
         menuPlacement === 'below' ? 'ds-morph-pop--below' : ''
       }`}
       onMouseDown={(event) => event.stopPropagation()}
@@ -318,6 +305,7 @@ export function ProjectContextPicker({
             return (
               <button
                 key={item.path}
+                title={item.path}
                 type="button"
                 role="option"
                 aria-selected={selected}
@@ -332,12 +320,7 @@ export function ProjectContextPicker({
                 <span className="ds-project-context-menu__icon" aria-hidden>
                   <FolderOpen className="h-3.5 w-3.5 fill-amber-300 text-amber-600 dark:fill-amber-400 dark:text-amber-500" strokeWidth={1.5} />
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="ds-project-context-menu__row-title">{item.label}</span>
-                  <span className="ds-project-context-menu__row-path" title={item.path}>
-                    {projectPathHint(item.path)}
-                  </span>
-                </span>
+                <span className="ds-project-context-menu__row-title min-w-0 flex-1">{item.label}</span>
                 {selected ? (
                   <Check className="h-4 w-4 shrink-0 text-accent" strokeWidth={2.2} />
                 ) : null}

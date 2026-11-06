@@ -147,7 +147,7 @@ it('ignores a slow plugin response from the previous workspace', async () => {
   expect(host.textContent).not.toContain('old-workspace-plugin')
 })
 
-it('keeps the skill beside the text and requires two backspaces to remove it', async () => {
+it('keeps the skill above the text and requires two backspaces to remove it', async () => {
   const setInput = vi.fn()
   await open({ input: 'Keep my draft', setInput })
   const skill = [...host.querySelectorAll<HTMLButtonElement>('[role="option"]')]
@@ -155,7 +155,7 @@ it('keeps the skill beside the text and requires two backspaces to remove it', a
   await act(async () => skill.click())
   const textarea = host.querySelector('textarea')!
   const chip = host.querySelector('[data-composer-focus]')!
-  expect(chip.parentElement).toBe(textarea.parentElement)
+  expect(chip.parentElement).toBe(textarea.previousElementSibling)
   expect(setInput).not.toHaveBeenCalled()
   textarea.focus()
   textarea.setSelectionRange(0, 0)
@@ -186,7 +186,7 @@ it('places a pending plugin before the draft and sends its plugin prefix', async
     ...props, input: 'Analyze this data', setInput, onSend
   })))
   const textarea = host.querySelector('textarea')!
-  expect(host.querySelector('[data-composer-focus]')?.parentElement).toBe(textarea.parentElement)
+  expect(host.querySelector('[data-composer-focus]')?.parentElement).toBe(textarea.previousElementSibling)
   expect(setInput).not.toHaveBeenCalled()
   textarea.focus()
   await key('Enter')
@@ -239,7 +239,7 @@ it('keeps a mounted plugin visible beside a focused skill and unmounts it from t
     .find(button => button.textContent?.includes('Review changes'))!
   await act(async () => skill.click())
   const chip = host.querySelector<HTMLElement>('[data-composer-mounted-plugin]')!
-  expect(chip.parentElement).toBe(host.querySelector('textarea')!.parentElement)
+  expect(chip.parentElement).toBe(host.querySelector('textarea')!.previousElementSibling)
   expect(host.querySelector('[data-composer-focus]')).not.toBeNull()
   await act(async () => chip.querySelector('button')!.click())
   expect(sendMessage).toHaveBeenCalledWith('@plugin:off')

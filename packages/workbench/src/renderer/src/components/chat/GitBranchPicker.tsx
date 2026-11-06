@@ -285,7 +285,7 @@ export function GitBranchPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className={`ds-project-context-menu ds-git-branch-menu ds-morph-pop z-50 overflow-hidden ${
+      className={`ds-project-context-menu ds-composer-picker ds-git-branch-menu ds-morph-pop z-50 overflow-hidden ${
         menuPlacement === 'below'
           ? 'ds-morph-pop--below'
           : menuPlacement === 'left'
@@ -315,7 +315,7 @@ export function GitBranchPicker({
 
       <div className="ds-project-context-menu__list max-h-[320px]">
         {loading && !result ? (
-          <div className="ds-project-context-menu__empty flex items-center gap-2">
+          <div className="ds-project-context-menu__empty flex items-center gap-1.5">
             <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
             {t('gitBranchLoading')}
           </div>
@@ -385,7 +385,7 @@ export function GitBranchPicker({
               : `ds-workspace-context-chip flex h-7 items-center gap-1.5 rounded-md px-2 py-1 text-left ${
                   hideLabel ? 'shrink-0' : 'max-w-[160px] min-w-0'
                 }`
-            : 'flex h-8 max-w-[320px] items-center gap-2 rounded-lg px-2 text-[14px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink'
+            : 'flex h-8 max-w-[320px] items-center gap-1.5 rounded-lg px-2 text-[14px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink'
         }
         onClick={() => setOpen((v) => !v)}
         title={label || t('gitBranch')}
@@ -423,7 +423,7 @@ export function GitBranchPicker({
                     : 'border-amber-400/55 text-amber-800 dark:border-amber-500/45 dark:text-amber-100'
                 }`}
               >
-                <div className="flex items-start gap-2.5">
+                <div className="flex items-start gap-1.5">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2} />
                   <span className="min-w-0 flex-1 break-words text-[13px] leading-5">
                     {error ?? notice}

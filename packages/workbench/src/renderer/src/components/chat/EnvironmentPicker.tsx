@@ -173,13 +173,10 @@ export function EnvironmentPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className="ds-project-context-menu ds-morph-pop z-50 flex flex-col overflow-hidden"
+      className="ds-project-context-menu ds-composer-picker ds-morph-pop z-50 flex flex-col overflow-hidden"
       onMouseDown={(event) => event.stopPropagation()}
     >
-      <div className="ds-project-context-menu__group-label shrink-0 px-3 pt-2">
-        {t('envPickerLabel')}
-      </div>
-      <div className="min-h-0 pb-1">
+      <div role="group" aria-label={t('envPickerLabel')} className="min-h-0 p-1.5">
         {(
           [
             {
