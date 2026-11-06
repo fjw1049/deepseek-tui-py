@@ -20,7 +20,7 @@ with website data retention disabled use a separate temporary browser. Identify 
 automation target from `status` and `tabs`. The user's regular Chrome, native
 desktop apps, and other file viewers are separate surfaces.
 
-Start with `status`. If no page is active, open the intended URL; otherwise reuse
+Start a new browser interaction with `status`. When a current observation already identifies the page and its state, act on it; do not restart discovery. If no page is active, open the intended URL; otherwise reuse
 the relevant page without reloading unfinished input. If `status` shows owner=user,
 the user holds the browser: ask them to return control with
 `request_user_input(kind="action", surface="browser", reason=...)` instead of

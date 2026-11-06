@@ -41,7 +41,7 @@ class BrowserUseTool(ToolSpec):
             "new site itself and they may trust it for the session. "
             "open keeps the user's own page: from a tab the user was using it opens a new tab. "
             "Windows a page opens (sign-in, payment) belong to the user; ask them to finish those. "
-            "Start with status to inspect control ownership without opening a browser. "
+            "Use status for initial discovery when there is no current observation; a known human-only blocker needs handoff next. "
             "Use tabs and switch_tab with fresh tab IDs for ordinary tabs; "
             "sign-in and payment popup windows require the user's interaction. "
             "new_tab opens an http(s) URL or a blank tab; close_tab closes a discovered tab. "
