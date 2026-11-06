@@ -2781,9 +2781,8 @@ samp {
 }
 
 .ds-empty-hero-panel {
-  height: 28.75rem;
-  max-height: 28.75rem;
-  min-height: 28.75rem;
+  height: 25.5rem;
+  min-width: 0;
 }
 
 /* Fixed full-width top bar — same edge alignment on home and chat views.
@@ -2939,11 +2938,6 @@ samp {
   margin-top: auto;
   padding-top: clamp(2.5rem, 7vh, 4.5rem);
   padding-bottom: clamp(1rem, 2.5vh, 1.75rem);
-}
-
-.ds-trending-repo:hover,
-.ds-trending-repo:active {
-  background: var(--ds-material-card-hover);
 }
 
 .ds-trending-grid-scroll {
