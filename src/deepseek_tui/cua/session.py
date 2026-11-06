@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import json
@@ -15,6 +16,14 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from deepseek_tui.cua.app_scope import (
+    binding_only,
+    canonical_binding,
+    discovery_only,
+    js_scope,
+    native_app,
+)
+from deepseek_tui.cua.leases import DesktopLease as _DesktopLease
 from deepseek_tui.tools.registry import ToolError
 
 ApprovalCallback = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -22,7 +31,7 @@ MAX_FRAME = 48 * 1024 * 1024
 CONNECT_RETRY_SECONDS = 30
 LEASE_WAIT_SECONDS = 30
 # A tool call queues behind another task's turn; nobody is watching it wait.
-ACTION_LEASE_WAIT_SECONDS = 120
+ACTION_LEASE_WAIT_SECONDS = None
 LOCK_DIR = Path("/tmp")
 
 # Per installation in this process: the last runtime catalog, so later sessions
@@ -45,84 +54,10 @@ def reset_runtime_cache() -> None:
     _RUNTIMES.clear()
 
 
-class DesktopLease:
-    """Hold through observe/action/verify, not merely through individual clicks."""
-
+class DesktopLease(_DesktopLease):
     def __init__(self, path: Path | None = None):
-        self.path = path or LOCK_DIR / f"deepseek-cua-{getattr(os, 'getuid', lambda: 0)()}.lock"
-        self.fd: int | None = None
-        self.owner: str | None = None
-
-    async def acquire(
-        self, timeout: float | None = None, *, give_up: Callable[[], bool] | None = None,
-    ) -> None:
-        import fcntl
-
-        if self.fd is not None:
-            return
-        loop = asyncio.get_running_loop()
-        deadline = None if timeout is None else loop.time() + timeout
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        try:
-            if os.fstat(fd).st_uid != os.getuid():
-                raise ToolError("Desktop lock belongs to another account")
-            while True:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    self.fd = fd
-                    self.describe("assistant", self.owner)
-                    return
-                except BlockingIOError:
-                    if give_up is not None and give_up():
-                        return
-                    if deadline is not None and loop.time() >= deadline:
-                        raise ToolError(self._busy_message(timeout)) from None
-                    await asyncio.sleep(0.1)
-        finally:
-            if self.fd != fd:
-                os.close(fd)
-
-    def _busy_message(self, waited: float | None) -> str:
-        holder = self.holder() or {}
-        since = holder.get("since")
-        held = f" for {int(time.time() - since)}s" if isinstance(since, (int, float)) else ""
-        who = "the user" if holder.get("owner") == "user" else "another computer-use task"
-        return (
-            f"The desktop is in use, held by {who}{held}; waited {int(waited or 0)}s and nothing "
-            "was executed. How long it will take is unknown. Do other work and retry, or end "
-            "the turn and say the desktop step is still to do."
-        )
-
-    def describe(self, owner: str, thread_id: str | None) -> None:
-        if self.fd is not None:
-            data = json.dumps(
-                {"owner": owner, "thread_id": thread_id, "since": time.time()}).encode()
-            os.ftruncate(self.fd, 0)
-            os.pwrite(self.fd, data, 0)
-
-    def holder(self) -> dict[str, Any] | None:
-        """Metadata is advisory only; flock is the authority."""
-        import fcntl
-        try:
-            fd = os.open(self.path, os.O_RDWR | os.O_NOFOLLOW)
-        except FileNotFoundError:
-            return None
-        try:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return None
-            except BlockingIOError:
-                try:
-                    return json.loads(os.pread(fd, 4096, 0))
-                except (ValueError, UnicodeError):
-                    return {"owner": "assistant", "thread_id": None}
-        finally:
-            os.close(fd)
-
-    def release(self) -> None:
-        if self.fd is not None:
-            os.close(self.fd)
-            self.fd = None
+        uid = getattr(os, "getuid", lambda: 0)()
+        super().__init__(path or LOCK_DIR / f"deepseek-cua-{uid}.lock")
 
 
 class CuaSession:
@@ -144,6 +79,9 @@ class CuaSession:
         self.sequence = 0
         self.turn_id: str | None = None
         self.runtime_turn_id: str | None = None
+        self.stop_task = None
+        self._app_bindings: dict[str, str] = {}
+        self._unrestricted_repl = False
         self.lease = DesktopLease()
         self.lease.owner = owner_id or session_id
         self.human_reserved = False
@@ -180,6 +118,9 @@ class CuaSession:
         self.broken = False
         self._operation: asyncio.Task | None = None
         self._interrupted_operation: asyncio.Task | None = None
+        self._preview_monitor: asyncio.Task | None = None
+        self._human_monitor: asyncio.Task | None = None
+        self._needs_observation: set[str | None] = set()
         self._monitor: asyncio.Task | None = None
         self._operation_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
@@ -238,11 +179,16 @@ class CuaSession:
         acquired = False
         try:
             async with self.lock:
+                self.lease.can_stop = self.stop_task is not None
                 await self.lease.acquire(timeout=LEASE_WAIT_SECONDS)
                 acquired = True
                 self.lease.describe("user", self.lease.owner)
             await self.close()
+            if await self._deliver_panel_stop():
+                raise ToolError("The user stopped this computer-use task.")
             self.human_ready = True
+            if self.stop_task:
+                self._human_monitor = asyncio.create_task(self._watch_human_stop(self.lease.ticket))
             self.human_since = time.time()
             self.control_revision += 1
         except BaseException:
@@ -252,6 +198,7 @@ class CuaSession:
                 self.release_human()
             else:
                 self._clear_human()
+            await self._deliver_panel_stop()
             raise
 
     def _clear_human(self) -> None:
@@ -265,6 +212,20 @@ class CuaSession:
     def release_human(self) -> None:
         self._clear_human()
         self.lease.release()
+
+    async def _watch_human_stop(self, ticket):
+        try:
+            while self.human_ready and self.lease.ticket == ticket:
+                if await self._deliver_panel_stop():
+                    if self.lease.ticket == ticket:
+                        self.release_human()
+                    return
+                await asyncio.sleep(0.1)
+            if self.lease.ticket is None:
+                await self._deliver_panel_stop()
+        finally:
+            if self._human_monitor is asyncio.current_task():
+                self._human_monitor = None
 
     async def record_outcome(
         self, turn_id: str, call_id: str, outcome: str, *, code: str | None = None,
@@ -320,8 +281,8 @@ class CuaSession:
             if any(event.is_set() for event in events):
                 await self.close()
                 raise ToolError("CUA stopped for cancellation or human takeover")
-            if self._monitor is None or self._monitor.done():
-                self._monitor = asyncio.create_task(self._watch(events)) if events else None
+            if (events or self.stop_task) and (self._monitor is None or self._monitor.done()):
+                self._monitor = asyncio.create_task(self._watch(events))
             task = asyncio.create_task(operation())
             self._operation = task
             try:
@@ -338,8 +299,23 @@ class CuaSession:
                 self._operation = None
                 self._interrupted_operation = None
 
+    async def _wait_for_panel_stop(self):
+        while not self.lease.stop_requested():  # noqa: ASYNC110 - cross-process signal
+            if self.lease.consume_raised():
+                self.invalidate_observation("The user raised the app; observe its current state.")
+            await asyncio.sleep(0.25)
+        await self._deliver_panel_stop()
+
+    async def _deliver_panel_stop(self):
+        if self.stop_task and self.lease.take_stop():
+            await self.stop_task()
+            return True
+        return False
+
     async def _watch(self, events: list[asyncio.Event]) -> None:
         watchers = [asyncio.create_task(event.wait()) for event in events]
+        if self.stop_task:
+            watchers.append(asyncio.create_task(self._wait_for_panel_stop()))
         try:
             await asyncio.wait(watchers, return_when=asyncio.FIRST_COMPLETED)
             if self._bound:
@@ -389,6 +365,8 @@ class CuaSession:
             bound = self._bound
             async with self._close_lock:
                 await self._close()
+            if not self.human_reserved:
+                await self._deliver_panel_stop()
             if bound:
                 self.reset_reason = (
                     "The CUA connection ended between calls; its JavaScript bindings are gone. "
@@ -561,6 +539,8 @@ class CuaSession:
             self.turn_used = True
             if self.human_reserved:
                 raise ToolError("The user controls the desktop. Wait for control to be returned.")
+            if self.lease.consume_raised():
+                self.invalidate_observation("The user raised the app; observe its current state.")
             code = _code_fingerprint(arguments) if name == "js" else None
             if name == "js" and self.outside_change:
                 raise ToolError("Not executed: " + self.outside_change
@@ -571,12 +551,37 @@ class CuaSession:
             await self.connect()
             if self.turn_id is not None and self.turn_id != turn_id:
                 raise ToolError("Previous CUA turn has not been cleaned up")
-            self.waiting = self.lease.fd is None
+            app = None
+            binding = None
+            summary = name == "js" and set(arguments) == {"completion_summary"}
+            if sys.platform == "darwin" and not self._unrestricted_repl:
+                if name == "observe" and isinstance(arguments.get("app"), str):
+                    app = await asyncio.to_thread(native_app, arguments["app"])
+                    if app:
+                        arguments = {**arguments, "app": app}
+                elif summary or name == "js_reset":
+                    app = self.lease.app
+                elif name == "js":
+                    app, binding = await asyncio.to_thread(
+                        js_scope, arguments.get("code") or "", self._app_bindings)
+                    if app and (binding or binding_only(arguments["code"])):
+                        arguments = {**arguments, "code": canonical_binding(arguments["code"], app)}
+            reacquiring = self.lease.fd is None
+            switching = self.lease.fd is not None and self.lease.app != app
+            if switching and await self.end_turn():
+                raise ToolError("The user stopped this computer-use task.")
+            if await self._deliver_panel_stop():
+                await self.end_turn(interrupted=True)
+                raise ToolError("The user stopped this computer-use task.")
+            self.lease.can_stop = self.stop_task is not None
+            self.waiting = self.lease.fd is None or switching
             waited = time.monotonic()
             try:
-                # A person taking over must not sit behind this call's wait.
-                await self.lease.acquire(
-                    timeout=ACTION_LEASE_WAIT_SECONDS, give_up=lambda: self.human_reserved)
+                await self.lease.acquire(timeout=ACTION_LEASE_WAIT_SECONDS, app=app,
+                                         give_up=lambda: self.human_reserved)
+            except BaseException:
+                await self._deliver_panel_stop()
+                raise
             finally:
                 self.waiting = False
             lease_wait_ms = round((time.monotonic() - waited) * 1000)
@@ -587,6 +592,13 @@ class CuaSession:
                 # needs a fresh native segment, with the host identity preserved.
                 self.runtime_turn_id = f"{turn_id}:cua:{uuid.uuid4().hex}"
             self.turn_id = turn_id
+            old_binding = app and (switching or reacquiring) and app in self._app_bindings.values()
+            if name == "js" and (self.lease.contended or old_binding):
+                self._needs_observation.add(app)
+            if (name == "js" and not summary and not binding_only(arguments.get("code", ""))
+                    and (app in self._needs_observation or (not app and self._needs_observation))):
+                raise ToolError("The desktop changed owners. Nothing was executed. Use cua_observe "
+                                "on the intended app, then act on the fresh state.")
             observed_generation = self.observation_generation
             try:
                 # Write before dispatch so a host crash cannot turn an uncertain
@@ -595,18 +607,22 @@ class CuaSession:
                     await self.record_outcome(turn_id, call_id, "in_progress", code=code)
                 self._bound = True
                 started = time.monotonic()
-                result = await self._request(
-                    "observe" if name == "observe" else "call",
-                    name=name,
-                    arguments=arguments,
-                    context={
-                        "sessionId": self.session_id,
-                        "turnId": self.runtime_turn_id,
-                        "toolCallId": call_id,
-                        "metadata": {"deepseek/host-turn-id": turn_id},
-                    },
-                    timeout=max(150, float(arguments.get("timeout_ms", 0)) / 1000 + 60),
-                )
+                program = arguments.get("code") or ""
+                clipboard_input = bool(app and name == "js" and
+                                       (".typeText(" in program or ".paste(" in program))
+                async with self.lease.input_dispatch(clipboard_input):
+                    result = await self._request(
+                        "observe" if name == "observe" else "call",
+                        name=name,
+                        arguments=arguments,
+                        context={
+                            "sessionId": self.session_id,
+                            "turnId": self.runtime_turn_id,
+                            "toolCallId": call_id,
+                            "metadata": {"deepseek/host-turn-id": turn_id},
+                        },
+                        timeout=max(150, float(arguments.get("timeout_ms", 0)) / 1000 + 60),
+                    )
                 # Runtime time includes any permission prompt answered during the call.
                 result["stats"] = {"lease_wait_ms": lease_wait_ms,
                                    "runtime_ms": round((time.monotonic() - started) * 1000)}
@@ -624,8 +640,30 @@ class CuaSession:
                     else:
                         # Observing another target switches work to it, so a target that
                         # quit or crashed cannot hold code execution blocked for good.
+                        # A wait for exclusive desktop access had no known target.
+                        self._needs_observation.discard(None)
+                        self._needs_observation.discard(app)
                         self.outside_change = ""
                         self.reset_reason = ""
+                if binding:
+                    self._app_bindings.pop(binding[0], None)
+                    if not result.get("isError"):
+                        self._app_bindings[binding[0]] = binding[1]
+                if name == "js" and not app and not summary and not discovery_only(
+                    arguments.get("code") or ""
+                ):
+                    self._unrestricted_repl = True
+                elif name == "js_reset" and not result.get("isError"):
+                    self._app_bindings.clear()
+                    self._needs_observation.clear()
+                    self._unrestricted_repl = False
+                if (not summary and not result.get("isError") and (name == "observe"
+                        or (name == "js" and (app or result.get("_meta"))))):
+                    self.lease.note_surface(preview=True)
+                    if self._preview_monitor is None or self._preview_monitor.done():
+                        self._preview_monitor = asyncio.create_task(self._serve_previews())
+                if summary and not result.get("isError"):
+                    await self.end_turn()
                 self._catalog(result)
                 if self.instructions != known_instructions:
                     result.setdefault("content", []).append(
@@ -670,6 +708,20 @@ class CuaSession:
             result.setdefault("content", []).append({"type": "text", "text": "\n".join(notes)})
         return bool(pending_ids)
 
+    async def _serve_previews(self):
+        while self.lease.ticket is not None:
+            ticket = self.lease.ticket
+            if ticket.with_suffix(".preview").exists() and not self.lock.locked():
+                image = await self.preview_frame()
+                data = base64.b64decode(image["data"]) if image else None
+                await asyncio.to_thread(self.lease.answer_preview, ticket.stem, data)
+            await asyncio.sleep(0.1)
+
+    def _stop_preview_monitor(self):
+        if self._preview_monitor is not None:
+            self._preview_monitor.cancel()
+            self._preview_monitor = None
+
     async def preview_frame(self) -> dict[str, Any] | None:
         """The operated target as it is now, for the panel only; skipped while a call runs."""
         if (self.lock.locked() or self.human_reserved or self.turn_id is None or not self._bound
@@ -686,9 +738,11 @@ class CuaSession:
                 return None
         return result.get("image")
 
-    async def end_turn(self, *, interrupted: bool = False) -> None:
+    async def end_turn(self, *, interrupted: bool = False) -> bool:
         async with self._end_lock:
+            self._stop_preview_monitor()
             await self._end_turn(interrupted=interrupted)
+            return await self._deliver_panel_stop()
 
     async def _end_turn(self, *, interrupted: bool = False) -> None:
         if self.turn_id is None:
@@ -722,12 +776,15 @@ class CuaSession:
         return True
 
     async def close(self) -> None:
+        self._stop_preview_monitor()
         monitor, self._monitor = self._monitor, None
         if monitor is not None and monitor is not asyncio.current_task():
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
         async with self._close_lock:
             await self._close()
+            if not self.human_reserved:
+                await self._deliver_panel_stop()
 
     async def _close(self) -> None:
         if self.process is not None and self._bound:
@@ -753,6 +810,9 @@ class CuaSession:
                 )
         finally:
             self.process = None
+            self._app_bindings.clear()
+            self._needs_observation.clear()
+            self._unrestricted_repl = False
             self.broken = False
             self._bound = False
             self.turn_id = None

@@ -108,7 +108,8 @@ import { AppTerminalPanel } from './AppTerminalPanel'
 import { Sidebar } from './chat/Sidebar'
 import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { OperationContextDock } from './chat/OperationContextDock'
-import { CuaPreview, CuaPreviewRailSlot } from './cua-preview/CuaPreview'
+import { useCuaTasks } from './cua-preview/use-cua-tasks'
+import { CuaGlobalMenu, CuaPreview, CuaPreviewRailSlot } from './cua-preview/CuaPreview'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
 import type { IncomingComposerImage } from './chat/FloatingComposer'
@@ -280,6 +281,7 @@ function DraftComposerStage({
 }
 
 export function Workbench(): ReactElement {
+  const cuaTasks = useCuaTasks()
   const actionFailures = useFeedbackStore((s) => s.failures)
   const dismissActionFailure = useFeedbackStore((s) => s.dismiss)
   const { t } = useTranslation('common')
@@ -1987,6 +1989,7 @@ export function Workbench(): ReactElement {
                     onFocus={focusSplitThread} /> : <SessionHeader compact className="min-w-0" />}
                 </div>
                 <div className={`flex h-7 shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
+                  <CuaGlobalMenu key={activeThreadId} tasks={cuaTasks} />
                   <ConnectionStatusBar compact />
                 </div>
               </div>
@@ -2102,7 +2105,7 @@ export function Workbench(): ReactElement {
             </div>
             </div>
             </ChatSplitDropZone>
-            <CuaPreview threadId={activeThreadId} />
+            <CuaPreview key={activeThreadId} threadId={activeThreadId} allTasks={cuaTasks} />
             {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
               <div
                 className="ds-bottom-terminal ds-no-drag flex shrink-0 flex-col border-t-2 border-ds-border"

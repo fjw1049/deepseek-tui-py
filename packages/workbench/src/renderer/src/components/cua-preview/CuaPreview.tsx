@@ -12,6 +12,8 @@ import {
 } from '../../store/cua-preview-store'
 import { claimScreenPermissionPrompt } from './screen-permission-prompt'
 import { CuaPermissionsDialog } from './CuaPermissionsDialog'
+import { ConfirmDialog } from '../workspace-editor/ConfirmDialog'
+import type { CuaTask } from './use-cua-tasks'
 import { CuaControlBar } from './CuaControlBar'
 import { useCuaStillFrame } from './use-cua-still-frame'
 import { useCuaWindowStream } from './use-cua-window-stream'
@@ -47,10 +49,60 @@ function useSlotWidth(slot: HTMLElement | null): number {
   return width
 }
 
-export function CuaPreview({ threadId }: { threadId: string | null }): ReactElement | null {
+export function CuaGlobalMenu({ tasks }: { tasks: CuaTask[] }): ReactElement | null {
   const { t } = useTranslation('common')
-  const session = useCuaPreviewStore((state) => (threadId ? state.sessions[threadId] : undefined))
-  const slot = useRailSlot((state) => state.slot)
+  const [open, setOpen] = useState(false)
+  useEffect(() => { if (!tasks.length) setOpen(false) }, [tasks.length])
+  if (!tasks.length) return null
+  return <div className="ds-no-drag relative">
+    <button type="button" aria-expanded={open} aria-label={t('cuaGlobalTasks')} title={t('cuaGlobalTasks')}
+      className="rounded-md p-1 text-ds-muted hover:bg-ds-hover" onClick={() => setOpen(!open)}>
+      <Monitor className="h-4 w-4" />
+    </button>
+    {open && <div role="region" aria-label={t('cuaGlobalTasks')}
+      className="absolute right-0 top-full mt-2 w-80 rounded-xl bg-ds-panel shadow-lg">
+      <CuaPreview threadId={null} allTasks={tasks} global />
+    </div>}
+  </div>
+}
+
+export function CuaPreview({ threadId: chatId, allTasks, global = false }: {
+  threadId: string | null; allTasks?: CuaTask[]; global?: boolean
+}): ReactElement | null {
+  const { t } = useTranslation('common')
+  const tasks = (allTasks ?? []).filter(item => global || (chatId && item.thread_id === chatId))
+  const running = tasks.filter(task => !task.waiting)
+  const waiting = tasks.filter(task => task.waiting)
+  const [selected, setSelected] = useState<string | null>(null)
+  const task = running.find(item => item.key === selected)
+    ?? running.find(item => item.thread_id === chatId) ?? running[0] ?? waiting[0]
+  const threadId = task?.thread_id ?? (global ? task?.key : chatId)
+  const localSession = useCuaPreviewStore(state => chatId ? state.sessions[chatId] : undefined)
+  const app = task?.app ?? task?.surface?.app_id ?? null
+  const session: CuaPreviewSession | undefined = task ? {
+    phase: 'live', turnId: task.key, surface: app ? 'app' : task.surface?.kind === 'browser' ? 'browser' : null,
+    appId: app, revision: task.revision ?? 0, still: null, label: null
+  } : allTasks ? undefined : localSession
+  const grouped = running.length > 1 || (global && tasks.length > 1)
+  const [groupOpen, setGroupOpen] = useState(global)
+  const openGroup = (): void => {
+    if (task && !task.waiting) setSelected(task.key)
+    setGroupOpen(true)
+  }
+  const [confirmKey, setConfirmKey] = useState<string | null>(null)
+  const [stopError, setStopError] = useState(false)
+  const confirmTask = tasks.find(item => item.key === confirmKey)
+  useEffect(() => {
+    if (!tasks.length) setGroupOpen(false)
+  }, [tasks.length])
+  const stopTicket = async (key: string, action: 'stop' | 'cancel' = 'stop'): Promise<void> => {
+    setConfirmKey(null)
+    try {
+      const response = await window.dsGui.runtimeRequest('/v1/cua/tasks/' + encodeURIComponent(key) + '/' + action, 'POST')
+      setStopError(!response.ok && response.status !== 409)
+    } catch { setStopError(true) }
+  }
+  const slot = useRailSlot((state) => global ? null : state.slot)
   const slotWidth = useSlotWidth(slot)
   const slotUsable = slotWidth > 0
   const compactRail = slotUsable && slotWidth < MIN_DOCK_WIDTH
@@ -78,6 +130,7 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     return () => observer.disconnect()
   }, [threadId, !!session, slotUsable, compactRail, slot])
   const collapse = useCallback(() => {
+    setGroupOpen(false)
     setCollapsedFor(permissionKey)
     setExpandedFor(null)
     setPeekFor(null)
@@ -90,8 +143,8 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
       setPeekFor(permissionKey)
     }
   }, [collapsedFor, autoOpenedFor, permissionKey])
-  const peeking = compactRail && peekFor === permissionKey
-  const expanded = compactRail ? peeking : expandedFor === permissionKey
+  const peeking = compactRail && (grouped ? groupOpen : peekFor === permissionKey)
+  const expanded = grouped ? groupOpen : compactRail ? peeking : expandedFor === permissionKey
   useEffect(() => {
     if (!compactRail || !slot) return
     const position = (): void => {
@@ -149,14 +202,14 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     setPermissionFor(`${threadId}:${session?.turnId}`)
   }, [threadId, session?.turnId])
   useEffect(() => {
-    if (!threadId || typeof window.dsGui?.runtimeRequest !== 'function') return
+    if (allTasks || task || !threadId || typeof window.dsGui?.runtimeRequest !== 'function') return
     let cancelled = false
     void window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/cua`, 'GET')
       .then(response => {
         if (!cancelled && response.ok) restoreCuaPreview(threadId, JSON.parse(response.body))
       }).catch(() => { /* Live tool events can still arm the preview. */ })
     return () => { cancelled = true }
-  }, [threadId])
+  }, [threadId, !!task, !!allTasks])
   // One mount for the whole task: changing place moves this node, so the capture, the
   // canvas and the control state are not rebuilt when the sidebar opens or narrows.
   const cardHost = useMemo(() => {
@@ -172,19 +225,57 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
   }, [cardHost, cardParent])
   useEffect(() => () => cardHost.remove(), [cardHost])
   if (!threadId || !session) return null
+  const waitNotice = (item: typeof tasks[number]): ReactElement => {
+    const holder = allTasks?.find(active => !active.waiting && ( !active.app || active.app === item.app))
+    const appName = item.app_name ?? item.app ?? t('cuaPreviewComputer')
+    const reason = holder?.external ? t('cuaTaskExternalWait', { app: appName })
+      : !holder && (allTasks?.filter(active => !active.waiting).length ?? 0) >= 3 ? t('cuaWaitingSlot') : t('cuaTaskWaitingFor', { app: appName })
+    return <div key={item.key} role="status"
+      className="flex items-center justify-between gap-2 px-3 py-1 text-xs text-ds-muted">
+      <span>{reason}</span>
+      {!global && <button type="button" onClick={() => void stopTicket(item.key, 'cancel')}>{t('cuaCancelWaiting')}</button>}
+    </div>
+  }
   const card = <section ref={cardRef} hidden={compactRail && !peeking} aria-label={t('cuaPreviewRegion')} data-cua-preview={threadId}
     style={{ height, ...(compactRail ? anchor : {}) }}
     className={`ds-cua-preview-card overflow-hidden ${animate ? 'transition-[height] duration-200' : ''} ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none rounded-[20px] border text-ds-ink ${
       compactRail ? 'fixed z-50' : slotUsable ? 'relative w-full' : 'relative w-full max-w-80'
     }`}>
     <div ref={contentRef} className="max-h-[calc(100vh-7rem)] overflow-y-auto">
-    <CuaPreviewSessionView key={`${threadId}:${session.turnId ?? ''}:${session.surface ?? ''}:${session.appId ?? ''}`}
+    {grouped && task && !task.waiting && <>
+      <button type="button" aria-expanded={groupOpen} onClick={() => groupOpen ? collapse() : openGroup()}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-ds-hover">
+        <Monitor className="h-4 w-4" aria-hidden />{t(global ? 'cuaGlobalTasks' : 'cuaTasksHeading')}
+        <span className="ml-auto text-ds-muted">{t('cuaTasksRunning', { count: running.length })}</span>
+        {waiting.length > 0 && <span>{t('cuaTasksWaiting', { count: waiting.length })}</span>}
+        <ChevronDown className="h-4 w-4" aria-hidden />
+      </button>
+      {groupOpen && running.length > 1 && <div role="group" aria-label={t('cuaTasksHeading')} className="flex gap-1 px-2 pb-1">
+        {running.map(item => <button type="button" key={item.key} aria-pressed={task.key === item.key}
+          onClick={() => { setSelected(item.key); setConfirmKey(null); setStopError(false) }}
+          className="min-w-0 flex-1 truncate rounded-md px-1 py-1 text-xs hover:bg-ds-hover aria-pressed:bg-ds-hover">
+          {item.app_name ?? item.app ?? t('cuaPreviewComputer')}</button>)}
+      </div>}
+
+    </>}
+    {(!task || (!task.waiting && (!grouped || groupOpen))) && <CuaPreviewSessionView key={`${threadId}:${session.turnId ?? ''}:${session.surface ?? ''}:${session.appId ?? ''}`}
       setStopTarget={setStopTarget} threadId={threadId} session={session} expanded={expanded} allowed={allowed}
-      autoPreview={collapsedFor !== permissionKey} onFrameReady={onFrameReady}
+      ticketKey={task?.key}
+      autoPreview={!task && collapsedFor !== permissionKey} onFrameReady={onFrameReady}
       onExpand={() => { setAnimate(true); setExpandedFor(permissionKey) }} onCollapse={() => { setAnimate(true); collapse() }}
       onPermissionRequired={requestPermission} onOpenPermissions={() => setPermissionFor(permissionKey)}
-      onDismiss={session.phase === 'ended' ? () => dismissEndedCuaPreview(threadId) : undefined} />
-    <CuaControlBar key={threadId} threadId={threadId} stopTarget={stopTarget} />
+      onDismiss={session.phase === 'ended' ? () => dismissEndedCuaPreview(threadId) : undefined} />}
+    {waiting.map(waitNotice)}
+    {!global && task && (!grouped || groupOpen) && !task.waiting && task.can_stop && stopTarget && createPortal(
+      <button type="button" aria-label={t('cuaControlStop')} title={t('cuaControlStop')}
+        className="grid h-7 w-7 place-items-center rounded-md text-ds-muted hover:bg-ds-hover"
+        onClick={() => setConfirmKey(task.key)}>■</button>, stopTarget)}
+    {stopError && <div role="alert" className="px-3 text-xs">{t('cuaStopFailed')}</div>}
+    {confirmTask && <ConfirmDialog title={t('cuaControlStopConfirmTitle')}
+      body={t('cuaTaskStopBody', { app: confirmTask.app_name ?? confirmTask.app ?? t('cuaPreviewComputer') })}
+      confirmLabel={t('cuaControlStopConfirm')} cancelLabel={t('cancel')}
+      onCancel={() => setConfirmKey(null)} onConfirm={() => void stopTicket(confirmTask.key)} />}
+    {!task && <CuaControlBar key={threadId} threadId={threadId} stopTarget={stopTarget} />}
     </div>
   </section>
   // The fallback belongs to the conversation layout, never to the whole window.
@@ -194,7 +285,7 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
     {compactRail && slot ? <>
       {createPortal(<button type="button" className="ds-operation-dock-rail__btn relative"
         aria-label={t('cuaPreviewShow')} title={t('cuaPreviewShow')} aria-expanded={peeking}
-        onClick={() => { setAnimate(true); peeking ? collapse() : setPeekFor(permissionKey) }}>
+        onClick={() => { setAnimate(true); peeking ? collapse() : grouped ? openGroup() : setPeekFor(permissionKey) }}>
         <Monitor className="h-4 w-4" aria-hidden />
         {session.phase !== 'ended' && <span aria-hidden
           className={`absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ${session.control ? 'bg-amber-500' : 'bg-emerald-500'}`} />}
@@ -206,7 +297,8 @@ export function CuaPreview({ threadId }: { threadId: string | null }): ReactElem
   </>
 }
 
-function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, allowed, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady }: {
+function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, allowed, onExpand, onCollapse, onPermissionRequired, onOpenPermissions, onDismiss, autoPreview, onFrameReady, ticketKey }: {
+  ticketKey?: string
   setStopTarget: (element: HTMLSpanElement | null) => void
   autoPreview: boolean; onFrameReady: () => void; allowed: boolean | null
   expanded: boolean; onExpand: () => void; onCollapse: () => void; onDismiss?: () => void
@@ -221,8 +313,13 @@ function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, all
     setOpenAppFailed(false)
     try {
       // Raising the app can close menus or open a window: the assistant observes again first.
-      await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/cua/raised`, 'POST')
-        .catch(() => undefined)
+      if (ticketKey) {
+        const result = await window.dsGui.runtimeRequest(`/v1/cua/tasks/${encodeURIComponent(ticketKey)}/raised`, 'POST')
+        if (!result.ok) { setOpenAppFailed(true); return }
+      } else {
+        await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/cua/raised`, 'POST')
+          .catch(() => undefined)
+      }
       const opened = await window.dsGui.openCuaApp(session.appId)
       setOpenAppFailed(!opened)
       if (opened) window.dispatchEvent(new Event('cua-preview-recheck'))
@@ -257,9 +354,11 @@ function CuaPreviewSessionView({ setStopTarget, threadId, session, expanded, all
   // Stop capture after a manual collapse; retain the latest frame. A screenshot only
   // replaces a held live frame when it is newer than the moment the stream lost its window.
   const useStill = shown && (!live.hasFrame || (live.lostAt !== null && (session.capturedAt ?? 0) > live.lostAt))
+  const framePath = ticketKey ? `/v1/cua/tasks/${encodeURIComponent(ticketKey)}/frame`
+    : `/v1/threads/${encodeURIComponent(threadId)}/cua/frame`
   const still = useCuaStillFrame({
     canvasRef, still: session.still, enabled: useStill, refresh: session.revision,
-    currentPath: streaming ? `/v1/threads/${encodeURIComponent(threadId)}/cua/frame` : null
+    currentPath: streaming ? framePath : null
   })
 
   const hasFrame = live.hasFrame || still.frameSize !== null

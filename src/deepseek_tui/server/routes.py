@@ -806,6 +806,51 @@ async def cua_thread_app_raised(request: Request, thread_id: str) -> dict[str, A
     return mgr.note_cua_app_raised(thread_id)
 
 
+@router_mcp.get("/cua/tasks")
+async def cua_desktop_tasks() -> dict[str, Any]:
+    import sys
+    from deepseek_tui.cua.session import DesktopLease
+
+    from deepseek_tui.cua.app_scope import display_name
+
+    def inspect():
+        import os
+        records = DesktopLease().records()
+        for row in records:
+            row["external"] = row["pid"] != os.getpid()
+            if app := row["app"] or (row.get("surface") or {}).get("app_id"):
+                row["app_name"] = display_name(app)
+        return records
+    return {"tasks": await asyncio.to_thread(inspect) if sys.platform in {"darwin", "linux"} else []}
+
+
+@router_mcp.get("/cua/tasks/{key}/frame")
+async def cua_ticket_frame(request: Request, key: str) -> dict[str, Any]:
+    import base64
+
+    session = manager(request).cua_ticket_session(key)
+    image = await session.preview_frame() if session and session.lease.info.get("preview") else None
+    if image and session.lease.info.get("key") == key and session.lease.fd is not None:
+        return await asyncio.to_thread(_frame_payload, base64.b64decode(image["data"]))
+    if session is None:
+        from deepseek_tui.cua.session import DesktopLease
+
+        data = await asyncio.to_thread(DesktopLease().remote_preview, key)
+        if data:
+            return await asyncio.to_thread(_frame_payload, data)
+    raise api_error(404, "No current frame", error="cua_frame_unavailable")
+
+
+
+@router_mcp.post("/cua/tasks/{key}/{action}")
+async def control_cua_desktop_task(key: str, action: str) -> dict[str, bool]:
+    from deepseek_tui.cua.session import DesktopLease
+
+    if not await asyncio.to_thread(DesktopLease().signal, key, action):
+        raise api_error(409, "The original computer-use task has ended")
+    return {"requested": True}
+
+
 @router_mcp.get("/cua/status")
 async def cua_status(request: Request) -> dict[str, Any]:
     """Inspect installed components without connecting or requesting desktop access."""

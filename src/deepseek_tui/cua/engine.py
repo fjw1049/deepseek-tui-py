@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from functools import partial
 
 from deepseek_tui.cua.approval import approval_question, approval_response, auto_allow_response
 from deepseek_tui.cua.session import CuaSession
@@ -63,6 +64,7 @@ class CuaEngineMixin:
                 owner_id=self.tool_context.metadata.get("runtime_thread_id"),
             )
             self._cua_session = session
+        session.stop_task = partial(self.handle.cancel, turn_id=self.handle.active_turn_id)
         events = [self.handle.cancel_event, self.handle.pause.requested]
         try:
             # Only the first session in this process starts the runtime here; later

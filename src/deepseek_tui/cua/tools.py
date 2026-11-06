@@ -110,7 +110,7 @@ _RUNTIME_ERRORS = (
      "The app changed since your last state read; this also follows your own window or menu "
      "change. Call getAXState() on the bound app (get_app_state in the message is the runtime's "
      "internal name) and act on fresh indices."),
-    ("screenshot_unavailable", (), r"Screenshot unavailable for",
+    ("screenshot_unavailable", (), r"Screenshot unavailable for|The screen capture failed|SCStreamErrorDomain Code=-3811",
      "This app has no screenshot in its current state, for example while a menu is open or its "
      "window is hidden or minimized. Use getAXState(), or close the menu or show the window "
      "first."),
@@ -515,6 +515,7 @@ class CuaTool(ToolSpec):
                 self.session.outside_change or self.session.reset_reason
             ):
                 self.session.last_surface = surface
+                self.session.lease.note_surface(surface)
         trace = payload.get("trace")
         if isinstance(trace, dict) and trace.get("ready"):
             metadata["cua_trace"] = trace

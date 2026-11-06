@@ -40,6 +40,7 @@ class SendMessageOp:
 @dataclass(frozen=True, slots=True)
 class CancelRequestOp:
     reason: str = "user_cancelled"
+    turn_id: str | None = None
 
 
 EngineOp = SendMessageOp | CancelRequestOp
@@ -108,6 +109,7 @@ class EngineHandle:
         # by the TUI to decide whether composer submit should send a new
         # SendMessageOp or queue a steer onto the live turn.
         self._turn_active = asyncio.Event()
+        self.active_turn_id: str | None = None
 
     @property
     def hooks(self) -> HookDispatcher | None:
@@ -272,10 +274,12 @@ class EngineHandle:
         while True:
             yield await self._event_queue.get()
 
-    async def cancel(self, reason: str = "user_cancelled") -> None:
+    async def cancel(self, reason: str = "user_cancelled", *, turn_id: str | None = None) -> None:
+        if turn_id is not None and turn_id != self.active_turn_id:
+            return
         self._cancel_reason = reason
         self.cancel_event.set()
-        await self.send_op(CancelRequestOp(reason=reason))
+        await self.send_op(CancelRequestOp(reason=reason, turn_id=turn_id))
 
     def reset_cancel(self) -> None:
         # Clear in place instead of replacing the Event object: subagents and
@@ -308,10 +312,12 @@ class EngineHandle:
         """
         return self._turn_active.is_set()
 
-    def _mark_turn_active(self) -> None:
+    def _mark_turn_active(self, turn_id: str | None = None) -> None:
+        self.active_turn_id = turn_id
         self._turn_active.set()
 
     def _mark_turn_idle(self) -> None:
+        self.active_turn_id = None
         self._turn_active.clear()
         self.resume_context = None
         self.pause.resume()

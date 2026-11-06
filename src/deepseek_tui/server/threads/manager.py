@@ -4923,6 +4923,13 @@ class RuntimeThreadManager:
         children = getattr(getattr(context, "subagent_manager", None), "cua_sessions", {})
         return ([parent] if parent else []) + list(children.values())
 
+    def cua_ticket_session(self, key: str):
+        for state in self._active.values():
+            for session in self._cua_sessions(state):
+                if session.lease.fd is not None and session.lease.info.get("key") == key:
+                    return session
+        return None
+
     def cua_task_state(self, thread_id: str) -> dict[str, Any]:
         state = self._active.get(thread_id)
         session = getattr(state.engine, "_cua_session", None) if state else None

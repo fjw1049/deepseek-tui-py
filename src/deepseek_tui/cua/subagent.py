@@ -63,6 +63,10 @@ async def prepare_subagent_cua(agent, runtime, context, registry, allowed_tools,
         runtime.manager.cua_sessions = {}
     runtime.manager.cua_sessions[agent.id] = session
     session.lease.owner = getattr(runtime.manager, "cua_owner_id", None) or session.session_id
+    async def stop_child():
+        agent.cancel_token.set()
+
+    session.stop_task = stop_child
     try:
         events = [cancel, agent.cancel_token, agent.interrupt_event]
         if agent.parent_cancel is not None:

@@ -1524,3 +1524,103 @@ async def test_busy_desktop_says_who_holds_it_and_makes_no_estimate(tmp_path):
         assert "nothing was executed" in message and "unknown" in message
     finally:
         holder.release()
+
+
+async def test_switching_native_apps_releases_first_before_waiting_and_summary_ends_second(
+    session, tmp_path, monkeypatch
+):
+    from deepseek_tui.cua import app_scope
+
+    apps = {"汽水音乐": "com.soda.music", "文本编辑": "com.apple.TextEdit"}
+    monkeypatch.setattr(app_scope, "native_app", apps.get)
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    blocker = DesktopLease(tmp_path / "desktop.lock")
+    next_player = DesktopLease(tmp_path / "desktop.lock")
+    await blocker.acquire(app="com.apple.TextEdit")
+    try:
+        await session.call("js", {"code": 'let music = await cua.getApp("汽水音乐");'}, "t", "1")
+        assert _calls(tmp_path)[0]["args"]["code"] == 'let music = await cua.getApp("com.soda.music");'
+        switching = asyncio.create_task(session.call(
+            "js", {"code": 'let editor = await cua.getApp("文本编辑");'}, "t", "2"))
+        await asyncio.wait_for(next_player.acquire(app="com.soda.music"), 2)
+        assert not switching.done()
+        blocker.release()
+        await asyncio.wait_for(switching, 2)
+        assert session.lease.app == "com.apple.TextEdit"
+        await session.call("js", {"completion_summary": "已查看文本编辑"}, "t", "3")
+        assert session.lease.fd is None and next_player.fd is not None
+    finally:
+        next_player.release()
+        blocker.release()
+        await session.close()
+
+
+async def test_stop_accepted_while_finishing_music_blocks_switch(session, tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.cua import app_scope
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    session.stop_task = AsyncMock()
+    music = {'code': 'let player = await cua.getApp("com.soda.music");'}
+    calc = {'code': 'let calc = await cua.getApp("com.apple.calculator");'}
+    try:
+        await session.call("js", music, "original", "1")
+        key = session.lease.info["key"]
+        end = session._request
+
+        async def request(kind, **kwargs):
+            if kind == "endTurn":
+                assert session.lease.signal(key, "stop")
+            return await end(kind, **kwargs)
+
+        monkeypatch.setattr(session, "_request", request)
+        with pytest.raises(ToolError, match="stop"):
+            await session.call("js", calc, "original", "2")
+        assert session.lease.fd is None
+        assert all(row.get("call") != "2" for row in _calls(tmp_path))
+        session.stop_task.assert_awaited_once()
+        monkeypatch.setattr(session, "_request", end)
+        await session.call("js", calc, "next-turn", "3")
+        assert not session.lease.signal(key, "stop")
+        session.stop_task.assert_awaited_once()
+    finally:
+        await session.close()
+
+
+async def test_reacquired_click_requires_observation_each_retry(session, tmp_path, monkeypatch):
+    from deepseek_tui.cua import app_scope
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    player = "com.soda.music"
+    click = {"code": "await player.click(29);"}
+    try:
+        await session.call("js", {"code": f'let player = await cua.getApp("{player}");'}, "t", "1")
+        await session.end_turn()
+        for call_id in ("first", "retry"):
+            with pytest.raises(ToolError, match="cua_observe"):
+                await session.call("js", click, "t", call_id)
+        await session.call("observe", {"app": "com.apple.calculator"}, "t", "other")
+        with pytest.raises(ToolError, match="cua_observe"):
+            await session.call("js", click, "t", "wrong-target")
+        request = session._request
+
+        async def failed_observe(kind, **kwargs):
+            if kind == "observe":
+                return {**await request(kind, **kwargs), "isError": True}
+            return await request(kind, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(session, "_request", failed_observe)
+            failed = await session.call("observe", {"app": player}, "t", "closed-window")
+            assert failed["isError"]
+            with pytest.raises(ToolError, match="cua_observe"):
+                await session.call("js", click, "t", "after-failure")
+        await session.call("observe", {"app": player}, "t", "fresh")
+        await session.call("js", click, "t", "safe")
+        assert [r["call"] for r in _calls(tmp_path) if r.get("args") == click] == ["safe"]
+    finally:
+        await session.close()

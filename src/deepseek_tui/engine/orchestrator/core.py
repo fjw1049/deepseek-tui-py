@@ -1849,7 +1849,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             if self.tool_context.subagent_manager is not None:
                 self.tool_context.subagent_manager.attach_parent_cancel(self.handle.cancel_event)
                 self.tool_context.subagent_manager.attach_parent_pause(self.handle.pause)
-            self.handle._mark_turn_active()
+            self.handle._mark_turn_active(turn_id)
             try:
                 await self._handle_send_message_inner(op, turn_id)
             finally:
@@ -1929,6 +1929,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                         name="engine-turn",
                     )
                 elif isinstance(op, CancelRequestOp):
+                    if op.turn_id is not None and op.turn_id != self.handle.active_turn_id:
+                        continue
                     logger.info("engine_cancel_request reason=%s", op.reason)
                     # Defense in depth: ensure the cancel_event is set even if
                     # the caller queued the op without calling handle.cancel().
@@ -1950,7 +1952,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             self.handle.reset_cancel()
             if self.tool_context.subagent_manager is not None:
                 self.tool_context.subagent_manager.attach_parent_cancel(self.handle.cancel_event)
-            self.handle._mark_turn_active()
+            self.handle._mark_turn_active(turn_id)
             # Publish the live auto-approve flag so task_create inherits the
             # session's actual approval mode (yolo/auto) instead of silently
             # defaulting. The Workbench thread manager writes the same key

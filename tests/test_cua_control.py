@@ -398,3 +398,46 @@ async def test_multiple_unknown_outcomes_survive_restart_and_individual_review(d
 def test_code_fingerprint_preserves_literal_whitespace():
     assert _code_fingerprint({'code': 'await app.typeText("a  b")'}) != _code_fingerprint(
         {'code': 'await app.typeText("a b")'})
+
+
+async def test_external_panel_stop_wakes_idle_owner_and_preserves_other_app(desktop, tmp_path):
+    _, state, session = desktop
+    from deepseek_tui.cua.session import DesktopLease
+
+    session.stop_task = state.handle.cancel
+    session.lease.can_stop = True
+    other = DesktopLease()
+    await session.lease.acquire(app="com.soda.music")
+    await other.acquire(app="com.apple.calculator")
+    key = session.lease.info["key"]
+    try:
+        # A task between native calls still has a stop monitor.
+        await session.run(lambda: asyncio.sleep(0), [state.handle.cancel_event])
+        assert DesktopLease().signal(key, "stop")
+        await asyncio.wait_for(state.handle.cancel_event.wait(), 2)
+        await asyncio.wait_for(session._monitor, 2)
+        assert session.lease.fd is None
+        assert other.fd is not None and not other.stop_requested()
+    finally:
+        await session.close()
+        other.release()
+
+
+async def test_panel_stop_after_human_takeover_releases_waiter(desktop):
+    manager, state, session = desktop
+    session.stop_task = state.handle.cancel
+    session.lease.can_stop = True
+    other = DesktopLease()
+    try:
+        await session.run(lambda: asyncio.sleep(0), [state.handle.cancel_event])
+        await manager.control_cua("thread", "user", 0, "turn")
+        key = session.lease.info["key"]
+        assert other.signal(key, "stop")
+        await asyncio.wait_for(state.handle.cancel_event.wait(), 1.5)
+        await other.acquire(app="com.soda.music", timeout=1)
+        assert not session.human_reserved
+        assert not other.signal(key, "stop")
+    finally:
+        other.release()
+        session.release_human()
+        await session.close()

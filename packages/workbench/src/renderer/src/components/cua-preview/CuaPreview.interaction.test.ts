@@ -413,3 +413,37 @@ it('leaves Escape to a text field being typed in', async () => {
   expect(document.querySelector('[aria-label="cuaPreviewCollapse"]')).not.toBeNull()
   field.remove()
 })
+
+it('switches three native apps in one viewer, folds without input, and stops only the selected ticket', async () => {
+  const tasks = [
+    { key: 'player-eval', app: 'com.soda.music', app_name: '汽水音乐', thread_id: 'external-eval' },
+    { key: 'text-job', app: 'com.apple.TextEdit', app_name: '文本编辑', thread_id: 'thread' },
+    { key: 'calc-job', app: 'com.apple.calculator', app_name: '计算器', thread_id: 'sibling' }
+  ].map(item => ({ ...item, waiting: false, can_stop: true }))
+  const waiter = { ...tasks[0], waiting: true, key: 'player-next', thread_id: 'next-chat' }
+  const allTasks = [...tasks, waiter]
+  const render = (threadId: string, global = false) => act(async () =>
+    root.render(createElement(CuaPreview, { key: threadId, threadId, allTasks, global })))
+  await render('empty-chat')
+  expect(document.querySelector('[data-cua-preview]')).toBeNull()
+  await render('next-chat')
+  expect(find('cuaCancelWaiting')).toBeTruthy()
+  expect(find('cuaControlStop')).toBeUndefined()
+  await render('all', true)
+  for (const app of ['汽水音乐', '计算器', '文本编辑']) {
+    await act(async () => find(app).click())
+    expect(find(app).getAttribute('aria-pressed')).toBe('true')
+    expect(find('cuaControlStop')).toBeUndefined()
+  }
+  await render('thread')
+  await expand()
+  expect(find('汽水音乐')).toBeUndefined()
+  await act(async () => find('cuaControlStop').click())
+  await render('sibling')
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+  await expand()
+  await act(async () => find('cuaControlStop').click())
+  await act(async () => find('cuaControlStopConfirm').click())
+  expect(request.mock.calls.filter(call => call[1] === 'POST').map(call => call[0]))
+    .toEqual(['/v1/cua/tasks/calc-job/stop'])
+})

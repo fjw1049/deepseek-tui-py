@@ -371,3 +371,38 @@ async def test_browser_input_is_not_written_to_tool_start_logs(engine, caplog):
     assert "browser arguments redacted" in caplog.text
     assert "private-password-123" not in caplog.text
     engine._execute_single_tool.assert_awaited_once()
+
+
+async def test_late_cua_cancel_op_does_not_interrupt_the_next_turn(engine):
+    handle = engine.handle
+    handle._mark_turn_active("music")
+    await handle.cancel(turn_id="music")
+    delayed = await handle.next_op()
+    handle._mark_turn_idle()
+    handle.reset_cancel()
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def turn(op):
+        handle._mark_turn_active("calculator")
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            handle._mark_turn_idle()
+            stopped.set()
+
+    engine._handle_send_message = turn
+    runner = asyncio.create_task(engine.run())
+    try:
+        await handle.send_message("calculator")
+        await asyncio.wait_for(started.wait(), 1)
+        await handle.send_op(delayed)
+        await handle.send_message("queue marker")
+        await eventually(lambda: handle._op_queue.empty())
+        assert not handle.cancel_event.is_set() and not stopped.is_set()
+        await handle.cancel(turn_id="calculator")
+        await asyncio.wait_for(stopped.wait(), 1)
+    finally:
+        runner.cancel()
+        await asyncio.gather(runner, return_exceptions=True)
