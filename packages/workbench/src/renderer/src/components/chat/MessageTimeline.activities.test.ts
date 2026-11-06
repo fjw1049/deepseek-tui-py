@@ -52,15 +52,16 @@ const agent = (id: string, status: 'running' | 'completed' | 'failed'): ChatBloc
   prompt: `分析 ${id}`, status
 })
 
-it.each([2, 4])('shows a collapsed top summary only after the turn ends with %i completed tasks', async (done) => {
+it.each([2, 4])('updates one collapsed plan during work and preserves its summary after %i tasks finish', async (done) => {
   const blocks: ChatBlock[] = [{ kind: 'user', id: 'user', text: 'mock four todos' }, checklist(0)]
   await render(blocks)
-  expect(container.querySelector('.ds-inline-todo')).toBeNull()
+  const liveCard = container.querySelector('.ds-inline-todo')!
+  expect(liveCard.textContent).toContain('步骤 1')
   blocks.push(checklist(done))
   await render([...blocks])
-  expect(container.querySelector('.ds-inline-todo')).toBeNull()
+  expect(liveCard.textContent).toContain(`${done}/4`)
   await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
-  expect(container.querySelector('.ds-inline-todo')).toBeNull()
+  expect(container.querySelectorAll('.ds-inline-todo')).toHaveLength(1)
   await render([...blocks], false)
   const card = container.querySelector('.ds-inline-todo')!
   expect(card).not.toBeNull()

@@ -1268,8 +1268,8 @@ function MessageTurn({
         </div>
       ) : (
         <>
-          {todoSession && !isProcessing && !hideInlineTodo ? (
-            <InlineTodoBlock session={todoSession} />
+          {todoSession && !hideInlineTodo ? (
+            <InlineTodoBlock session={todoSession} active={isProcessing} />
           ) : null}
           {showWorkMeta ? (
             <div className="flex flex-col gap-1 pb-2">

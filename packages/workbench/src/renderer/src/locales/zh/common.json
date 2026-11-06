@@ -1392,6 +1392,8 @@
   "operationDockCommitViewChanges": "在更改面板查看",
   "operationDockGitMore": "更多 Git 操作",
   "operationDockOpenChanges": "展开完整变更面板",
+  "todoInlineRemaining": "剩余 {{count}} 步",
+  "todoInlineNext": "下一步：{{item}}",
   "todoInlineTitle": "任务计划",
   "todoInlineStatus_pending": "待开始",
   "todoInlineStatus_in_progress": "进行中",

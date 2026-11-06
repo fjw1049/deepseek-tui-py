@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, ChevronRight, ListTodo } from 'lucide-react'
+import { Check, ChevronRight, ListTodo, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TodoItemView } from '../../lib/extract-todos-from-blocks'
 
@@ -41,9 +41,10 @@ export function DockTodos({ todos, collapsed, onToggle }: { todos: TodoItemView[
           <ul className="mt-1 flex max-h-80 flex-col gap-0.5 overflow-y-auto overflow-x-hidden [scrollbar-width:thin]">
             {todos.map((item, index) => {
               const completed = item.status === 'completed'
+              const cancelled = item.status === 'cancelled'
               const inProgress = item.status === 'in_progress'
               const step = index + 1
-              const rowKey = `${item.id}-${item.content}`
+              const rowKey = item.id
               const expanded = expandedTodoKey === rowKey
               return (
                 <li key={rowKey}>
@@ -64,7 +65,7 @@ export function DockTodos({ todos, collapsed, onToggle }: { todos: TodoItemView[
                       className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center"
                       aria-hidden
                     >
-                      {completed ? (
+                      {cancelled ? <X className="h-4 w-4 text-ds-faint" /> : completed ? (
                         <span className="flex h-5 w-5 items-center justify-center text-ds-faint">
                           <Check className="h-4 w-4" strokeWidth={2} />
                         </span>
@@ -84,6 +85,7 @@ export function DockTodos({ todos, collapsed, onToggle }: { todos: TodoItemView[
                     <span
                       className={[
                         'min-w-0 flex-1 text-[13px] leading-5',
+                        cancelled ? 'line-through' : '',
                         expanded ? 'break-words whitespace-pre-wrap' : 'truncate',
                         completed
                           ? 'text-ds-muted'
@@ -92,7 +94,7 @@ export function DockTodos({ todos, collapsed, onToggle }: { todos: TodoItemView[
                             : 'text-ds-muted'
                       ].join(' ')}
                     >
-                      {item.content}
+                      <span className="sr-only">{t(`todoInlineStatus_${item.status}`)}: </span>{item.content}
                     </span>
                   </button>
                 </li>

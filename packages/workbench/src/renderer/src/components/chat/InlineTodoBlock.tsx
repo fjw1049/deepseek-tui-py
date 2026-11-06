@@ -51,8 +51,8 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
     : false
 
   const currentItem = session.items.find((item) => item.id === session.inProgressId)
-  const latestCompleted = session.items.filter((item) => item.status === 'completed').at(-1)
-  const previewItem = currentItem ?? latestCompleted
+  const previewItem = currentItem ?? session.items.find((item) => item.status === 'pending')
+  const remaining = count - completedCount - cancelledCount
 
   return (
     <section
@@ -71,16 +71,16 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
           {allCompleted ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : <ListTodo className="h-4 w-4" />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="ds-inline-todo__title block text-[14px] font-medium leading-5 text-ds-ink">{active ? t('todoInlineTitle') : t('todoInlineProgress', { done: completedCount, total: count })}</span>
+          <span className="ds-inline-todo__title block text-[14px] font-medium leading-5 text-ds-ink">{active && remaining > 0 ? t('todoInlineRemaining', { count: remaining }) : t('todoInlineProgress', { done: completedCount, total: count })}</span>
           {active && !listExpanded && !session.isComplete && previewItem ? (
             <span className="mt-1 block truncate text-[13px] text-ds-muted" title={previewItem.content}>
-              {currentItem ? t('todoInlineCurrent', { item: currentItem.content }) : t('todoInlineLatestDone', { item: previewItem.content })}
+              {t(currentItem ? 'todoInlineCurrent' : 'todoInlineNext', { item: previewItem.content })}
             </span>
           ) : null}
         </span>
         <span className={`shrink-0 text-right text-[12px] leading-5 tabular-nums ${allCompleted ? 'text-emerald-600 dark:text-emerald-400' : 'text-ds-muted'}`}>
           <span className="sr-only" role="status">{t('todoInlineProgress', { done: completedCount, total: count })}{cancelledCount > 0 ? `, ${t('todoInlineCancelled', { count: cancelledCount })}` : ''}</span>
-          {active ? <span aria-hidden="true"><span key={completedCount} className="ds-inline-todo__count inline-block">{completedCount}</span>/{count}</span> : null}
+          {active && remaining > 0 ? <span aria-hidden="true"><span key={completedCount} className="ds-inline-todo__count inline-block">{completedCount}</span>/{count}</span> : null}
           {cancelledCount > 0 ? <span aria-hidden="true" className="ml-2">{t('todoInlineCancelled', { count: cancelledCount })}</span> : null}
         </span>
         <ChevronDown aria-hidden="true" className={`ds-inline-todo__chevron mt-1 h-3 w-3 shrink-0 text-ds-faint ${listExpanded ? 'rotate-180' : ''}`} strokeWidth={1.8} />
