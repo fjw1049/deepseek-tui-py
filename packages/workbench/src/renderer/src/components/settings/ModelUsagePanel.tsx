@@ -8,9 +8,8 @@ import {
   formatCompactNumber,
   type ModelUsageSummary
 } from '../../hooks/use-model-usage'
-import { ModelUsageTrendChart } from './ModelUsageTrendChart'
+import { MODEL_USAGE_BAR_COLORS as BAR_COLORS, ModelUsageTrendChart } from './ModelUsageTrendChart'
 
-const BAR_COLORS = ['#6f8cff', '#52b788', '#f2b56b', '#c69bd3', '#8b7cf6', '#67b7dc']
 const RANGES: Array<{ value: UsageRange; labelKey: string }> = [
   { value: '7d', labelKey: 'modelUsageRange7d' },
   { value: '30d', labelKey: 'modelUsageRange30d' },
@@ -42,6 +41,7 @@ export function ModelUsagePanel({
 }: Props): ReactElement {
   const { t } = useTranslation('settings')
   const buckets = useMemo(() => usage?.buckets ?? [], [usage])
+  const modelOrder = useMemo(() => buckets.map(bucket => bucket.model), [buckets])
   const maxTokens = useMemo(
     () => Math.max(...buckets.map((bucket) => bucket.totalTokens), 1),
     [buckets]
@@ -54,7 +54,7 @@ export function ModelUsagePanel({
     <div className="px-4 py-5">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ds-subtle text-ds-muted">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
             <BarChart3 className="h-4 w-4" strokeWidth={1.85} />
           </div>
           <div className="min-w-0">
@@ -106,9 +106,10 @@ export function ModelUsagePanel({
 
       {!error && usage && buckets.length > 0 ? (
         <>
-          <div className="mt-4 rounded-xl border border-ds-border-muted bg-ds-card/60 px-3 py-3">
+          <div className="mt-4 rounded-xl border border-ds-border-muted bg-ds-elevated px-4 py-5">
             <ModelUsageTrendChart
               daily={daily}
+              modelOrder={modelOrder}
               composerModelMeta={composerModelMeta}
               showYAxis
               segmentDays={segmentDays}
@@ -117,7 +118,7 @@ export function ModelUsagePanel({
           <div className="mt-4 max-h-[min(420px,50vh)] space-y-1.5 overflow-y-auto pb-3 pr-1">
           {buckets.map((bucket, index) => {
             const label = formatComposerModelLabel(bucket.model, composerModelMeta)
-            const widthPct = Math.max(4, (bucket.totalTokens / maxTokens) * 100)
+            const widthPct = (bucket.totalTokens / maxTokens) * 100
             const active =
               activeModelId.trim() !== '' &&
               (bucket.model === activeModelId.trim() ||
@@ -127,10 +128,10 @@ export function ModelUsagePanel({
             return (
               <div
                 key={bucket.model}
-                className={`rounded-lg border px-2.5 py-1.5 ${
+                className={`rounded-lg border px-3 py-2 ${
                   active
                     ? 'border-accent/35 bg-accent/5'
-                    : 'border-ds-border-muted bg-ds-card/60'
+                    : 'border-transparent bg-transparent'
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">

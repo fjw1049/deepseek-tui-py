@@ -20,14 +20,14 @@ import {
 import { formatCompactNumber } from '../../hooks/use-model-usage'
 
 const WEEKDAY_LABEL_WIDTH = 16
-const LEGEND_CELL_PX = 14
+const LEGEND_CELL_PX = 9
 const SQUARE_GAP = 3
 const MONTH_ROW_HEIGHT = 14
 const MONTH_ROW_GAP = 6
 const COLUMN_GAP = 8
 // Target cell size in fill mode: small enough to read like a GitHub graph,
 // capped so a short panel packs more weeks instead of inflating each square.
-const IDEAL_CELL_PX = 13
+const IDEAL_CELL_PX = 17
 const MIN_CELL_PX = 3
 /** Auto-dismiss the day detail after the user has had time to read it. */
 const SELECTED_DAY_TIMEOUT_MS = 3000
@@ -160,7 +160,7 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
   if (grid.cells.length === 0) {
     return (
       <div className={fillHeight ? 'flex min-h-0 flex-1 flex-col' : undefined}>
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ds-faint">
+        <p className="mb-2 text-[12px] font-medium text-ds-muted">
           {t('usageHeroActivity')}
         </p>
       </div>
@@ -173,14 +173,11 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
 
   return (
     <div ref={rootRef} className={rootClass}>
-      <p className="mb-2.5 shrink-0 text-[11px] font-semibold uppercase tracking-[0.05em] text-ds-faint">
+      <p className="mb-2.5 shrink-0 text-[12px] font-medium text-ds-muted">
         {t('usageHeroActivity')}
       </p>
       <div
-        className={[
-          fillHeight ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden' : 'min-w-0 w-full overflow-hidden',
-          'rounded-xl border border-ds-border/55 bg-ds-elevated/20 px-2.5 py-2.5'
-        ].join(' ')}
+        className={fillHeight ? 'flex min-h-0 flex-1 flex-col px-1' : 'w-full px-1'}
       >
         <div
           ref={plotRef}
@@ -199,7 +196,7 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
               {grid.weekdayLabels.map((label, index) => (
                 <span
                   key={`${label}-${index}`}
-                  className="absolute left-0 -translate-y-1/2 text-[10px] font-medium leading-none text-ds-faint"
+                  className="absolute left-0 -translate-y-1/2 text-[10px] font-medium leading-none text-ds-muted"
                   style={{ top: `${((index + 0.5) / HEATMAP_ROWS) * 100}%` }}
                 >
                   {label}
@@ -215,7 +212,7 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
               {grid.monthLabels.map((marker) => (
                 <span
                   key={`${marker.weekIndex}-${marker.label}`}
-                  className="absolute top-0 whitespace-nowrap text-[10px] font-medium leading-none text-ds-faint"
+                  className="absolute top-0 whitespace-nowrap text-[10px] font-medium leading-none text-ds-muted"
                   style={{
                     left: `${(marker.weekIndex / Math.max(grid.weekCount, 1)) * 100}%`
                   }}
@@ -263,8 +260,8 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
       </div>
       <div
         className={[
-          'mt-2.5 flex w-full min-w-0 shrink-0 items-center gap-2 rounded-xl border border-ds-border/65 bg-ds-card/70 px-3 py-2',
-          fillHeight ? 'justify-between' : 'flex-col gap-2.5 border-ds-border/55 bg-ds-card/55 py-2.5'
+          'mt-2.5 flex w-full min-w-0 shrink-0 items-center gap-2',
+          fillHeight ? 'justify-between' : 'flex-col gap-2.5'
         ].join(' ')}
       >
         {fillHeight ? (
@@ -428,11 +425,11 @@ function HeatLegend({
   return (
     <div className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-ds-faint">
       <span>{lessLabel}</span>
-      <div className="flex gap-[3px] rounded-md bg-ds-elevated/50 p-1">
+      <div className="flex gap-[3px]">
         {[0, 1, 2, 3, 4].map((level) => (
           <span
             key={level}
-            className={`rounded-[3px] ring-1 ring-black/[0.04] ${heatClassForLevel(level)}`}
+            className={`rounded-[2px] ${heatClassForLevel(level)}`}
             style={{
               width: LEGEND_CELL_PX,
               height: LEGEND_CELL_PX

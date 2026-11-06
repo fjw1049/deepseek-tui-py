@@ -48,6 +48,8 @@ export function ModelUsageHeroPanel({
     : '—'
   const totalTokens = summary?.totals.totalTokens ?? 0
 
+  const showMetrics = loaded && !error && hasUsage
+
   const ranges: Array<{ value: UsageRange; labelKey: string }> = [
     { value: '1y', labelKey: 'usageHeroRangeAll' },
     { value: '30d', labelKey: 'usageHeroRange30d' },
@@ -57,13 +59,15 @@ export function ModelUsageHeroPanel({
   return (
     <div className="ds-hero-panel ds-glass ds-empty-hero-panel flex flex-col overflow-hidden rounded-[14px] px-4 py-4 sm:px-5 sm:py-5">
       <div className="flex shrink-0 flex-nowrap items-center justify-between gap-3">
-        <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-ds-ink">
+        <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-ds-ink">
           {t('usageHeroTabOverview')}
         </h2>
         <GlassSegmentedControl
           value={range}
           onChange={onRangeChange}
-          segmentClassName="px-2.5 py-1.5"
+          ariaLabel={t('usageHeroTabOverview')}
+          className="ds-hero-ranges"
+          segmentClassName="px-2 py-1"
           items={ranges.map((item) => ({
             value: item.value,
             label: t(item.labelKey)
@@ -86,10 +90,15 @@ export function ModelUsageHeroPanel({
         </div>
       ) : null}
 
-      {loaded && !error && hasUsage ? (
+      {showMetrics ? (
         <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
-            <StatTile label={t('usageHeroStatTokens')} value={formatCompactNumber(totalTokens)} />
+          <div className="mb-3 flex items-baseline gap-2">
+            <p className="text-[32px] font-semibold leading-none tracking-[-0.045em] tabular-nums text-ds-ink">
+              {formatCompactNumber(totalTokens)}
+            </p>
+            <p className="text-[12px] text-ds-muted">{t('usageHeroStatTokens')}</p>
+          </div>
+          <div className="grid shrink-0 grid-cols-[1fr_1fr_1.4fr] gap-2 rounded-xl bg-ds-subtle px-3 py-3">
             <StatTile
               label={t('usageHeroStatTurns')}
               value={String(summary?.totals.turns ?? 0)}
@@ -102,7 +111,7 @@ export function ModelUsageHeroPanel({
               title={topModel ? formatComposerModelLabel(topModel.model, composerModelMeta) : undefined}
             />
           </div>
-          <div className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ds-border/60 bg-ds-card/40 px-3.5 py-3">
+          <div className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col">
             <UsageActivityHeatmap daily={heatmapDaily} asOfDay={heatmapAsOfDay} fillHeight />
           </div>
         </div>
@@ -123,8 +132,8 @@ function StatTile({
   title?: string
 }): ReactElement {
   return (
-    <div className="min-w-0 rounded-2xl border border-ds-border/60 bg-ds-card/40 px-3 py-2">
-      <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-ds-faint">{label}</p>
+    <div className="min-w-0">
+      <p className="text-[11px] text-ds-muted">{label}</p>
       {marqueeValue ? (
         <HoverMarqueeValue value={value} title={title ?? value} />
       ) : (

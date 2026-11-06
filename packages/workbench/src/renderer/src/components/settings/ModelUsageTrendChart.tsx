@@ -1,16 +1,16 @@
-import { useMemo, type ReactElement } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import type { UsageDailyPoint } from '@shared/usage-ledger'
 import { formatComposerModelLabel } from '../../lib/composer-model-label'
 import type { ComposerModelMeta } from '../../lib/composer-model-label'
 import { formatCompactNumber } from '../../hooks/use-model-usage'
 
 const BAR_COLORS = [
-  '#5b8def',
-  '#3dba8c',
-  '#e8a44a',
-  '#a78bfa',
-  '#38bdf8',
-  '#f472b6',
+  '#2979ff',
+  '#ff7100',
+  '#00b69e',
+  '#854dff',
+  '#00a5dd',
+  '#e43887',
   '#84cc16',
   '#fb7185',
   '#22d3ee',
@@ -22,6 +22,7 @@ const BAR_COLORS = [
 type Props = {
   daily: UsageDailyPoint[]
   composerModelMeta: Record<string, ComposerModelMeta>
+  modelOrder?: string[]
   compact?: boolean
   showYAxis?: boolean
   /**
@@ -87,6 +88,7 @@ function aggregateDailyToBuckets(
 export function ModelUsageTrendChart({
   daily,
   composerModelMeta,
+  modelOrder,
   compact = false,
   showYAxis = false,
   segmentDays
@@ -100,27 +102,27 @@ export function ModelUsageTrendChart({
     }
     return daily.length > 45 ? aggregateDailyToBuckets(daily, 7) : daily
   }, [daily, segmentDays])
+  const legendModels = useMemo(() => {
+    const models = new Set(modelOrder)
+    for (const point of daily) {
+      for (const segment of point.segments) models.add(segment.model)
+    }
+    return Array.from(models)
+  }, [daily, modelOrder])
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  const filteredDaily = useMemo(() => displayDaily.map(point => {
+    const segments = point.segments.filter(segment => !hidden.has(segment.model))
+      .sort((a, b) => legendModels.indexOf(a.model) - legendModels.indexOf(b.model))
+    return { ...point, segments, totalTokens: segments.reduce((sum, segment) => sum + segment.tokens, 0) }
+  }), [displayDaily, hidden, legendModels])
   const maxTokens = useMemo(
-    () => Math.max(...displayDaily.map((point) => point.totalTokens), 1),
-    [displayDaily]
+    () => Math.max(...filteredDaily.map((point) => point.totalTokens), 1),
+    [filteredDaily]
   )
   const yTicks = useMemo(() => {
     if (!showYAxis) return []
     return [maxTokens, maxTokens * 0.75, maxTokens * 0.5, maxTokens * 0.25, 0]
   }, [maxTokens, showYAxis])
-  const legendModels = useMemo(() => {
-    const seen = new Set<string>()
-    const models: string[] = []
-    for (const point of daily) {
-      for (const segment of point.segments) {
-        if (seen.has(segment.model)) continue
-        seen.add(segment.model)
-        models.push(segment.model)
-      }
-    }
-    return models.slice(0, 6)
-  }, [daily])
-
   const chartHeight = compact ? 'h-[132px]' : 'h-[200px]'
   // In segmented mode (hero), label every bar when there are few enough; 7d
   // has 7 daily bars and should show all dates. Otherwise cap the tick count.
@@ -153,13 +155,13 @@ export function ModelUsageTrendChart({
               )}
               aria-hidden
             >
-              {yTicks.slice(0, -1).map((tick) => (
-                <div key={tick} className="h-px w-full bg-ds-border" />
+              {yTicks.map((tick) => (
+                <div key={tick} className="w-full border-t border-dashed border-ds-border-muted" />
               ))}
             </div>
           ) : null}
           <div className={['relative flex items-stretch gap-[3px]', chartHeight].join(' ')}>
-            {displayDaily.map((point) => {
+            {filteredDaily.map((point) => {
               const heightPct =
                 point.totalTokens > 0 ? Math.max(3, (point.totalTokens / maxTokens) * 100) : 0
               const visibleSegments =
@@ -173,13 +175,13 @@ export function ModelUsageTrendChart({
                   title={`${point.label}: ${formatCompactNumber(point.totalTokens)} tokens`}
                 >
                   <div
-                    className="flex w-full flex-col justify-end overflow-hidden rounded-t-[3px] bg-ds-border"
+                    className="flex w-full flex-col-reverse overflow-hidden rounded-t-[3px] bg-ds-border"
                     style={{
                       height: point.totalTokens > 0 ? `${heightPct}%` : '2px',
                       minHeight: point.totalTokens > 0 ? '3px' : '2px'
                     }}
                   >
-                    {visibleSegments.map((segment, index) => (
+                    {visibleSegments.map((segment) => (
                       <span
                         key={`${point.day}-${segment.model}`}
                         className="block w-full shrink-0"
@@ -187,7 +189,7 @@ export function ModelUsageTrendChart({
                           flexGrow: segment.tokens,
                           flexBasis: 0,
                           minHeight: 1,
-                          backgroundColor: BAR_COLORS[index % BAR_COLORS.length]
+                          backgroundColor: BAR_COLORS[legendModels.indexOf(segment.model) % BAR_COLORS.length]
                         }}
                       />
                     ))}
@@ -224,16 +226,24 @@ export function ModelUsageTrendChart({
       {legendModels.length > 0 ? (
         <div className="flex flex-wrap gap-x-2.5 gap-y-1">
           {legendModels.map((model, index) => (
-            <span
+            <button
+              type="button"
+              aria-pressed={!hidden.has(model)}
+              onClick={() => setHidden(current => {
+                const next = new Set(current)
+                if (next.has(model)) next.delete(model)
+                else next.add(model)
+                return next
+              })}
               key={model}
-              className="inline-flex min-w-0 max-w-full items-center gap-1 text-[10px] leading-tight text-ds-muted"
+              className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-ds-border-muted bg-ds-elevated px-2.5 py-1 text-[10px] aria-pressed:opacity-100 opacity-50 leading-tight text-ds-muted"
             >
               <span
                 className="h-1.5 w-1.5 shrink-0 rounded-full"
                 style={{ backgroundColor: BAR_COLORS[index % BAR_COLORS.length] }}
               />
               <span className="truncate">{formatComposerModelLabel(model, composerModelMeta)}</span>
-            </span>
+            </button>
           ))}
         </div>
       ) : null}

@@ -35,6 +35,16 @@ type BreakdownRow = {
   color: string
 }
 
+function compactTokens(tokens: number): string {
+  return formatTokenCount(tokens).replace(/\.0([kM])$/, '$1')
+}
+
+function windowShare(tokens: number, capacity: number): string {
+  if (capacity <= 0) return '—'
+  const percent = (tokens / capacity) * 100
+  return percent > 0 && percent < 0.1 ? '<0.1%' : `${percent.toFixed(1)}%`
+}
+
 function breakdownRows(
   breakdown: ContextBreakdownJson,
   labels: {
@@ -48,40 +58,40 @@ function breakdownRows(
 ): BreakdownRow[] {
   return [
     {
-      key: 'system',
-      label: labels.system,
-      tokens: contextBucketTokens(breakdown, 'system_prompt'),
-      color: '#8b7cf6'
+      key: 'conversation',
+      label: labels.conversation,
+      tokens: contextBucketTokens(breakdown, 'conversation'),
+      color: '#3392ff'
     },
     {
       key: 'tools',
       label: labels.tools,
       tokens: contextBucketTokens(breakdown, 'tool_definitions'),
-      color: '#6f8cff'
+      color: '#c27bff'
     },
     {
       key: 'mcp',
       label: labels.mcp,
       tokens: contextBucketTokens(breakdown, 'mcp'),
-      color: '#52b788'
+      color: '#fb64b6'
     },
     {
       key: 'skills',
       label: labels.skills,
       tokens: contextBucketTokens(breakdown, 'skills'),
-      color: '#f2b56b'
+      color: '#fec700'
+    },
+    {
+      key: 'system',
+      label: labels.system,
+      tokens: contextBucketTokens(breakdown, 'system_prompt'),
+      color: '#00d492'
     },
     {
       key: 'rules',
       label: labels.rules,
       tokens: contextBucketTokens(breakdown, 'rules'),
-      color: '#c69bd3'
-    },
-    {
-      key: 'conversation',
-      label: labels.conversation,
-      tokens: contextBucketTokens(breakdown, 'conversation'),
-      color: '#dc7f68'
+      color: '#00bcff'
     }
   ]
 }
@@ -208,16 +218,28 @@ export function ContextUsageMeter({
             ref={panelRef}
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
-            className={`max-h-[calc(100vh-80px)] overflow-y-auto rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[13px] leading-[1.5] text-ds-ink shadow-[0_12px_36px_rgba(0,0,0,0.12)] dark:shadow-[0_16px_48px_rgba(0,0,0,0.32)] ${
+            className={`max-h-[calc(100vh-80px)] overflow-y-auto rounded-[12px] border border-ds-border-muted bg-[color-mix(in_srgb,var(--ds-surface-elevated)_97%,var(--ds-text))] px-4 py-3 text-[13px] leading-[1.5] text-ds-ink shadow-panel ${
               anchoredToComposer
-                ? 'absolute inset-x-0 bottom-full z-[120] mb-1.5 w-full'
-                : 'fixed bottom-12 left-3 z-[120] w-[min(520px,calc(100vw-24px))]'
+                ? 'absolute left-0 bottom-full z-[120] mb-1.5 w-[420px] max-w-full'
+                : 'fixed bottom-12 left-3 z-[120] w-[min(420px,calc(100vw-24px))]'
             }`}
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-4">
-              <div className="text-[13px] font-medium text-ds-muted">
-                {t('contextBreakdownTitle')}
+            <div className="flex items-center gap-2">
+              <div className="flex flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className="font-medium">{t('contextBreakdownTitle')}</span>
+                <span className="whitespace-nowrap text-[12px] tabular-nums text-ds-muted">
+                  {t('contextBreakdownTokenSummary', {
+                    used: compactTokens(usage.usedTokens),
+                    max: compactTokens(usage.maxTokens)
+                  })}{' '}
+                  <strong className={`font-semibold ${
+                    tone === 'critical' ? 'text-ds-danger' :
+                    tone === 'high' ? 'text-amber-600 dark:text-amber-400' : 'text-ds-ink'
+                  }`}>
+                    ({Math.round(usage.percent)}%)
+                  </strong>
+                </span>
               </div>
               <button
                 type="button"
@@ -232,31 +254,11 @@ export function ContextUsageMeter({
               </button>
             </div>
 
-            <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-              <div
-                className={`text-[16px] font-semibold tabular-nums tracking-[-0.02em] ${
-                  tone === 'critical'
-                    ? 'text-ds-danger'
-                    : tone === 'high'
-                      ? 'text-amber-600 dark:text-amber-400'
-                      : 'text-ds-ink'
-                }`}
-              >
-                {t('contextBreakdownFull', { percent: Math.round(usage.percent) })}
-              </div>
-              <div className="text-[12px] tabular-nums text-ds-muted">
-                {t('contextBreakdownTokenSummary', {
-                  used: formatTokenCount(usage.usedTokens),
-                  max: formatTokenCount(usage.maxTokens)
-                })}
-              </div>
-            </div>
-
             {/* Preserve real proportions; the small visual floor only prevents bucket clipping. */}
             <div
               aria-hidden="true"
               className="ds-context-usage-bar relative mt-2.5 h-[6px] w-full overflow-hidden rounded-full"
-              style={{ backgroundColor: USAGE_TRACK_GREY }}
+              style={{ backgroundColor: 'color-mix(in srgb, var(--ds-text-faint) 12%, transparent)' }}
             >
               {barSegments.length > 0 && barUsedPct > 0 ? (
                 <div
@@ -283,17 +285,20 @@ export function ContextUsageMeter({
               ) : null}
             </div>
 
-            <ul className="mt-4 space-y-0.5">
+            <ul className="mt-3">
               {rows.map((row) => (
-                <li key={row.key} className="flex items-center gap-2.5 py-1.5">
+                <li key={row.key} className="grid min-h-8 grid-cols-[10px_minmax(0,1fr)_auto_4em] items-center gap-x-2.5">
                   <span
                     aria-hidden="true"
-                    className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                    className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
                     style={{ backgroundColor: row.color }}
                   />
-                  <span className="min-w-0 flex-1">{row.label}</span>
-                  <span className="shrink-0 text-[12px] font-medium tabular-nums text-ds-muted">
-                    {formatTokenCount(row.tokens)}
+                  <span className="min-w-0">{row.label}</span>
+                  <span className="text-right text-[13px] tabular-nums text-[color:color-mix(in_srgb,var(--ds-text-muted)_55%,var(--ds-text-faint))]">
+                    {compactTokens(row.tokens)}
+                  </span>
+                  <span className="text-right text-[13px] font-medium tabular-nums">
+                    {windowShare(row.tokens, windowTokens)}
                   </span>
                 </li>
               ))}

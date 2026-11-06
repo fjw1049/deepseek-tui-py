@@ -65,14 +65,14 @@
   --ds-accent-foreground: #111111;
   --ds-accent-soft: rgba(0, 136, 255, 0.14);
   /*
-   * Contribution greens — light mode darkens with activity.
+   * Contribution violets — light mode darkens with activity.
    * Large lightness jumps so ~10px legend swatches stay separable.
    */
-  --ds-heat-0: #ebedf0;
-  --ds-heat-1: #bfe9c9;
-  --ds-heat-2: #22c55e;
-  --ds-heat-3: #15803d;
-  --ds-heat-4: #14532d;
+  --ds-heat-0: #e7e7eb;
+  --ds-heat-1: #dbd3fa;
+  --ds-heat-2: #b39af1;
+  --ds-heat-3: #9069df;
+  --ds-heat-4: #6d40bd;
   --ds-success: #128a4a;
   --ds-warning: #9a6700;
   --ds-danger: #c92a2a;
@@ -190,14 +190,14 @@
   --ds-accent: #339cff;
   --ds-accent-soft: rgba(51, 156, 255, 0.18);
   /*
-   * Dark contribution greens — brightens with activity.
-   * heat-0 is a lifted green-gray empty tile; active steps stay above it.
+   * Dark contribution violets — brightens with activity.
+   * heat-0 is a neutral gray empty tile; active steps stay above it.
    */
-  --ds-heat-0: #26312a;
-  --ds-heat-1: #315c40;
-  --ds-heat-2: #15803d;
-  --ds-heat-3: #22c55e;
-  --ds-heat-4: #86efac;
+  --ds-heat-0: #2c2b32;
+  --ds-heat-1: #4b3965;
+  --ds-heat-2: #74519a;
+  --ds-heat-3: #a77ad2;
+  --ds-heat-4: #d5b0fa;
   --ds-success: #40c977;
   --ds-warning: #f5b44a;
   --ds-danger: #fa423e;
@@ -261,35 +261,35 @@
  * always repaints when these rules change. Tokens stay in sync above.
  */
 .ds-heat-fill--0 {
-  background-color: #ebedf0;
+  background-color: #e7e7eb;
 }
 .ds-heat-fill--1 {
-  background-color: #bfe9c9;
+  background-color: #dbd3fa;
 }
 .ds-heat-fill--2 {
-  background-color: #22c55e;
+  background-color: #b39af1;
 }
 .ds-heat-fill--3 {
-  background-color: #15803d;
+  background-color: #9069df;
 }
 .ds-heat-fill--4 {
-  background-color: #14532d;
+  background-color: #6d40bd;
 }
 
 [data-theme='dark'] .ds-heat-fill--0 {
-  background-color: #26312a;
+  background-color: #2c2b32;
 }
 [data-theme='dark'] .ds-heat-fill--1 {
-  background-color: #315c40;
+  background-color: #4b3965;
 }
 [data-theme='dark'] .ds-heat-fill--2 {
-  background-color: #15803d;
+  background-color: #74519a;
 }
 [data-theme='dark'] .ds-heat-fill--3 {
-  background-color: #22c55e;
+  background-color: #a77ad2;
 }
 [data-theme='dark'] .ds-heat-fill--4 {
-  background-color: #86efac;
+  background-color: #d5b0fa;
 }
 
 [data-theme='dark'] body::before {
@@ -2531,6 +2531,18 @@ samp {
 
 /* Empty-stage hero cards sit flush on the canvas — hairline border only. */
 .ds-hero-panel.ds-glass {
+  box-shadow: none;
+}
+
+.ds-hero-ranges[role='radiogroup'] {
+  height: 2rem;
+  background: transparent;
+  border-color: transparent;
+}
+
+.ds-hero-ranges .ds-glass-segment-thumb {
+  background: var(--ds-surface-hover);
+  border-color: transparent;
   box-shadow: none;
 }
 

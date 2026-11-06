@@ -23,6 +23,7 @@ describe('usage-heatmap-grid', () => {
     }
 
     const grid = buildHeatmapGrid(daily, 'zh')
+    expect(grid.weekdayLabels).toEqual(['一', '二', '三', '四', '五', '六', '日'])
     expect(grid.weekCount).toBeGreaterThanOrEqual(13)
     expect(grid.cells.length).toBe(grid.weekCount * 7)
     expect(grid.cells.filter((cell) => cell.inRange)).toHaveLength(HEATMAP_DAY_COUNT)

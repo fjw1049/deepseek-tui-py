@@ -48,4 +48,25 @@ describe('ModelUsageTrendChart', () => {
       true
     )
   })
+
+  it('keeps model colors aligned with the legend across ranges and filters hidden usage', async () => {
+    const day = {
+      day: '2026-08-31', label: '8/31', totalTokens: 30,
+      segments: [{ model: 'b', tokens: 20 }, { model: 'a', tokens: 10 }]
+    }
+    for (const days of [7, 30, 90]) {
+      const daily = Array.from({ length: days }, (_, index) => ({ ...day, day: String(index) }))
+      await act(async () => root.render(createElement(ModelUsageTrendChart, {
+        daily, segmentDays: days === 90 ? 2 : 1, modelOrder: ['a', 'b'], composerModelMeta: {}
+      })))
+      const bars = container.querySelectorAll<HTMLElement>('.group')
+      expect(bars.length).toBe(days === 90 ? 45 : days)
+      const legend = container.querySelector<HTMLButtonElement>('button')!
+      const segment = bars[0]!.querySelector<HTMLElement>('span')!
+      expect(segment.style.backgroundColor).toBe(legend.querySelector('span')!.style.backgroundColor)
+      await act(async () => legend.click())
+      expect(bars[0]!.title).toContain(days === 90 ? '40 tokens' : '20 tokens')
+      await act(async () => legend.click())
+    }
+  })
 })

@@ -17,7 +17,7 @@ export type HeatmapGrid = {
   weekdayLabels: string[]
 }
 
-/** Five visible steps: empty gray → deep/bright contribution green. */
+/** Five visible steps: empty gray → deep/bright violet. */
 export const HEAT_FILL = [
   'var(--ds-heat-0)',
   'var(--ds-heat-1)',
@@ -65,7 +65,7 @@ function formatMonthLabel(date: Date, locale: string): string {
 }
 
 function buildWeekdayLabels(locale: string): string[] {
-  const anchor = new Date('2026-06-02T12:00:00')
+  const anchor = new Date('2026-06-01T12:00:00')
   return Array.from({ length: HEATMAP_ROWS }, (_, index) => {
     const date = new Date(anchor)
     date.setDate(anchor.getDate() + index)
