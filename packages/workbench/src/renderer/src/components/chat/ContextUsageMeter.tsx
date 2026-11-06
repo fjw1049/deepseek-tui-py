@@ -1,9 +1,10 @@
 import {
   useEffect,
-  useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -115,8 +116,7 @@ export function ContextUsageMeter({
       ? snapshot.data
       : null
   const liveBreakdown = breakdown !== null
-  const [portalHost, setPortalHost] = useState<Element | null>(null)
-  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const anchorName = `--context-meter-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
@@ -160,15 +160,6 @@ export function ContextUsageMeter({
     return snapshotFromContextBreakdown(effectiveBreakdown)
   }, [effectiveBreakdown])
 
-  useLayoutEffect(() => {
-    if (!open) {
-      setPortalHost(null)
-      return
-    }
-    const shell = buttonRef.current?.closest('.ds-composer-shell')
-    setPortalHost(shell?.parentElement ?? shell ?? document.body)
-  }, [open])
-
   useLightDismiss({
     open,
     onDismiss: () => setOpen(false),
@@ -210,19 +201,19 @@ export function ContextUsageMeter({
     barSegments.length * USAGE_SEGMENT_MIN_WIDTH +
     Math.max(0, barSegments.length - 1) * USAGE_SEGMENT_GAP
 
-  const anchoredToComposer = portalHost != null && portalHost !== document.body
   const panel =
-    open && portalHost
+    open
       ? createPortal(
           <div
             ref={panelRef}
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
-            className={`max-h-[calc(100vh-80px)] overflow-y-auto rounded-[12px] border border-ds-border-muted bg-[color-mix(in_srgb,var(--ds-surface-elevated)_97%,var(--ds-text))] px-4 py-3 text-[13px] leading-[1.5] text-ds-ink shadow-panel ${
-              anchoredToComposer
-                ? 'absolute left-0 bottom-full z-[120] mb-1.5 w-[420px] max-w-full'
-                : 'fixed bottom-12 left-3 z-[120] w-[min(420px,calc(100vw-24px))]'
-            }`}
+            className="fixed z-[120] max-h-[calc(100vh-80px)] w-[min(340px,calc(100vw-24px))] overflow-y-auto rounded-[12px] border border-ds-border-muted bg-[var(--ds-surface-elevated)] px-4 py-3 text-[13px] leading-[1.5] text-ds-ink shadow-panel"
+            style={{
+              positionAnchor: anchorName,
+              bottom: 'calc(anchor(top) + 4px)',
+              left: 'clamp(12px, calc(anchor(center) - 170px), max(12px, calc(100vw - 352px)))'
+            } as CSSProperties}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-center gap-2">
@@ -310,14 +301,15 @@ export function ContextUsageMeter({
               </p>
             ) : null}
           </div>,
-          portalHost
+          document.body
         )
       : null
 
   return (
-    <div ref={wrapRef} className="relative shrink-0">
+    <div className="relative shrink-0">
       <button
         ref={buttonRef}
+        style={{ anchorName } as CSSProperties}
         type="button"
         className={`ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${
           open ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
