@@ -98,8 +98,13 @@ class LLMClient(ABC):
         accounting. Connect/write timeouts stay bounded so DNS or TLS
         stalls still surface promptly.
         """
-        network = read_network_settings()
-        options = network.http_options(self.base_url)
+        if self.transport is None:
+            network = read_network_settings()
+            options = network.http_options(self.base_url)
+        else:
+            # Proxy mounts would take precedence over the caller's transport.
+            network = NetworkSettings()
+            options = {"mounts": {}}
         key = (network, frozenset(options["mounts"]), options.get("proxy"))
         self._http_client = self._network_clients.get(key)
         if self._http_client is None or self._http_client.is_closed:

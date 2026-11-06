@@ -44,12 +44,16 @@ class NetworkSettings(BaseModel):
         if self.mode == "direct":
             return {"mounts": {"all://": None, "http://": None, "https://": None}}
         host = _url_host(url)
-        if host and (_system_bypasses(host) or urllib.request.proxy_bypass_environment(host)):
+        proxy = _hidden_os_proxy(url)
+        if host and (
+            _system_bypasses(host, restored_proxy=bool(proxy))
+            or urllib.request.proxy_bypass_environment(host)
+        ):
             # Following the system proxy includes its exception list, as the
             # Workbench connection test (Electron) does.
             hosts[f"all://{f'[{host}]' if ':' in host else host}"] = None
         options: dict = {"mounts": hosts}
-        if proxy := _hidden_os_proxy(url):
+        if proxy:
             options["proxy"] = proxy
         return options
 
@@ -87,10 +91,14 @@ def _hidden_os_proxy(url: str) -> str | None:
     return _os_proxies().get(scheme) or None
 
 
-def _system_bypasses(host: str) -> bool:
+def _system_bypasses(host: str, *, restored_proxy: bool) -> bool:
     """Whether the OS proxy settings exempt ``host`` (macOS: "Bypass proxy settings for")."""
     try:
-        return bool(urllib.request.proxy_bypass(host))
+        if urllib.request.proxy_bypass(host):
+            return True
+        # NO_PROXY can hide the macOS exception list along with the proxy itself.
+        native_bypass = getattr(urllib.request, "proxy_bypass_macosx_sysconf", None)
+        return bool(restored_proxy and native_bypass and native_bypass(host))
     except Exception:  # noqa: BLE001 — unreadable OS settings mean no exemption
         return False
 

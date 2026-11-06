@@ -66,6 +66,7 @@ async def test_system_mode_follows_os_proxy_exceptions(monkeypatch, url, direct)
     [
         ("https://api.openai.com/v1/responses", False),
         ("http://127.0.0.1:11434/v1/chat/completions", True),
+        ("https://internal.example/v1/messages", True),
     ],
 )
 async def test_system_mode_keeps_os_proxy_when_environment_only_sets_no_proxy(
@@ -86,6 +87,10 @@ async def test_system_mode_keeps_os_proxy_when_environment_only_sets_no_proxy(
     monkeypatch.setattr("deepseek_tui.client.network.urllib.request.proxy_bypass",
                         lambda host: False)
     monkeypatch.setattr(
+        "deepseek_tui.client.network.urllib.request.proxy_bypass_macosx_sysconf",
+        lambda host: host == "internal.example", raising=False,
+    )
+    monkeypatch.setattr(
         "deepseek_tui.client.base.read_network_settings", lambda: NetworkSettings()
     )
     client = AnthropicCompatClient(api_key="test", base_url=url)
@@ -93,5 +98,19 @@ async def test_system_mode_keeps_os_proxy_when_environment_only_sets_no_proxy(
         http_client = client._get_http_client()
         transport = http_client._transport_for_url(httpx.URL(url))
         assert (transport is http_client._transport) is direct
+    finally:
+        await client.close()
+
+
+async def test_explicit_transport_handles_requests_even_with_system_proxy(monkeypatch):
+    monkeypatch.setattr(
+        NetworkSettings, "http_options",
+        lambda self, url: {"mounts": {}, "proxy": "http://127.0.0.1:7890"},
+    )
+    url = "https://example.org/v1"
+    mock = httpx.MockTransport(lambda request: httpx.Response(200))
+    client = AnthropicCompatClient(api_key="test", base_url=url, transport=mock)
+    try:
+        assert client._get_http_client()._transport_for_url(httpx.URL(url)) is mock
     finally:
         await client.close()
