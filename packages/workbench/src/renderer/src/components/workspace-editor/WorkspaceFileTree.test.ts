@@ -196,3 +196,24 @@ it('flushes debounced expansion state on unmount', async () => {
   await mount(list)
   expect(host.textContent).toContain('demo.py')
 })
+
+it('uses horizontal arrows to open, enter, leave and close a folder', async () => {
+  await mount(vi.fn(async (_root: string, path: string) =>
+    result(path ? [file('src/app.ts')] : [dir('src'), file('README.md')])))
+
+  const folder = host.querySelector<HTMLButtonElement>('[data-tree-key="src"]')!
+  folder.focus()
+  const press = async (key: string) => {
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+    })
+  }
+  await press('ArrowRight')
+  expect(folder.getAttribute('aria-expanded')).toBe('true')
+  await press('ArrowRight')
+  expect((document.activeElement as HTMLElement).dataset.treeKey).toBe('src/app.ts')
+  await press('ArrowLeft')
+  expect(document.activeElement).toBe(folder)
+  await press('ArrowLeft')
+  expect(folder.getAttribute('aria-expanded')).toBe('false')
+})

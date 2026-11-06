@@ -73,7 +73,7 @@ function translateTreeError(message: string): string {
 }
 
 function indentPx(depth: number): number {
-  return depth * 12 + 8
+  return depth * 16 + 8
 }
 
 /**
@@ -309,29 +309,31 @@ export function WorkspaceFileTree({
 
   const anyExpanded = expanding || [...expanded].some(Boolean)
 
-  type Row = { key: string; depth: number; entry?: WorkspaceTreeEntry; message?: string; error?: boolean }
+  type Row = { key: string; depth: number; trunks: number[]; last?: boolean; entry?: WorkspaceTreeEntry; message?: string; error?: boolean }
   const rows = useMemo(() => {
     const result: Row[] = []
-    const visit = (path: string, depth: number): void => {
+    const visit = (path: string, depth: number, trunks: number[]): void => {
       const key = treeKey(path)
       const node = nodes[key]
       if (!node) {
-        result.push({ key: `${key}__loading`, depth, message: '…' })
+        result.push({ key: `${key}__loading`, depth, trunks, message: '…' })
         return
       }
       if (node.error) {
-        result.push({ key: `${key}__error`, depth, message: node.error, error: true })
+        result.push({ key: `${key}__error`, depth, trunks, message: node.error, error: true })
         return
       }
       const entries = showAllFiles ? node.entries : node.entries.filter((entry) => !isAuxiliaryWorkspaceEntry(entry))
-      if (!entries.length) result.push({ key: `${key}__empty`, depth,
-        message: t(node.entries.length ? 'workspaceTreeFilteredEmpty' : 'workspaceTreeEmpty') })
-      for (const entry of entries) {
-        result.push({ key: treeKey(entry.path), depth, entry })
-        if (entry.kind === 'directory' && expanded.has(treeKey(entry.path))) visit(entry.path, depth + 1)
+      if (!entries.length) result.push({ key: `${key}__empty`, depth, trunks, message: t(node.entries.length ? 'workspaceTreeFilteredEmpty' : 'workspaceTreeEmpty') })
+      for (const [index, entry] of entries.entries()) {
+        const last = index === entries.length - 1
+        result.push({ key: treeKey(entry.path), depth, trunks, last, entry })
+        if (entry.kind === 'directory' && expanded.has(treeKey(entry.path))) {
+          visit(entry.path, depth + 1, depth > 0 && !last ? [...trunks, depth - 1] : trunks)
+        }
       }
     }
-    if (trimmedRoot) visit('', 0)
+    if (trimmedRoot) visit('', 0, [])
     return result
   }, [nodes, expanded, showAllFiles, trimmedRoot, t])
 
@@ -373,13 +375,25 @@ export function WorkspaceFileTree({
     }
   }, [start, end, rows, viewport])
 
-  const renderRow = ({ key, entry, depth, message, error }: Row): ReactElement => {
+  const renderRow = ({ key, entry, depth, trunks, last = true, message, error }: Row): ReactElement => {
+    const branchX = indentPx(depth - 1) + 7
+    const isExpanded = entry?.kind === 'directory' && expanded.has(key)
+    const guides = (depth > 0 || isExpanded) && (
+      <svg className="ds-tree-guides" width={indentPx(depth) + 9} height={rowHeight} aria-hidden>
+        {trunks.map((level) => {
+          const x = indentPx(level) + 7
+          return <path key={level} d={`M${x} 0v${rowHeight}`} />
+        })}
+        {depth > 0 && <path d={`M${branchX} 0v9q0 5 5 5h5`} />}
+        {isExpanded && <path d={`M${indentPx(depth) + 7} 21V${rowHeight}`} />}
+        {depth > 0 && !last && <path d={`M${branchX} 9v${rowHeight - 9}`} />}
+      </svg>
+    )
     if (!entry) return <div key={key} title={message}
-      className={`ds-workspace-file-tree__row-pad h-[28px] truncate py-1 text-[12.5px] ${error ? 'text-red-600 dark:text-red-300' : 'text-ds-faint'}`}
-      style={{ paddingLeft: indentPx(depth) }}>{message}</div>
+      className={`relative mx-1 ds-workspace-file-tree__row-pad h-[28px] truncate py-1 text-[12.5px] ${error ? 'text-red-600 dark:text-red-300' : 'text-ds-faint'}`}
+      style={{ paddingLeft: indentPx(depth) }}>{guides}{message}</div>
     const entryKey = key
     const isDir = entry.kind === 'directory'
-    const isExpanded = expanded.has(entryKey)
     const isDirty = dirtyKeys.has(entryKey)
     const isChanged = patchMap ? pathHasChanges(patchMap, entry.path) : false
     const dirHasChanges = isDir && patchMap ? directoryHasChanges(patchMap, entry.path) : false
@@ -387,7 +401,8 @@ export function WorkspaceFileTree({
       return (
         <button
           key={entryKey}
-        data-tree-key={entryKey}
+          data-tree-key={entryKey}
+          title={entry.path}
           type="button"
           aria-expanded={isExpanded}
           onClick={(event) => {
@@ -398,6 +413,7 @@ export function WorkspaceFileTree({
           className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-[28px] w-full items-center gap-1.5 text-left text-[12.5px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
           style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
+          {guides}
           <ChevronRight
             className={`pointer-events-none h-3.5 w-3.5 shrink-0 text-ds-faint transition ${
               isExpanded ? 'rotate-90' : ''
@@ -458,9 +474,10 @@ export function WorkspaceFileTree({
                 ? 'text-ds-ink'
                 : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
         }`}
-        style={{ paddingLeft: `${indentPx(depth) + 14}px` }}
+        style={{ paddingLeft: `${indentPx(depth) + (depth ? 6 : 20)}px` }}
         title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
       >
+        {guides}
         <span className="ds-workspace-file-tree__row-label flex min-w-0 items-center gap-1.5">
           <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
           <span className="min-w-0 truncate">{entry.name}</span>
@@ -527,12 +544,29 @@ export function WorkspaceFileTree({
       </div>
       <div ref={scrollRef} className="ds-workspace-file-tree__scroll min-h-0 flex-1 overflow-y-auto" style={{ overflowAnchor: 'none' }}
         onKeyDown={(event) => {
-          if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(event.key)) return
+          if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Tab'].includes(event.key)) return
           const key = (event.target as HTMLElement).closest<HTMLElement>('[data-tree-key]')?.dataset.treeKey
           if (!key) return
           const direction = event.key === 'ArrowUp' || event.key === 'End' || (event.key === 'Tab' && event.shiftKey) ? -1 : 1
+          const current = rows.findIndex((row) => row.key === key)
           let index = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1
-            : rows.findIndex((row) => row.key === key) + direction
+            : current + direction
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            const item = rows[current]
+            if (!item?.entry) return
+            event.preventDefault()
+            const right = event.key === 'ArrowRight'
+            if (item.entry.kind === 'directory' && expanded.has(key) !== right) {
+              toggleDirectory(item.entry.path)
+              return
+            }
+            if (right) {
+              if (!rows[index]?.entry || rows[index]!.depth <= item.depth) return
+            } else {
+              index = current - 1
+              while (index >= 0 && rows[index]!.depth >= item.depth) index--
+            }
+          }
           while (index >= 0 && index < rows.length && !rows[index]!.entry) index += direction
           const row = rows[index]
           if (!row?.entry) return

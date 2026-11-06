@@ -1422,20 +1422,32 @@ samp {
   height: 7px;
 }
 
-/* Selected file, Codex-style: the whole row becomes a rounded bar with a
-   quiet gray fill and a crisp accent ring — unmistakable but not loud.
-   Rows float with a small side inset so the ring clears the tree edges. */
-.ds-workspace-file-tree .ds-workspace-file-tree__row {
-  width: calc(100% - 8px);
-  margin: 0 4px;
-  border-radius: 8px;
+/* Draw branch segments per visible row so they scroll with the virtual list. */
+.ds-tree-guides {
+  position: absolute;
+  inset: 0 auto auto 0;
+  pointer-events: none;
+  fill: none;
+  stroke: color-mix(in srgb, var(--ds-text) 21%, transparent);
 }
 
-.ds-workspace-file-tree__row--active,
-.ds-workspace-file-tree__row--active:hover {
-  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-accent) 55%, transparent);
+.ds-workspace-file-tree .ds-workspace-file-tree__row {
+  position: relative;
+  width: calc(100% - 8px);
+  margin: 0 4px;
+  border-radius: 6px;
+}
+
+.ds-workspace-file-tree .ds-workspace-file-tree__row--active {
+  background: color-mix(in srgb, var(--ds-accent) 12%, transparent);
+  box-shadow: inset 2px 0 var(--ds-accent);
   color: var(--ds-text);
+  font-weight: 550;
+}
+
+.ds-workspace-file-tree__row[aria-expanded='true'] .ds-tree-folder {
+  color: color-mix(in srgb, var(--ds-accent) 65%, var(--ds-text));
+  fill: color-mix(in srgb, var(--ds-accent) 12%, transparent);
 }
 
 /* Changed-file rows (ChangeInspector) share the file tree's rounded-bar form:
@@ -11573,7 +11585,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 /* Chrome glyphs follow the palette; !important beats Tailwind utilities. */
-.ds-ide-workspace .ds-workspace-file-tree__row > svg:first-child,
+.ds-ide-workspace .ds-workspace-file-tree__row > .lucide-chevron-right,
 .ds-ide-workspace .ds-ide-activity-bar button:not([aria-pressed='true']),
 .ds-ide-workspace .ds-ide-topbar__action {
   color: var(--ds-icon-muted) !important;
@@ -11586,7 +11598,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   color: var(--ds-accent) !important;
 }
 
-[data-theme='dark'] .ds-ide-workspace .ds-workspace-file-tree__row > svg:first-child,
+[data-theme='dark'] .ds-ide-workspace .ds-workspace-file-tree__row > .lucide-chevron-right,
 [data-theme='dark'] .ds-ide-workspace .ds-ide-activity-bar button:not([aria-pressed='true']),
 [data-theme='dark'] .ds-ide-workspace .ds-ide-topbar__action {
   color: var(--ds-icon-muted) !important;
