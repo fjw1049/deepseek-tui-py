@@ -1,0 +1,199 @@
+- id: personal.recording_scope
+  suite: personal_sessions
+  title: 录制给谁用，何时保存，能否跨站复用
+  description: 本机 claude 0005103f，原始 JSONL 行 4, 88, 114, 125；节选需求，重建输入。
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - development
+  - claude
+  - personal-session
+  setup:
+    files:
+      capture.py: |
+        def finish(events, save, store):
+            if save:
+                store.append([e for e in events if e["kind"] == "action"])
+
+        def replay(flow, site):
+            return [e for e in flow if e["site"] == site]
+  input:
+    turns:
+    - 看 capture.py，通俗讲一遍录制和回放有什么用。
+    - 我都操作完了，什么时候才保存？举个在甲站登录、然后去乙站的例子，只解释当前代码。
+  expect:
+    checks:
+    - type: unchanged
+      name: 保留输入
+      paths:
+      - capture.py
+    rubric:
+    - 以末轮为准。只有显式 save 才追加 action 事件，示例解释站点过滤，不能断言回放能迁移登录凭据或生成视频。
+- id: personal.review_then_switch
+  suite: personal_sessions
+  title: 核实版本差异后切换
+  description: 本机 claude 85fef08b，原始 JSONL 行 7；节选需求，重建输入。
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - development
+  - claude
+  - personal-session
+  setup:
+    files:
+      build_a.json: '{"browser":false,"timeout":30,"shell":"ask"}'
+      build_b.json: '{"browser":true,"timeout":90,"shell":"ask"}'
+      branches.txt: |
+        release-a -> build_a.json
+        release-b -> build_b.json
+      active.txt: |
+        release-a
+  input:
+    turns:
+    - 我以为新版只多了浏览器，你先对比两版再切到最新版。这里是离线发布快照，改 active.txt 为对应分支名就是切换。
+  expect:
+    checks:
+    - type: unchanged
+      name: 保留输入
+      paths:
+      - build_a.json
+      - build_b.json
+      - branches.txt
+    - type: command
+      name: 切到目标版本
+      argv:
+      - python3
+      - -c
+      - from pathlib import Path; assert Path('active.txt').read_text().strip()=='release-b'
+    rubric:
+    - 报告 browser 开启、timeout 从 30 到 90，和实际激活分支。明确判断“只多浏览器”是否成立。
+- id: personal.stage_override
+  suite: personal_sessions
+  title: 用户纠正状态位口径后检查全覆盖
+  description: 本机 codex c1f58a79，原始 JSONL 行 10, 59；节选需求，重建输入。
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - development
+  - codex
+  - personal-session
+  setup:
+    files:
+      flags.py: |
+        def interrupted(stage, reason):
+            return int(reason == "pending_lead")
+  input:
+    turns:
+    - 看 flags.py，现在 interrupted 是按什么逻辑返回的？
+    - 我纠正一下，S2 返回 0，其他阶段都是 1。帮我改成全覆盖，别只给待续线索加个例外。
+  expect:
+    checks:
+    - type: command
+      name: 按阶段而非原因决定，覆盖未列举阶段
+      argv:
+      - python3
+      - -c
+      - |
+        from flags import interrupted
+        for stage in ['S1','S2','S3','NEW']:
+         for reason in ['pending_lead','finished','']:
+          assert interrupted(stage,reason) == int(stage!='S2'), (stage,reason)
+    rubric:
+    - 首轮解释旧行为，末轮修改可运行的实现并说明 S2 和其余阶段的行为。
+- id: personal.conversation_compare
+  suite: personal_sessions
+  title: 完整十轮对照，只改客户的话
+  description: 本机 codex 44120cef，原始 JSONL 行 204, 399；节选需求，重建输入。
+  runner: product_session
+  grader: rubric
+  live: true
+  tags:
+  - development
+  - codex
+  - personal-session
+  setup:
+    files:
+      original.json: |-
+        [
+          {
+            "turn": 1,
+            "agent": "请核对第1项。",
+            "customer": "嗯，第1项已核对。"
+          },
+          {
+            "turn": 2,
+            "agent": "请核对第2项。",
+            "customer": "嗯，第2项已核对。"
+          },
+          {
+            "turn": 3,
+            "agent": "请核对第3项。",
+            "customer": "嗯，第3项已核对。"
+          },
+          {
+            "turn": 4,
+            "agent": "请核对第4项。",
+            "customer": "嗯，第4项已核对。"
+          },
+          {
+            "turn": 5,
+            "agent": "请核对第5项。",
+            "customer": "嗯，第5项已核对。"
+          },
+          {
+            "turn": 6,
+            "agent": "请核对第6项。",
+            "customer": "嗯，第6项已核对。"
+          },
+          {
+            "turn": 7,
+            "agent": "请核对第7项。",
+            "customer": "嗯，第7项已核对。"
+          },
+          {
+            "turn": 8,
+            "agent": "请核对第8项。",
+            "customer": "嗯，第8项已核对。"
+          },
+          {
+            "turn": 9,
+            "agent": "请核对第9项。",
+            "customer": "嗯，第9项已核对。"
+          },
+          {
+            "turn": 10,
+            "agent": "请核对第10项。",
+            "customer": "嗯，第10项已核对。"
+          }
+        ]
+  input:
+    turns:
+    - original.json 是十轮完整对话。做个能直接打开的本地对照页面，我要看每一轮原话和改写后的完整对话。
+    - 我要改的是客户的话，客服原话要保留。我想现场打开查看。请同时把页面用的改写数据导出 rewritten.json，字段跟原文件相同。
+  expect:
+    checks:
+    - type: unchanged
+      name: 保留输入
+      paths:
+      - original.json
+    - type: file_exists
+      glob: '**/*.html'
+      name: 有可打开的页面
+    - type: command
+      name: 十轮顺序、客服原话和客户改写逐条对照
+      argv:
+      - python3
+      - -c
+      - |
+        import json
+        from pathlib import Path
+        a,b=[json.loads(Path(n+'.json').read_text()) for n in ('original','rewritten')]
+        assert len(b)==len(a)==10
+        for x,y in zip(a,b):
+         assert y['turn']==x['turn'] and y['agent']==x['agent']
+         assert y['customer'].strip() and y['customer']!=x['customer']
+    rubric:
+    - 页面能在本地直接查看十轮完整原文与改写，区分双方角色，核对页面与导出数据一致；每轮客户保留原意与项号。

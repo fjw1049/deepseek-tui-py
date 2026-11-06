@@ -1,0 +1,138 @@
+- &base
+  id: personal.intent_audit
+  suite: personal_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  tags: [development, codex, personal-session, data-audit]
+  title: 依据标注表审核预期产品与意图
+  description: Codex 91ab6cba，JSONL 10、32、39；用合成 CSV 代替 Excel 导出，仅取测试前审核阶段。
+  setup:
+    files:
+      labels.csv: |
+        id,product,intent
+        Q8,乙,报价
+        Q3,甲,咨询
+        Q4,丙,
+      results.csv: |
+        id,product,intent
+        Q4,丙,退订
+        Q8,甲,报价
+        Q3,甲,咨询
+  input:
+    turns: ['预期产品、意图以 labels.csv 为准。审核 results.csv，按 ID 告诉我哪些错、哪些暂时评不了，以及为什么。先给我审核结论。']
+  expect:
+    checks:
+    - {type: unchanged, name: 标注与预测原样保留, paths: [labels.csv, results.csv]}
+    - {type: answer_contains, name: 逐项可定位, all_of: [Q8, Q3, Q4]}
+    rubric: [Q8 产品应为乙而预测甲、意图正确；Q3 两项正确；Q4 产品正确且无预期意图，不能把预测当标注。不按行号拼表。]
+- <<: *base
+  id: personal.desktop_plan
+  tags: [development, claude, personal-session, tool-selection]
+  title: 自研原生 GUI 与浏览器怎样协作测试
+  description: Claude 45131d98，JSONL 7、102；重建工具能力清单及测试流程。
+  setup:
+    files:
+      capabilities.txt: |
+        browser 能读网页 DOM、按元素操作网页，读不到原生窗口。
+        desktop 能观察原生窗口和操作系统对话框。用户接管后旧元素引用失效。
+        测试流程：从原生编辑器选择导出文件，打开网页预览并核对本次导出的标题。
+  input:
+    turns:
+    - 看 capabilities.txt，举例说明这两个工具怎么协作。
+    - 那我自己的 GUI 能测吗？按文件里这个流程给我可执行的测试步骤。如果中间我接管了怎么接着测？这次只写方案。
+  expect:
+    checks: [{type: unchanged, name: 保留能力说明, paths: [capabilities.txt]}]
+    rubric: [说清原生窗口及系统选择器用 desktop，网页用 browser；把同一次导出的文件或标题贯穿核验，接管回来重新观察；没有虚报已实测。]
+- <<: *base
+  id: personal.call_without_variables
+  title: 没有下发变量仍调用远端的原因
+  tags: [development, codex, personal-session, debugging]
+  description: Codex 6d5c0a44，JSONL 11；把真实调用链改为无网络的最小实现。
+  setup:
+    files:
+      flow.py: |
+        def step(pending, fetch, send):
+            snapshot = fetch()
+            if pending:
+                send(pending, snapshot)
+      trace.txt: |
+        step pending=[]
+        fetch 200
+        step pending=[city]
+        fetch 200
+        send city
+  input:
+    turns: [为什么我没下发变量还一直在调远程接口？对照代码和记录定位一下，告诉我这两次分别干了什么，先审核。]
+  expect:
+    checks: [{type: unchanged, name: 仅审核保留原始实现与记录, paths: [flow.py, trace.txt]}]
+    rubric: [指出 fetch 在判断前无条件执行，两次均调用 fetch、只有第二次 send；不能凭两条记录断言有重试或定时循环。]
+- <<: *base
+  id: personal.press_feedback
+  title: 列表每个条目的灰色按压反馈
+  tags: [development, codex, personal-session, interaction]
+  description: Codex 1f3d0ee6，JSONL 8；重建列表页，只取交互需求，原会话后续 Git 发布另测。
+  setup:
+    files:
+      index.html: |
+        <!doctype html><meta charset=utf-8><link rel=stylesheet href=style.css>
+        <section class=trending><a href="#a">Alpha</a><a href="#b">Beta</a></section>
+        <aside><a href="#help">Help</a></aside>
+      style.css: |
+        a { display:block; padding:8px; background:white; }
+  input:
+    turns: [Trending 里面每个仓库按下时都要有灰色反馈，松开恢复。只改 style.css，保留跳转，旁边的帮助入口维持原样。]
+  expect:
+    checks: [{type: unchanged, name: 链接与页面结构原样保留, paths: [index.html]}]
+    rubric: [检查 CSS 是否作用于两个仓库的按下状态且松开恢复，单纯 hover 不合格；不能影响 aside 的链接或整块容器。]
+- <<: *base
+  id: personal.model_alias
+  title: 两个模型名是否都能用于当前服务
+  tags: [development, claude, personal-session, deployment]
+  description: Claude 804573d3，JSONL 27；替换模型名和部署资料，验证能否区分权重路径与 API 名称。
+  setup:
+    files:
+      launch.txt: |
+        serve /weights/orchid-27b --served-model-name sales-blue
+      api_snapshot.json: |
+        {"data":[{"id":"sales-blue"}]}
+      smoke.log: |
+        POST model=sales-blue status=200
+        POST model=orchid-27b status=404 error=model_not_found
+  input:
+    turns: ['orchid-27b、sales-blue 这两个都能作为这个接口的 model 参数吗？以目录里这次部署和试调结果为准。']
+  expect:
+    checks: [{type: unchanged, name: 不改服务快照, paths: [launch.txt, api_snapshot.json, smoke.log]}]
+    rubric: [仅 sales-blue 被列出且请求成功；orchid-27b 是磁盘名称，此次以它调用返回 404。不能泛化为该权重不支持推理。]
+- <<: *base
+  id: personal.eval_portfolio
+  title: 从重复的简单题重组成有跨度的评测数据
+  tags: [development, codex, personal-session, eval-design]
+  description: Codex 48d6b4c0，JSONL 17；以脱敏候选任务池代替外部下载，限定为整理阶段。
+  setup:
+    files:
+      pool.txt: |
+        A1 查询给定工单的负责人。A2 问工单负责人叫什么。A3 告诉我谁负责该工单。
+        B1 两份费用表行序不同，其中一笔退款晚到，需要按单号重算。
+        C1 用户先要求发布公告，随后纠正只保存草稿。
+        D1 提交已成功但返回超时，能查回执，再次提交会产生重复记录。
+  input:
+    turns: ['之前测的题太相似。请从 pool.txt 选代表，再造至少一个不同机制的复杂需求，整理成 cases.json，先别跑模型。每项给 source（候选编号或 new）、request 和 oracle，别人要能照着判断对错。别只改个说法。']
+  expect:
+    checks:
+    - {type: unchanged, name: 候选池未改, paths: [pool.txt]}
+    - name: 去重并引入新机制的可读用例集
+      type: command
+      argv:
+      - python3
+      - -c
+      - |
+        import json
+        rows=json.load(open('cases.json'))
+        assert isinstance(rows,list)
+        sources=[r['source'] for r in rows]
+        assert sum(k in ['A1','A2','A3'] for k in sources)<=1
+        assert 'new' in sources and any(k in ('A1','A2','A3','B1','C1','D1') for k in sources)
+        assert all(isinstance(r['request'],str) and r['request'].strip() for r in rows)
+        assert all(isinstance(r['oracle'],(str,dict,list)) and bool(r['oracle']) for r in rows)
+    rubric: [每项能执行并能从明确事实判断结果；费用需能按键核算或有明示夹具，授权纠正核对草稿及未发布，超时恢复核对提交次数及结果（按所选题判）；新增任务的失败机制与所选题有实质差异。]

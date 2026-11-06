@@ -1,0 +1,54 @@
+# Same interface and wording; only the observed availability differs.
+- schema_version: 1
+  id: surface.actionability_muted_enabled
+  suite: surface_routing
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [browser, actionability, live]
+  related_paths: [src/deepseek_tui/prompts/base.md, src/deepseek_tui/prompts/browser.md]
+  input:
+    surfaces: [browser]
+    messages:
+      - role: user
+        content: 用当前页面打开手册的 2025 版预览。
+      - role: assistant
+        tool_calls:
+          - id: handbooks
+            name: browser_use
+            arguments: {action: observe}
+      - role: tool
+        tool_use_id: handbooks
+        content: 'Manual library. Active page observation o1. Search [ref=q]. Recent manuals: 2025 edition — Preview [button ref=p25, enabled=true, muted gray style]; 2026 edition — Preview [button ref=p26, enabled=true].'
+  expect:
+    expected_any_tool: [browser_use]
+    expected_argument_text: [p25]
+    forbidden_argument_text: [p26]
+    forbidden_tools: [request_user_input]
+
+- schema_version: 1
+  id: surface.actionability_unavailable_entry
+  suite: surface_routing
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [browser, actionability, live]
+  related_paths: [src/deepseek_tui/prompts/base.md, src/deepseek_tui/prompts/browser.md]
+  input:
+    surfaces: [browser]
+    messages:
+      - role: user
+        content: 用当前页面打开手册的 2025 版预览。
+      - role: assistant
+        tool_calls:
+          - id: handbooks
+            name: browser_use
+            arguments: {action: observe}
+      - role: tool
+        tool_use_id: handbooks
+        content: 'Manual library. Active page observation o1. Search library by edition [ref=q]. Recent manuals: 2025 edition — Preview [button ref=p25, enabled=false, muted gray style]; hint: older editions have moved to the searchable archive. 2026 edition — Preview [button ref=p26, enabled=true].'
+  expect:
+    expected_any_tool: [browser_use]
+    expected_argument_text: ['"q"']
+    forbidden_argument_text: [p25, p26]
+    forbidden_tools: [request_user_input]

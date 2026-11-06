@@ -1,0 +1,202 @@
+# Derived from top-level ~/.claude transcripts, indexed by sha256(session stem)[:8].
+# All logs, code, data and refs below are synthetic. Source IDs are evaluator metadata.
+- id: claude.linux_command
+  title: 用户纠正后给出包含隐藏项的 Linux 用量命令
+  description: b8317033，保留原会话里范围和平台的两句追问。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  input:
+    turns: [就是当前环境下所有的大小呢包括隐藏文件, 我说在linux的指令]
+  expect:
+    checks: []
+    rubric:
+    - 最后一轮给出可复制的 Linux 命令，统计当前目录每个一级条目的磁盘用量，普通文件、隐藏文件、隐藏目录都包含；允许 GNU du、find 或正确的 shell 通配方案。
+    - 不把仅有当前目录总数、只列目录、只列隐藏文件、或默认展开 * 不包含隐藏项的命令当作答案。
+
+- id: claude.label_score
+  title: 修订分类计分，保持其他类别精确匹配
+  description: 8462b52b，抽取分类用户关于定向等价的口径，重建标签和验收数据。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  setup:
+    files:
+      score.py: |
+        def matches(gold, prediction):
+            return gold == prediction
+  input:
+    turns:
+    - 帮我改 score.py。标准标签 F,OTHER 遇到预测具体 F 子标签（F,NEED、F,TRUST、F,BUSY、F,PRICE）都算对。别把其他错分也算进去。
+  expect:
+    checks:
+    - name: 四个放宽项、精确匹配、反向与邻近错例
+      type: command
+      critical: true
+      argv:
+      - python3
+      - -c
+      - |
+        from score import matches
+        for label in ['F,NEED','F,TRUST','F,BUSY','F,PRICE']:
+            assert matches('F,OTHER', label) and matches(label,label)
+            assert not matches(label,'F,OTHER')
+            assert not matches('F',label) and not matches('OTHER',label)
+        assert matches('F,OTHER','F,OTHER') and matches('E,TAG7','E,TAG7')
+        for pred in ['F,FAKE','F,PRICEY','E,TAG7','E7','']:
+            assert not matches('F,OTHER',pred)
+        assert not matches('F,NEED','F,BUSY')
+    rubric: [实际修改可调用的 matches，单向放宽恰好四个标签，其他标签继续按原规则比较。]
+
+- id: claude.cache_evidence
+  title: 相同前缀与缓存命中分开判断
+  description: 5043851a，保留原会话的缓存问题，重建三条 usage 记录。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  setup:
+    files:
+      usage.log: |
+        R1 prefix_digest=c24 cache_read_tokens=600
+        R2 prefix_digest=c24 cache_read_tokens=0
+        R3 prefix_digest=c24
+  input:
+    turns: [我的提示词前面都一样，不是有缓存吗？看 usage.log 分别告诉我这三次能确认什么。]
+  expect:
+    checks:
+    - {name: 原始记录完整, type: unchanged, paths: [usage.log], critical: true}
+    rubric: [分别指出 R1 为 600、R2 报告零、R3 没报所以未知，相同前缀无法证明三次都命中或给出 R2 未命中根因。]
+
+- id: claude.git_direction
+  title: 同步方向纠正与本地改动
+  description: f6bba893，保留用户纠正同步方向的原句；用本地快照检查两轮判断。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  setup:
+    files:
+      refs.txt: |
+        local feature: A--B
+        just fetched origin/feature: A--B--C--D
+        working tree: modified settings.py (user's uncommitted changes)
+  input:
+    turns:
+    - 先看 refs.txt，说明帮我同步到远程前要确认什么，这次只分析。
+    - 我说远程有更新的，同步到本地
+  expect:
+    checks:
+    - {name: 快照保持原样, type: unchanged, paths: [refs.txt], critical: true}
+    rubric: [最后一轮采用远端到本地的方向，指出本地落后且需保护本地改动；从快照无法宣称完成拉取。]
+
+- id: claude.select_changes
+  title: 从混合改动中按功能划提交范围
+  description: d8200f01，来自排除正在开发的浏览器功能的提交请求；只考方案和混合文件的处理。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  setup:
+    files:
+      changes.txt: |
+        browser.py all hunks: browser automation in progress
+        chat.py hunk A: fix conversation resume
+        chat.py hunk B: attach browser preview, depends on browser.py
+        test_chat.py all hunks: regression for conversation resume
+        report.py all hunks: repair CSV quoting
+        test_report.py all hunks: regression for CSV quoting
+  input:
+    turns: [除了现在 browser use 在优化，其他的功能想按功能提交。你先按 changes.txt 给我分组方案。]
+  expect:
+    checks:
+    - {name: 原始清单不变, type: unchanged, paths: [changes.txt], critical: true}
+    rubric: [恢复会话和 CSV 修复各一组并配对应测试。chat.py 只选 hunk A，hunk B 与 browser.py 保留；不能整文件提交。]
+
+- id: claude.architecture_html
+  title: 由路由入口追到写入线程并实际交付 HTML
+  description: 09af93f5，抽取 Octop 从路由逐层审核并画 HTML 架构图的需求，模块结构重建。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  setup:
+    files:
+      routes.py: |
+        from bridge import receive
+        def dispatch(path, event):
+            if path == '/inbox':
+                return receive(event)
+            return 404
+      bridge.py: |
+        from store import append
+        def receive(event):
+            if not event.get('thread_id'):
+                return 422
+            append(event['thread_id'], event['result'])
+            return 202
+      store.py: |
+        threads = {}
+        def append(thread_id, result):
+            threads.setdefault(thread_id, []).append(result)
+  input:
+    turns: [从路由入口审核这个项目，给我一份能直接打开的 architecture.html 架构图。讲清消息怎么回到原会话，出错走哪里。]
+  expect:
+    checks:
+    - {name: HTML 包含路由和不同失败码, type: file_contains, glob: architecture.html, all_of: [/inbox, '422', '404'], critical: true}
+    - {name: 三个源码文件未变, type: unchanged, paths: [routes.py, bridge.py, store.py], critical: true}
+    rubric: [HTML 内有可读图示，主路径从 dispatch 到 receive 到 append，thread_id 决定写回的原会话，给出正常 202 与两种错误分支；避免编造实际外部投递。]
+
+- id: claude.takeover_history
+  title: 多轮解释接管后保留什么、丢弃什么
+  description: b6ee72ce，以代码重建人工接管时历史与当前观察分离的语义。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  setup:
+    files:
+      handoff.py: |
+        def take_over(state):
+            state['owner'] = 'user'
+            state['element_refs'].clear()
+            state['history'].append('handoff')
+        def resume(state, fresh_view):
+            state['owner'] = 'agent'
+            state['element_refs'] = fresh_view
+            state['history'].append('resumed')
+  input:
+    turns: [看看 handoff.py，人工接管和还回去是什么逻辑？, 就是那轮的旧观察全清了，历史也没了，是这个意思吗？]
+  expect:
+    final_turn_only: true
+    checks:
+    - {name: 接管逻辑保持原样, type: unchanged, paths: [handoff.py], critical: true}
+    rubric: [最终答复纠正误解，元素引用清空、还回时用 fresh_view，history 保留并追加事件，区分用户接管和恢复动作。]
+
+- id: claude.automation_runs
+  title: 自动化历史遇到重跑和失败
+  description: d6273824，保留用户对每次运行是否都能追踪的追问，三份事件重建。
+  suite: claude_sessions
+  runner: product_session
+  grader: rubric
+  live: true
+  setup:
+    files:
+      automation.py: |
+        def finish(store, thread, run, status, body):
+            if status == 'ok':
+                store[(thread,run)] = body
+      trace.txt: |
+        t9 r1 ok draft
+        t9 r1 ok retry
+        t9 r2 failed missing_input
+        t8 r1 ok elsewhere
+  input:
+    turns: [审核一下自动化每次的结果怎么保存，看看代码和记录。, 每次都保存对吧，我就能知道第几次什么时候的内容了这个意思吗]
+  expect:
+    final_turn_only: true
+    checks:
+    - {name: 两份证据不变, type: unchanged, paths: [automation.py, trace.txt], critical: true}
+    rubric: [解释同线程同 run 重写，只存成功结果；t9/r1 最终 retry，r2 的失败不在 store，另一个线程相互独立；代码没有保存时间戳，不能恢复每次时间和旧内容。]

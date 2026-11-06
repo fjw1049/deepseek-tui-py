@@ -48,11 +48,14 @@
       paths:
       - orders.csv
       - payments.csv
-    - name: 有可处理的清单文件
-      type: file_exists
-      glob: '*.*'
+    - name: 交付清单能定位差额、缺失金额和无对应订单的收款
+      type: file_contains
+      glob: '**/*'
+      exclude_seeded: true
+      all_of: [A02, A05]
+      patterns: ['(?<![0-9.])60(?:\.0+)?(?![0-9.])']
+      any_of: [P06, A99]
       critical: true
-      min_count: 4
     rubric:
     - A02 应收 260，P02 重复记录一次，去重后实收 200、差 60，清单要同时指出重复和差额。
     - A03 是已取消订单却收款 80；第二轮 R01 退款 80 后已平。

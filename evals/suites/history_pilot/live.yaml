@@ -1,0 +1,72 @@
+# 开发集。来源为会话文件 stem 的 SHA-256 前八位。输入和验收数据均为重新构造。
+- id: history.permission_trace
+  title: 从运行记录解释授权与后续失败
+  suite: history_pilot
+  runner: product_session
+  grader: rubric
+  live: true
+  tags: [history, diagnosis]
+  setup:
+    files:
+      events.log: |
+        10:00:00 bookmarks.read result=unsupported
+        10:00:01 desktop.control approval=pending request=R17
+        10:00:26 desktop.control approval=granted request=R17
+        10:00:27 screenshot result=denied domain=screen_capture
+        10:00:28 menu.find result=not_found target=Bookmarks
+  input:
+    turns:
+    - 我已经点了同意，怎么还停了，又报两个错？看 events.log 给我讲清楚，哪些原因现在还确定不了。先只分析。
+  expect:
+    checks:
+    - {name: 留存原始证据, type: unchanged, paths: [events.log], critical: true}
+    rubric:
+    - 说明书签读取不支持后转向桌面操作，待批准到批准约 25 秒。
+    - 同意的是桌面操作请求，截图另被 screen_capture 拒绝，菜单查找返回未找到。区分两个失败。
+    - 日志无法确定菜单找不到的根因或弹窗是否仍显示；避免声称已修复或观察到界面。
+# Claude 732fbe22。下一题来自 Codex 3e3d164c，抽取主会话与另一处卡片保持一致的约束。
+- id: history.card_parity
+  title: 让侧栏卡片跟随主会话格式
+  suite: history_pilot
+  runner: product_session
+  grader: rubric
+  live: true
+  tags: [history, coding, consistency]
+  setup:
+    files:
+      defaults.json: '{"compact":true}'
+      cards.py: |
+        import json
+        from pathlib import Path
+
+        def main_card(name, state):
+            defaults = json.loads(Path(__file__).with_name("defaults.json").read_text())
+            return {"title": name, "badge": state, **defaults}
+
+        def sidebar_card(name, state):
+            return {"label": name}
+  input:
+    turns:
+    - cards.py 里侧栏卡片的格式要跟主会话保持对齐。改一下，以后在 defaults.json 增改默认字段时侧栏也得跟着，保留两个入口和现有默认设置。
+  expect:
+    checks:
+    - {name: 保留原始默认设置, type: unchanged, paths: [defaults.json], critical: true}
+    - name: 改变默认值并新增字段后，两个入口仍然一致
+      type: command
+      critical: true
+      argv:
+      - python3
+      - -c
+      - |
+        from pathlib import Path
+        import cards
+        expected = {"title": "查找", "badge": "等待", "compact": True}
+        assert cards.main_card("查找", "等待") == expected
+        assert cards.sidebar_card("查找", "等待") == expected
+        Path("defaults.json").write_text('{"compact":false,"priority":7}')
+        import importlib
+        importlib.reload(cards)
+        for name, state in [("", "失败"), ("写入", "完成")]:
+            assert cards.sidebar_card(name, state) == cards.main_card(name, state) == {"title": name, "badge": state, "compact": False, "priority": 7}
+    rubric:
+    - 原有两个可调用入口均可用，主会话原有输出保留，两个入口共享格式定义。

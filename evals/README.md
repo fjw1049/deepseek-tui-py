@@ -2,6 +2,10 @@
 
 This directory is a behavioral evaluation system, not another unit-test folder.
 
+从项目根目录运行 `make eval-full` 可执行当前注册题集。个人历史子集与旧长跑题库的口径见[复跑入口和数据总账](EVAL_RUNBOOK.md)。
+
+系统级指标、数据覆盖、评分与版本决策见[整套系统评估方案 v1](SYSTEM_EVALUATION.md)。
+
 ## 独立 Eval Lab（本地端口 7879）
 
 ```bash
@@ -33,7 +37,7 @@ bash scripts/dev-eval.sh
 | 单步决策 | 真实模型探针 | 观察一次响应，工具不执行 |
 | 真实文件任务 | 3 个真实 Engine 文件任务 | 生产文件工具与工具循环；临时目录；独立 JSON/保护文件验收 |
 | 产品任务 | 22 个 `daily_tasks` 场景 | 真实 HTTP 入口、完整工具、持久化；事实检查 + 独立评审 |
-| 评审校准 | 6 个 `judge_calibration` 样本 | 用人工构造的好坏结果测评审员本身 |
+| 评审校准 | 10 个 `judge_calibration` 样本 | 用人工构造的好坏结果测评审员本身 |
 | 缓存探针 | 1 个 provider 缓存实验 | 人工稳定前缀；不代表真实任务质量 |
 
 真实模型读取现有用户级模型配置与环境变量；Key 不通过页面或导出接口暴露。
@@ -192,3 +196,7 @@ judge prompts are intentionally unsupported.
 Critical runtime invariants must still have ordinary tests. An eval can measure
 how often a model attempts an unsafe action, but only product tests can prove
 that the runtime always blocks it.
+
+每次 run 会生成 `scorecard.md`，按入口和套件分开统计首试、复测和未判样本，并链接产品会话。对已有运行执行 `.venv/bin/python -m evals scorecard <运行目录>` 即可补生成，无模型调用；用 `regrade <运行目录> --reuse-judge` 可在原产物上重跑事实检查。[实际校准结果、误判与隔离范围](reports/2026-11-06-eval-integrity.md)。
+
+[个人会话开发集](suites/personal_sessions/README.md)收录从本机 Claude Code、Codex 的真实需求改编的多轮产品任务，附原会话索引、脱敏改动和逐题验收说明。
