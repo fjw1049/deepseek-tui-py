@@ -18,7 +18,7 @@ const INDEX_TO_EFFORT = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export interface ComposerModelOption {
   id: string
   label: string
-  /** Short label for the composer pill; menus retain the full label. */
+  /** Model name for the pill and for unambiguous menu entries. */
   compactLabel?: string
   /** Optional provider id for icon coloring (e.g. deepseek, hs). */
   providerId?: string

@@ -913,7 +913,12 @@ class ChatGPTModelSelector extends HTMLElement {
 
       const labelEl = document.createElement('span');
       labelEl.className = 'model-label';
-      labelEl.textContent = m.label || m.id;
+      const fullName = m.label || m.id;
+      const sameName = m.compactLabel && models.some(
+        other => other.id !== m.id && other.compactLabel === m.compactLabel
+      );
+      labelEl.textContent = sameName ? fullName : (m.compactLabel || fullName);
+      btn.title = fullName;
 
       btn.appendChild(iconEl);
       btn.appendChild(labelEl);

@@ -91,3 +91,19 @@ it('does not retain a gray highlight after the pointer leaves a model', () => {
   row.dispatchEvent(new PointerEvent('pointerleave'))
   expect(root.querySelector('.is-highlight')).toBeNull()
 })
+
+it('shows the model name alone unless another endpoint uses the same name', () => {
+  const picker = document.createElement('reasoning-effort-selector') as HTMLElement & {
+    models: { id: string; label: string; compactLabel: string }[]
+  }
+  document.body.append(picker)
+  picker.models = [
+    { id: 'a', label: '众安/kimi-k3', compactLabel: 'kimi-k3' },
+    { id: 'b', label: '众安/glm-5-3', compactLabel: 'glm-5-3' },
+    { id: 'c', label: '备用/glm-5-3', compactLabel: 'glm-5-3' }
+  ]
+  const root = picker.shadowRoot!
+  expect(Array.from(root.querySelectorAll('.model-label'), el => el.textContent))
+    .toEqual(['kimi-k3', '众安/glm-5-3', '备用/glm-5-3'])
+  expect(root.querySelector<HTMLButtonElement>('.model-item')?.title).toBe('众安/kimi-k3')
+})
