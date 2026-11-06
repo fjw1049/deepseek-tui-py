@@ -26,6 +26,7 @@ from evals.harness.product import EnvironmentInvalid
 from evals.report import append_result, summarize, write_json
 from evals.rubric import CHECK_TYPES
 from evals.schema import EvalCase, EvalObservation, RunManifest, RunSummary, TrialResult
+from evals.scorecard import write_scorecard
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SUITES_ROOT = Path(__file__).resolve().parent / "suites"
@@ -102,6 +103,13 @@ def dataset_hash(cases: list[EvalCase]) -> str:
     return _hash_json(payload)
 
 
+def grader_hash() -> str:
+    root = REPO_ROOT / "evals"
+    paths = [*sorted((root / "graders").glob("*.py")),
+             *(root / f"{name}.py" for name in ("judge", "rubric", "session_metrics"))]
+    return _hash_json({str(p.relative_to(REPO_ROOT)): p.read_text() for p in paths})
+
+
 def _hash_json(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
@@ -174,16 +182,7 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
         model=options.model,
         trials=options.trials,
         case_ids=[case.id for case in cases],
-        grader_hash=_hash_json(
-            {
-                str(p.relative_to(REPO_ROOT)): p.read_text()
-                for p in [
-                    *sorted((REPO_ROOT / "evals" / "graders").glob("*.py")),
-                    REPO_ROOT / "evals" / "judge.py",
-                    REPO_ROOT / "evals" / "rubric.py",
-                ]
-            }
-        ),
+        grader_hash=grader_hash(),
         settings={
             "label": options.label,
             "prompt_suffix": options.prompt_suffix,
@@ -266,6 +265,7 @@ async def run_evaluations(
     def trial_result(case: EvalCase, trial: int, **fields: Any) -> TrialResult:
         return TrialResult(
             case_id=case.id,
+            runner=case.runner,
             suite=case.suite,
             risk=case.risk,
             source_file=case.source_file,
@@ -417,11 +417,11 @@ async def run_evaluations(
                     )
                 )
     finally:
-        await asyncio.shield(context.close())
         end_hash = _dirty_state_hash()
         manifest.settings["source_changed_during_run"] = end_hash != manifest.dirty_diff_hash
         manifest.settings["end_dirty_diff_hash"] = end_hash
         write_json(output / "manifest.json", manifest.model_dump(mode="json"))
         summary = summarize(run_id, results)
         write_json(output / "summary.json", summary.model_dump(mode="json"))
+        write_scorecard(output)
     return output, summary

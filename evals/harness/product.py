@@ -1,8 +1,8 @@
 """Drive one scenario through the real product: HTTP API, Engine, tools, persistence.
 
-Each run owns a server on a throwaway home and each trial a workspace outside the
-repository, so the product's AGENTS.md, the user's threads and other cases' files
-cannot reach the model. Execution only collects evidence; ``grade_session`` judges
+Each trial owns a server, home and workspace. On macOS its process tree also
+has kernel-enforced read/write restrictions on the trial pool and grading data.
+Execution only collects evidence; ``grade_session`` judges
 what was collected and can run again later on the saved session.
 """
 
@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,7 @@ import httpx
 
 from deepseek_tui.config.paths import user_config_path, user_deepseek_dir
 from evals.harness.budget import BudgetExceeded
+from evals.harness.service_fixture import service_fixture, terminal_checks
 from evals.judge import judge_session
 from evals.rubric import run_checks
 from evals.schema import EvalCase, EvalObservation
@@ -54,15 +56,74 @@ class EnvironmentInvalid(RuntimeError):
     """The runtime cannot reach a model; further trials would measure the setup."""
 
 
+class ProductRun:
+    """Share endpoint health across trials, never a server or thread store."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.ready = False
+        self.failure: EnvironmentInvalid | None = None
+        self.failed_trials = 0
+
+    @asynccontextmanager
+    async def trial(self, context: HarnessContext):
+        server = ProductServer(context.provider, context.model, context.artifacts_dir)
+        try:
+            await server.start()
+            async with self.lock:
+                if self.failure:
+                    raise self.failure
+                if not self.ready:
+                    try:
+                        await server.preflight()
+                    except EnvironmentInvalid as exc:
+                        self.failure = exc
+                        raise
+                    self.ready = True
+            yield server
+        finally:
+            await asyncio.shield(server.close())
+
+    def record(self, status: str) -> None:
+        if status == "failed":
+            self.failed_trials += 1
+        elif status == "completed":
+            self.failed_trials = 0
+        if self.failed_trials >= _MAX_CONSECUTIVE_FAILED_TRIALS:
+            raise EnvironmentInvalid(f"{self.failed_trials} consecutive turns failed")
+
+
 class ProductServer:
-    def __init__(self, provider: str | None, model: str | None) -> None:
+    def __init__(self, provider: str | None, model: str | None, output: Path | None = None) -> None:
         self.provider = provider
         self.model = model
-        self.root = Path(tempfile.mkdtemp(prefix="deepseek-eval-")).resolve()
+        pool = Path(tempfile.gettempdir()).resolve() / "deepseek-eval-trials"
+        pool.mkdir(mode=0o700, exist_ok=True)
+        self.root = Path(tempfile.mkdtemp(dir=pool))
+        self.output = output
         self.home = self.root / "home"
         self.process: asyncio.subprocess.Process | None = None
         self.client: httpx.AsyncClient | None = None
-        self.failed_trials = 0
+
+    def process_prefix(self) -> list[str]:
+        if sys.platform != "darwin":
+            return []
+        hidden = [_REPO_ROOT / name for name in (
+            "evals/suites", "evals/artifacts", "evals/baselines", "evals/reports", "scratch",
+        )]
+        if self.output is not None:
+            hidden.append(self.output.resolve())
+        # Deny listing the pool and accessing siblings even via an absolute path.
+        def subtree(path: Path) -> str:
+            return f"(subpath {json.dumps(str(path), ensure_ascii=False)})"
+
+        profile = [
+            "(version 1)(allow default)",
+            f"(deny file-read* file-write* {subtree(self.root.parent)})",
+            f"(allow file-read* file-write* {subtree(self.root)})",
+            *(f"(deny file-read* file-write* {subtree(path)})" for path in hidden),
+        ]
+        return ["/usr/bin/sandbox-exec", "-p", "".join(profile)]
 
     def _prepare_home(self) -> None:
         self.home.mkdir()
@@ -95,7 +156,7 @@ class ProductServer:
         log = open(self.root / "server.log", "ab")  # noqa: ASYNC230 - created beside the home
         try:
             self.process = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "evals.product_server", *arguments,
+                *self.process_prefix(), sys.executable, "-m", "evals.product_server", *arguments,
                 cwd=_REPO_ROOT,
                 env={
                     **os.environ,
@@ -256,6 +317,8 @@ def seed_workspace(case: EvalCase, workspace: Path) -> None:
 def _write_files(workspace: Path, files: dict[str, str]) -> None:
     for name, content in files.items():
         path = workspace / name
+        if not path.resolve().is_relative_to(workspace.resolve()):
+            raise ValueError(f"fixture path escapes workspace: {name}")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
@@ -278,7 +341,23 @@ async def grade_session(
     answers = turn_answers(session) if session else []
     metrics = session_metrics(session) if session else {}
     workspace = session_dir / "workspace"
+    if any(p.is_symlink() and not p.resolve().is_relative_to(workspace.resolve())
+           for p in workspace.rglob("*")):
+        raise ValueError("unsafe artifact: symlink outside the saved workspace")
     checks = await asyncio.to_thread(run_checks, case, workspace, answers)
+    if kind := case.setup.get("service_fixture"):
+        snapshot = json.loads((session_dir / "service-state.json").read_text())
+        checks.extend(terminal_checks(kind, snapshot, answers))
+        if kind == "login":
+            for turn, expected in zip(turns, ["请本人登录后查看", snapshot["value"]], strict=False):
+                verified = session and any(
+                    item["turn_id"] == turn["turn_id"] and item.get("status") != "failed"
+                    and (item.get("metadata") or {}).get("tool_name") == "browser_use"
+                    and expected in str(item.get("detail", ""))
+                    for item in session.items
+                )
+                checks.append(dict(name="浏览器回包含该轮页面内容", passed=bool(verified),
+                                   critical=True, detail=turn["turn_id"]))
     record = run_record(session) if session else ""
     judge = saved_judge or await judge_session(case, answers, workspace, context, record)
     return EvalObservation(
@@ -301,40 +380,51 @@ async def run_product_session(case: EvalCase, context: HarnessContext) -> EvalOb
         and context.usage.get("input_tokens", 0) >= context.max_input_tokens
     ):
         raise BudgetExceeded("输入 token 预算已用完")
-    server = await context.product_server()
     trial = uuid.uuid4().hex[:8]
-    workspace = server.root / "workspaces" / f"{case.id}-{trial}"
-    seed_workspace(case, workspace)
-    thread_id = await server.create_thread(workspace, f"eval {case.id}")
-    turns: list[dict[str, Any]] = []
-    releases = case.setup.get("release_before_turn", {})
-    for number, prompt in enumerate(case.input["turns"], 1):
-        _write_files(workspace, releases.get(number, {}))
-        turn = await server.drive_turn(
-            thread_id, prompt, workspace, timeout=context.turn_timeout_seconds
+    async with context.product_run.trial(context) as server:
+        workspace = server.root / "workspace"
+        seed_workspace(case, workspace)
+        thread_id = await server.create_thread(workspace, f"eval {case.id}")
+        turns: list[dict[str, Any]] = []
+        releases = case.setup.get("release_before_turn", {})
+        kind = case.setup.get("service_fixture")
+        if kind == "login":
+            await server.request("POST", f"/v1/threads/{thread_id}/browser/preferences",
+                                 json={"persistent": False})
+        with service_fixture(kind) as fixture:
+            for number, prompt in enumerate(case.input["turns"], 1):
+                if fixture:
+                    state, urls = fixture
+                    if kind == "login" and number == 2:
+                        state["authenticated"] = True
+                    for role, url in urls.items():
+                        prompt = prompt.replace("{" + role + "}", url)
+                _write_files(workspace, releases.get(number, {}))
+                turn = await server.drive_turn(
+                    thread_id, prompt, workspace, timeout=context.turn_timeout_seconds
+                )
+                turns.append(turn)
+                if turn["status"] != "completed":
+                    break
+            # Only a failed model request says anything about the environment: a timeout
+            # or an unanswered question is the task's own result.
+            context.product_run.record(turns[-1]["status"])
+            session_dir = context.artifacts_dir / "sessions" / f"{case.id}-{trial}"
+        if fixture:
+            session_dir.mkdir(parents=True)
+            (session_dir / "service-state.json").write_text(json.dumps(state))
+        server.save_session(thread_id, session_dir)
+        shutil.copytree(
+            workspace,
+            session_dir / "workspace",
+            symlinks=True,
+            ignore=shutil.ignore_patterns("node_modules", ".git", ".venv", "__pycache__"),
         )
-        turns.append(turn)
-        if turn["status"] != "completed":
-            break
-    # Only a failed model request says anything about the environment: a timeout
-    # or an unanswered question is the task's own result.
-    last_status = turns[-1]["status"]
-    if last_status == "failed":
-        server.failed_trials += 1
-    elif last_status == "completed":
-        server.failed_trials = 0
-    if server.failed_trials >= _MAX_CONSECUTIVE_FAILED_TRIALS:
-        raise EnvironmentInvalid(f"{server.failed_trials} consecutive turns failed")
-    session_dir = context.artifacts_dir / "sessions" / f"{case.id}-{trial}"
-    server.save_session(thread_id, session_dir)
-    shutil.copytree(
-        workspace,
-        session_dir / "workspace",
-        symlinks=True,
-        ignore=shutil.ignore_patterns("node_modules", ".git", ".venv", "__pycache__"),
-    )
-    (session_dir / "turns.json").write_text(json.dumps(turns), encoding="utf-8")
+        (session_dir / "turns.json").write_text(json.dumps(turns), encoding="utf-8")
     observation = await grade_session(case, session_dir, turns, context)
+    observation.data["trial_isolation"] = (
+        "macos-trial-pool-policy" if sys.platform == "darwin" else "separate-process-only"
+    )
     session = observation.data["session"]
     for key in ("input_tokens", "output_tokens"):
         context.usage[key] = context.usage.get(key, 0) + session.get(key, 0)

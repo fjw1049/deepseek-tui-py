@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -128,13 +131,7 @@ async def test_a_task_runs_through_the_product_and_comes_back_graded(
 ) -> None:
     case = make_case()
     context = context_for(tmp_path)
-    try:
-        observation = await run_product_session(case, context)
-        server = await context.product_server()
-        repository = Path(__file__).resolve().parents[2]
-        assert not server.root.is_relative_to(repository)
-    finally:
-        await context.close()
+    observation = await run_product_session(case, context)
 
     data = observation.data
     assert [turn["status"] for turn in data["turns"]] == ["completed", "completed"]
@@ -159,10 +156,7 @@ async def test_a_finished_run_can_be_graded_again_without_the_agent(
 ) -> None:
     case = make_case()
     context = context_for(tmp_path)
-    try:
-        observation = await run_product_session(case, context)
-    finally:
-        await context.close()
+    observation = await run_product_session(case, context)
     run = tmp_path / "run"
     write_json(run / "manifest.json", {"run_id": "r", "provider": "fake", "model": "fake-model"})
     append_result(run / "cases.jsonl", TrialResult(
@@ -203,15 +197,38 @@ async def test_repeated_timeouts_do_not_look_like_a_broken_environment(
     async def timed_out(self, thread_id, prompt, folder, *, timeout):
         return {"turn_id": "t", "status": "timeout", "error": None, "elapsed_seconds": 1}
 
-    server = await context.product_server()
+    async with context.product_run.trial(context):
+        pass  # finish the real preflight before injecting task timeouts
     monkeypatch.setattr(ProductServer, "drive_turn", timed_out)
-    try:
-        for _ in range(4):
-            await run_product_session(make_case(), context)
-    finally:
-        await context.close()
+    for _ in range(4):
+        await run_product_session(make_case(), context)
 
-    assert server.failed_trials == 0
+    assert context.product_run.failed_trials == 0
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS process-tree file policy")
+async def test_trial_shell_can_read_own_files_but_not_other_trials_or_grading_data(tmp_path):
+    output = tmp_path / "run"
+    output.mkdir()
+    (output / "answer").write_text("hidden")
+    a, b = (ProductServer(None, None, output) for _ in range(2))
+    try:
+        own, sibling = a.root / "marker", b.root / "marker"
+        own.write_text("mine")
+        sibling.write_text("hidden")
+        (a.root / "alias").symlink_to(sibling)
+        def probe(*args):
+            return subprocess.run([*a.process_prefix(), *map(str, args)], capture_output=True)
+        assert probe("/bin/cat", own).stdout == b"mine"
+        truth = Path(__file__).resolve().parents[2] / "evals/suites/system_v1/current_state.yaml"
+        targets = [sibling, a.root / "alias", output / "answer", truth]
+        for target in targets:
+            assert probe("/bin/cat", target).returncode != 0
+        assert probe("/bin/ls", a.root.parent).returncode != 0
+        assert probe("/bin/sh", "-c", 'echo changed > "$1"', "probe", sibling).returncode != 0
+        assert sibling.read_text() == "hidden"
+    finally:
+        await asyncio.gather(a.close(), b.close())
 
 
 def test_a_trial_does_not_see_skills_from_the_developers_home(tmp_path, monkeypatch) -> None:

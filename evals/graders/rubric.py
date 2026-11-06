@@ -11,19 +11,23 @@ from evals.schema import EvalCase, EvalObservation, GradeResult
 _SCORES = {"pass": 1.0, "partial": 0.5, "fail": 0.0}
 
 
-def _session_checks(data: dict) -> list[dict]:
+def _session_checks(case: EvalCase, data: dict) -> list[dict]:
     session = data["session"]
     statuses = [turn["status"] for turn in data["turns"]]
     return [
         {
             "name": "所有回合正常结束",
-            "passed": all(status == "completed" for status in statuses),
+            "passed": bool(statuses) and len(statuses) == len(case.input.get("turns", statuses))
+            and all(status == "completed" for status in statuses),
             "critical": True,
             "detail": str(statuses),
         },
         {
             "name": "每个回合都有答复",
-            "passed": not session.get("answers_lost", 0),
+            "passed": not session.get("answers_lost", 0) and (
+                "answers" not in data
+                or (len(data["answers"]) == len(statuses) and all(data["answers"]))
+            ),
             "critical": True,
             "detail": "",
         },
@@ -47,7 +51,7 @@ def grade_rubric(case: EvalCase, observation: EvalObservation) -> GradeResult:
     if "judge" not in data or "checks" not in data or "session" not in data:
         raise ValueError("rubric evidence is missing")
     judge = data["judge"]
-    checks = [*_session_checks(data), *data["checks"]]
+    checks = [*_session_checks(case, data), *data["checks"]]
     critical = [check for check in checks if check["critical"] and not check["passed"]]
     soft = [check for check in checks if not check["critical"] and not check["passed"]]
     verdict = judge["verdict"]

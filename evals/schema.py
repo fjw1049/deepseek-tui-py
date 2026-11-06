@@ -73,6 +73,7 @@ class TrialResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: str
+    runner: str = ""  # absent in older archives
     suite: str
     risk: str
     source_file: str = ""

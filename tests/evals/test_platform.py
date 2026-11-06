@@ -21,9 +21,12 @@ def test_corpus_is_valid_and_covers_every_risk_suite() -> None:
         "authority",
         "cache_behavior",
         "constraint_survival",
+        "claude_sessions",
         "daily_tasks",
+        "history_pilot",
         "judge_calibration",
         "surface_routing",
+        "system_v1",
         "tool_accuracy",
         "workspace_tasks",
     }
@@ -68,6 +71,8 @@ async def test_offline_platform_writes_traceable_artifacts(tmp_path: Path) -> No
     assert manifest["dataset_hash"]
     assert manifest["prompt_hash"]
     assert manifest["tool_catalog_hash"]
+    card = (output / "scorecard.md").read_text()
+    assert all(f"{r['runner']} / {r['suite']}" in card for r in rows)
     assert len(rows) == summary.total
     assert saved_summary["run_id"] == manifest["run_id"]
     assert compare_files(

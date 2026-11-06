@@ -112,6 +112,7 @@ def turn_answers(session: Session) -> list[str]:
     answers = []
     for turn in session.turns:
         final = ""
+        fallback = ""
         for item in session.items:
             if item["turn_id"] != turn["id"] or item["kind"] != "agent_message":
                 continue
@@ -120,11 +121,11 @@ def turn_answers(session: Session) -> list[str]:
             if intent.get("source") in {"narration_service", "runtime"}:
                 continue
             text = without_completion_note((item.get("detail") or item.get("summary") or "").strip(), meta)
-            if text and (meta.get("agent_segment") == "final_answer" or not final):
+            if text and meta.get("agent_segment") == "final_answer":
                 final = text
-            elif text:
-                final = text
-        answers.append(final)
+            elif text and not meta.get("agent_segment"):
+                fallback = text
+        answers.append(final or fallback)
     return answers
 
 
@@ -209,6 +210,8 @@ def session_metrics(session: Session) -> dict[str, float]:
         "output_tokens": sum(u.get("output_tokens") or 0 for u in usage),
         "cache_hit_tokens": sum(u.get("cache_hit_tokens") or 0 for u in usage),
         "tool_calls": sum(tool_calls.values()),
+        # Review signal, not proof of disclosure or a task failure.
+        "config_path_mentions_in_shell": sum("DEEPSEEK_CONFIG_PATH" in cmd for cmd in shell),
         "tool_failures": sum(tool_failures.values()),
         "finish_task_calls": tool_calls["finish_task"],
         "finish_task_failures": tool_failures["finish_task"],

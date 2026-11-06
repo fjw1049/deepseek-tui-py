@@ -11,7 +11,7 @@ from evals.graders import grade
 from evals.harness import HarnessContext
 from evals.harness.product import grade_session
 from evals.report import append_result, summarize, write_json
-from evals.runner import REPO_ROOT, load_cases
+from evals.runner import REPO_ROOT, dataset_hash, grader_hash, load_cases
 from evals.schema import RunSummary, TrialResult
 from evals.session_metrics import aggregate, load_sessions, session_metrics
 
@@ -29,8 +29,8 @@ async def regrade(
         provider=manifest.get("provider"),
         model=manifest.get("model"),
         remaining_live_requests=max_requests,
-        judge_provider=judge_provider,
-        judge_model=judge_model,
+        judge_provider=judge_provider or manifest.get("settings", {}).get("judge_provider"),
+        judge_model=judge_model or manifest.get("settings", {}).get("judge_model"),
         artifacts_dir=output,
     )
     results: list[TrialResult] = []
@@ -44,6 +44,8 @@ async def regrade(
         turns = json.loads((session_dir / "turns.json").read_text(encoding="utf-8"))
         saved = observation.data.get("judge") if reuse_judge else None
         fresh = await grade_session(case, session_dir, turns, context, saved_judge=saved)
+        if "trial_isolation" in observation.data:
+            fresh.data["trial_isolation"] = observation.data["trial_isolation"]
         fresh.usage = observation.usage
         verdict = grade(case, fresh)
         result = original.model_copy(
@@ -56,8 +58,23 @@ async def regrade(
         results.append(result)
         append_result(output / "cases.jsonl", result)
     summary = summarize(manifest["run_id"], results)
-    write_json(output / "manifest.json", manifest)
+    reviewed_ids = {result.case_id for result in results}
+    review_metadata = {
+        "reuse_judge": reuse_judge,
+        "grader_hash": grader_hash(),
+        "dataset_hash": dataset_hash([case for key, case in cases.items() if key in reviewed_ids]),
+        "judge_provider": judge_provider or manifest.get("settings", {}).get("judge_provider")
+        or manifest.get("provider"),
+        "judge_model": judge_model or manifest.get("settings", {}).get("judge_model")
+        or manifest.get("model"),
+    }
+    write_json(output / "manifest.json", {**manifest, "settings": {
+        **manifest.get("settings", {}), "regrade": review_metadata,
+    }})
     write_json(output / "summary.json", summary.model_dump(mode="json"))
+    from evals.scorecard import write_scorecard
+
+    write_scorecard(output)
     return output, summary
 
 

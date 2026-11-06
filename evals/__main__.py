@@ -42,6 +42,9 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--judge-model")
     run.add_argument("--max-input-tokens", type=int)
 
+    card = commands.add_parser("scorecard", help="summarize the evidence in a finished run")
+    card.add_argument("run", type=Path)
+
     compare = commands.add_parser("compare", help="compare summary against gates")
     compare.add_argument("baseline", type=Path)
     compare.add_argument("summary", type=Path)
@@ -87,6 +90,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"ERROR {error}")
             return 1
         print(f"validated {len(cases)} eval cases")
+        return 0
+
+    if args.command == "scorecard":
+        from evals.scorecard import write_scorecard
+
+        print(write_scorecard(args.run))
         return 0
 
     if args.command == "compare":

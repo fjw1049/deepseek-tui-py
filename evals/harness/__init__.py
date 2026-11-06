@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -15,7 +14,7 @@ from evals.harness.offline import (
     run_compaction_state,
     run_tool_boundary,
 )
-from evals.harness.product import ProductServer, run_product_session
+from evals.harness.product import ProductRun, run_product_session
 from evals.harness.workspace import run_workspace_task
 from evals.schema import EvalCase, EvalObservation
 
@@ -57,10 +56,10 @@ class HarnessContext:
         self.cost_usd = 0.0
         self.usage: dict[str, int | float] = {}
         self.trace: list[dict[str, object]] = []
-        self._server: _SharedServer = _SharedServer()
+        self.product_run = ProductRun()
 
     def fork(self) -> HarnessContext:
-        """One trial's view: its own trace, budgets as they stand, the shared server."""
+        """One trial's view: its own trace, budgets as they stand, the shared preflight state."""
         trial = copy.copy(self)
         trial.usage = dict(self.usage)
         trial.trace = []
@@ -76,41 +75,6 @@ class HarnessContext:
         self.cost_usd += trial.cost_usd - before.cost_usd
         for key, value in trial.usage.items():
             self.usage[key] = self.usage.get(key, 0) + value - before.usage.get(key, 0)
-
-    async def product_server(self) -> ProductServer:
-        return await self._server.get(self.provider, self.model)
-
-    async def close(self) -> None:
-        await self._server.close()
-
-
-class _SharedServer:
-    """Started by the first trial that needs it; every parallel trial then shares it."""
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._server: ProductServer | None = None
-        self._failure: Exception | None = None
-
-    async def get(self, provider: str | None, model: str | None) -> ProductServer:
-        async with self._lock:
-            if self._failure is not None:
-                raise self._failure
-            if self._server is None:
-                server = ProductServer(provider, model)
-                self._server = server
-                try:
-                    await server.start()
-                    await server.preflight()
-                except Exception as exc:
-                    self._failure = exc
-                    raise
-            return self._server
-
-    async def close(self) -> None:
-        if self._server is not None:
-            await self._server.close()
-
 
 HARNESSES: dict[str, Harness] = {
     "authority_prompt": run_authority_prompt,

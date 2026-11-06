@@ -338,3 +338,52 @@ def test_computer_use_time_splits_into_runtime_and_model_gaps() -> None:
     # Narration between the calls is the model's time.
     assert metrics["cua_model_gap_ms"] == 4000 and metrics["cua_tool_ms"] == 2000
     assert metrics["cua_observed_after_failure"] == 1 and metrics["cua_error.stale_element"] == 1
+
+def test_terminal_review_does_not_reward_an_earlier_answer_or_drop_final_evidence():
+    case = EvalCase(id="p", suite="s", runner="product_session", grader="rubric",
+                    input={"turns": ["最初", "此刻？"]},
+                    expect={"rubric": ["核对当前值"], "final_turn_only": True})
+    packet = build_packet(case, ["EARLIER_CORRECT" * 10000, "末轮说反"], "实际状态")
+    assert "EARLIER_CORRECT" not in packet
+    assert "末轮说反" in packet and "实际状态" in packet
+    assert "缺少末轮答复" in build_packet(case, ["只有首轮"], "实际状态")
+    case.expect.pop("final_turn_only")
+    packet = build_packet(case, ["长" * 100000, "末轮说反"], "实际状态")
+    assert "中段已截断" in packet and "末轮说反" in packet and "实际状态" in packet
+
+
+def test_contradictory_final_labels_do_not_pass(tmp_path):
+    case = next(c for c in load_cases() if c.id == "system.current_state_proposal_only")
+    workspace = tmp_path / "workspace"
+    seed_workspace(case, workspace)
+    checks = run_checks(case, workspace, ["之前答对", "现状=不可追溯。现状=可追溯。"])
+    assert not checks[0]["passed"]
+
+def test_orders_release_and_empty_file_cannot_substitute_for_delivery(tmp_path):
+    case = daily()["daily.orders"]
+    workspace = tmp_path / "work"
+    seed_workspace(case, workspace)
+    for name, text in case.setup["release_before_turn"][2].items():
+        (workspace / name).write_text(text)
+    result = workspace / "result.md"
+    result.touch()
+    assert not all(c["passed"] for c in run_checks(case, workspace, []))
+    result.write_text("A02 重复 P02，差 60；A05 金额待核；P06 无对应订单。")
+    assert all(c["passed"] for c in run_checks(case, workspace, []))
+
+def test_final_segment_wins_over_commentary_and_legacy_fallback():
+    final = _item("t", "agent_message", detail="实际结论", metadata={"agent_segment": "final_answer"})
+    preface = _item("t", "agent_message", detail="正在查看", metadata={"agent_segment": "mid_turn_preface"})
+    legacy = _item("t", "agent_message", detail="旧版记录")
+    turns = [{"id": "t", "status": "completed"}]
+    assert turn_answers(Session("thr", turns, [final, legacy, preface])) == ["实际结论"]
+    assert turn_answers(Session("thr", turns, [preface])) == [""]
+
+def test_browser_probe_crash_is_a_grader_error_not_a_bad_page(tmp_path, monkeypatch):
+    import subprocess
+
+    (tmp_path / "index.html").write_text("<button>OK</button>")
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs:
+                        subprocess.CompletedProcess([], 1, "", "Chrome failed to launch"))
+    with pytest.raises(RuntimeError, match="Chrome failed to launch"):
+        _page_loads(tmp_path, {"glob": "*.html"})

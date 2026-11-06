@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 PRE_COMMIT := .venv/bin/pre-commit
 
-.PHONY: install-dev format lint typecheck test eval-validate eval-typecheck eval-offline eval-serve check pre-commit-install
+.PHONY: install-dev format lint typecheck test eval-validate eval-typecheck eval-offline eval-serve eval-full eval-history eval-personal check pre-commit-install
 
 install-dev:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -29,6 +29,18 @@ eval-serve:
 
 eval-offline:
 	PYTHONPATH=src:. $(PYTHON) -m evals run --mode offline --baseline evals/baselines/offline.json
+
+# Standard live regression: one attempt, serial trials, a fresh artifact directory.
+FLASH_EVAL = PYTHONPATH=src:. $(PYTHON) -m evals run --mode live --provider endpoint --model deepseek-v4-1-flash --timeout 360 --concurrency 1 --trials 1 --max-live-requests 500
+
+eval-full: eval-validate
+	$(FLASH_EVAL)
+
+eval-history: eval-validate
+	$(FLASH_EVAL) --suite personal_sessions --suite claude_sessions --suite claude_archived --suite history_pilot
+
+eval-personal: eval-validate
+	$(FLASH_EVAL) --suite personal_sessions
 
 check: lint typecheck test eval-typecheck eval-offline
 
