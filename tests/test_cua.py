@@ -783,8 +783,9 @@ async def test_busy_desktop_times_out_clearly_without_dropping_the_connection(
     waiter = CuaSession(installation, tmp_path, "waiter")
     try:
         await holder.call("js", {"code": "holder"}, "turn-a", "a")
-        with pytest.raises(ToolError, match="held by another computer-use task for \\d+s"):
+        with pytest.raises(ToolError, match="held by another computer-use task for \\d+s") as busy:
             await asyncio.wait_for(waiter.call("js", {"code": "blocked"}, "turn-b", "b"), 2)
+        assert "end the turn" in str(busy.value)
         assert waiter.process is not None and waiter.turn_id is None
         assert not waiter.reset_reason
         await holder.end_turn()
@@ -1622,5 +1623,30 @@ async def test_reacquired_click_requires_observation_each_retry(session, tmp_pat
         await session.call("observe", {"app": player}, "t", "fresh")
         await session.call("js", click, "t", "safe")
         assert [r["call"] for r in _calls(tmp_path) if r.get("args") == click] == ["safe"]
+    finally:
+        await session.close()
+
+
+async def test_unscoped_code_names_the_app_still_awaiting_observation(
+    session, tmp_path, monkeypatch
+):
+    from deepseek_tui.cua import app_scope
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    player = "com.soda.music"
+    try:
+        await session.call("js", {"code": f'let player = await cua.getApp("{player}");'}, "t", "1")
+        await session.end_turn()
+        with pytest.raises(ToolError, match="cua_observe"):
+            await session.call("js", {"code": "await player.click(29);"}, "t", "2")
+        # Observing a different target does not satisfy it; the error must say which app does.
+        await session.call("observe", {"app": "com.apple.calculator"}, "t", "3")
+        with pytest.raises(ToolError, match=f"cua_observe on {player},"):
+            await session.call("js", {"code": "globalThis.x = 1"}, "t", "4")
+        await session.call("observe", {"app": player}, "t", "5")
+        await session.call("js", {"code": "globalThis.x = 1"}, "t", "6")
+        assert _calls(tmp_path)[-1]["args"]["code"] == "globalThis.x = 1"
     finally:
         await session.close()

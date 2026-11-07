@@ -387,3 +387,16 @@ def test_browser_probe_crash_is_a_grader_error_not_a_bad_page(tmp_path, monkeypa
                         subprocess.CompletedProcess([], 1, "", "Chrome failed to launch"))
     with pytest.raises(RuntimeError, match="Chrome failed to launch"):
         _page_loads(tmp_path, {"glob": "*.html"})
+
+
+def test_page_that_never_settles_fails_instead_of_erroring(tmp_path, monkeypatch):
+    import subprocess
+
+    (tmp_path / "index.html").write_text("<button>OK</button><script>while(true){}</script>")
+
+    def hang(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", hang)
+    ok, detail = _page_loads(tmp_path, {"glob": "*.html"})
+    assert not ok and "未完成加载" in detail

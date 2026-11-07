@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.metadata
+import inspect
 import json
 import platform
 import subprocess
@@ -22,7 +23,7 @@ from deepseek_tui.tools.registry import build_default_registry
 from evals.graders import GRADERS, grade
 from evals.harness import HARNESSES, HarnessContext, run_harness
 from evals.harness.budget import BudgetExceeded
-from evals.harness.product import EnvironmentInvalid
+from evals.harness.product import EnvironmentInvalid, grade_session
 from evals.report import append_result, summarize, write_json
 from evals.rubric import CHECK_TYPES
 from evals.schema import EvalCase, EvalObservation, RunManifest, RunSummary, TrialResult
@@ -106,8 +107,12 @@ def dataset_hash(cases: list[EvalCase]) -> str:
 def grader_hash() -> str:
     root = REPO_ROOT / "evals"
     paths = [*sorted((root / "graders").glob("*.py")),
-             *(root / f"{name}.py" for name in ("judge", "rubric", "session_metrics"))]
-    return _hash_json({str(p.relative_to(REPO_ROOT)): p.read_text() for p in paths})
+             *(root / f"{name}.py" for name in ("judge", "rubric", "session_metrics")),
+             root / "harness" / "service_fixture.py"]
+    sources = {str(p.relative_to(REPO_ROOT)): p.read_text() for p in paths}
+    # Only the grading half of the product harness: execution changes stay comparable.
+    sources["evals/harness/product.py:grade_session"] = inspect.getsource(grade_session)
+    return _hash_json(sources)
 
 
 def _hash_json(value: Any) -> str:

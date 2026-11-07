@@ -1,10 +1,15 @@
 import asyncio
+import os
 import sys
 
 import pytest
 
 from deepseek_tui.cua import app_scope
 from deepseek_tui.cua.session import DesktopLease
+
+
+# Child runtimes import this checkout's package even when it is not installed.
+CHILD_ENV = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
 
 
 async def wait_records(lease, count):
@@ -67,6 +72,7 @@ async def run():
 asyncio.run(run())
 """,
         str(path),
+        env=CHILD_ENV,
     )
     waiter = DesktopLease(path)
     try:
@@ -235,7 +241,7 @@ async def main():
             owner.answer_preview(owner.ticket.stem, Path(sys.argv[2]).read_bytes())
         await asyncio.sleep(.01)
 asyncio.run(main())
-""", str(observer.path), str(screen),
+""", str(observer.path), str(screen), env=CHILD_ENV,
     )
     try:
         await wait_records(observer, 1)

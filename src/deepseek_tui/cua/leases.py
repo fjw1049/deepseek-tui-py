@@ -290,7 +290,8 @@ class DesktopLease:
                     raise ToolError(
                         f"The desktop is in use, held by {who} for {seconds}s; waited "
                         f"{int(timeout)}s and nothing was executed. "
-                        "How long it will take is unknown."
+                        "How long it will take is unknown. Do other work and retry, or end "
+                        "the turn and say the desktop step is still to do."
                     )
                 await asyncio.sleep(0.1)
         finally:

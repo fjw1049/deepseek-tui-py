@@ -30,8 +30,9 @@ ApprovalCallback = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 MAX_FRAME = 48 * 1024 * 1024
 CONNECT_RETRY_SECONDS = 30
 LEASE_WAIT_SECONDS = 30
-# A tool call queues behind another task's turn; nobody is watching it wait.
-ACTION_LEASE_WAIT_SECONDS = None
+# A tool call queues behind another task's turn. A holder keeps its app until its
+# turn ends, so bound the wait instead of hanging a turn nobody may be watching.
+ACTION_LEASE_WAIT_SECONDS = 300
 LOCK_DIR = Path("/tmp")
 
 # Per installation in this process: the last runtime catalog, so later sessions
@@ -597,8 +598,11 @@ class CuaSession:
                 self._needs_observation.add(app)
             if (name == "js" and not summary and not binding_only(arguments.get("code", ""))
                     and (app in self._needs_observation or (not app and self._needs_observation))):
+                # Unscoped code may touch any app still awaiting observation: name them.
+                pending = sorted(a for a in ({app} if app else self._needs_observation) if a)
+                target = ", ".join(pending) or "the intended app"
                 raise ToolError("The desktop changed owners. Nothing was executed. Use cua_observe "
-                                "on the intended app, then act on the fresh state.")
+                                f"on {target}, then act on the fresh state.")
             observed_generation = self.observation_generation
             try:
                 # Write before dispatch so a host crash cannot turn an uncertain

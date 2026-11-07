@@ -20,11 +20,13 @@ def test_corpus_is_valid_and_covers_every_risk_suite() -> None:
     assert {case.suite for case in cases} == {
         "authority",
         "cache_behavior",
-        "constraint_survival",
+        "claude_archived",
         "claude_sessions",
+        "constraint_survival",
         "daily_tasks",
         "history_pilot",
         "judge_calibration",
+        "personal_sessions",
         "surface_routing",
         "system_v1",
         "tool_accuracy",
@@ -155,3 +157,18 @@ def test_artifact_redaction_keeps_usage_but_removes_credentials() -> None:
     assert cleaned["api_key"] == "[REDACTED]"
     assert cleaned["input_tokens"] == 123
     assert "abc.def.ghi" not in cleaned["message"]
+
+
+def test_grader_hash_covers_service_checks_and_session_grading(monkeypatch) -> None:
+    import evals.runner as runner
+
+    before = runner.grader_hash()
+    monkeypatch.setattr(runner.inspect, "getsource", lambda obj: "changed")
+    assert runner.grader_hash() != before
+    monkeypatch.undo()
+    paths: list[str] = []
+    real_read = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: (
+        paths.append(self.as_posix()), real_read(self, *a, **k))[1])
+    runner.grader_hash()
+    assert any(p.endswith("evals/harness/service_fixture.py") for p in paths)

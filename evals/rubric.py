@@ -99,7 +99,10 @@ def _page_loads(workspace: Path, spec: dict[str, Any]) -> tuple[bool, str]:
             reason = diagnostic[-1][:400] if diagnostic else "无诊断输出"
             raise RuntimeError(f"页面验收器异常退出（{done.returncode}）：{reason}")
         report = json.loads(done.stdout.splitlines()[-1])
-    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError) as exc:
+    except subprocess.TimeoutExpired:
+        # A plain page opens in about a second; one that never settles is the page's fault.
+        return False, f"{page.name}：{_PAGE_TIMEOUT_SECONDS} 秒内未完成加载"
+    except (OSError, ValueError, IndexError) as exc:
         raise RuntimeError(f"页面验收器没有返回有效证据：{type(exc).__name__}") from exc
     controls, errors = report["controls"], report["errors"]
     detail = f"{page.name}：{controls} 个控件，{len(errors)} 个错误"
