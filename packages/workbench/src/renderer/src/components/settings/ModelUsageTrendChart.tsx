@@ -23,6 +23,8 @@ type Props = {
   daily: UsageDailyPoint[]
   composerModelMeta: Record<string, ComposerModelMeta>
   modelOrder?: string[]
+  variant?: 'bar' | 'line'
+  colorScheme?: 'models' | 'purple'
   compact?: boolean
   showYAxis?: boolean
   /**
@@ -89,6 +91,8 @@ export function ModelUsageTrendChart({
   daily,
   composerModelMeta,
   modelOrder,
+  variant = 'bar',
+  colorScheme = 'models',
   compact = false,
   showYAxis = false,
   segmentDays
@@ -123,6 +127,16 @@ export function ModelUsageTrendChart({
     if (!showYAxis) return []
     return [maxTokens, maxTokens * 0.75, maxTokens * 0.5, maxTokens * 0.25, 0]
   }, [maxTokens, showYAxis])
+  const colors = colorScheme === 'purple'
+    ? ['#c79aff', '#a879ed', '#8d5cce', '#7547b0', '#ddbaff', '#b187df']
+    : BAR_COLORS
+  const linePoints = filteredDaily.map((point, index) => ({
+    x: ((index + 0.5) / filteredDaily.length) * 100,
+    y: 98 - (point.totalTokens / maxTokens) * 94
+  }))
+  const linePath = linePoints.map((point, index) =>
+    `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`
+  ).join(' ')
   const chartHeight = compact ? 'h-[132px]' : 'h-[200px]'
   // In segmented mode (hero), label every bar when there are few enough; 7d
   // has 7 daily bars and should show all dates. Otherwise cap the tick count.
@@ -160,7 +174,14 @@ export function ModelUsageTrendChart({
               ))}
             </div>
           ) : null}
-          <div className={['relative flex items-stretch gap-[3px]', chartHeight].join(' ')}>
+          <div className={['relative flex items-stretch', chartHeight].join(' ')} style={{ gap: `min(5px, ${20 / Math.max(displayDaily.length, 1)}%)` }}>
+            {variant === 'line' && linePoints.length > 0 ? (
+              <svg aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 h-full w-full text-accent" style={colorScheme === 'purple' ? { color: '#b77bfa' } : undefined}>
+                <path d={`${linePath} L ${linePoints[linePoints.length - 1]!.x} 98 L ${linePoints[0]!.x} 98 Z`} fill="currentColor" opacity="0.1" />
+                <path d={linePath} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                {linePoints.length === 1 ? <path d={`M ${linePoints[0]!.x - 0.4} ${linePoints[0]!.y} h 0.8`} stroke="currentColor" strokeWidth="4" vectorEffect="non-scaling-stroke" /> : null}
+              </svg>
+            ) : null}
             {filteredDaily.map((point) => {
               const heightPct =
                 point.totalTokens > 0 ? Math.max(3, (point.totalTokens / maxTokens) * 100) : 0
@@ -172,11 +193,14 @@ export function ModelUsageTrendChart({
                 <div
                   key={point.day}
                   className="group flex h-full min-w-0 flex-1 flex-col justify-end"
+                  tabIndex={variant === 'line' ? 0 : undefined}
+                  aria-label={variant === 'line' ? `${point.label}: ${formatCompactNumber(point.totalTokens)} tokens` : undefined}
                   title={`${point.label}: ${formatCompactNumber(point.totalTokens)} tokens`}
                 >
                   <div
                     className="flex w-full flex-col-reverse overflow-hidden rounded-t-[3px] bg-ds-border"
                     style={{
+                      opacity: variant === 'line' ? 0 : 1,
                       height: point.totalTokens > 0 ? `${heightPct}%` : '2px',
                       minHeight: point.totalTokens > 0 ? '3px' : '2px'
                     }}
@@ -189,7 +213,7 @@ export function ModelUsageTrendChart({
                           flexGrow: segment.tokens,
                           flexBasis: 0,
                           minHeight: 1,
-                          backgroundColor: BAR_COLORS[legendModels.indexOf(segment.model) % BAR_COLORS.length]
+                          backgroundColor: colors[legendModels.indexOf(segment.model) % colors.length]
                         }}
                       />
                     ))}
@@ -205,15 +229,15 @@ export function ModelUsageTrendChart({
             track so the labeled ones stay aligned.
           */}
           <div className="relative mt-1 h-[14px]">
-            <div className="flex h-full gap-[3px]">
+            <div className="flex h-full" style={{ gap: `min(5px, ${20 / Math.max(displayDaily.length, 1)}%)` }}>
               {displayDaily.map((point, pointIndex) => {
                 if (!labeledIndices.has(pointIndex)) {
-                  return <div key={`${point.day}-axis-empty`} className="h-full flex-1" />
+                  return <div key={`${point.day}-axis-empty`} className="h-full min-w-0 flex-1" />
                 }
                 return (
                   <span
                     key={`${point.day}-axis`}
-                    className="flex h-full flex-1 items-center justify-center whitespace-nowrap text-[10px] leading-[14px] tabular-nums text-ds-faint"
+                    className="flex h-full min-w-0 flex-1 items-center justify-center whitespace-nowrap text-[10px] leading-[14px] tabular-nums text-ds-faint"
                   >
                     {point.label}
                   </span>
@@ -240,7 +264,7 @@ export function ModelUsageTrendChart({
             >
               <span
                 className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: BAR_COLORS[index % BAR_COLORS.length] }}
+                style={{ backgroundColor: colors[index % colors.length] }}
               />
               <span className="truncate">{formatComposerModelLabel(model, composerModelMeta)}</span>
             </button>

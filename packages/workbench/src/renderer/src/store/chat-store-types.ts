@@ -45,6 +45,7 @@ export type SendMessageOverrides = {
 }
 
 export type SettingsRouteSection =
+  | 'ai-profile'
   | 'setup'
   | 'general'
   | 'search'

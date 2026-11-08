@@ -22,6 +22,33 @@ afterEach(async () => {
 })
 
 describe('ModelUsageTrendChart', () => {
+  it.each([[30, 1, 30], [90, 3, 30], [365, 7, 53]])(
+    'groups %i days into readable bars without losing usage', async (days, segmentDays, count) => {
+      const daily = Array.from({ length: days }, (_, index) => ({
+        day: String(index), label: String(index), totalTokens: 10,
+        segments: [{ model: 'a', tokens: 10 }]
+      }))
+      await act(async () => root.render(createElement(ModelUsageTrendChart, {
+        daily, segmentDays, composerModelMeta: {}
+      })))
+      const bars = Array.from(container.querySelectorAll<HTMLElement>('.group'))
+      expect(bars).toHaveLength(count)
+      const total = bars.reduce((sum, bar) => sum + Number(bar.title.match(/: (\d+) tokens/)![1]), 0)
+      expect(total).toBe(days * 10)
+    }
+  )
+
+  it.each([30, 90, 365])('preserves all %i daily bars when daily granularity is requested', async (days) => {
+    const daily = Array.from({ length: days }, (_, index) => ({
+      day: String(index), label: String(index), totalTokens: 10,
+      segments: [{ model: 'a', tokens: 10 }]
+    }))
+    await act(async () => root.render(createElement(ModelUsageTrendChart, {
+      daily, segmentDays: 1, composerModelMeta: {}
+    })))
+    expect(container.querySelectorAll('.group')).toHaveLength(days)
+  })
+
   it('rounds only the outer top edge of a stacked bar', async () => {
     await act(async () => {
       root.render(
@@ -68,5 +95,24 @@ describe('ModelUsageTrendChart', () => {
       expect(bars[0]!.title).toContain(days === 90 ? '40 tokens' : '20 tokens')
       await act(async () => legend.click())
     }
+  })
+})
+
+describe('line chart', () => {
+  it('handles empty and single-day usage and updates accessible values when filtering', async () => {
+    await act(async () => root.render(createElement(ModelUsageTrendChart, {
+      daily: [], composerModelMeta: {}, variant: 'line'
+    })))
+    expect(container.querySelector('svg')).toBeNull()
+    await act(async () => root.render(createElement(ModelUsageTrendChart, {
+      daily: [{ day: '2026-11-08', label: '11/8', totalTokens: 30,
+        segments: [{ model: 'a', tokens: 30 }] }],
+      composerModelMeta: {}, variant: 'line'
+    })))
+    expect(container.querySelector('svg')).not.toBeNull()
+    expect(container.querySelector('[tabindex="0"]')?.getAttribute('aria-label')).toContain('30 tokens')
+    expect(container.querySelector('svg')?.innerHTML).not.toMatch(/NaN|Infinity/)
+    await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+    expect(container.querySelector('[tabindex="0"]')?.getAttribute('aria-label')).toContain('0 tokens')
   })
 })

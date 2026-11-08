@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  UserRound,
   Anchor,
   Archive,
   Box,
@@ -27,6 +28,7 @@ type NavItem = {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { id: 'ai-profile', labelKey: 'aiProfile.title', icon: <UserRound className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'general', labelKey: 'general', icon: <Globe className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'appearance', labelKey: 'appearance', icon: <Palette className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'shortcuts', labelKey: 'shortcuts', icon: <Keyboard className="h-4 w-4" strokeWidth={1.75} /> },

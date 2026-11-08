@@ -1,3 +1,4 @@
+import { AiProfileSettingsPanel } from './settings/AiProfileSettingsPanel'
 import { SettingsToggle as Toggle } from './settings/SettingsToggle'
 import { cacheSettingsSnapshot, getSettingsSnapshot, loadSettingsSnapshot } from '../lib/settings-snapshot'
 import { GlobalErrorNotice } from './GlobalFeedback'
@@ -70,13 +71,10 @@ import { SharingSettingsPanel } from './settings/SharingSettingsPanel'
 import { BrowserSettingsPanel } from './settings/BrowserSettingsPanel'
 import { CuaSettingsPanel } from './settings/CuaSettingsPanel'
 import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
-import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
 import { PetPicker, type PetPickerItem } from './pet/PetPicker'
 import { FieldHelpPopover } from './channels/FieldHelpPopover'
-import type { UsageRange } from '@shared/usage-ledger'
-import { usePersistentUsage } from '../hooks/use-persistent-usage'
 
 type SettingsCategory = SettingsRouteSection
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -176,11 +174,6 @@ export function SettingsView(): ReactElement {
   const applyI18n = useChatStore((s) => s.applyI18nFromSettings)
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
-  const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
-  const composerModel = useChatStore((s) => s.composerModel)
-  const composerModelMeta = useChatStore((s) => s.composerModelMeta)
-  const [usageRange, setUsageRange] = useState<UsageRange>('30d')
-  const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const [form, setForm] = useState<AppSettingsV1 | null>(getSettingsSnapshot)
   const [settingsReady, setSettingsReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -449,6 +442,8 @@ export function SettingsView(): ReactElement {
     })
     return () => setSettingsLeaveHandler(null)
   }, [])
+
+  if (category === 'ai-profile') return <AiProfileSettingsPanel />
 
   if (category === 'setup') {
     return (
@@ -880,25 +875,9 @@ export function SettingsView(): ReactElement {
           )}
 
           {category === 'models' && (
-            <>
-              <SettingsCard title={t('llmProvidersTitle')}>
-                <LlmProvidersPanel form={form} onUpdate={(patch) => update(patch)} />
-              </SettingsCard>
-
-              <SettingsCard title={t('modelUsageSection')} className="mt-6">
-                <ModelUsagePanel
-                  usage={persistentUsage.data?.summary ?? null}
-                  daily={persistentUsage.data?.daily ?? []}
-                  loading={persistentUsage.loading}
-                  loaded={persistentUsage.loaded}
-                  error={persistentUsage.error}
-                  activeModelId={composerModel}
-                  composerModelMeta={composerModelMeta}
-                  range={usageRange}
-                  onRangeChange={setUsageRange}
-                />
-              </SettingsCard>
-            </>
+            <SettingsCard title={t('llmProvidersTitle')}>
+              <LlmProvidersPanel form={form} onUpdate={(patch) => update(patch)} />
+            </SettingsCard>
           )}
 
           {category === 'permissions' && (

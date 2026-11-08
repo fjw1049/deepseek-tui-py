@@ -8,7 +8,7 @@ import {
   type ReactElement
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { UsageDailyPoint } from '@shared/usage-ledger'
+import { USAGE_MAX_RANGE_DAYS, type UsageDailyPoint } from '@shared/usage-ledger'
 import {
   buildHeatLevelScale,
   buildHeatmapGrid,
@@ -84,36 +84,24 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
     [asOfDay]
   )
 
-  // In fill mode, prefer small, GitHub-style cells and pack as many weekly
-  // columns as the width allows, filling the panel edge-to-edge. Height only
-  // caps the cell so extra height becomes breathing room, not chunky blocks;
-  // dataless lead-in days render as faint empty squares (heat-0), so the grid
-  // reads like a GitHub contribution graph rather than a black slab.
+  // Keep the full year visible and fit the cells to the available panel size.
   const layout = useMemo(() => {
     if (!fillHeight || plotBox.width <= 0 || plotBox.height <= 0) {
-      return { dayCount: undefined as number | undefined, cellPx: 0, gridWidth: 0 }
+      return { cellPx: 0, gridWidth: 0 }
     }
     const gridHeight = plotBox.height - MONTH_ROW_HEIGHT - MONTH_ROW_GAP
     const gridWidth = plotBox.width - WEEKDAY_LABEL_WIDTH - COLUMN_GAP
     const maxByHeight = (gridHeight - (HEATMAP_ROWS - 1) * SQUARE_GAP) / HEATMAP_ROWS
     const side = Math.max(MIN_CELL_PX, Math.min(IDEAL_CELL_PX, maxByHeight))
-    const weeks = Math.min(
-      53,
-      Math.max(1, Math.floor((gridWidth + SQUARE_GAP) / (side + SQUARE_GAP)))
-    )
-    return { dayCount: weeks * HEATMAP_ROWS, cellPx: side, gridWidth }
+    return { cellPx: side, gridWidth }
   }, [fillHeight, plotBox.width, plotBox.height])
 
   const grid = useMemo(
-    () => buildHeatmapGrid(daily, i18n.language, layout.dayCount, referenceDate),
-    [daily, i18n.language, layout.dayCount, referenceDate]
+    () => buildHeatmapGrid(daily, i18n.language, USAGE_MAX_RANGE_DAYS, referenceDate),
+    [daily, i18n.language, referenceDate]
   )
 
-  // buildHeatmapGrid pads the range to full Mon–Sun weeks, so weekCount can be
-  // one more than the `weeks` we planned for. When it is, the grid at `cellPx`
-  // would be a column wider than the panel and the right edge (the current
-  // week) gets clipped. Shrink the cell so all weekCount columns fit — the
-  // current week stays complete and flush to the right edge, no clipping.
+  // Include partial boundary weeks when fitting the grid.
   const fittedCellPx = useMemo(() => {
     if (!fillHeight || layout.cellPx <= 0 || grid.weekCount <= 0) return layout.cellPx
     const avail = layout.gridWidth - (grid.weekCount - 1) * SQUARE_GAP
