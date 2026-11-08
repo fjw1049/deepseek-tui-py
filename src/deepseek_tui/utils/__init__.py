@@ -19,6 +19,7 @@ import tempfile
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -274,6 +275,30 @@ DEFAULT_LOG_DIR = Path.home() / ".deepseek" / "logs"
 DEFAULT_KEEP_HOURS = 168  # 7 days
 
 
+class _HourlyLogHandler(logging.handlers.TimedRotatingFileHandler):
+    """Hourly rotation whose retention understands ``deepseek-YYYY-MM-DD-HH.log``.
+
+    The stdlib matcher only recognises its own ``deepseek.log.<suffix>`` naming,
+    so with our namer nothing was ever deleted and ``keep_hours`` had no effect.
+    """
+
+    def getFilesToDelete(self) -> list[str]:  # noqa: N802 — stdlib override
+        if self.backupCount <= 0:
+            return []
+        rotated = sorted(Path(self.baseFilename).parent.glob("deepseek-????-??-??-??.log"))
+        cutoff = datetime.now() - timedelta(hours=self.backupCount)
+        expired = []
+        for path in rotated:
+            try:
+                hour = datetime.strptime(path.name, "deepseek-%Y-%m-%d-%H.log")
+            except ValueError:
+                continue
+            # Retain the entire hourly bucket when it overlaps the retention window.
+            if hour + timedelta(hours=1) <= cutoff:
+                expired.append(str(path))
+        return expired
+
+
 def _resolve_level(value: str | int) -> int:
     if isinstance(value, int):
         return value
@@ -314,7 +339,7 @@ def setup_logging(
     cfg_logging.dir.mkdir(parents=True, exist_ok=True)
     log_file = cfg_logging.dir / "deepseek.log"
 
-    handler = logging.handlers.TimedRotatingFileHandler(
+    handler = _HourlyLogHandler(
         filename=str(log_file),
         when="H",
         interval=1,

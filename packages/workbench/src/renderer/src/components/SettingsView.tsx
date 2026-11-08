@@ -1,3 +1,4 @@
+import { loadDataInventory } from '../lib/data-inventory-cache'
 import { AiProfileSettingsPanel } from './settings/AiProfileSettingsPanel'
 import { SettingsToggle as Toggle } from './settings/SettingsToggle'
 import { cacheSettingsSnapshot, getSettingsSnapshot, loadSettingsSnapshot } from '../lib/settings-snapshot'
@@ -171,6 +172,10 @@ export function SettingsView(): ReactElement {
   const settingsSection = useChatStore((s) => s.settingsSection)
   const openSettings = useChatStore((s) => s.openSettings)
   const category: SettingsCategory = settingsSection
+  const runtimeConnection = useChatStore((s) => s.runtimeConnection)
+  useEffect(() => {
+    if (runtimeConnection === 'ready') void loadDataInventory().catch(() => {})
+  }, [runtimeConnection])
   const applyI18n = useChatStore((s) => s.applyI18nFromSettings)
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
   const probeRuntime = useChatStore((s) => s.probeRuntime)

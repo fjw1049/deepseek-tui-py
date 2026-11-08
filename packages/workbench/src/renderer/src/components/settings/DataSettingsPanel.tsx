@@ -1,9 +1,11 @@
+import { getDataInventorySnapshot, loadDataInventory, type DataInventory, type StorageCategory } from '../../lib/data-inventory-cache'
+import './data-storage.css'
 import { GlobalErrorNotice } from '../GlobalFeedback'
 import { ConfirmDialog } from '../workspace-editor/ConfirmDialog'
-import { formatRuntimeError } from '../../lib/format-runtime-error'
+import { formatRuntimeError, getRuntimeErrorCode } from '../../lib/format-runtime-error'
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { FolderOpen, Loader2, Settings2, Trash2 } from 'lucide-react'
 import { useChatStore } from '../../store/chat-store'
 import { SettingsSelect } from './SettingsSelect'
 import {
@@ -11,22 +13,6 @@ import {
   settingsToolbarButtonClass
 } from './SettingsActionToolbar'
 import { confirmAsync } from '../../lib/confirm-dialog'
-
-type DataInventory = {
-  home_dir: string
-  threads_dir: string
-  sessions_dir: string
-  state_db_path: string
-  threads_bytes: number
-  sessions_bytes: number
-  state_db_bytes: number
-  events_bytes: number
-  checkpoints_bytes: number
-  thread_count: number
-  message_count: number
-  item_count: number
-  total_bytes: number
-}
 
 type ActionState = 'idle' | 'running' | 'done' | 'error'
 type ExportScope = 'conversations' | 'settings' | 'all'
@@ -38,6 +24,19 @@ type BackupMeta = {
 type InlineNotice = {
   tone: 'success' | 'error' | 'info'
   message: string
+}
+type ImportPlan = {
+  path: string
+  has_conversations: boolean
+  threads: number
+  settings: string[]
+}
+
+/** Expected refusals get a localized explanation; anything else shows the runtime's reason. */
+const DATA_ERROR_KEYS: Record<string, string> = {
+  history_blocked: 'dataErrorHistoryBlocked',
+  thread_active: 'dataErrorThreadActive',
+  invalid_bundle: 'dataErrorInvalidBundle'
 }
 
 const CLEAN_AGE_OPTIONS = [
@@ -53,12 +52,14 @@ const EXPORT_SCOPE_OPTIONS = [
   { value: 'all', labelKey: 'dataExportScopeAll' }
 ] as const
 
-const COMPOSITION_COLORS = {
-  conversations: 'bg-[#5ac8fa] dark:bg-[#64d2ff]',
-  events: 'bg-accent',
-  sessions: 'bg-[#af52de] dark:bg-[#bf5af2]',
-  other: 'bg-ds-faint'
-} as const
+const CATEGORY_STYLE: Record<StorageCategory, { color: string; labelKey: string }> = {
+  conversations: { color: 'violet', labelKey: 'dataCatConversations' },
+  browser: { color: 'blue', labelKey: 'dataCatBrowser' },
+  workspace: { color: 'teal', labelKey: 'dataCatWorkspace' },
+  logs: { color: 'amber', labelKey: 'dataCatLogs' },
+  worktrees: { color: 'orchid', labelKey: 'dataCatWorktrees' },
+  other: { color: 'slate', labelKey: 'dataCatOther' }
+}
 
 function formatBytes(bytes: number, locale: string): string {
   const value = Math.max(0, Number(bytes) || 0)
@@ -182,9 +183,10 @@ function InlineNoticeView({ notice }: { notice: InlineNotice }): ReactElement {
 export function DataSettingsPanel(): ReactElement {
   const { t, i18n } = useTranslation('settings')
   const refreshThreads = useChatStore((s) => s.refreshThreads)
-  const [inventory, setInventory] = useState<DataInventory | null>(null)
+  const openSettings = useChatStore((s) => s.openSettings)
+  const [inventory, setInventory] = useState<DataInventory | null>(() => getDataInventorySnapshot())
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => !getDataInventorySnapshot())
   const [cleanAgeDays, setCleanAgeDays] = useState(90)
   const [exportScope, setExportScope] = useState<ExportScope>('conversations')
   const [backupMeta, setBackupMeta] = useState<BackupMeta | null>(null)
@@ -193,7 +195,7 @@ export function DataSettingsPanel(): ReactElement {
   const [clearState, setClearState] = useState<ActionState>('idle')
   const [exportState, setExportState] = useState<ActionState>('idle')
   const [importState, setImportState] = useState<ActionState>('idle')
-  const [importPath, setImportPath] = useState<string | null>(null)
+  const [importPlan, setImportPlan] = useState<ImportPlan | null>(null)
   const [backupState, setBackupState] = useState<ActionState>('idle')
   const [deleteExitState, setDeleteExitState] = useState<ActionState>('idle')
   const [notice, setNotice] = useState<InlineNotice | null>(null)
@@ -216,58 +218,115 @@ export function DataSettingsPanel(): ReactElement {
     }
   }, [])
 
-  const refresh = useCallback(async (): Promise<void> => {
-    setLoading(true)
+  const refresh = useCallback(async (force = true): Promise<void> => {
+    setLoading(!getDataInventorySnapshot())
     setLoadError(null)
     try {
-      const r = await window.dsGui.runtimeRequest('/v1/data/inventory', 'GET')
-      if (!r.ok) {
-        setLoadError(t('dataInventoryLoadFailed'))
-        setInventory(null)
-        return
-      }
-      setInventory(JSON.parse(r.body) as DataInventory)
-      await refreshBackup()
+      setInventory(await loadDataInventory(force))
+      void refreshBackup()
     } catch {
       setLoadError(t('dataInventoryLoadFailed'))
-      setInventory(null)
     } finally {
       setLoading(false)
     }
   }, [refreshBackup, t])
 
   useEffect(() => {
-    void refresh()
+    void refresh(false)
   }, [refresh])
 
   const composition = useMemo(() => {
     if (!inventory) return null
-    const conversationCore = Math.max(
-      0,
-      inventory.threads_bytes - inventory.events_bytes - inventory.checkpoints_bytes
+    const categories = inventory.categories ?? [
+      { key: 'conversations' as const, bytes: inventory.total_bytes }
+    ]
+    const total = inventory.storage_total_bytes ?? inventory.total_bytes
+    // Largest first, like system storage views; the catch-all stays last.
+    const ordered = [...categories].sort((a, b) =>
+      a.key === 'other' ? 1 : b.key === 'other' ? -1 : b.bytes - a.bytes
     )
-    const segments = [
-      { key: 'conversations', bytes: conversationCore, color: COMPOSITION_COLORS.conversations },
-      { key: 'events', bytes: inventory.events_bytes, color: COMPOSITION_COLORS.events },
-      { key: 'sessions', bytes: inventory.sessions_bytes, color: COMPOSITION_COLORS.sessions },
-      {
-        key: 'other',
-        bytes: inventory.checkpoints_bytes + inventory.state_db_bytes,
-        color: COMPOSITION_COLORS.other
-      }
-    ] as const
-    const total = segments.reduce((sum, s) => sum + s.bytes, 0) || 1
     return {
-      total: inventory.total_bytes,
-      segments: segments.map((s) => ({
-        ...s,
-        pct: Math.max(s.bytes > 0 ? 0.8 : 0, (s.bytes / total) * 100)
+      total,
+      segments: ordered.map((c) => ({
+        ...c,
+        ...CATEGORY_STYLE[c.key],
+        pct: Math.max(c.bytes > 0 ? 0.8 : 0, (c.bytes / (total || 1)) * 100)
       }))
     }
   }, [inventory])
 
+  const lang = i18n.language
+
+  const categoryDetail = (key: StorageCategory): string => {
+    if (!inventory) return ''
+    if (key === 'conversations') {
+      const parts = [
+        `${t('dataLegendEvents')} ${formatBytes(inventory.events_bytes, lang)}`,
+        `${t('dataCheckpoints')} ${formatBytes(inventory.checkpoints_bytes, lang)}`
+      ]
+      if (inventory.sessions_bytes > 0) {
+        parts.push(`${t('dataStatSessionsBytes')} ${formatBytes(inventory.sessions_bytes, lang)}`)
+      }
+      return parts.join(' · ')
+    }
+    if (key === 'logs') {
+      const hours = inventory.log_keep_hours ?? 0
+      if (hours <= 0) return t('dataCatLogsDescManual')
+      const period =
+        hours % 24 === 0
+          ? t('dataPeriodDays', { count: hours / 24 })
+          : t('dataPeriodHours', { count: hours })
+      return t('dataCatLogsDesc', { period })
+    }
+    return t(`${CATEGORY_STYLE[key].labelKey}Desc`)
+  }
+
+  const revealPath = async (path: string): Promise<void> => {
+    try {
+      await window.dsGui.showItemInFolder(path)
+    } catch (error) {
+      showNotice('error', failure('dataOpenDirFailed', error))
+    }
+  }
+
+  const categoryAction = (key: StorageCategory, bytes: number): ReactNode => {
+    const category = inventory?.categories?.find((item) => item.key === key)
+    // Older runtimes only expose the workspace, conversation, and home paths.
+    const legacyPath = key === 'workspace' ? inventory?.workspace_dir
+      : key === 'conversations' ? inventory?.threads_dir
+        : key === 'other' ? inventory?.home_dir : undefined
+    const path = category && 'reveal_path' in category
+      ? category.reveal_path
+      : bytes > 0 ? legacyPath : undefined
+    const revealLabel = key === 'other' ? openDirLabel
+      : t('dataReveal') + ' · ' + t(CATEGORY_STYLE[key].labelKey)
+    return (
+      <div className="flex shrink-0 items-center gap-1">
+        {key === 'browser' ? (
+          <button type="button" className="ds-data-storage__action" title={t('dataCatManage')}
+            aria-label={t('dataCatManage')} onClick={() => openSettings('browser')}>
+            <Settings2 size={16} strokeWidth={1.75} aria-hidden />
+          </button>
+        ) : null}
+        {path ? (
+          <button type="button" className="ds-data-storage__action" title={revealLabel}
+            aria-label={revealLabel} onClick={() => void revealPath(path)}>
+            <FolderOpen size={16} strokeWidth={1.75} aria-hidden />
+          </button>
+        ) : null}
+      </div>
+    )
+  }
+
   const showNotice = (tone: InlineNotice['tone'], message: string): void => {
     setNotice({ tone, message })
+  }
+
+  const failure = (actionKey: string, reason?: unknown): string => {
+    if (reason === undefined || reason === '') return t(actionKey)
+    const known = DATA_ERROR_KEYS[getRuntimeErrorCode(reason) ?? '']
+    if (known) return t(known)
+    return t('dataFailedWithReason', { action: t(actionKey), reason: formatRuntimeError(reason) })
   }
 
   const runOptimize = async (): Promise<void> => {
@@ -277,7 +336,7 @@ export function DataSettingsPanel(): ReactElement {
       const r = await window.dsGui.runtimeRequest('/v1/data/optimize', 'POST', '{}')
       if (!r.ok) {
         setOptimizeState('error')
-        showNotice('error', t('dataOptimizeFailed'))
+        showNotice('error', failure('dataOptimizeFailed', r.body))
         return
       }
       const body = JSON.parse(r.body) as { bytes_reclaimed?: number }
@@ -289,17 +348,31 @@ export function DataSettingsPanel(): ReactElement {
         })
       )
       await refresh()
-    } catch {
+    } catch (error) {
       setOptimizeState('error')
-      showNotice('error', t('dataOptimizeFailed'))
+      showNotice('error', failure('dataOptimizeFailed', error))
     }
   }
 
   const runClean = async (): Promise<void> => {
-    if (!(await confirmAsync(t('dataCleanConfirm', { days: cleanAgeDays }), { destructive: true }))) return
-    setCleanState('running')
     setNotice(null)
     try {
+      const preview = await window.dsGui.runtimeRequest(
+        `/v1/data/clean/preview?older_than_days=${cleanAgeDays}`,
+        'GET'
+      )
+      if (!preview.ok) {
+        showNotice('error', failure('dataCleanFailed', preview.body))
+        return
+      }
+      const matched = (JSON.parse(preview.body) as { threads_matched?: number }).threads_matched ?? 0
+      if (matched === 0) {
+        showNotice('info', t('dataCleanNone', { days: cleanAgeDays }))
+        return
+      }
+      const message = t('dataCleanConfirm', { count: matched, days: cleanAgeDays })
+      if (!(await confirmAsync(message, { destructive: true }))) return
+      setCleanState('running')
       const r = await window.dsGui.runtimeRequest(
         '/v1/data/clean',
         'POST',
@@ -307,17 +380,22 @@ export function DataSettingsPanel(): ReactElement {
       )
       if (!r.ok) {
         setCleanState('error')
-        showNotice('error', t('dataCleanFailed'))
+        showNotice('error', failure('dataCleanFailed', r.body))
         return
       }
-      const body = JSON.parse(r.body) as { threads_deleted?: number }
+      const body = JSON.parse(r.body) as { threads_deleted?: number; threads_skipped?: number }
+      const count = body.threads_deleted ?? 0
+      const skipped = body.threads_skipped ?? 0
       setCleanState('done')
-      showNotice('success', t('dataCleanDone', { count: body.threads_deleted ?? 0 }))
+      showNotice(
+        'success',
+        skipped > 0 ? t('dataCleanDoneSkipped', { count, skipped }) : t('dataCleanDone', { count })
+      )
       await refresh()
       await syncThreadList()
-    } catch {
+    } catch (error) {
       setCleanState('error')
-      showNotice('error', t('dataCleanFailed'))
+      showNotice('error', failure('dataCleanFailed', error))
     }
   }
 
@@ -330,16 +408,16 @@ export function DataSettingsPanel(): ReactElement {
       const r = await window.dsGui.runtimeRequest('/v1/data/clear-history', 'POST', '{}')
       if (!r.ok) {
         setClearState('error')
-        showNotice('error', t('dataClearHistoryFailed'))
+        showNotice('error', failure('dataClearHistoryFailed', r.body))
         return
       }
       setClearState('done')
       showNotice('success', t('dataClearHistoryDone'))
       await refresh()
       await syncThreadList()
-    } catch {
+    } catch (error) {
       setClearState('error')
-      showNotice('error', t('dataClearHistoryFailed'))
+      showNotice('error', failure('dataClearHistoryFailed', error))
     }
   }
 
@@ -376,15 +454,15 @@ export function DataSettingsPanel(): ReactElement {
       )
       if (!r.ok) {
         setExportState('error')
-        showNotice('error', t('dataExportFailed'))
+        showNotice('error', failure('dataExportFailed', r.body))
         return
       }
       const body = JSON.parse(r.body) as { path?: string }
       setExportState('done')
       showNotice('success', t('dataExportDone', { path: body.path ?? picked.path }))
-    } catch {
+    } catch (error) {
       setExportState('error')
-      showNotice('error', t('dataExportFailed'))
+      showNotice('error', failure('dataExportFailed', error))
     }
   }
 
@@ -393,18 +471,42 @@ export function DataSettingsPanel(): ReactElement {
       showNotice('error', t('dataImportFailed'))
       return
     }
+    setNotice(null)
     try {
       const picked = await window.dsGui.pickDataImportPath()
-      if (!picked.canceled && picked.path) setImportPath(picked.path)
+      if (picked.canceled || !picked.path) return
+      const r = await window.dsGui.runtimeRequest(
+        '/v1/data/import/inspect',
+        'POST',
+        JSON.stringify({ path: picked.path })
+      )
+      if (!r.ok) {
+        showNotice('error', failure('dataImportFailed', r.body))
+        return
+      }
+      const plan = { ...(JSON.parse(r.body) as Omit<ImportPlan, 'path'>), path: picked.path }
+      if (!plan.has_conversations && plan.settings.length === 0) {
+        showNotice('info', t('dataImportEmpty'))
+        return
+      }
+      setImportPlan(plan)
     } catch (error) {
-      showNotice('error', formatRuntimeError(error))
+      showNotice('error', failure('dataImportFailed', error))
     }
   }
 
   const confirmImport = async (mode: 'merge' | 'replace'): Promise<void> => {
-    if (!importPath || importState === 'running') return
-    const path = importPath
-    setImportPath(null)
+    if (!importPlan || importState === 'running') return
+    const plan = importPlan
+    setImportPlan(null)
+    if (
+      mode === 'replace' &&
+      plan.has_conversations &&
+      !(await confirmAsync(t('dataImportReplaceConfirm', { count: plan.threads }), { destructive: true }))
+    ) {
+      return
+    }
+    const path = plan.path
     setImportState('running')
     setNotice(null)
     try {
@@ -415,7 +517,7 @@ export function DataSettingsPanel(): ReactElement {
       )
       if (!r.ok) {
         setImportState('error')
-        showNotice('error', t('dataImportFailed'))
+        showNotice('error', failure('dataImportFailed', r.body))
         return
       }
       const body = JSON.parse(r.body) as {
@@ -431,33 +533,39 @@ export function DataSettingsPanel(): ReactElement {
       setImportState('done')
       showNotice(
         'success',
-        settingsRestored.length > 0
-          ? `${importSummary} ${t('dataImportSettingsRestartHint')}`
-          : importSummary
+        !plan.has_conversations
+          ? t('dataImportSettingsRestartHint')
+          : settingsRestored.length > 0
+            ? `${importSummary} ${t('dataImportSettingsRestartHint')}`
+            : importSummary
       )
       await refresh()
       await syncThreadList()
-    } catch {
+    } catch (error) {
       setImportState('error')
-      showNotice('error', t('dataImportFailed'))
+      showNotice('error', failure('dataImportFailed', error))
     }
   }
 
   const pickBackupDir = async (): Promise<void> => {
     if (typeof window.dsGui?.pickBackupDirectory !== 'function') return
-    const picked = await window.dsGui.pickBackupDirectory()
-    if (picked.canceled || !picked.path) return
-    const r = await window.dsGui.runtimeRequest(
-      '/v1/data/backup/directory',
-      'POST',
-      JSON.stringify({ directory: picked.path })
-    )
-    if (!r.ok) {
-      showNotice('error', t('dataBackupDirFailed'))
-      return
+    try {
+      const picked = await window.dsGui.pickBackupDirectory()
+      if (picked.canceled || !picked.path) return
+      const r = await window.dsGui.runtimeRequest(
+        '/v1/data/backup/directory',
+        'POST',
+        JSON.stringify({ directory: picked.path })
+      )
+      if (!r.ok) {
+        showNotice('error', failure('dataBackupDirFailed', r.body))
+        return
+      }
+      setBackupMeta(JSON.parse(r.body) as BackupMeta)
+      showNotice('success', t('dataBackupDirSet'))
+    } catch (error) {
+      showNotice('error', failure('dataBackupDirFailed', error))
     }
-    setBackupMeta(JSON.parse(r.body) as BackupMeta)
-    showNotice('success', t('dataBackupDirSet'))
   }
 
   const runBackupNow = async (): Promise<void> => {
@@ -467,7 +575,7 @@ export function DataSettingsPanel(): ReactElement {
       const r = await window.dsGui.runtimeRequest('/v1/data/backup', 'POST', '{}')
       if (!r.ok) {
         setBackupState('error')
-        showNotice('error', t('dataBackupFailed'))
+        showNotice('error', failure('dataBackupFailed', r.body))
         return
       }
       const body = JSON.parse(r.body) as BackupMeta & { path?: string }
@@ -478,9 +586,9 @@ export function DataSettingsPanel(): ReactElement {
       })
       setBackupState('done')
       showNotice('success', t('dataBackupDone', { path: body.path ?? '' }))
-    } catch {
+    } catch (error) {
       setBackupState('error')
-      showNotice('error', t('dataBackupFailed'))
+      showNotice('error', failure('dataBackupFailed', error))
     }
   }
 
@@ -527,11 +635,28 @@ export function DataSettingsPanel(): ReactElement {
 
   return (
     <>
-      {importPath ? (
-        <ConfirmDialog title={t('dataImportChooseTitle')} body={t('dataImportChooseBody')} destructive
-          confirmLabel={t('dataImportReplace')} cancelLabel={t('cancel')}
-          secondaryAction={{ label: t('dataImportMerge'), onClick: () => void confirmImport('merge') }}
-          onConfirm={() => void confirmImport('replace')} onCancel={() => setImportPath(null)} />
+      {importPlan?.has_conversations ? (
+        <ConfirmDialog
+          title={t('dataImportChooseTitle')}
+          body={t(importPlan.settings.length > 0 ? 'dataImportChooseBodyWithSettings' : 'dataImportChooseBody', {
+            count: importPlan.threads
+          })}
+          confirmLabel={t('dataImportMerge')}
+          cancelLabel={t('cancel')}
+          secondaryAction={{ label: t('dataImportReplace'), onClick: () => void confirmImport('replace') }}
+          onConfirm={() => void confirmImport('merge')}
+          onCancel={() => setImportPlan(null)}
+        />
+      ) : importPlan ? (
+        <ConfirmDialog
+          title={t('dataImportSettingsTitle')}
+          body={t('dataImportSettingsBody', { files: new Intl.ListFormat(i18n.language).format(importPlan.settings) })}
+          destructive
+          confirmLabel={t('dataImportSettingsAction')}
+          cancelLabel={t('cancel')}
+          onConfirm={() => void confirmImport('replace')}
+          onCancel={() => setImportPlan(null)}
+        />
       ) : null}
     <div className="flex flex-col gap-6">
       {notice ? <InlineNoticeView notice={notice} /> : null}
@@ -542,11 +667,12 @@ export function DataSettingsPanel(): ReactElement {
             <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
             {t('dataInventoryLoading')}
           </div>
-        ) : loadError ? (
+        ) : loadError && !inventory ? (
           <div className="px-3 py-4 text-[13px] text-red-700 dark:text-red-300">{loadError}</div>
         ) : inventory && composition ? (
           <>
-            <div className="px-3 py-4">
+            <div className="ds-data-storage px-3 py-4">
+              {loadError ? <p role="status" className="mb-3 text-[12px] text-ds-muted">{loadError}</p> : null}
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <div className="text-[12.5px] font-medium text-ds-faint">{t('dataTotalUsed')}</div>
@@ -560,64 +686,51 @@ export function DataSettingsPanel(): ReactElement {
                   {formatCount(inventory.message_count, i18n.language)} {t('dataStatMessageCount')}
                 </div>
               </div>
-              <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-ds-subtle">
+              <div className="ds-data-storage__bar mt-4">
                 {composition.segments.map((seg) =>
                   seg.bytes > 0 ? (
                     <div
                       key={seg.key}
-                      className={`${seg.color} min-w-[2px]`}
+                      className="ds-data-storage__segment"
+                      data-storage-tone={seg.color}
                       style={{ flexGrow: seg.pct, flexBasis: 0 }}
                     />
                   ) : null
                 )}
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <StatTile
-                  label={t('dataStatThreadsBytes')}
-                  value={formatBytes(
-                    Math.max(
-                      0,
-                      inventory.threads_bytes - inventory.events_bytes - inventory.checkpoints_bytes
-                    ),
-                    i18n.language
-                  )}
-                />
-                <StatTile
-                  label={t('dataLegendEvents')}
-                  value={formatBytes(inventory.events_bytes, i18n.language)}
-                />
-                <StatTile
-                  label={t('dataStatSessionsBytes')}
-                  value={formatBytes(inventory.sessions_bytes, i18n.language)}
-                />
-                <StatTile
-                  label={t('dataLegendOther')}
-                  value={formatBytes(
-                    inventory.checkpoints_bytes + inventory.state_db_bytes,
-                    i18n.language
-                  )}
-                />
-              </div>
-              <p className="mt-3 text-[12.5px] leading-5 text-ds-faint">{t('dataStorageFooter')}</p>
+              <ul className="ds-data-storage__list mt-4">
+                {composition.segments.map((seg) => (
+                  <li key={seg.key} className="ds-data-storage__stat" data-storage-tone={seg.color}>
+                    <span aria-hidden className="ds-data-storage__dot" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13.5px] font-medium leading-5 text-ds-ink">{t(seg.labelKey)}</div>
+                      <div className="truncate text-[12.5px] leading-5 text-ds-muted">
+                        {categoryDetail(seg.key)}
+                      </div>
+                    </div>
+                    {categoryAction(seg.key, seg.bytes)}
+                    <div className="ds-data-storage__value">
+                      {formatBytes(seg.bytes, i18n.language)}
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </div>
             <SettingRow
               title={t('dataDirectory')}
               description={
                 <div className="space-y-1">
                   <p>{t('dataDirectoryDesc')}</p>
-                  <code className="block truncate rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
-                    {inventory.home_dir}
-                  </code>
                   {openDirError ? (
                     <p className="text-[12px] text-red-700 dark:text-red-300">{openDirError}</p>
                   ) : null}
                 </div>
               }
               control={
-                <ActionButton block disabled={busy} onClick={() => void openDataDir()}>
-                  <FolderOpen className="h-4 w-4" strokeWidth={1.75} />
-                  {openDirLabel}
-                </ActionButton>
+                <button type="button" className="ds-data-storage__action" disabled={busy}
+                  title={openDirLabel} aria-label={openDirLabel} onClick={() => void openDataDir()}>
+                  <FolderOpen size={16} strokeWidth={1.75} aria-hidden />
+                </button>
               }
             />
           </>
@@ -691,7 +804,22 @@ export function DataSettingsPanel(): ReactElement {
         />
         <SettingRow
           title={t('dataBackupLast')}
-          description={formatBackupTime(backupMeta?.last_backup_at)}
+          description={
+            backupMeta?.last_backup_at && backupMeta.last_backup_path ? (
+              <span className="inline-flex flex-wrap items-center gap-x-2">
+                {formatBackupTime(backupMeta.last_backup_at)}
+                <button
+                  type="button"
+                  className="font-medium text-accent hover:underline"
+                  onClick={() => void revealPath(backupMeta.last_backup_path as string)}
+                >
+                  {openDirLabel}
+                </button>
+              </span>
+            ) : (
+              formatBackupTime(backupMeta?.last_backup_at)
+            )
+          }
           control={
             <ActionButton
               block
@@ -788,14 +916,5 @@ export function DataSettingsPanel(): ReactElement {
       </SettingsCard>
     </div>
     </>
-  )
-}
-
-function StatTile({ label, value }: { label: string; value: string }): ReactElement {
-  return (
-    <div className="rounded-xl border border-ds-border-muted bg-ds-card/60 px-3 py-2.5">
-      <div className="text-[11.5px] font-medium text-ds-faint">{label}</div>
-      <div className="mt-1 text-[14px] font-semibold tabular-nums text-ds-ink">{value}</div>
-    </div>
   )
 }

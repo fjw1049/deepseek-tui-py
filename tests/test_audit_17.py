@@ -578,3 +578,27 @@ def test_cli_key_precedence_reaches_client_factory(config_env, monkeypatch, mana
     build_llm_client(cfg)
     assert captured["api_key"] == expected
     assert "_api_key_override" not in cfg.model_dump()
+
+
+def test_hourly_log_retention_deletes_renamed_files(tmp_path):
+    from datetime import datetime, timedelta
+
+    from deepseek_tui.utils import _HourlyLogHandler, _rotated_namer
+
+    now = datetime.now().replace(minute=0, second=0, microsecond=0)
+    names = [(now - timedelta(hours=hours)).strftime("deepseek-%Y-%m-%d-%H.log")
+             for hours in (1, 2, 3, 4, 240)]
+    for name in names:
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    (tmp_path / "notes.log").write_text("keep", encoding="utf-8")
+    (tmp_path / "deepseek-xxxx-xx-xx-xx.log").write_text("keep", encoding="utf-8")
+    handler = _HourlyLogHandler(str(tmp_path / "deepseek.log"), when="H", backupCount=2)
+    handler.suffix = "%Y-%m-%d-%H"
+    handler.namer = _rotated_namer
+    try:
+        doomed = sorted(Path(p).name for p in handler.getFilesToDelete())
+        handler.backupCount = 0
+        assert handler.getFilesToDelete() == []
+    finally:
+        handler.close()
+    assert doomed == sorted(names[2:])

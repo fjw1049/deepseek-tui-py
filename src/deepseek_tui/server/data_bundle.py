@@ -28,7 +28,6 @@ from typing import Any, Literal
 from deepseek_tui.config.paths import (
     settings_path,
     user_config_path,
-    user_deepseek_dir,
     user_mcp_config_path,
     user_media_dir,
     user_sessions_dir,
@@ -44,6 +43,10 @@ ExportScope = Literal["conversations", "settings", "all"]
 ImportMode = Literal["merge", "replace"]
 
 _SCOPES: frozenset[str] = frozenset({"conversations", "settings", "all"})
+
+
+class ThreadActiveError(ValueError):
+    """A conversation is running, so its history cannot be replaced yet."""
 
 
 _EMPTY_BACKUP_META = {"directory": None, "last_backup_at": None, "last_backup_path": None}
@@ -175,6 +178,63 @@ def export_bundle(
     }
 
 
+def _manifest_includes(manifest: Any) -> dict[str, bool]:
+    if not isinstance(manifest, dict) or manifest.get("format") != BUNDLE_FORMAT:
+        raise ValueError("invalid export: unknown format")
+    version = manifest.get("version")
+    if type(version) is not int or not 1 <= version <= BUNDLE_VERSION:
+        raise ValueError("invalid export: unsupported schema version")
+    includes = manifest.get("includes", {})
+    if not isinstance(includes, dict) or any(
+        type(value) is not bool for value in includes.values()
+    ):
+        raise ValueError("invalid export: malformed includes")
+    return includes
+
+
+def inspect_bundle(source: Path) -> dict[str, Any]:
+    """Read only the manifest and member names, so the UI can offer the right choices."""
+    src = Path(source).expanduser()
+    if not src.is_file():
+        raise FileNotFoundError(f"export file not found: {src}")
+    try:
+        with zipfile.ZipFile(src, "r") as zf:
+            if len(zf.infolist()) > MAX_ARCHIVE_FILES:
+                raise ValueError("Archive contains too many entries")
+            names = set(zf.namelist())
+            with zf.open("manifest.json") as member:
+                raw = member.read(1_048_577)
+            if len(raw) > 1_048_576:
+                raise ValueError("invalid export: manifest is too large")
+            manifest = json.loads(raw)
+    except (KeyError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("invalid export: not a deepseek-data-export archive") from exc
+    includes = _manifest_includes(manifest)
+    threads = 0
+    if includes.get("threads"):
+        threads = sum(
+            1 for name in names
+            if name.startswith("threads/threads/") and name.endswith(".json")
+            and "/" not in name[len("threads/threads/"):]
+        )
+    settings = [
+        label
+        for label, members, key in (
+            ("config.toml", ("config.toml",), "config"),
+            ("mcp.json", ("mcp.json",), "mcp"),
+            ("settings.json", ("settings.json", "workbench/settings.json"), "workbench_settings"),
+        )
+        if any(member in names for member in members)
+        and not (includes and key in includes and not includes.get(key))
+    ]
+    return {
+        "scope": manifest.get("scope"),
+        "has_conversations": bool(includes.get("threads")),
+        "threads": threads,
+        "settings": settings,
+    }
+
+
 def import_bundle(
     source: Path,
     *,
@@ -201,13 +261,7 @@ def import_bundle(
         if not manifest_path.is_file():
             raise ValueError("invalid export: missing manifest.json")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("format") != BUNDLE_FORMAT:
-            raise ValueError("invalid export: unknown format")
-        version = int(manifest.get("version") or 0)
-        if version > BUNDLE_VERSION:
-            raise ValueError(f"export schema v{version} is newer than supported v{BUNDLE_VERSION}")
-
-        includes = manifest.get("includes") or {}
+        includes = _manifest_includes(manifest)
         _validate_bundle(tmp_root, includes)
         report: dict[str, Any] = {
             "mode": mode,
@@ -237,7 +291,9 @@ def import_bundle(
                 for path in sorted((threads_root / "threads").glob("*.json")):
                     thread_lease = ThreadLease(path.stem)
                     if not thread_lease.acquire_blocking(nonblocking=True):
-                        raise ValueError(f"Cannot import while thread is active: {path.stem}")
+                        raise ThreadActiveError(
+                            f"Cannot import while thread is active: {path.stem}"
+                        )
                     thread_leases.append(thread_lease)
             with _staged_import(roots) as targets:
                 threads_root = targets.get(threads_root, threads_root)
@@ -327,7 +383,11 @@ def create_backup(
     threads_dir: Path | None = None,
     sessions_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Copy conversations into a timestamped folder under the backup directory."""
+    """Write a timestamped conversations export into the backup directory.
+
+    It is the same ZIP as Export, so Import can restore it. Settings are left out
+    on purpose: they hold API keys, and backup folders are often synced elsewhere.
+    """
     meta = read_backup_meta()
     raw_dir = str(directory or meta.get("directory") or "").strip()
     if not raw_dir:
@@ -336,55 +396,23 @@ def create_backup(
     backup_root.mkdir(parents=True, exist_ok=True)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    target = backup_root / f"deepseek-backup-{stamp}"
-    target.mkdir(parents=False, exist_ok=False)
-
-    threads_root = threads_dir or user_threads_dir()
-    sessions_root = sessions_dir or user_sessions_dir()
-    for root in (threads_root, sessions_root):
-        _reject_symlinks(root, exclude_browser_profiles=root == threads_root)
-        if target.resolve().is_relative_to(root.resolve()):
-            raise ValueError("Backup destination must be outside conversation storage")
-    files = 0
-    bytes_copied = 0
-    if threads_root.exists():
-        dest = target / "threads"
-        shutil.copytree(threads_root, dest, ignore=lambda directory, names: {
-            name for name in names
-            if _browser_profile((Path(directory) / name).relative_to(threads_root))
-        })
-        files, bytes_copied = _count_tree(dest)
-    for asset in _referenced_media(threads_root, sessions_root):
-        dest = target / "media" / asset.name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(asset, dest)
-        files += 1
-        bytes_copied += asset.stat().st_size
-    if sessions_root.exists():
-        dest = target / "sessions"
-        shutil.copytree(sessions_root, dest)
-        n, b = _count_tree(dest)
-        files += n
-        bytes_copied += b
-
-    manifest = {
-        "format": "deepseek-data-backup",
-        "version": BUNDLE_VERSION,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "home": str(user_deepseek_dir()),
-    }
-    write_json_atomic(target / "manifest.json", manifest)
+    target = backup_root / f"deepseek-backup-{stamp}.zip"
+    if target.exists():
+        raise FileExistsError(f"backup already exists: {target}")
+    report = export_bundle(
+        target, scope="conversations", threads_dir=threads_dir, sessions_dir=sessions_dir
+    )
     at = datetime.now(timezone.utc).isoformat()
     write_backup_meta(
         directory=str(backup_root),
         last_backup_at=at,
-        last_backup_path=str(target),
+        last_backup_path=report["path"],
     )
     return {
-        "path": str(target),
+        "path": report["path"],
         "directory": str(backup_root),
-        "files": files + 1,
-        "bytes": bytes_copied,
+        "files": report["files"],
+        "bytes": report["bytes"],
         "last_backup_at": at,
     }
 
@@ -775,16 +803,3 @@ def _copy_tree_merge(src: Path, dest: Path, *, overwrite: bool) -> None:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
-
-
-def _count_tree(root: Path) -> tuple[int, int]:
-    files = 0
-    total = 0
-    for path in root.rglob("*"):
-        if path.is_file():
-            files += 1
-            try:
-                total += path.stat().st_size
-            except OSError:
-                pass
-    return files, total

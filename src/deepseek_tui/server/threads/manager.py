@@ -2607,6 +2607,12 @@ class RuntimeThreadManager:
         async with self._hold_thread_operation(thread.id):
             return await self._reclaim_owned_worktree_claimed(thread)
 
+    def _worktree_keeps_unpublished(self, thread: ThreadRecord) -> bool:
+        path = thread.worktree_path or thread.associated_worktree_path or ""
+        if not path or not Path(path).expanduser().is_dir():
+            return False
+        return bool(thread.publish_blocked or self._unpublished_checkpoints(thread))
+
     async def _reclaim_owned_worktree_claimed(
         self, thread: ThreadRecord
     ) -> str:
@@ -2615,11 +2621,7 @@ class RuntimeThreadManager:
         path = thread.worktree_path or thread.associated_worktree_path or ""
         if not path:
             return "gone"
-        worktree = Path(path).expanduser()
-        worktree_exists = await asyncio.to_thread(worktree.is_dir)
-        if worktree_exists and (
-            thread.publish_blocked or self._unpublished_checkpoints(thread)
-        ):
+        if await asyncio.to_thread(self._worktree_keeps_unpublished, thread):
             return "kept"
         try:
             root = project_root(thread)
@@ -3070,7 +3072,13 @@ class RuntimeThreadManager:
     async def data_inventory(self) -> dict[str, Any]:
         from deepseek_tui.server.data_inventory import collect_inventory
 
-        return await asyncio.to_thread(collect_inventory, threads_dir=self.manager_cfg.data_dir)
+        inventory = await asyncio.to_thread(
+            collect_inventory, threads_dir=self.manager_cfg.data_dir,
+            logs_dir=self.config.logging.dir,
+        )
+        logging_cfg = self.config.logging
+        inventory["log_keep_hours"] = logging_cfg.keep_hours if logging_cfg.enabled else None
+        return inventory
 
     async def optimize_storage(self) -> dict[str, Any]:
         from deepseek_tui.server.data_inventory import (
@@ -3093,7 +3101,9 @@ class RuntimeThreadManager:
         )
         return payload
 
-    async def clean_storage_older_than(self, older_than_days: int) -> dict[str, Any]:
+    async def clean_storage_older_than(
+        self, older_than_days: int, *, dry_run: bool = False
+    ) -> dict[str, Any]:
         from datetime import timedelta
 
         from deepseek_tui.server.data_inventory import CleanReport
@@ -3101,14 +3111,24 @@ class RuntimeThreadManager:
         if older_than_days < 1:
             raise ValueError("older_than_days must be >= 1")
         cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-        report = CleanReport()
-        for thread in list(self.store.list_threads()):
+        expired = []
+        for thread in self.store.list_threads():
             updated = thread.updated_at
             if updated.tzinfo is None:
                 updated = updated.replace(tzinfo=timezone.utc)
-            if updated >= cutoff:
+            if updated < cutoff:
+                expired.append(thread)
+        if dry_run:
+            return {"threads_matched": len(expired)}
+        report = CleanReport()
+        for thread in expired:
+            try:
+                await self.delete_thread(thread.id)
+            except ValueError:
+                # Unpublished code, an occupied worktree or another runtime's
+                # lease: keep that thread and still clean the rest.
+                report.threads_skipped += 1
                 continue
-            await self.delete_thread(thread.id)
             report.threads_deleted += 1
             report.thread_ids.append(thread.id)
         return report.to_dict()
@@ -3116,6 +3136,17 @@ class RuntimeThreadManager:
     async def clear_conversation_history(self) -> dict[str, Any]:
         from deepseek_tui.server.data_inventory import clear_conversation_history
 
+        # Refuse before cancelling anything, so a blocked clear leaves running work alone.
+        blocked = await asyncio.to_thread(lambda: [
+            thread.id
+            for thread in self.store.list_threads()
+            if self._worktree_keeps_unpublished(thread)
+        ])
+        if blocked:
+            raise ValueError(
+                "cannot clear conversation history while threads contain "
+                f"unpublished code: {', '.join(sorted(blocked))}"
+            )
         async with self._active_lock:
             active_ids = list(self._active.keys())
         for thread_id in active_ids:
@@ -3146,12 +3177,18 @@ class RuntimeThreadManager:
             threads_dir=self.manager_cfg.data_dir,
         ))
 
+    async def inspect_data_bundle(self, path: str) -> dict[str, Any]:
+        from deepseek_tui.server.data_bundle import inspect_bundle
+
+        return await asyncio.to_thread(inspect_bundle, Path(path))
+
     async def import_data_bundle(
         self, path: str, *, mode: str = "merge"
     ) -> dict[str, Any]:
         from deepseek_tui.server.data_bundle import import_bundle
 
-        if mode == "replace":
+        # A settings-only restore leaves conversations alone, so it must not stop them.
+        if mode == "replace" and (await self.inspect_data_bundle(path))["has_conversations"]:
             async with self._active_lock:
                 active_ids = list(self._active.keys())
             for thread_id in active_ids:

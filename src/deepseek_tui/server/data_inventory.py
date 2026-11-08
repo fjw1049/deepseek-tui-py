@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -25,10 +26,13 @@ from deepseek_tui.browser import ARTIFACTS_DIRNAME
 from deepseek_tui.config.paths import (
     user_browser_dir,
     user_deepseek_dir,
+    user_logs_dir,
+    user_media_dir,
     user_sessions_dir,
     user_state_db_path,
     user_thread_plan_path,
     user_threads_dir,
+    user_worktrees_dir,
 )
 from deepseek_tui.server.threads.models import TurnItemKind
 from deepseek_tui.server.threads.store import RuntimeThreadStore
@@ -52,6 +56,10 @@ EVENT_DELTA_PAYLOAD_MAX_CHARS = 2048
 DEFAULT_CHECKPOINT_MAX_AGE_DAYS = 7
 CYCLE_ARCHIVE_MAX_AGE_DAYS = 30
 CRASH_CHECKPOINT_MAX_AGE_SECS = 7 * 86400
+# Writers save an item before the turn that lists it (and a turn before its
+# thread). Optimize runs without thread leases, so only records older than
+# this are treated as orphans; a live turn never loses its newest item.
+ORPHAN_GRACE_SECS = 600
 _MESSAGE_KINDS = frozenset(
     {
         TurnItemKind.USER_MESSAGE,
@@ -80,6 +88,87 @@ def directory_size(path: Path) -> int:
     except OSError:
         return total
     return total
+
+
+def _tree_bytes(path: Path) -> int:
+    """Fast size of a file or tree; never follows symlinks (browser profiles use them)."""
+    try:
+        if path.is_symlink() or not path.is_dir():
+            return path.lstat().st_size
+    except OSError:
+        return 0
+    total = 0
+    stack = [path]
+    while stack:
+        try:
+            entries = os.scandir(stack.pop())
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                    else:
+                        total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+    return total
+
+
+def storage_categories(
+    *, home: Path, threads_root: Path, sessions_root: Path, state_db: Path,
+    logs_dir: Path | None = None,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Split the whole data home into the groups Settings explains.
+
+    Everything not named lands in ``other`` so the parts always add up to the total.
+    """
+    groups: dict[str, list[Path]] = {
+        "conversations": [threads_root, sessions_root, state_db, user_media_dir()],
+        "browser": [user_browser_dir(home)],
+        "workspace": [home / "workspace"],
+        "logs": [logs_dir or user_logs_dir()],
+        "worktrees": [user_worktrees_dir()],
+    }
+    top: dict[str, int] = {}
+    try:
+        with os.scandir(home) as entries:
+            for entry in entries:
+                top[entry.name] = _tree_bytes(Path(entry.path))
+    except OSError:
+        pass
+    # Partition overlapping roots instead of counting a nested custom thread
+    # directory once as workspace data and again as conversation data.
+    home = home.absolute()
+    owners: dict[Path, str] = {}
+    for key, paths in groups.items():
+        for path in paths:
+            owners.setdefault(path.absolute(), key)
+    owners.setdefault(home, "other")
+    sizes = {
+        path: sum(top.values()) if path == home else (
+            top.get(path.name, 0) if path.parent == home else _tree_bytes(path)
+        )
+        for path in owners
+    }
+    totals = dict.fromkeys([*groups, "other"], 0)
+    for path, key in owners.items():
+        children = [child for child in owners if child != path and child.is_relative_to(path)]
+        direct = [child for child in children if not any(
+            child != parent and child.is_relative_to(parent) for parent in children
+        )]
+        totals[key] += max(0, sizes[path] - sum(sizes[child] for child in direct))
+    categories: list[dict[str, Any]] = []
+    for key, size in totals.items():
+        reveal_dir = home if key == "other" else (
+            threads_root if key == "conversations" else groups[key][0]
+        )
+        categories.append({
+            "key": key, "bytes": size,
+            "reveal_path": str(reveal_dir) if reveal_dir.is_dir() else None,
+        })
+    return sum(totals.values()), categories
 
 
 def is_noisy_event_name(event: str) -> bool:
@@ -112,6 +201,7 @@ def collect_inventory(
     sessions_dir: Path | None = None,
     state_db_path: Path | None = None,
     home_dir: Path | None = None,
+    logs_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Return path + size + count summary for Settings cards."""
     threads_root = threads_dir or user_threads_dir()
@@ -136,6 +226,10 @@ def collect_inventory(
     threads_bytes = directory_size(threads_root)
     sessions_bytes = directory_size(sessions_root)
     state_db_bytes = directory_size(state_db)
+    storage_total, categories = storage_categories(
+        home=home, threads_root=threads_root, sessions_root=sessions_root, state_db=state_db,
+        logs_dir=logs_dir,
+    )
 
     return {
         "home_dir": str(home),
@@ -152,6 +246,9 @@ def collect_inventory(
         "message_count": message_count,
         "item_count": item_count,
         "total_bytes": threads_bytes + sessions_bytes + state_db_bytes,
+        "storage_total_bytes": storage_total,
+        "categories": categories,
+        "workspace_dir": str(home / "workspace"),
     }
 
 
@@ -188,12 +285,14 @@ class OptimizeReport:
 @dataclass(slots=True)
 class CleanReport:
     threads_deleted: int = 0
+    threads_skipped: int = 0
     bytes_reclaimed: int = 0
     thread_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "threads_deleted": self.threads_deleted,
+            "threads_skipped": self.threads_skipped,
             "bytes_reclaimed": self.bytes_reclaimed,
             "thread_ids": list(self.thread_ids),
         }
@@ -275,12 +374,16 @@ def optimize_storage(
 
     for turn in store.iter_turns():
         if turn.thread_id not in live_thread_ids or turn.id not in live_turn_ids:
+            if _recently_written(store.root / "turns" / f"{turn.id}.json"):
+                continue
             store.delete_turn(turn.id)
             checkpoints.delete(turn.id)
             report.orphan_turns_removed += 1
 
     for item in store.iter_items():
         if item.id not in live_item_ids:
+            if _recently_written(store.root / "items" / f"{item.id}.json"):
+                continue
             store.delete_item(item.id)
             report.orphan_items_removed += 1
 
@@ -353,6 +456,13 @@ def clear_conversation_history(
     return report
 
 
+def _recently_written(path: Path) -> bool:
+    try:
+        return time.time() - path.stat().st_mtime < ORPHAN_GRACE_SECS
+    except OSError:
+        return False
+
+
 def _prune_cycle_archives(sessions_root: Path, *, max_age_days: int) -> int:
     if not sessions_root.exists() or max_age_days < 1:
         return 0
@@ -416,7 +526,6 @@ __all__ = [
     "CleanReport",
     "ClearHistoryReport",
     "collect_inventory",
-    "clean_threads_older_than",
     "clear_conversation_history",
     "delete_thread_tree",
     "directory_size",

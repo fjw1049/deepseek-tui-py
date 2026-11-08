@@ -88,15 +88,113 @@ it('reports MCP partial failures and retries only failed entries', async () => {
 })
 
 describe('data import', () => {
-  it.each(['cancel', 'merge', 'replace'])('%s has explicit request semantics', async (choice) => {
-    const request = vi.fn(async (_path: string, _method?: string, _body?: string) => ({ ok: true, body: '{}' }))
+  const stubImport = (plan: object) => {
+    const request = vi.fn(async (path: string, _method?: string, _body?: string) =>
+      ({ ok: true, body: path === '/v1/data/import/inspect' ? JSON.stringify(plan) : '{}' }))
     vi.stubGlobal('dsGui', { runtimeRequest: request, pickDataImportPath: async () => ({ path: '/tmp/archive.zip', canceled: false }) })
+    return () => request.mock.calls.filter((args: unknown[]) => args[0] === '/v1/data/import')
+  }
+  const conversations = { has_conversations: true, threads: 3, settings: [] }
+
+  it.each(['cancel', 'merge'])('%s has explicit request semantics', async (choice) => {
+    const writes = stubImport(conversations)
     await act(async () => root.render(createElement(DataSettingsPanel)))
     await act(async () => button('dataImportAction').click())
-    await act(async () => button(choice === 'cancel' ? 'cancel' : choice === 'merge' ? 'dataImportMerge' : 'dataImportReplace').click())
-    const writes = request.mock.calls.filter((args: unknown[]) => args[0] === '/v1/data/import')
-    if (choice === 'cancel') expect(writes).toHaveLength(0)
-    else { expect(writes).toHaveLength(1); expect(JSON.parse(String(writes[0][2])).mode).toBe(choice) }
+    await act(async () => button(choice === 'cancel' ? 'cancel' : 'dataImportMerge').click())
+    if (choice === 'cancel') expect(writes()).toHaveLength(0)
+    else { expect(writes()).toHaveLength(1); expect(JSON.parse(String(writes()[0][2])).mode).toBe('merge') }
+  })
+
+  it('makes merge the primary choice and confirms replace separately', async () => {
+    const writes = stubImport(conversations)
+    await act(async () => root.render(createElement(DataSettingsPanel)))
+    await act(async () => button('dataImportAction').click())
+    const actions = [...document.querySelectorAll('[role="alertdialog"] button')]
+    expect(actions.at(-1)?.textContent).toBe('dataImportMerge')
+    await act(async () => button('dataImportReplace').click())
+    expect(writes()).toHaveLength(0)
+    const confirm = [...document.querySelectorAll('[role="alertdialog"] button')].at(-1) as HTMLButtonElement
+    await act(async () => confirm.click())
+    expect(writes()).toHaveLength(1)
+    expect(JSON.parse(String(writes()[0][2])).mode).toBe('replace')
+  })
+
+  it('restores a settings-only bundle instead of a no-op merge', async () => {
+    const writes = stubImport({ has_conversations: false, threads: 0, settings: ['config.toml'] })
+    await act(async () => root.render(createElement(DataSettingsPanel)))
+    await act(async () => button('dataImportAction').click())
+    expect(document.body.textContent).not.toContain('dataImportMerge')
+    await act(async () => button('dataImportSettingsAction').click())
+    expect(JSON.parse(String(writes()[0][2])).mode).toBe('replace')
+    expect(host.textContent).toContain('dataImportSettingsRestartHint')
+  })
+
+  it('lists every storage category largest first and links browser data to its settings', async () => {
+    const inventory = {
+      events_bytes: 1, checkpoints_bytes: 1, sessions_bytes: 0, thread_count: 1, message_count: 2,
+      total_bytes: 30, storage_total_bytes: 600, log_keep_hours: 168, workspace_dir: '/h/workspace',
+      categories: [
+        { key: 'conversations', bytes: 30 }, { key: 'browser', bytes: 300 }, { key: 'workspace', bytes: 100 },
+        { key: 'logs', bytes: 50 }, { key: 'worktrees', bytes: 0 }, { key: 'other', bytes: 120 }
+      ].map(category => ({ ...category, reveal_path: category.key === 'worktrees' ? null : '/storage/' + category.key }))
+    }
+    const reveal = vi.fn(async (_path: string) => undefined)
+    vi.stubGlobal('dsGui', {
+      showItemInFolder: reveal,
+      runtimeRequest: async (path: string) => ({ ok: true, body: path === '/v1/data/inventory' ? JSON.stringify(inventory) : '{}' })
+    })
+    await act(async () => root.render(createElement(DataSettingsPanel)))
+    const labels = [...host.querySelectorAll('li .font-medium.leading-5')].map((el) => el.textContent)
+    expect(labels).toEqual(['dataCatBrowser', 'dataCatWorkspace', 'dataCatLogs', 'dataCatConversations', 'dataCatWorktrees', 'dataCatOther'])
+    expect(host.textContent).toContain('dataCatLogsDesc{"period":"dataPeriodDays{\\"count\\":7}"}')
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="dataCatManage"]')!.click())
+    expect(state.openSettings).toHaveBeenCalledWith('browser')
+    const actions = [...host.querySelectorAll<HTMLButtonElement>('li button')]
+    expect(actions).toHaveLength(6)
+    expect(actions.every(action => !action.textContent?.trim() && action.title && action.getAttribute('aria-label'))).toBe(true)
+    for (const action of actions.filter(action => action.getAttribute('aria-label') !== 'dataCatManage')) {
+      await act(async () => action.click())
+    }
+    expect(reveal.mock.calls.map(call => call[0])).toEqual([
+      '/storage/browser', '/storage/workspace', '/storage/logs', '/storage/conversations', '/storage/other'
+    ])
+  })
+
+  it('explains a blocked clear instead of a bare failure', async () => {
+    vi.stubGlobal('dsGui', {
+      runtimeRequest: async (path: string) => path === '/v1/data/clear-history'
+        ? { ok: false, status: 409, body: JSON.stringify({ detail: { message: 'unpublished', error: 'history_blocked' } }) }
+        : { ok: true, body: '{}' }
+    })
+    await act(async () => root.render(createElement(DataSettingsPanel)))
+    for (let step = 0; step < 3; step += 1) {
+      const target = step === 0
+        ? button('dataClearHistoryAction')
+        : [...document.querySelectorAll('[role="alertdialog"] button')].at(-1) as HTMLButtonElement
+      await act(async () => target.click())
+    }
+    expect(host.textContent).toContain('dataErrorHistoryBlocked')
+  })
+
+  it('shows cached storage immediately on reentry and retains it if refresh fails', async () => {
+    const request = vi.fn(async (path: string) => ({ ok: true, body: JSON.stringify(
+      path === '/v1/data/inventory'
+        ? { total_bytes: 1024, events_bytes: 0, checkpoints_bytes: 0, sessions_bytes: 0, thread_count: 1, message_count: 2 }
+        : {}
+    ) }))
+    vi.stubGlobal('dsGui', { runtimeRequest: request })
+    await act(async () => root.render(createElement(DataSettingsPanel)))
+    expect(host.textContent).toContain('1 KB')
+    await act(async () => root.render(null))
+    await act(async () => root.render(createElement(DataSettingsPanel)))
+    expect(request.mock.calls.filter(([path]) => path === '/v1/data/inventory')).toHaveLength(1)
+    expect(host.textContent).toContain('1 KB')
+    await act(async () => root.render(null))
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000)
+    request.mockRejectedValueOnce(new Error('Offline'))
+    await act(async () => root.render(createElement(DataSettingsPanel)))
+    expect(host.textContent).toContain('1 KB')
+    expect(host.textContent).toContain('dataInventoryLoadFailed')
   })
 })
 

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import HTTPException
+from fastapi import Query
 from fastapi import Request
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -2150,6 +2151,10 @@ class DataExportRequest(BaseModel):
     scope: str = Field(default="conversations")
 
 
+class DataInspectRequest(BaseModel):
+    path: str
+
+
 class DataImportRequest(BaseModel):
     path: str
     mode: str = Field(default="merge")
@@ -2186,10 +2191,23 @@ async def data_clean(request: Request) -> dict[str, Any]:
         raise api_error(400, str(exc), error="validation_error") from exc
 
 
+# A separate read-only route: a runtime that predates it answers 404 instead of
+# treating an unknown "preview" flag on POST /clean as a real deletion.
+@router_data.get("/clean/preview")
+async def data_clean_preview(
+    request: Request, older_than_days: int = Query(default=90, ge=1, le=3650)
+) -> dict[str, Any]:
+    mgr = manager(request)
+    return await mgr.clean_storage_older_than(older_than_days, dry_run=True)
+
+
 @router_data.post("/clear-history")
 async def data_clear_history(request: Request) -> dict[str, Any]:
     mgr = manager(request)
-    return await mgr.clear_conversation_history()
+    try:
+        return await mgr.clear_conversation_history()
+    except ValueError as exc:
+        raise api_error(409, str(exc), error="history_blocked") from exc
 
 
 @router_data.post("/export")
@@ -2205,8 +2223,23 @@ async def data_export(request: Request) -> dict[str, Any]:
         raise api_error(500, str(exc), error="export_failed") from exc
 
 
+@router_data.post("/import/inspect")
+async def data_import_inspect(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = DataInspectRequest.model_validate(payload)
+    try:
+        return await mgr.inspect_data_bundle(req.path)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="invalid_bundle") from exc
+
+
 @router_data.post("/import")
 async def data_import(request: Request) -> dict[str, Any]:
+    from deepseek_tui.server.data_bundle import ThreadActiveError
+
     mgr = manager(request)
     payload = await body(request)
     req = DataImportRequest.model_validate(payload)
@@ -2214,6 +2247,8 @@ async def data_import(request: Request) -> dict[str, Any]:
         return await mgr.import_data_bundle(req.path, mode=req.mode)
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="not_found") from exc
+    except ThreadActiveError as exc:
+        raise api_error(409, str(exc), error="thread_active") from exc
     except ValueError as exc:
         raise api_error(400, str(exc), error="validation_error") from exc
     except OSError as exc:

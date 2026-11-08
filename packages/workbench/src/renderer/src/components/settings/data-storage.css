@@ -1,0 +1,86 @@
+/* BoardUI-inspired chart colors on softly tinted, compact statistic cards. */
+.ds-data-storage [data-storage-tone='blue'] { --storage-color: #2563eb; }
+.ds-data-storage [data-storage-tone='violet'] { --storage-color: #7c3aed; }
+.ds-data-storage [data-storage-tone='orchid'] { --storage-color: #c026d3; }
+.ds-data-storage [data-storage-tone='teal'] { --storage-color: #0d9488; }
+.ds-data-storage [data-storage-tone='slate'] { --storage-color: #64748b; }
+.ds-data-storage [data-storage-tone='amber'] { --storage-color: #d97706; }
+
+[data-theme='dark'] .ds-data-storage [data-storage-tone='blue'] { --storage-color: #60a5fa; }
+[data-theme='dark'] .ds-data-storage [data-storage-tone='violet'] { --storage-color: #a78bfa; }
+[data-theme='dark'] .ds-data-storage [data-storage-tone='orchid'] { --storage-color: #e879f9; }
+[data-theme='dark'] .ds-data-storage [data-storage-tone='teal'] { --storage-color: #2dd4bf; }
+[data-theme='dark'] .ds-data-storage [data-storage-tone='slate'] { --storage-color: #94a3b8; }
+[data-theme='dark'] .ds-data-storage [data-storage-tone='amber'] { --storage-color: #fbbf24; }
+
+.ds-data-storage__bar {
+  display: flex;
+  height: 14px;
+  gap: 3px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--ds-card);
+}
+
+.ds-data-storage__segment {
+  min-width: 2px;
+  border-radius: 3px;
+  background: var(--storage-color);
+}
+
+.ds-data-storage__list { display: grid; gap: 8px; }
+
+.ds-data-storage__stat {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--storage-color) 16%, var(--ds-border-muted));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--storage-color) 7%, var(--ds-card));
+}
+
+.ds-data-storage__dot {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  background: var(--storage-color);
+}
+
+.ds-data-storage__value {
+  width: 88px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--ds-text);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+[data-theme='dark'] .ds-data-storage__stat {
+  background: color-mix(in srgb, var(--storage-color) 10%, var(--ds-card));
+}
+
+@media (max-width: 480px) {
+  .ds-data-storage__stat { gap: 9px; padding: 10px; }
+  .ds-data-storage__value { width: 72px; font-size: 15px; }
+}
+
+.ds-data-storage__action {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--ds-text-muted);
+}
+.ds-data-storage__action:hover { color: var(--ds-text); background: var(--ds-surface-hover); }
+.ds-data-storage__action:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: 2px; }
+.ds-data-storage__action:disabled { opacity: 0.45; cursor: default; }
