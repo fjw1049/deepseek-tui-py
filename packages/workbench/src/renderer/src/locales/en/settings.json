@@ -299,7 +299,7 @@
   "terminalFontSize": "Terminal font size",
   "terminalFontSizeDesc": "Adjust terminal text independently from the app and chat font size.",
   "terminalFont": "Terminal font",
-  "terminalFontDesc": "Bundled JetBrains Mono works offline. You can also type an installed monospace font. Empty or unavailable fonts use the bundled default.",
+  "terminalFontDesc": "Uses JetBrains Mono with system Chinese fonts. You can also type an installed monospace font; empty or unavailable fonts use the default.",
   "terminalFontPlaceholder": "Default (JetBrains Mono)",
   "fontSmoothing": "Font smoothing",
   "fontSmoothingDesc": "Use macOS-style antialiasing for lighter, crisper text rendering.",

@@ -41,8 +41,10 @@ async function check() {
   const assets = path.join(base, 'out/renderer/assets')
   const cssFiles = fs.readdirSync(assets).filter(name => name.endsWith('.css'))
   assert(cssFiles.length > 0, 'Build the renderer before auditing fonts.')
-  for (const family of ['inter', 'jetbrains-mono', 'noto-sans-sc']) {
-    assert(fs.existsSync(path.join(base, 'out/renderer/font-licenses', family + '-OFL.txt')))
+  const retiredFonts = /inter-|noto-sans-sc|terminal-blocks/i
+  assert(!fs.readdirSync(assets).some(name => retiredFonts.test(name)), 'Retired fonts must not be bundled.')
+  for (const name of cssFiles) {
+    assert(!/font-family:\s*["']?(?:Inter|Noto Sans SC|DS Terminal Blocks)(?:["';,\s])/i.test(fs.readFileSync(path.join(assets, name), 'utf8')), 'Retired font declaration in ' + name)
   }
   await app.whenReady()
   const win = new BrowserWindow({ show: false, width: 1200, height: 1200, webPreferences: { backgroundThrottling: false } })
@@ -75,15 +77,8 @@ async function check() {
   }).outputFiles[0].text
   await win.webContents.executeJavaScript(browser)
   await inPage(win, async () => {
-    for (const family of ['Inter', 'JetBrains Mono', 'Noto Sans SC']) {
-      for (const weight of [400, 500, 600, 700]) {
-        const faces = await document.fonts.load(weight + ' 14px "' + family + '"', family === 'Noto Sans SC' ? '中文' : 'English')
-        if (!faces.length) throw new Error('Missing bundled font: ' + family + '/' + weight)
-      }
-    }
-    for (const family of ['Inter', 'JetBrains Mono']) for (const weight of [400, 700]) {
-      const faces = await document.fonts.load('italic ' + weight + ' 14px "' + family + '"')
-      if (!faces.length) throw new Error('Missing bundled italic: ' + family + '/' + weight)
+    for (const weight of [400, 500, 600, 700]) {
+      await document.fonts.load(weight + ' 14px "JetBrains Mono"')
     }
   })
   const results = await inPage(win, (samples) => {
@@ -100,7 +95,7 @@ async function check() {
       host.innerHTML = samples.map(([name, html]) => '<section data-name="' + name + '">' + html.replace('TEXT', '项目 Project 中文 English 0123，。！？') + '</section>').join('') + '<reasoning-effort-selector></reasoning-effort-selector>'
       const ui = getComputedStyle(document.body).fontFamily
       const mono = getComputedStyle(document.querySelector('kbd')).fontFamily
-      if (!ui.startsWith('Inter,')) throw new Error('UI fallback in ' + preset.id + ': ' + ui)
+      if (!ui.startsWith('-apple-system,')) throw new Error('UI fallback in ' + preset.id + ': ' + ui)
       if (!mono.startsWith('"JetBrains Mono",')) throw new Error('Code fallback in ' + preset.id + ': ' + mono)
       for (const [name, , code] of samples) {
         const section = host.querySelector('[data-name="' + name + '"]')
@@ -131,7 +126,7 @@ async function check() {
     api.applyAppearance(api.defaultAppearanceSettings())
     document.documentElement.dataset.theme = 'light'
     document.body.style.zoom = '1'
-    document.querySelector('#samples').innerHTML = '<h1 style="font-size:22px">内置字体实际渲染审核</h1><div id="font-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"></div><div id="audit-monaco" style="width:1100px;height:180px"></div><div id="audit-terminal" style="width:1100px;height:180px"></div>'
+    document.querySelector('#samples').innerHTML = '<h1 style="font-size:22px">系统界面字体与 JetBrains Mono 渲染审核</h1><div id="font-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"></div><div id="audit-monaco" style="width:1100px;height:180px"></div><div id="audit-terminal" style="width:1100px;height:180px"></div>'
     document.body.style.cssText += ';padding:24px;background:#f6f6f6'
     document.querySelector('#font-cards').innerHTML = cards.map(card => {
       const family = card.kind === 'ui' ? 'var(--font-ui)' : card.kind === 'code' ? 'var(--font-mono)' : 'var(--font-terminal)'
@@ -168,7 +163,7 @@ async function check() {
     }
   }, cards)
   assert(instances.editorFamily.startsWith("'JetBrains Mono'"))
-  assert(instances.terminalFamily.startsWith('JetBrains Mono'))
+  assert(instances.terminalFamily.startsWith("'JetBrains Mono'"))
   assert(Math.max(...instances.widths) - Math.min(...instances.widths) < 0.05, 'ASCII glyphs must remain monospace')
   assert(Math.abs(instances.editorWidth - instances.widths[0]) < 0.1, 'Monaco measured a fallback font')
   assert(instances.cols > 20 && instances.rows > 5)
@@ -184,15 +179,13 @@ async function check() {
   for (const card of cards) {
     const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: '#' + card.id })
     const { fonts } = await send('CSS.getPlatformFontsForNode', { nodeId })
-    const expected = card.language === 'zh' ? 'Noto Sans SC' : card.kind === 'ui' ? 'Inter' : 'JetBrains Mono'
     assert(fonts.length > 0, card.id)
     for (const font of fonts) {
-      // Static faces expose internal names such as Inter Medium and Noto Sans SC Thin.
-      assert(font.familyName === expected || font.familyName.startsWith(expected + ' '), card.id + ': ' + JSON.stringify(font))
-      assert(font.isCustomFont, card.id + ' must use the bundled font')
-      const weightName = { 400: /regular|italic/i, 500: /medium/i, 600: /semibold/i, 700: /bold/i }[card.weight]
-      assert(weightName.test(font.postScriptName), card.id + ' must use the requested weight')
-      if (card.italic) assert(/italic/i.test(font.postScriptName), card.id + ' must use a real italic face')
+      assert.equal(font.isCustomFont, card.language === 'en' && card.kind !== 'ui', card.id + ': ' + JSON.stringify(font))
+      if (process.platform === 'darwin') {
+        const expected = card.language === 'zh' ? /PingFang/ : card.kind === 'ui' ? /SF|System|Helvetica/ : /JetBrains Mono/
+        assert(expected.test(font.familyName), card.id + ': ' + JSON.stringify(font))
+      }
     }
     glyphs.push({ ...card, fonts })
   }
@@ -204,8 +197,8 @@ async function check() {
       fonts.push(...(await send('CSS.getPlatformFontsForNode', { nodeId })).fonts)
     }
     assert(fonts.some(font => font.familyName === 'JetBrains Mono'), selector + ': ' + JSON.stringify(fonts))
-    assert(fonts.some(font => font.familyName.startsWith('Noto Sans SC')), selector + ': ' + JSON.stringify(fonts))
-    assert(fonts.every(font => font.isCustomFont), selector)
+    assert(fonts.some(font => font.familyName.startsWith('PingFang')), selector + ': ' + JSON.stringify(fonts))
+    assert(fonts.every(font => font.isCustomFont === font.familyName.startsWith('JetBrains Mono')), selector)
     glyphs.push({ selector, fonts })
   }
   if (output) {
@@ -213,7 +206,7 @@ async function check() {
     fs.writeFileSync(path.join(output, 'computed-fonts.json'), JSON.stringify({ results, glyphs, instances }, null, 2))
     fs.writeFileSync(path.join(output, 'font-comparison.png'), (await win.webContents.capturePage()).toPNG())
   }
-  console.log(results.length + ' surface/language/preset/scale checks passed; ' + glyphs.length + ' actual glyph checks use bundled fonts.')
+  console.log(results.length + ' surface/language/preset/scale checks passed; ' + glyphs.length + ' actual glyph checks use system UI/Chinese fonts and JetBrains Mono.')
   console.log(JSON.stringify(instances))
   win.destroy()
 }

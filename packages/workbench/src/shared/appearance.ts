@@ -92,8 +92,8 @@ export const DEFAULT_CHAT_FONT_SIZE_PX = 15
 export const MIN_TERMINAL_FONT_SIZE_PX = 10
 export const MAX_TERMINAL_FONT_SIZE_PX = 22
 export const DEFAULT_TERMINAL_FONT_SIZE_PX = 13
-export const DEFAULT_UI_FONT_STACK = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', 'Inter', 'Noto Sans SC', sans-serif"
-export const DEFAULT_MONO_FONT_STACK = "'JetBrains Mono', 'Noto Sans SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
+export const DEFAULT_UI_FONT_STACK = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif"
+export const DEFAULT_MONO_FONT_STACK = "'JetBrains Mono', 'PingFang SC', Menlo, Consolas, 'Microsoft YaHei', monospace"
 
 export const DEFAULT_THEME_PRESET_ID = 'default'
 export const CUSTOM_THEME_PRESET_ID = 'custom'
@@ -686,7 +686,7 @@ export function defaultAppearanceSettings(): AppearanceSettingsV1 {
     emptyHomeLayout: 'normal',
     chatFontSizePx: DEFAULT_CHAT_FONT_SIZE_PX,
     terminalFontSizePx: DEFAULT_TERMINAL_FONT_SIZE_PX,
-    terminalFontFamily: 'JetBrains Mono',
+    terminalFontFamily: '',
     fontSmoothing: true,
     timestampFormat: 'locale'
   }

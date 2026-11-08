@@ -259,7 +259,7 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
 })
 
 describe('normalizeUiFontFamily', () => {
-  it('uses bundled Inter/Noto and migrates the retired system-native choice', () => {
+  it('preserves the legacy font setting alias for the system UI stack', () => {
     expect(normalizeUiFontFamily(undefined)).toBe('inter-noto')
     expect(normalizeUiFontFamily('invalid')).toBe('inter-noto')
     expect(normalizeUiFontFamily('inter-noto')).toBe('inter-noto')

@@ -14,15 +14,14 @@
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
   --font-default-ui: -apple-system, BlinkMacSystemFont, 'PingFang SC',
-    'Segoe UI', 'Microsoft YaHei', 'Inter', 'Noto Sans SC', sans-serif;
+    'Segoe UI', 'Microsoft YaHei', sans-serif;
   --font-ui: var(--font-default-ui);
   --font-chat: var(--font-ui);
   --font-display: var(--font-ui);
   /* Real monospace for code-like UI strings (URLs, model/task ids, tool
      output). Static stack — user's terminal font choice only affects
      --font-terminal, which is overridden inline by apply-appearance.ts. */
-  --font-default-mono: 'JetBrains Mono', 'Noto Sans SC', ui-monospace, SFMono-Regular,
-    'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-default-mono: 'JetBrains Mono', 'PingFang SC', Menlo, Consolas, 'Microsoft YaHei', monospace;
   --font-mono: var(--font-default-mono);
   --font-terminal: var(--font-default-mono);
   --ds-chat-code-font: var(--font-mono);

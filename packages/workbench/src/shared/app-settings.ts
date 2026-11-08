@@ -1430,7 +1430,7 @@ export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[]
 }
 
 export function normalizeUiFontFamily(_raw: unknown): UiFontFamily {
-  // The retired global selector always resolves to the bundled UI stack.
+  // Keep the legacy serialized value; both aliases use the system UI stack.
   // Per-theme custom fonts remain in appearance.themes.
   return 'inter-noto'
 }

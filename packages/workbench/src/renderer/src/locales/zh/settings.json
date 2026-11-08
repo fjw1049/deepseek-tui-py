@@ -299,7 +299,7 @@
   "terminalFontSize": "终端字号",
   "terminalFontSizeDesc": "独立于应用与聊天字号，单独调整终端文字大小。",
   "terminalFont": "终端字体",
-  "terminalFontDesc": "内置 JetBrains Mono，离线可用。也可输入本机已安装的等宽字体；留空或未安装时使用内置默认字体。",
+  "terminalFontDesc": "使用 JetBrains Mono，中文使用系统字体（macOS 为苹方）。也可输入本机已安装的等宽字体；留空或未安装时使用默认字体。",
   "terminalFontPlaceholder": "默认（JetBrains Mono）",
   "fontSmoothing": "字体平滑",
   "fontSmoothingDesc": "使用 macOS 风格的抗锯齿渲染，让文字更轻更锐利。",

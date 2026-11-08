@@ -16,6 +16,11 @@ import {
 import { buildAppearanceOverrideCss, buildChromeThemeCssVars } from './appearance-derive'
 
 describe('normalizeAppearanceSettings', () => {
+  it('preserves configured terminal fonts', () => {
+    expect(normalizeAppearanceSettings({ terminalFontFamily: 'JetBrains Mono' }).terminalFontFamily).toBe('JetBrains Mono')
+    expect(normalizeAppearanceSettings({ terminalFontFamily: 'Monaco' }).terminalFontFamily).toBe('Monaco')
+  })
+
   it('preserves the old sidebar tint and Auto blur when loading legacy themes', () => {
     const settings = normalizeAppearanceSettings({ themes: { dark: { translucent: true } } })
     expect(settings.translucency).toEqual({
@@ -132,7 +137,7 @@ describe('theme presets', () => {
     expect(DEFAULT_CHROME_THEMES.light.accent).toBe('#3183d8')
     expect(DEFAULT_CHROME_THEMES.dark.accent).toBe('#88c0d0')
     expect(defaultAppearanceSettings().uiDensity).toBe('compact')
-    expect(defaultAppearanceSettings().terminalFontFamily).toBe('JetBrains Mono')
+    expect(defaultAppearanceSettings().terminalFontFamily).toBe('')
   })
 
   it('the Workbench preset keeps the legacy handcrafted seeds', () => {
@@ -354,12 +359,16 @@ describe('appearance-derive', () => {
     expect(bare['--ds-chat-code-font']).toBeUndefined()
   })
 
-  it('prefers platform UI fonts while retaining bundled monospace fonts', () => {
+  it('uses system UI fonts and JetBrains Mono with system Chinese fallback', () => {
     const theme = { ...DEFAULT_CHROME_THEMES.dark, uiFont: 'Unavailable UI', codeFont: 'Unavailable Mono' }
     const vars = buildChromeThemeCssVars(theme, 'dark')
-    expect(vars['--font-ui'].indexOf('-apple-system')).toBeLessThan(vars['--font-ui'].indexOf("'Inter'"))
-    expect(vars['--font-ui'].indexOf("'PingFang SC'")).toBeLessThan(vars['--font-ui'].indexOf("'Noto Sans SC'"))
-    expect(vars['--font-mono'].indexOf("'JetBrains Mono'")).toBeLessThan(vars['--font-mono'].indexOf('ui-monospace'))
+    expect(vars['--font-ui']).toContain('-apple-system')
+    expect(vars['--font-ui']).not.toContain("'Inter'")
+    expect(vars['--font-ui']).toContain("'PingFang SC'")
+    expect(vars['--font-mono']).toContain('Menlo')
+    expect(vars['--font-mono']).toContain('JetBrains Mono')
+    expect(vars['--font-mono']).toContain("'PingFang SC'")
+    expect(vars['--font-mono']).not.toContain('Noto Sans')
     expect(vars['--ds-chat-code-font']).toBe(vars['--font-mono'])
   })
 
