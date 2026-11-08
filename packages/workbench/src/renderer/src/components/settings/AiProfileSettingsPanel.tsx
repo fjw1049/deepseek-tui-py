@@ -83,21 +83,21 @@ export function AiProfileSettingsPanel(): ReactElement {
             </div>
           </div>
         </section>
-        <div className="flex flex-col gap-5" aria-busy={usage.loading}>
+        <div className="flex flex-col gap-4" aria-busy={usage.loading}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-medium text-ds-muted">{t('aiProfile.chartPeriod')}</h2>
               <GlassSegmentedControl value={chartRange} onChange={setChartRange} items={chartRanges} ariaLabel={t('aiProfile.chartPeriod')} />
             </div>
-            <section className="ds-content-card overflow-hidden rounded-2xl p-5">
+            <section className="overflow-hidden rounded-[20px] bg-ds-subtle px-4 pb-4 pt-4">
               <h2 className="text-sm text-ds-muted">{t('aiProfile.bars')}</h2>
               <p className="mt-1 text-xs text-ds-muted">{chartGranularity}</p>
-              <p className="mb-4 mt-1 text-xl font-medium tabular-nums text-ds-ink">{ready ? formatCompactNumber(chartTokens) : '—'} tokens</p>
-              <div className="h-[280px] overflow-y-auto scrollbar-hide"><ModelUsageTrendChart segmentDays={chartSegmentDays} daily={chartDaily} composerModelMeta={modelMeta} colorScheme="purple" showYAxis={false} /></div>
+              <p className="mb-3 mt-0.5 text-xl font-medium tabular-nums text-ds-ink">{ready ? formatCompactNumber(chartTokens) : '—'} tokens</p>
+              <div><ModelUsageTrendChart segmentDays={chartSegmentDays} daily={chartDaily} composerModelMeta={modelMeta} colorScheme="purple" showYAxis={false} /></div>
             </section>
-            <section className="ds-content-card overflow-hidden rounded-2xl p-5">
-              <h2 className="text-[16px] font-semibold text-ds-ink">{t('aiProfile.trend')}</h2>
-              <p className="mb-4 mt-1 text-sm text-ds-muted">{t('aiProfile.lineDescription', { days: chartRange })} · {chartGranularity}</p>
-              <div className="h-[280px] overflow-y-auto scrollbar-hide"><ModelUsageTrendChart segmentDays={chartSegmentDays} daily={chartDaily} composerModelMeta={modelMeta} variant="line" colorScheme="purple" showYAxis={false} /></div>
+            <section className="overflow-hidden rounded-[20px] bg-ds-subtle px-4 pb-4 pt-4">
+              <h2 className="text-sm text-ds-muted">{t('aiProfile.trend')}</h2>
+              <p className="mb-3 mt-1 text-xs text-ds-faint">{t('aiProfile.lineDescription', { days: chartRange })} · {chartGranularity}</p>
+              <div><ModelUsageTrendChart segmentDays={chartSegmentDays} daily={chartDaily} composerModelMeta={modelMeta} variant="line" colorScheme="purple" showYAxis={false} /></div>
             </section>
         </div>
       </div>
