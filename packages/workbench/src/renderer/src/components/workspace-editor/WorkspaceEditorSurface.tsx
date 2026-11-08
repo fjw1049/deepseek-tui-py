@@ -57,14 +57,15 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
     const innerRef = useRef<WorkspaceEditorSurfaceHandle>(null)
     useEffect(() => {
       let cancelled = false
+      const controller = new AbortController()
       // A failed grammar must not prevent reading or editing the file.
-      void prepareWorkspaceLanguage(language).catch(() => {}).then(() => {
+      void prepareWorkspaceLanguage(language).catch(() => {}).then(async () => {
         if (!cancelled && !tab.loading) {
-          prepareWorkspaceModel(tab, props.paneId)
-          setPreparedModel(modelKey)
+          await Promise.resolve(prepareWorkspaceModel(tab, props.paneId, controller.signal)).catch(() => {})
+          if (!cancelled) setPreparedModel(modelKey)
         }
       })
-      return () => { cancelled = true }
+      return () => { cancelled = true; controller.abort() }
     }, [language, modelKey, tab, props.paneId])
     const busy = tab.loading || preparedModel !== modelKey
     const ready = useMemo(() => busy ? null : { tab, patch }, [busy, tab, patch])

@@ -227,3 +227,22 @@ it('does not reset scrolling when full context arrives, but resets for another f
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 })
   } finally { await act(async () => root.unmount()); host.remove() }
 })
+
+it.each(['unified', 'split'] as const)('windows large %s diffs and navigates to an unmounted hunk', async diffStyle => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const patch = ['@@ -1,900 +1,900 @@', ...Array.from({ length: 900 }, (_, i) => '+line' + i), '@@ -901 +901 @@', '-last', '+end'].join('\n')
+  try {
+    await act(async () => root.render(createElement(DiffView, { patch, diffStyle })))
+    expect(host.querySelectorAll('tbody tr').length).toBeLessThan(100)
+    expect(host.textContent).not.toContain('+end')
+    const viewport = host.querySelector<HTMLElement>('.ds-change-inspector__code')!
+    const scrollTo = viewport.scrollTo = vi.fn()
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="diffNextChange"]')!.click())
+    expect(scrollTo.mock.calls[0][0].top).toBeGreaterThan(10_000)
+    await act(async () => root.render(createElement(DiffView, { patch: '@@ -1 +1 @@\n-old\n+new', diffStyle })))
+    expect(host.textContent).toContain('new')
+    expect(host.querySelectorAll('tbody tr').length).toBeLessThan(5)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})

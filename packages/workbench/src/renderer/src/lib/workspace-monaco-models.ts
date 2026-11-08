@@ -1,3 +1,4 @@
+import { prepareSemanticTokens, cancelSemanticPreparation } from './monaco-lexical-semantic-tokens'
 import * as monaco from 'monaco-editor'
 import { useWorkspaceEditorStore, type EditorPaneId, type EditorTab } from '../store/workspace-editor-store'
 
@@ -14,12 +15,16 @@ export function workspaceModelPath(tabId: string, paneId: EditorPaneId): string 
   return uri
 }
 
-/** Prepare only the first viewport before attaching a new model. */
-export function prepareWorkspaceModel(tab: EditorTab, paneId: EditorPaneId): void {
+/** Prepare name colors in the worker; Monaco tokenizes visible syntax on attach. */
+export async function prepareWorkspaceModel(tab: EditorTab, paneId: EditorPaneId, signal?: AbortSignal): Promise<void> {
   const uri = monaco.Uri.parse(workspaceModelPath(tab.id, paneId))
-  if (monaco.editor.getModel(uri)) return
-  const model = monaco.editor.createModel(tab.content, languageForPath(tab.path), uri)
-  monaco.editor.colorizeModelLine(model, Math.min(model.getLineCount(), 200))
+  const existing = monaco.editor.getModel(uri)
+  const model = existing ?? monaco.editor.createModel(tab.content, languageForPath(tab.path), uri)
+  if (signal?.aborted) return
+  const cancel = () => cancelSemanticPreparation(model)
+  signal?.addEventListener('abort', cancel, { once: true })
+  try { await prepareSemanticTokens(model) }
+  finally { signal?.removeEventListener('abort', cancel) }
 }
 
 export function pruneClosedWorkspaceModels(): void {

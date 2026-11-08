@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useCodeHighlights } from './use-code-highlights'
 
 const { highlight } = vi.hoisted(() => ({ highlight: vi.fn() }))
-vi.mock('../components/chat/SharedCodeBlock', () => ({ highlightCodeHtml: highlight }))
+vi.mock('./highlight-client', () => ({ highlightCodeHtml: highlight }))
 
 function Probe({ code, language = 'typescript' }: { code: string; language?: string }) {
   const lines = useCodeHighlights(code, language)

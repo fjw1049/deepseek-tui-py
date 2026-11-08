@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "audit:fonts": "electron scripts/check-bilingual-fonts.cjs",
+    "audit:rendering": "electron scripts/check-code-rendering.cjs",
     "dist": "npm run build && npx --yes electron-builder@26.8.1 --config electron-builder.config.cjs --publish never",
     "dist:mac": "npm run dist -- --mac dmg zip --arm64 --x64",
     "dist:mac:signed": "MAC_SIGN=1 npm run dist -- --mac dmg zip --arm64 --x64",

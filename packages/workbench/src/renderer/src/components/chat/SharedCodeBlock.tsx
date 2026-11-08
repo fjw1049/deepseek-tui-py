@@ -1,3 +1,6 @@
+import { renderFallbackHtml } from '../../lib/code-fallback'
+import { highlightCodeHtml } from '../../lib/highlight-client'
+export { highlightCodeHtml } from '../../lib/highlight-client'
 import { useTranslation } from 'react-i18next'
 import { copyText } from '../../lib/copy-text'
 import { useConversationScope } from './conversation-scope'
@@ -19,10 +22,8 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react'
-import type { ThemeRegistration, ThemeRegistrationRaw } from 'shiki'
 import { useChatStore } from '../../store/chat-store'
 import { basenameOfPath, formatFileLineRange } from '../../lib/file-chip'
-import { CODE_CHROME, CODE_PALETTE, SHIKI_SCOPE_SLOTS, type CodeAppearance } from '../../lib/code-palette'
 import { normalizeLanguage } from './code-language'
 import { FileChip } from './FileChip'
 import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
@@ -30,54 +31,6 @@ import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 const TRAILING_NEWLINES_REGEX = /\n+$/
 const COLLAPSE_HEIGHT = 480
 const COPY_RESET_MS = 2000
-
-/**
- * Both chat themes come from lib/code-palette.ts — the same slots the Monaco
- * editor consumes — so a file keeps its colors as it moves between the editor
- * and a chat block. The built-in `github-light` this replaces was the light
- * half of that drift.
- */
-function shikiTheme(appearance: CodeAppearance, name: string): ThemeRegistration {
-  const slots = CODE_PALETTE[appearance]
-  const background = appearance === 'dark' ? '#181818' : '#ffffff'
-  // One TextMate settings entry per distinct style, scopes grouped under it.
-  const groups = new Map<string, { scope: string[]; settings: Record<string, string> }>()
-  for (const [scope, slot, fontStyle] of SHIKI_SCOPE_SLOTS) {
-    const style = slots[slot]
-    const font = fontStyle ?? style.fontStyle ?? ''
-    const settings: Record<string, string> = { foreground: style.color }
-    if (font) settings.fontStyle = font
-    if (style.background) settings.background = style.background
-    const key = JSON.stringify(settings)
-    const group = groups.get(key)
-    if (group) group.scope.push(scope)
-    else groups.set(key, { scope: [scope], settings })
-  }
-  return {
-    name,
-    displayName: name,
-    type: appearance,
-    fg: slots.ink.color,
-    bg: background,
-    colors: {
-      ...CODE_CHROME[appearance],
-      'editor.background': background,
-      'terminal.ansiGreen': slots.added.color,
-      'terminal.ansiRed': slots.removed.color,
-      'terminal.ansiBlue': slots.changed.color,
-      'terminal.ansiMagenta': slots.function.color
-    },
-    settings: [
-      { settings: { foreground: slots.ink.color, background } },
-      ...groups.values()
-    ]
-  } satisfies ThemeRegistration as ThemeRegistrationRaw as ThemeRegistration
-}
-
-const SHIKI_THEMES = {
-  light: shikiTheme('light', 'ds-light'),
-  dark: shikiTheme('dark', 'codex')
-}
 
 const DOWNLOAD_EXTENSIONS: Record<string, string> = {
   bash: 'sh',
@@ -111,82 +64,6 @@ const DOWNLOAD_EXTENSIONS: Record<string, string> = {
   xml: 'xml',
   yaml: 'yml',
   yml: 'yml'
-}
-
-let shikiPromise: Promise<typeof import('shiki')> | null = null
-const highlightCache = new Map<string, string>()
-const inflightHighlights = new Map<string, Promise<string>>()
-const HIGHLIGHT_CACHE_MAX = 48
-
-function trimHighlightCache(): void {
-  while (highlightCache.size > HIGHLIGHT_CACHE_MAX) {
-    const oldest = highlightCache.keys().next().value
-    if (oldest === undefined) break
-    highlightCache.delete(oldest)
-  }
-}
-
-function loadShiki(): Promise<typeof import('shiki')> {
-  shikiPromise ??= import('shiki').catch((error) => { shikiPromise = null; throw error })
-  return shikiPromise
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-}
-
-function renderFallbackHtml(code: string): string {
-  const lines = code.split('\n')
-  return `<pre class="shiki shiki-themes"><code>${lines
-    .map((line) => `<span class="line">${escapeHtml(line)}</span>`)
-    .join('\n')}</code></pre>`
-}
-
-export async function highlightCodeHtml(code: string, language: string): Promise<string> {
-  const normalized = normalizeLanguage(language)
-  const cacheKey = `${normalized || 'plain'}\u0000${code}`
-  const cached = highlightCache.get(cacheKey)
-  if (cached) return cached
-
-  const inflight = inflightHighlights.get(cacheKey)
-  if (inflight) return inflight
-
-  const task = (async () => {
-    if (!normalized) {
-      const fallback = renderFallbackHtml(code)
-      highlightCache.set(cacheKey, fallback)
-      trimHighlightCache()
-      return fallback
-    }
-
-    try {
-      const { codeToHtml } = await loadShiki()
-      const html = await codeToHtml(code, {
-        lang: normalized,
-        themes: SHIKI_THEMES
-      })
-      highlightCache.set(cacheKey, html)
-      trimHighlightCache()
-      return html
-    } catch (error) {
-      // Common cause in Electron: CSP missing 'wasm-unsafe-eval' for Oniguruma.
-      // Do not cache failures — CSP/HMR fixes should be able to retry.
-      console.warn('[SharedCodeBlock] Shiki highlight failed; using plain text', error)
-      return renderFallbackHtml(code)
-    }
-  })()
-
-  inflightHighlights.set(cacheKey, task)
-  try {
-    return await task
-  } finally {
-    inflightHighlights.delete(cacheKey)
-  }
 }
 
 function extensionForLanguage(language: string): string {
@@ -259,6 +136,7 @@ export function SharedCodeBlock({
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
     const skipHighlight = deferHighlightWhileBusy && busy
 
     if (skipHighlight) {
@@ -276,14 +154,15 @@ export function SharedCodeBlock({
       setHtml(renderFallbackHtml(trimmedCode))
     }
 
-    void highlightCodeHtml(trimmedCode, language).then((nextHtml) => {
+    void highlightCodeHtml(trimmedCode, language, controller.signal).then((nextHtml) => {
       if (cancelled) return
       setHtml(nextHtml)
       highlightedForRef.current = contentKey
-    })
+    }).catch(() => { /* Keep escaped source if highlighting fails or is cancelled. */ })
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [busy, contentKey, deferHighlightWhileBusy, language, trimmedCode])
 

@@ -1,3 +1,4 @@
+vi.mock('./monaco-lexical-semantic-tokens', () => ({ prepareSemanticTokens: async () => null, cancelSemanticPreparation: () => {} }))
 import { describe, expect, it, vi } from 'vitest'
 import { Uri, editor } from 'monaco-editor'
 import { workspaceModelPath, prepareWorkspaceModel } from './workspace-monaco-models'
@@ -37,15 +38,15 @@ describe('workspaceModelPath', () => {
 })
 
 
-it('prepares a bounded first viewport once and preserves existing models', () => {
+it('prepares models without forcing main-thread tokenization and preserves edits', () => {
   const tab = { id: 'a.py', path: 'a.py', kind: 'text' as const, content: 'example', savedContent: 'example', loading: false, error: null }
   const model = { getLineCount: () => 2000 } as unknown as editor.ITextModel
   vi.mocked(editor.createModel).mockReturnValue(model)
   prepareWorkspaceModel(tab, 'primary')
   expect(editor.createModel).toHaveBeenCalledWith('example', 'python', Uri.parse(workspaceModelPath(tab.id, 'primary')))
-  expect(editor.colorizeModelLine).toHaveBeenCalledWith(model, 200)
+  expect(editor.colorizeModelLine).not.toHaveBeenCalled()
   vi.mocked(editor.getModel).mockReturnValue(model)
   prepareWorkspaceModel({ ...tab, content: 'do not overwrite edits' }, 'primary')
   expect(editor.createModel).toHaveBeenCalledTimes(1)
-  expect(editor.colorizeModelLine).toHaveBeenCalledTimes(1)
+  expect(editor.colorizeModelLine).not.toHaveBeenCalled()
 })

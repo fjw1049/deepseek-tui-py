@@ -1,6 +1,7 @@
+import { useVirtualDiffRows } from '../lib/use-virtual-diff-rows'
 import { createPortal } from 'react-dom'
 import { copyText } from '../lib/copy-text'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Copy, FileDiff, Loader2, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
@@ -312,6 +313,11 @@ export function highlightChangedText(text: string, html: string | undefined, cou
   return container.innerHTML
 }
 
+const CodeLine = memo(function CodeLine({ text, html, counterpart }: { text: string; html?: string; counterpart?: string | null }) {
+  const content = useMemo(() => highlightChangedText(text, html, counterpart), [text, html, counterpart])
+  return <span className="ds-syntax-line" dangerouslySetInnerHTML={{ __html: content }} />
+})
+
 /**
  * Lightweight diff renderer with dual gutters and optional side-by-side split.
  * Chat tool cards keep unified; the change inspector defaults to split.
@@ -339,8 +345,8 @@ export function DiffView({
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const requestedFullContext = showFullFile && fullFilePatch !== undefined
-  const fullContext = requestedFullContext && fullFilePatch.length <= 200_000 && fullFilePatch.split('\n').length <= 2000
-  const sourcePatch = fullContext ? fullFilePatch : patch
+  const fullContext = useMemo(() => requestedFullContext && fullFilePatch.length <= 200_000 && fullFilePatch.split('\n').length <= 2000, [requestedFullContext, fullFilePatch])
+  const sourcePatch = fullContext && fullFilePatch !== undefined ? fullFilePatch : patch
   const visiblePatch = useMemo(() => sourcePatch.slice(0, 200_000).split('\n').slice(0, 2000).join('\n'), [sourcePatch])
   const previewLimited = (requestedFullContext && !fullContext) || visiblePatch.length < sourcePatch.length
   const looksLikePatch = useMemo(
@@ -362,17 +368,18 @@ export function DiffView({
   const oldSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'add'), [unifiedRows])
   const newSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'del'), [unifiedRows])
   const language = languageForPath(fileLabel ?? '')
-  const oldHighlights = useCodeHighlights(oldSource.map((row) => stripPrefix(row.text)).join('\n'), language)
-  const newHighlights = useCodeHighlights(newSource.map((row) => stripPrefix(row.text)).join('\n'), language)
-  const oldTokens = new Map(oldSource.map((row, index) => [row.oldNo, oldHighlights?.[index]]))
-  const newTokens = new Map(newSource.map((row, index) => [row.newNo, newHighlights?.[index]]))
+  const oldCode = useMemo(() => oldSource.map(row => stripPrefix(row.text)).join('\n'), [oldSource])
+  const oldHighlights = useCodeHighlights(oldCode, language)
+  const newCode = useMemo(() => newSource.map(row => stripPrefix(row.text)).join('\n'), [newSource])
+  const newHighlights = useCodeHighlights(newCode, language)
+  const oldTokens = useMemo(() => new Map(oldSource.map((row, index) => [row.oldNo, oldHighlights?.[index]])), [oldSource, oldHighlights])
+  const newTokens = useMemo(() => new Map(newSource.map((row, index) => [row.newNo, newHighlights?.[index]])), [newSource, newHighlights])
   const codeLine = (text: string, html: string | undefined, counterpart?: string | null): ReactElement => {
-    const content = highlightChangedText(text, html, counterpart)
-    return <span className="ds-syntax-line" dangerouslySetInnerHTML={{ __html: content }} />
+    return <CodeLine text={text} html={html} counterpart={counterpart} />
   }
   const splitRows = useMemo(() => buildSplitRows(bodyLines), [bodyLines])
-  const oldPairs = new Map(splitRows.filter((row) => row.leftKind === 'del').map((row) => [row.leftNo, row.rightText]))
-  const newPairs = new Map(splitRows.filter((row) => row.rightKind === 'add').map((row) => [row.rightNo, row.leftText]))
+  const oldPairs = useMemo(() => new Map(splitRows.filter((row) => row.leftKind === 'del').map((row) => [row.leftNo, row.rightText])), [splitRows])
+  const newPairs = useMemo(() => new Map(splitRows.filter((row) => row.rightKind === 'add').map((row) => [row.rightNo, row.leftText])), [splitRows])
   const [unfoldedContext, setUnfoldedContext] = useState<Set<number>>(new Set())
   const displayRows = useMemo(
     () => fullContext ? unifiedRows.map((row): UnifiedDisplayRow => ({ type: 'row', row }))
@@ -404,6 +411,12 @@ export function DiffView({
     return result
   }, [splitRows, unfoldedContext, fullContext])
   const bodyRef = useRef<HTMLDivElement | HTMLPreElement>(null)
+  const rowLengths = useMemo(() => diffStyle === 'split'
+    ? splitDisplayRows.map(row => row.kind === 'fold' ? 20 : row.kind === 'meta' ? (row.meta?.length ?? 0) : Math.max(row.leftText?.length ?? 0, row.rightText?.length ?? 0))
+    : displayRows.map(entry => entry.type === 'fold' ? 20 : entry.row.text.length), [diffStyle, splitDisplayRows, displayRows])
+  const virtual = useVirtualDiffRows(bodyRef, rowLengths, wrapLines, diffStyle === 'split', rowLengths)
+  const spacer = (height: number, columns: number) => height > 0 ? <tr aria-hidden><td colSpan={columns} style={{ height, padding: 0, border: 0 }} /></tr> : null
+
 
   useLayoutEffect(() => {
     if (!follow) return
@@ -412,13 +425,13 @@ export function DiffView({
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
   }, [follow, patch])
 
-  const unifiedHunks = new Set(unifiedRows.filter((row, index) => fullContext
+  const unifiedHunks = useMemo(() => new Set(unifiedRows.filter((row, index) => fullContext
     ? (row.kind === 'add' || row.kind === 'del') && !['add', 'del'].includes(unifiedRows[index - 1]?.kind ?? '')
-    : row.kind === 'meta').map((row) => row.key))
-  const splitHunks = new Set(splitRows.filter((row, index) => fullContext
+    : row.kind === 'meta').map((row) => row.key)), [unifiedRows, fullContext])
+  const splitHunks = useMemo(() => new Set(splitRows.filter((row, index) => fullContext
     ? (row.leftKind === 'del' || row.rightKind === 'add') &&
       splitRows[index - 1]?.leftKind !== 'del' && splitRows[index - 1]?.rightKind !== 'add'
-    : row.kind === 'meta').map((row) => row.key))
+    : row.kind === 'meta').map((row) => row.key)), [splitRows, fullContext])
   const hunkCount = diffStyle === 'split' ? splitHunks.size : unifiedHunks.size
   useLayoutEffect(() => {
     if (!follow) bodyRef.current?.scrollTo?.({ top: 0, left: 0 })
@@ -426,6 +439,17 @@ export function DiffView({
   const navigateHunk = (direction: number): void => {
     const viewport = bodyRef.current
     if (!viewport) return
+    if (virtual.enabled) {
+      const indices = diffStyle === 'split'
+        ? splitDisplayRows.flatMap((row, index) => row.kind !== 'fold' && splitHunks.has(row.key) ? [index] : [])
+        : displayRows.flatMap((entry, index) => entry.type === 'row' && unifiedHunks.has(entry.row.key) ? [index] : [])
+      const tops = indices.map(index => virtual.offsets[index])
+      if (!tops.length) return
+      const target = direction > 0 ? tops.find(top => top > viewport.scrollTop + 1) ?? tops[0]
+        : [...tops].reverse().find(top => top < viewport.scrollTop - 1) ?? tops[tops.length - 1]
+      viewport.scrollTo({ top: target })
+      return
+    }
     const hunks = Array.from(viewport.querySelectorAll<HTMLElement>('[data-diff-hunk]'))
     if (!hunks.length) return
     const bounds = viewport.getBoundingClientRect()
@@ -495,9 +519,10 @@ export function DiffView({
     />
   ) : null
 
-  const loadingStatus = fullFilePending ? (
+  const syntaxPending = language !== 'plaintext' && ((Boolean(oldCode) && !oldHighlights) || (Boolean(newCode) && !newHighlights))
+  const loadingStatus = fullFilePending || syntaxPending ? (
     <div role="status" className="pointer-events-none absolute bottom-3 right-3 z-10 flex items-center gap-2 rounded bg-ds-card px-2 py-1 text-[12.5px] text-ds-muted shadow-sm">
-      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{t('diffLoadingFullFile')}
+      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{t(fullFilePending ? 'diffLoadingFullFile' : 'viewLoading')}
     </div>
   ) : null
 
@@ -528,7 +553,7 @@ export function DiffView({
       </div> : null}
       <div ref={(node) => { bodyRef.current = node }} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
-          <table className="ds-diff-table border-collapse">
+          <table className="ds-diff-table border-collapse" style={{ visibility: syntaxPending ? 'hidden' : undefined, width: virtual.enabled && !wrapLines ? virtual.width : undefined, tableLayout: virtual.enabled ? 'fixed' : undefined }}>
             <colgroup>
               <col style={gutterStyle} />
               <col />
@@ -536,9 +561,10 @@ export function DiffView({
               <col />
             </colgroup>
             <tbody>
-              {splitDisplayRows.map((row) => {
+              {spacer(virtual.before, 4)}
+              {splitDisplayRows.slice(virtual.start, virtual.end).map((row, index) => {
                 if (row.kind === 'fold') return (
-                  <tr key={`fold-${row.key}`} className="ds-diff-fold"><td colSpan={4}>
+                  <tr key={`fold-${row.key}`} data-virtual-row={virtual.start + index} className="ds-diff-fold"><td colSpan={4}>
                     <button type="button" onClick={() => expandContext(row.key)} title={t('diffExpandContext')}>
                       ⋯ {t('diffUnmodifiedLines', { count: row.count })}
                     </button>
@@ -547,7 +573,7 @@ export function DiffView({
                 if (row.kind === 'meta') {
                   if (fullContext) return null
                   return (
-                    <tr key={row.key} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined} className="text-[color:var(--ds-diff-hunk)]">
+                    <tr key={row.key} data-virtual-row={virtual.start + index} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined} className="text-[color:var(--ds-diff-hunk)]">
                       <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
                         {row.meta}
                       </td>
@@ -555,7 +581,7 @@ export function DiffView({
                   )
                 }
                 return (
-                  <tr key={row.key} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined}>
+                  <tr key={row.key} data-virtual-row={virtual.start + index} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined}>
                     <td
                       className={`select-none px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
                     >
@@ -579,20 +605,22 @@ export function DiffView({
                   </tr>
                 )
               })}
+              {spacer(virtual.after, diffStyle === 'split' ? 4 : 3)}
             </tbody>
           </table>
         ) : (
-          <table className="ds-diff-table border-collapse">
+          <table className="ds-diff-table border-collapse" style={{ visibility: syntaxPending ? 'hidden' : undefined, width: virtual.enabled && !wrapLines ? virtual.width : undefined, tableLayout: virtual.enabled ? 'fixed' : undefined }}>
             <colgroup>
               <col style={gutterStyle} />
               <col style={gutterStyle} />
               <col />
             </colgroup>
             <tbody>
-              {displayRows.map((entry) => {
+              {spacer(virtual.before, 3)}
+              {displayRows.slice(virtual.start, virtual.end).map((entry, index) => {
                 if (entry.type === 'fold') {
                   return (
-                    <tr key={`fold-${entry.key}`}>
+                    <tr key={`fold-${entry.key}`} data-virtual-row={virtual.start + index}>
                       <td colSpan={3} className="bg-[color-mix(in_srgb,var(--ds-text)_4%,transparent)] px-2 py-0.5">
                         <button
                           type="button"
@@ -617,7 +645,7 @@ export function DiffView({
                 if (row.kind === 'meta') {
                   if (fullContext) return null
                   return (
-                    <tr key={row.key} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined}>
+                    <tr key={row.key} data-virtual-row={virtual.start + index} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined}>
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
                       <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[13.5px] text-[color:var(--ds-diff-hunk)]">
@@ -627,7 +655,7 @@ export function DiffView({
                   )
                 }
                 return (
-                  <tr key={row.key} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined} className={row.cls}>
+                  <tr key={row.key} data-virtual-row={virtual.start + index} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined} className={row.cls}>
                     <td className="select-none px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint">
                       {row.oldNo ?? ''}
                     </td>
@@ -641,6 +669,7 @@ export function DiffView({
                   </tr>
                 )
               })}
+              {spacer(virtual.after, 3)}
             </tbody>
           </table>
         )}

@@ -194,3 +194,9 @@ describe('lexical semantic tokens', () => {
     expect(tokensIn(lines, 'typescript')).toEqual([])
   })
 })
+
+it('keeps enhanced colors beyond the former 5000-line cutoff', () => {
+  const lines = [...Array(5001).fill(''), 'result = calculate(value)']
+  const result = provideSemanticTokens(mockModel(lines, 'python')) as { data: Uint32Array }
+  expect(decode(result.data).some(([line, , , type]) => line === 5001 && type === 'function')).toBe(true)
+})
