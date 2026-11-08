@@ -3,15 +3,17 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { GitBranchesResult } from '@shared/git-branches'
+import { GitBranchPicker } from './GitBranchPicker'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
 
+const activity = vi.hoisted(() => ({ dirtyTick: 0 }))
 const translate = vi.hoisted(() => (key: string) => key)
 vi.mock('./ProjectContextPicker', () => ({ ProjectContextPicker: () => null }))
 vi.mock('./EnvironmentPicker', () => ({ EnvironmentPicker: () => null }))
 vi.mock('./GitLogDialog', () => ({ GitLogDialog: () => null }))
 vi.mock('../../store/chat-store', () => ({
   useChatStore: (select: (state: { workspaceDirtyTick: number }) => unknown) =>
-    select({ workspaceDirtyTick: 0 })
+    select({ workspaceDirtyTick: activity.dirtyTick })
 }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: translate }) }))
 
@@ -45,6 +47,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   vi.stubGlobal('ResizeObserver', undefined)
   previousGui = window.dsGui
+  activity.dirtyTick = 0
   read.mockReset().mockResolvedValue(branchState)
   switchBranch.mockReset()
   stashAndSwitch.mockReset()
@@ -62,6 +65,7 @@ afterEach(async () => {
   await act(async () => root.unmount())
   host.remove()
   window.dsGui = previousGui
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -144,4 +148,39 @@ it.each([false, true])('updates the current branch after a successful switch (st
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
   expect(document.querySelector('.ds-git-branch-menu')).toBeNull()
   expect(document.querySelector('[role="alert"]')).toBeNull()
+})
+
+
+it('refreshes workspace changes without animating an already loaded branch badge', async () => {
+  vi.useFakeTimers()
+  await act(async () => root.render(createElement(WorkspaceContextBar, { workspaceRoot: '/repo' })))
+  expect(trigger().textContent).toContain('build_1001')
+  let finish!: (result: GitBranchesResult) => void
+  read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  activity.dirtyTick += 1
+  await act(async () => root.render(createElement(WorkspaceContextBar, { workspaceRoot: '/repo' })))
+  await act(async () => vi.advanceTimersByTime(500))
+  expect(read).toHaveBeenCalledTimes(2)
+  expect(trigger().textContent).toContain('build_1001')
+  expect(trigger().querySelector('.animate-spin')).toBeNull()
+  await act(async () => finish({ ...branchState, currentBranch: 'other' }))
+  expect(trigger().textContent).toContain('other')
+})
+
+
+it('still indicates initial loading and an explicit branch switch', async () => {
+  let finishRead!: (result: GitBranchesResult) => void
+  read.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+  await act(async () => root.render(createElement(GitBranchPicker, { workspaceRoot: '/repo' })))
+  expect(host.querySelector('button .animate-spin')).not.toBeNull()
+  await act(async () => finishRead(branchState))
+  expect(host.querySelector('button .animate-spin')).toBeNull()
+  await act(async () => host.querySelector<HTMLButtonElement>('button')!.click())
+  let finishSwitch!: (result: GitBranchesResult) => void
+  switchBranch.mockImplementationOnce(() => new Promise(resolve => { finishSwitch = resolve }))
+  await act(async () => menuBranch('other').click())
+  expect(host.querySelector('button .animate-spin')).not.toBeNull()
+  await act(async () => finishSwitch({ ...branchState, currentBranch: 'other' }))
+  expect(host.querySelector('button .animate-spin')).toBeNull()
+  expect(host.querySelector('button')!.textContent).toContain('other')
 })

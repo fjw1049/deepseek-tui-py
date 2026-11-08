@@ -398,7 +398,8 @@ export function GitBranchPicker({
             {label}
           </span>
         ) : null}
-        {loading ? (
+        {/* Background freshness must not animate an already resolved badge. */}
+        {(loading && !result) || actingBranch != null ? (
           <Loader2 className="h-3 w-3 shrink-0 animate-spin text-ds-faint" strokeWidth={2} />
         ) : !hideChevron ? (
           <ChevronDown
