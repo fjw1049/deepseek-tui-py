@@ -24,7 +24,6 @@ vi.mock('../../hooks/use-thread-tasks', () => ({
   useThreadsWithActiveTasks: () => ({ threadIds: new Set(), taskIds: new Set() })
 }))
 vi.mock('./ConversationSearchModal', () => ({ ConversationSearchModal: () => null }))
-vi.mock('./EmptyHomeLayoutToggle', () => ({ EmptyHomeLayoutToggle: () => null }))
 vi.mock('./ThemeToggle', () => ({ ThemeToggle: () => null }))
 vi.mock('../settings/SettingsSidebarNav', () => ({ SettingsSidebarNav: () => null }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true

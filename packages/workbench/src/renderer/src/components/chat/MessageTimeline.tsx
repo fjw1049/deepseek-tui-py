@@ -56,7 +56,7 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
+import { TaskSuggestionOfflineHero } from './TaskSuggestionOfflineHero'
 import { SquareGrid } from './SquareGrid'
 import type { ChatBlock, RuntimeConnectionStatus, ToolBlock } from '../../agent/types'
 import {
@@ -72,7 +72,6 @@ import {
   type TurnDiffSnapshot
 } from '../../lib/turn-mutation-view'
 import {
-  getEmptyHomeLayout,
   getTimestampFormat,
   subscribeAppearance
 } from '../../lib/apply-appearance'
@@ -163,7 +162,6 @@ type Props = {
   onRetryConnection: () => void
   onOpenSettings: () => void
   onOpenDiagnostics: () => void
-  onSelectSuggestion?: (prompt: string) => void
   /** Local HTML artifact from this turn — nested under file changes when present. */
   htmlPreviewAction?: { path: string; onOpen: () => void } | null
   /** Open a workspace file in the editor panel (final MD report, etc.). */
@@ -171,11 +169,6 @@ type Props = {
   stageCentered?: boolean
   useChatStageWidth?: boolean
   withOperationColumn?: boolean
-  /**
-   * IDE chat rail is too narrow for Overview / GitHub cards — always use the
-   * simple empty home (hide TaskSuggestionHero) regardless of appearance setting.
-   */
-  forceSimpleEmptyHome?: boolean
 }
 
 type Turn = {
@@ -304,13 +297,11 @@ export function MessageTimeline({
   onRetryConnection,
   onOpenSettings,
   onOpenDiagnostics,
-  onSelectSuggestion,
   htmlPreviewAction = null,
   onOpenWorkspaceFile,
   stageCentered = false,
   useChatStageWidth = true,
   withOperationColumn = false,
-  forceSimpleEmptyHome = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -776,12 +767,10 @@ export function MessageTimeline({
           <EmptyHero
             ready={runtimeConnection === 'ready'}
             hasWorkspace={!!workspaceRoot}
-            forceSimpleEmptyHome={forceSimpleEmptyHome}
             onPickWorkspace={() => void chooseWorkspace()}
             onRetry={onRetryConnection}
             onOpenSettings={onOpenSettings}
             onOpenDiagnostics={onOpenDiagnostics}
-            onSelectSuggestion={onSelectSuggestion}
           />
         )}
 
@@ -789,12 +778,10 @@ export function MessageTimeline({
           <EmptyHero
             ready={runtimeConnection === 'ready'}
             hasWorkspace={!!workspaceRoot}
-            forceSimpleEmptyHome={forceSimpleEmptyHome}
             onPickWorkspace={() => void chooseWorkspace()}
             onRetry={onRetryConnection}
             onOpenSettings={onOpenSettings}
             onOpenDiagnostics={onOpenDiagnostics}
-            onSelectSuggestion={onSelectSuggestion}
           />
         )}
 
@@ -955,24 +942,19 @@ export function MessageTimeline({
 function EmptyHero({
   ready,
   hasWorkspace,
-  forceSimpleEmptyHome = false,
   onPickWorkspace,
   onRetry,
   onOpenSettings,
   onOpenDiagnostics,
-  onSelectSuggestion
 }: {
   ready: boolean
   hasWorkspace: boolean
-  forceSimpleEmptyHome?: boolean
   onPickWorkspace: () => void
   onRetry: () => void
   onOpenSettings: () => void
   onOpenDiagnostics: () => void
-  onSelectSuggestion?: (prompt: string) => void
 }): ReactElement | null {
   const { t } = useTranslation('common')
-  const emptyHomeLayout = useSyncExternalStore(subscribeAppearance, getEmptyHomeLayout)
 
   if (!ready) {
     return (
@@ -1001,10 +983,7 @@ function EmptyHero({
     )
   }
 
-  // IDE rail / explicit simple home: skip Overview + GitHub Trending cards.
-  if (forceSimpleEmptyHome || emptyHomeLayout === 'simple') return null
-
-  return <TaskSuggestionHero onSelectSuggestion={onSelectSuggestion} />
+  return null
 }
 
 function groupTurns(blocks: ChatBlock[]): Turn[] {

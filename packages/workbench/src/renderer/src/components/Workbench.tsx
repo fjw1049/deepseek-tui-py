@@ -27,7 +27,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore
 } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -114,7 +113,6 @@ import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
 import type { IncomingComposerImage } from './chat/FloatingComposer'
 import { SimpleEmptyPrompt } from './chat/SimpleEmptyPrompt'
-import { getEmptyHomeLayout, subscribeAppearance } from '../lib/apply-appearance'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { SessionHeader } from './SessionHeader'
 import { SessionSharing, SharedLinkReceiver } from './SessionSharing'
@@ -527,7 +525,6 @@ export function Workbench(): ReactElement {
     hasLiveStream
 
   const stageCentered = !hasStartedConversation
-  const emptyHomeLayout = useSyncExternalStore(subscribeAppearance, getEmptyHomeLayout)
   const activeWorkspaceRoot = useMemo(
     () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
@@ -603,7 +600,6 @@ export function Workbench(): ReactElement {
   }, [chooseWorkspace])
   const simpleEmptyHome =
     stageCentered &&
-    emptyHomeLayout === 'simple' &&
     runtimeConnection === 'ready' &&
     activeWorkspaceRoot.trim().length > 0
   const threadFilesystemRoot = useMemo(
@@ -2194,11 +2190,9 @@ export function Workbench(): ReactElement {
           stageCentered={!ideModeActive && stageCentered}
           useChatStageWidth={!ideModeActive && !stageCentered}
           withOperationColumn={!ideModeActive && !stageCentered && operationColumnActive}
-          forceSimpleEmptyHome={ideModeActive}
           onRetryConnection={() => void probeRuntime('user')}
           onOpenSettings={() => openSettings('general')}
           onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-          onSelectSuggestion={(text) => setInput(text)}
           htmlPreviewAction={htmlPreviewAction}
           onOpenWorkspaceFile={openFileInEditor}
         />,

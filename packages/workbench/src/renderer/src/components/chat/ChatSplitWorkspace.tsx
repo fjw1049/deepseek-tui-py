@@ -45,14 +45,14 @@ function ChatTabTools(): ReactElement {
   </>
 }
 
-const PaneTimeline = memo(function PaneTimeline({ threadId, onOpenFile, setInput }: Pick<PaneProps, 'threadId' | 'onOpenFile'> & { setInput: (value: string) => void }): ReactElement {
+const PaneTimeline = memo(function PaneTimeline({ threadId, onOpenFile }: Pick<PaneProps, 'threadId' | 'onOpenFile'>): ReactElement {
   const state = useChatStore(useShallow(s => ({ blocks: s.blocks, liveAssistant: s.liveAssistant, liveReasoning: s.liveReasoning, openSettings: s.openSettings, probeRuntime: s.probeRuntime, runtimeConnection: s.runtimeConnection })))
   const session = getChatPaneSession(threadId)
   return (<MessageTimeline blocks={state.blocks} liveReasoning={state.liveReasoning} live={state.liveAssistant}
         activeThreadId={threadId} runtimeConnection={state.runtimeConnection} stageCentered={false}
-        useChatStageWidth={false} forceSimpleEmptyHome scrollMemory={session.scroll}
+        useChatStageWidth={false} scrollMemory={session.scroll}
         onRetryConnection={() => void state.probeRuntime('user')} onOpenSettings={() => state.openSettings('general')}
-        onOpenDiagnostics={() => state.openSettings('general')} onSelectSuggestion={setInput}
+        onOpenDiagnostics={() => state.openSettings('general')}
         onOpenWorkspaceFile={(path, line) => onOpenFile(threadId, path, line)} />)
 })
 
@@ -68,7 +68,7 @@ function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): React
     {state.error ? <GlobalErrorNotice message={state.error} onDismiss={() => session.store.getState().setError(null)} /> : null}
     {!ready ? <div role="status" className="flex-1 p-4 text-ds-muted">{state.error
       ? <button onClick={() => void state.selectThread(threadId)}>{t('retry')}</button> : t('splitLoading')}</div> : <>
-      <PaneTimeline threadId={threadId} onOpenFile={onOpenFile} setInput={setInput} />
+      <PaneTimeline threadId={threadId} onOpenFile={onOpenFile} />
       <div className="ds-chat-split-composer">
         <ComposerStage input={input} setInput={setInput} mode={state.composerMode} setMode={state.setComposerMode}
           busy={state.busy} runtimeReady={state.runtimeConnection === 'ready'} hasActiveThread

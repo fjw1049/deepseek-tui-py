@@ -1,7 +1,6 @@
 import type { ReactElement } from 'react'
 import { useEffect, useState } from 'react'
 import {
-  Bot,
   ExternalLink,
   RefreshCw,
   Star,
@@ -9,12 +8,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TrendingPeriod, TrendingRepo } from '../../../../shared/ds-gui-api'
-import type { UsageRange } from '@shared/usage-ledger'
-import { useChatStore } from '../../store/chat-store'
-import { usePersistentUsage } from '../../hooks/use-persistent-usage'
-import { ModelUsageHeroPanel } from '../settings/ModelUsageHeroPanel'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
-import { GreetingDateBar } from './GreetingDateBar'
 
 const PERIODS: Array<{ value: TrendingPeriod; labelKey: string }> = [
   { value: 'daily', labelKey: 'trendingDaily' },
@@ -132,13 +126,11 @@ function TrendingRepoScrollList({
   )
 }
 
-export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement {
+/** Retained for future reuse: the home dashboard was removed. Not mounted by any page.
+ * Keep the Trending service, IPC API, translations, and list implementation.
+ */
+export function GitHubTrendingPanel({ onSelectSuggestion }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
-  const composerModelMeta = useChatStore((s) => s.composerModelMeta)
-  const [usageRange, setUsageRange] = useState<UsageRange>('1y')
-  const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
-  const heatmapUsage = usePersistentUsage('1y', usageRefreshKey)
   const [period, setPeriod] = useState<TrendingPeriod>('daily')
   const [repos, setRepos] = useState<TrendingRepo[]>([])
   const [loading, setLoading] = useState(true)
@@ -180,28 +172,6 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const trendingRepos = repos.slice(0, TRENDING_REPO_LIMIT)
 
   return (
-    <div className="ds-no-drag w-full">
-      <div className="mt-4">
-        <GreetingDateBar
-          daily={persistentUsage.data?.daily ?? []}
-          asOfDay={persistentUsage.data?.asOfDay}
-          loading={persistentUsage.loading}
-        />
-      </div>
-      <div className="ds-empty-hero-grid mt-6 grid">
-        <ModelUsageHeroPanel
-          summary={persistentUsage.data?.summary ?? null}
-          daily={persistentUsage.data?.daily ?? []}
-          heatmapDaily={heatmapUsage.data?.daily ?? []}
-          heatmapAsOfDay={heatmapUsage.data?.asOfDay}
-          loading={persistentUsage.loading || heatmapUsage.loading}
-          loaded={persistentUsage.loaded && heatmapUsage.loaded}
-          error={persistentUsage.error ?? heatmapUsage.error}
-          range={usageRange}
-          onRangeChange={setUsageRange}
-          composerModelMeta={composerModelMeta}
-        />
-
         <div className="ds-hero-panel ds-glass ds-empty-hero-panel flex flex-col overflow-hidden rounded-[14px] p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
             <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-ds-ink">
@@ -248,55 +218,6 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
             )}
           </div>
         </div>
-      </div>
-    </div>
   )
 }
 
-type OfflineProps = {
-  onRetry: () => void
-  onOpenSettings: () => void
-  onOpenDiagnostics: () => void
-}
-
-export function TaskSuggestionOfflineHero({
-  onRetry,
-  onOpenSettings,
-  onOpenDiagnostics
-}: OfflineProps): ReactElement {
-  const { t } = useTranslation('common')
-  return (
-    <div className="flex flex-col items-center justify-center px-8 py-16 text-center">
-      <div className="ds-card-soft mb-4 rounded-[12px] px-4 py-3">
-        <Bot className="mx-auto h-6 w-6 text-accent opacity-90" strokeWidth={1.4} />
-      </div>
-      <p className="max-w-sm text-[20px] font-semibold tracking-[-0.03em] text-ds-ink">
-        {t('runtimeOfflineHeroTitle')}
-      </p>
-      <p className="mt-2 max-w-[520px] text-[14px] leading-6 text-ds-muted">{t('runtimeOfflineHeroSub')}</p>
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-        <button
-          type="button"
-          className="ds-chip rounded-full px-4 py-2 text-[12.5px] font-medium text-ds-ink"
-          onClick={onRetry}
-        >
-          {t('retryConnection')}
-        </button>
-        <button
-          type="button"
-          className="ds-chip-muted rounded-full px-4 py-2 text-[12.5px] font-medium text-ds-muted"
-          onClick={onOpenDiagnostics}
-        >
-          {t('runtimeDiagnosticsButton')}
-        </button>
-        <button
-          type="button"
-          className="ds-chip-muted rounded-full px-4 py-2 text-[12.5px] font-medium text-ds-muted"
-          onClick={onOpenSettings}
-        >
-          {t('openSettings')}
-        </button>
-      </div>
-    </div>
-  )
-}

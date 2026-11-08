@@ -29,7 +29,6 @@ import { SidebarActivity } from './SidebarActivity'
 import { activityDismissalKey, buildSidebarActivity, filterDismissedActivity, loadDismissedActivity, persistDismissedActivity, type ActivityRow } from '../../lib/sidebar-activity'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { ThemeToggle } from './ThemeToggle'
-import { EmptyHomeLayoutToggle } from './EmptyHomeLayoutToggle'
 
 type Props = {
   revealRequest?: { threadId: string | null } | null
@@ -354,7 +353,6 @@ export const Sidebar = memo(function Sidebar({
                 variant="footer"
               />
             </div>
-            <EmptyHomeLayoutToggle />
             <ThemeToggle />
           </div>
         </>
