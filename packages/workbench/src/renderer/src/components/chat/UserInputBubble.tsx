@@ -275,7 +275,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
           type="button"
           disabled={submitting}
           aria-pressed={otherSelected}
-          className="ds-question-option"
+          className="ds-question-option ds-question-option-custom"
           onClick={() => chooseOption(question, USER_INPUT_OTHER_LABEL,
             answer?.label === USER_INPUT_OTHER_LABEL ? answer.value : '', false)}
         >
@@ -307,10 +307,10 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
         </button> : null}
         <div className="ds-question-actions">
           <button type="button" disabled={submitting} onClick={cancel}>{t('userInputCancel')}</button>
-          {isLast ? <button type="button" disabled={submitting || !canSubmit || !total} onClick={submit}>
+          {isLast ? <button type="button" className="ds-question-primary" disabled={submitting || !canSubmit || !total} onClick={submit}>
             {t('userInputSubmit')}
             {submitting ? <LoaderCircle size={15} className="animate-spin" aria-hidden /> : <ArrowRight size={15} aria-hidden />}
-          </button> : <button type="button" disabled={submitting || !currentAnswered} onClick={() => goTo(clampedStep + 1)}>
+          </button> : <button type="button" className="ds-question-primary" disabled={submitting || !currentAnswered} onClick={() => goTo(clampedStep + 1)}>
             {t('userInputNext')}<ArrowRight size={15} aria-hidden />
           </button>}
         </div>
