@@ -92,3 +92,62 @@ async def test_three_native_apps_and_a_queued_second_player(tmp_path, monkeypatc
             waiter.cancel()
             await asyncio.gather(waiter, return_exceptions=True)
         await asyncio.gather(*(session.close() for session in sessions))
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or os.getenv("RUN_CUA_NATIVE") != "1",
+    reason="requires an authorized real Mac desktop with TextEdit",
+)
+async def test_typed_actions_edit_a_disposable_document_and_reobserve_after_release(tmp_path, monkeypatch):
+    from deepseek_tui.cua.tools import CuaActTool, CuaObserveTool
+    from deepseek_tui.tools.registry import ToolContext
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    document = tmp_path / f"CUA typed check {uuid4().hex[:8]}.txt"
+    document.write_text("temporary-cua-document")
+    await asyncio.to_thread(subprocess.run, ["open", "-a", "TextEdit", str(document)], check=True)
+
+    async def approve(params):
+        return auto_allow_response(params) or {"action": "cancel"}
+
+    session = CuaSession(CuaConfig(), tmp_path, uuid4().hex, approve)
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "typed-live"})
+    app = "com.apple.TextEdit"
+
+    async def execute(tool, request):
+        context.metadata["cua_call_id"] = uuid4().hex
+        return await tool.execute(request, context)
+
+    try:
+        observe = CuaObserveTool(session)
+        before = await execute(observe, {"app": app, "expect": [document.name], "wait_ms": 5000})
+        assert before.success and document.name in before.content, before.content
+        act = CuaActTool(session)
+        written = await execute(act, {"app": app, "actions": [
+            {"type": "key", "key": "super+a"},
+            {"type": "type", "text": "真实中文输入校验-317"},
+        ]})
+        assert written.success and "真实中文输入校验-317" in written.content, written.content
+        assert session.lease.app == app
+        await session.end_turn()
+        request = {"app": app, "actions": [{"type": "type", "text": "-恢复后输入"}]}
+        held = await execute(act, request)
+        assert not held.success and held.metadata["cua_stats"]["replaced_by_observation"], held.content
+        assert "真实中文输入校验-317" in held.content and "-恢复后输入" not in held.content
+        resumed = await execute(act, request)
+        assert resumed.success and "-恢复后输入" in resumed.content, resumed.content
+        # Saving this disposable document uses a non-local shortcut and holds the desktop.
+        saved = await execute(act, {"app": app, "actions": [{"type": "key", "key": "super+s"}]})
+        assert saved.success and session.lease.fd is not None and session.lease.app is None, saved.content
+        for _ in range(20):
+            if "-恢复后输入" in document.read_text():
+                break
+            await asyncio.sleep(0.1)
+        assert document.read_text() == "真实中文输入校验-317-恢复后输入"
+    finally:
+        await session.close()
+        # Close only the uniquely named test document, preserving other open documents.
+        await asyncio.to_thread(subprocess.run, ["osascript", "-e",
+            'on run argv\n tell application "TextEdit"\n'
+            ' if exists document (item 1 of argv) then close document (item 1 of argv) saving no\n'
+            ' end tell\nend run', document.name], check=True, capture_output=True)

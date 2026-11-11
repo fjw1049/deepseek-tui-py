@@ -292,10 +292,13 @@ class BrowserAction(BaseModel):
         if (self.button != "left" or self.clicks != 1) and self.action != "click":
             raise ValueError("button and clicks apply to click")
         # Either both ends are observed elements or both are screenshot points.
-        if self.action == "drag" and bool(self.ref and self.to_ref) == (
-                None not in (self.x, self.y, self.to_x, self.to_y)):
-            raise ValueError("drag requires ref and to_ref from the same observation, "
-                             "or x, y, to_x and to_y from the current screenshot")
+        if self.action == "drag":
+            points = (self.x, self.y, self.to_x, self.to_y)
+            refs_only = self.ref and self.to_ref and all(p is None for p in points)
+            points_only = not (self.ref or self.to_ref) and all(p is not None for p in points)
+            if self.selector or not (refs_only or points_only):
+                raise ValueError("drag requires ref and to_ref from the same observation, "
+                                 "or x, y, to_x and to_y from the current screenshot")
         if self.to_ref and self.action != "drag":
             raise ValueError("to_ref applies to drag")
         if (self.to_x is not None or self.to_y is not None) and self.action != "drag":

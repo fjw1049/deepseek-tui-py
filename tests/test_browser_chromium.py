@@ -2828,3 +2828,14 @@ async def test_coordinate_drag_needs_a_current_screenshot_and_an_on_screen_desti
     capture = await service.action("t", BrowserAction(action="screenshot"))
     result = await act(service, capture["observation"], "drag", x=10, y=10, to_x=1300, to_y=50)
     assert result["receipt"]["reason"] == "pointer_outside_viewport"
+
+
+async def test_triple_click_emits_three_increasing_click_counts(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML='<button id=b>Triple target</button>';"
+                   "window.clickCounts=[];b.onclick=e=>clickCounts.push(e.detail);true")
+    observation = await read(service)
+    result = await act(service, observation, "click", ref=ref(observation, "Triple target"), clicks=3)
+    assert result["success"], result
+    assert await evaluate(client, "window.clickCounts") == [1, 2, 3]

@@ -92,6 +92,7 @@ class CuaSession:
         self.runtime_turn_id: str | None = None
         self.stop_task = None
         self._app_bindings: dict[str, str] = {}
+        self._scoped_apps: set[str] = set()
         self._unrestricted_repl = False
         self.lease = DesktopLease()
         self.lease.owner = owner_id or session_id
@@ -547,9 +548,9 @@ class CuaSession:
 
     async def call(
         self, name: str, arguments: dict[str, Any], turn_id: str, call_id: str,
-        *, scope: str | None = None,
+        *, scope: str | None = None, exclusive: bool = False,
     ) -> dict[str, Any]:
-        """Run one public tool. ``scope`` names the one app host-written code touches."""
+        """Run a tool; scope identifies the target even when its keys need an exclusive lease."""
         if name not in {"js", "js_reset", "observe"} or not turn_id or not call_id:
             raise ToolError("CUA requires a public tool and real host turn/call identities")
         async with self.lock:
@@ -580,12 +581,14 @@ class CuaSession:
                 elif summary or name == "js_reset":
                     app = self.lease.app
                 elif name == "js" and scope:
-                    app = scope
+                    app = None if exclusive else scope
                 elif name == "js":
                     app, binding = await asyncio.to_thread(
                         js_scope, arguments.get("code") or "", self._app_bindings)
                     if app and (binding or binding_only(arguments["code"])):
                         arguments = {**arguments, "code": canonical_binding(arguments["code"], app)}
+            target_app = scope or app
+            same_target = scope is not None and self.lease.app == scope
             reacquiring = self.lease.fd is None
             switching = self.lease.fd is not None and self.lease.app != app
             if switching and await self.end_turn():
@@ -612,17 +615,22 @@ class CuaSession:
                 # needs a fresh native segment, with the host identity preserved.
                 self.runtime_turn_id = f"{turn_id}:cua:{uuid.uuid4().hex}"
             self.turn_id = turn_id
-            old_binding = app and (switching or reacquiring) and app in self._app_bindings.values()
+            old_binding = target_app and (reacquiring or (switching and not same_target)) and (
+                target_app in self._app_bindings.values() or target_app in self._scoped_apps)
             if name == "js" and (self.lease.contended or old_binding):
-                self._needs_observation.add(app)
+                self._needs_observation.add(target_app)
             if (name == "js" and not summary and not binding_only(arguments.get("code", ""))
-                    and (app in self._needs_observation or (not app and self._needs_observation))):
+                    and (target_app in self._needs_observation
+                         or (not target_app and self._needs_observation))):
                 # Unscoped code may touch any app still awaiting observation: name them.
-                pending = sorted(a for a in ({app} if app else self._needs_observation) if a)
+                pending = sorted(a for a in (
+                    {target_app} if target_app else self._needs_observation) if a)
                 target = ", ".join(pending) or "the intended app"
                 raise StaleTarget(
                     f"{target} was released or used by another task since you last looked at it.",
                     pending[0] if len(pending) == 1 else None, target)
+            if scope:
+                self._scoped_apps.add(scope)
             observed_generation = self.observation_generation
             try:
                 # Write before dispatch so a host crash cannot turn an uncertain
@@ -672,8 +680,9 @@ class CuaSession:
                         if self._unresolved and not arguments.get("poll"):
                             # The state shown is what the model checks an unknown outcome
                             # against, so telling it here settles it as a code result would.
+                            result["unknown_outcome_note"] = self._unknown_note()
                             result.setdefault("content", []).append(
-                                {"type": "text", "text": self._unknown_note()})
+                                {"type": "text", "text": result["unknown_outcome_note"]})
                             last = self._unresolved[-1]
                             await self.record_outcome(
                                 last["turn_id"], last["call_id"], "returned", settle=True)
@@ -685,12 +694,13 @@ class CuaSession:
                         and binding_only(arguments.get("code") or "")):
                     # Binding prints the app's current state: the model has looked at it.
                     self._needs_observation.discard(app)
-                if name == "js" and not app and not summary and not discovery_only(
+                if name == "js" and not app and not scope and not summary and not discovery_only(
                     arguments.get("code") or ""
                 ):
                     self._unrestricted_repl = True
                 elif name == "js_reset" and not result.get("isError"):
                     self._app_bindings.clear()
+                    self._scoped_apps.clear()
                     self._needs_observation.clear()
                     self._unrestricted_repl = False
                 if (not summary and not result.get("isError") and (name == "observe"
@@ -850,6 +860,7 @@ class CuaSession:
         finally:
             self.process = None
             self._app_bindings.clear()
+            self._scoped_apps.clear()
             self._needs_observation.clear()
             self._unrestricted_repl = False
             self.broken = False

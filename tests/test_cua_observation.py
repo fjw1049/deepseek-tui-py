@@ -660,3 +660,20 @@ async def test_first_observation_keeps_documentation_but_not_a_second_state_copy
         assert "printed by binding" not in result.content and "1 text Saved" in result.content
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+async def test_waited_observation_preserves_unknown_outcome_warning(session, tmp_path):
+    await session.connect()
+    await session.record_outcome("old-turn", "lost-submit", "unknown")
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        result = await CuaObserveTool(session).execute({
+            "app": "dev.fixture", "expect": ["not present"], "wait_ms": 1,
+        }, context)
+        assert result.success and "unknown outcome" in result.content
+        assert "lost-submit" in result.content and session.unresolved is None
+        again = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
+        assert "unknown outcome" not in again.content
+    finally:
+        await session.close()

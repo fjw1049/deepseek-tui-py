@@ -143,6 +143,9 @@ def test_pointer_gestures_accept_refs_or_screenshot_points(arguments):
 
 @pytest.mark.parametrize("arguments", [
     {"action": "hover", "x": 10},
+    *({"action": "drag", "x": 10, "y": 20, "to_x": 30, "to_y": 40, **extra}
+      for extra in ({"ref": "e1"}, {"to_ref": "e2"}, {"selector": "#item"})),
+    {"action": "drag", "ref": "e1", "to_ref": "e2", "x": 10},
     {"action": "drag", "x": 10, "y": 20, "to_x": 30},
     {"action": "drag", "ref": "e1", "to_x": 30, "to_y": 40},  # One kind of grounding per drag.
     {"action": "drag", "ref": "e1", "to_ref": "e2", "x": 1, "y": 2, "to_x": 3, "to_y": 4},

@@ -48,7 +48,7 @@ export function resolveTurnActivityStep(blocks: ChatBlock[]): string | null {
     const block = blocks[i]
     const tool = block.kind === 'tool' ? block.meta?.tool_name : undefined
     if (block.kind !== 'tool' || (tool !== 'cua_js' && tool !== 'cua_act')) continue
-    const input = block.meta.tool_input
+    const input = block.meta?.tool_input
     const title = input && typeof input === 'object' ? (input as { title?: unknown }).title : undefined
     return typeof title === 'string' && title.trim() ? title.trim() : null
   }

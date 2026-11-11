@@ -391,9 +391,6 @@ def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:
 
 
 class CuaTool(ToolSpec):
-    # The one app host-written code touches in the current call (set by CuaActTool).
-    scope: str | None = None
-
     def __init__(
         self,
         session: CuaSession,
@@ -419,7 +416,10 @@ class CuaTool(ToolSpec):
     def supports_parallel(self) -> bool:
         return False
 
-    async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext, *, scope: str | None = None,
+        exclusive: bool = False,
+    ) -> ToolResult:
         context.metadata["cua_session"] = self.session
         js = self.descriptor["name"] == "js"
         if js and self.session.outside_change and (target := self.session.heal_target()):
@@ -434,7 +434,7 @@ class CuaTool(ToolSpec):
                     UNKNOWN_OUTCOME_NOTE.format(app=target["app"]) + "\n" + observed.content)),
                     replaced_by_observation=True)
         try:
-            result = await self._execute(input_data, context)
+            result = await self._execute(input_data, context, scope=scope, exclusive=exclusive)
         except StaleTarget as stale:
             if not stale.app:
                 raise
@@ -492,13 +492,16 @@ class CuaTool(ToolSpec):
             "before this observation may be stale.\n" + observed.content)),
             replaced_by_observation=True)
 
-    async def _execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+    async def _execute(
+        self, input_data: dict[str, Any], context: ToolContext, *, scope: str | None = None,
+        exclusive: bool = False,
+    ) -> ToolResult:
         from deepseek_tui.mcp.execute import mcp_response_to_tool_result
 
         turn, call_id = _call_ids(context)
-        scope = {"scope": self.scope} if self.scope else {}
+        scope_args = {"scope": scope, "exclusive": exclusive} if scope else {}
         payload = await self.session.run(
-            lambda: self.session.call(self.descriptor["name"], input_data, turn, call_id, **scope),
+            lambda: self.session.call(self.descriptor["name"], input_data, turn, call_id, **scope_args),
             self.cancel_events,
         )
         for item in payload.get("content") or []:
@@ -527,6 +530,8 @@ class CuaTool(ToolSpec):
         ]
         metadata = {**result.metadata, "cua_runtime_content": True,
                     "cua_stats": dict(payload.get("stats") or {})}
+        if payload.get("unknown_outcome_note"):
+            metadata["unknown_outcome_note"] = payload["unknown_outcome_note"]
         if self.descriptor["name"] == "observe":
             observation = payload.get("observation")
             if isinstance(observation, dict):
@@ -679,8 +684,12 @@ class CuaObserveTool(CuaTool):
             started = time.monotonic()
             await self._wait_for(target, expected, started + wait_ms / 1000, context)
             waited = time.monotonic() - started
+            # Preserve the warning already settled by the first observation.
+            unknown_note = result.metadata.get("unknown_outcome_note")
             # One fresh observation after the wait, whatever the polls saw.
             result = await super().execute(input_data, context)
+            if unknown_note:
+                result = replace(result, content=result.content + "\n" + unknown_note)
             checks = result.metadata.get("cua_observation", {}).get("expectations", [])
             result = replace(result, content=result.content
                              + f"\nWaited {waited:.1f}s for the expected text.")
@@ -795,7 +804,9 @@ def action_types(mac: bool) -> list[str]:
             + (["set_value", "select_text"] if mac else []))
 
 
-def actions_code(entry: str, key: str, steps: list[str], screenshot: bool) -> str:
+def actions_code(
+    entry: str, key: str, steps: list[str], screenshot: bool, *, refresh: bool = False,
+) -> str:
     """Host-written code: bind the app once per REPL, run the steps, read the state."""
     slot = f"globalThis.__deepseekActs[{json.dumps(key)}]"
     return "\n".join([
@@ -805,6 +816,8 @@ def actions_code(entry: str, key: str, steps: list[str], screenshot: bool) -> st
         "let app;",
         "try {",
         f"app = {slot} ??= await {entry};",
+        # Switching to a desktop-wide lease ends the runtime's previous app control.
+        *(["await app.getAXState();"] if refresh else []),
         *(f"step = {number}; {step}" for number, step in enumerate(steps, 1)),
         "} catch (error) {",
         'if (step && typeof error?.message === "string") error.message += '
@@ -882,24 +895,32 @@ class CuaActTool(CuaTool):
         if not isinstance(actions, list) or not 1 <= len(actions) <= MAX_ACTIONS:
             raise ToolError(f"Supply actions: 1 to {MAX_ACTIONS} steps.")
         steps = [action_js(action, mac) for action in actions]
+        scope = None
+        exclusive = False
         if mac:
             name = input_data.get("app")
             if not isinstance(name, str) or not name.strip():
                 raise ToolError("Supply app: the app's name or bundle id.")
             # The installed app's own id scopes the desktop hold to that app; an unknown
             # name is left to the runtime and holds the whole desktop.
-            self.scope = await asyncio.to_thread(app_scope.native_app, name)
-            key = self.scope or name
+            scope = await asyncio.to_thread(app_scope.native_app, name)
+            key = scope or name
+            # Match cua_js: system shortcuts need exclusive desktop access.
+            if any(action["type"] == "key" and not app_scope.js_scope(
+                    step, {"app": key})[0] for action, step in zip(actions, steps)):
+                exclusive = True
             entry = f"cua.getApp({json.dumps(key)})"
         else:
             window = input_data.get("window_id")
             if type(window) is not int or window < 0:
                 raise ToolError("Supply window_id from the runtime inventory.")
             key, entry = f"window:{window}", f"cua.getApp({{windowId: {window}}})"
-        call = {"code": actions_code(entry, key, steps, input_data.get("screenshot") is True)}
+        call = {"code": actions_code(
+            entry, key, steps, input_data.get("screenshot") is True,
+            refresh=mac and (exclusive or scope is None))}
         if isinstance(input_data.get("title"), str) and input_data["title"].strip():
             call["title"] = input_data["title"]
-        return await super().execute(call, context)
+        return await super().execute(call, context, scope=scope, exclusive=exclusive)
 
 
 def register_tools(

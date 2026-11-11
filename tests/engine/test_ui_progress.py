@@ -189,7 +189,7 @@ async def test_engine_warns_then_pauses_a_dead_loop_until_the_next_turn(tmp_path
         contents = {b.tool_use_id: str(b.content) for m in client.requests[-1].messages
                     for b in m.content if b.type == "tool_result"}
         assert "nothing new" in contents["c1"]
-        assert "Do not act" in contents[f"c{REMIND_STREAK}"]
+        assert "do not act" in contents[f"c{REMIND_STREAK}"].lower()
         assert "paused until the person acts" in contents[f"c{STALL_STREAK}"]
         assert tool.calls == STALL_STREAK + 1  # the first capture, then the repeats
         assert "Not executed" in contents[f"c{STALL_STREAK + 1}"]

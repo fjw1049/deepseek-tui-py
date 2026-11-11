@@ -1758,3 +1758,49 @@ def test_typed_actions_offer_only_what_this_platform_runs(session, monkeypatch):
     assert "select_text" in schema["properties"]["actions"]["items"]["properties"]["type"]["enum"]
     assert tools.action_js({"type": "set_value", "element": 1, "text": ""}, mac=True) == (
         'await app.setValue(1, "");')
+
+
+async def test_typed_actions_observe_after_releasing_the_app(session, tmp_path, monkeypatch):
+    from deepseek_tui.cua import app_scope, tools
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "native_app", lambda name: name)
+    for module in (cua_session, tools):
+        monkeypatch.setattr(module, "sys", SimpleNamespace(platform="darwin"))
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    act = CuaActTool(session)
+    request = {"app": "dev.fixture", "actions": [{"type": "click", "element": 3}]}
+    try:
+        assert (await act.execute(request, context)).success
+        await session.end_turn()
+        held = await act.execute(request, context)
+        assert not held.success and "observed dev.fixture for you" in held.content
+        assert held.metadata["cua_stats"]["replaced_by_observation"]
+        assert sum("await app.click(3)" in r.get("args", {}).get("code", "")
+                   for r in _calls(tmp_path)) == 1
+        assert (await act.execute(request, context)).success
+    finally:
+        await session.close()
+
+
+async def test_typed_system_shortcuts_hold_the_whole_desktop(session, tmp_path, monkeypatch):
+    from deepseek_tui.cua import app_scope, tools
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "native_app", lambda name: name)
+    for module in (cua_session, tools):
+        monkeypatch.setattr(module, "sys", SimpleNamespace(platform="darwin"))
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        assert (await CuaActTool(session).execute({"app": "dev.fixture", "actions": [
+            {"type": "key", "key": "super+Tab"},
+        ]}, context)).success
+        assert session.lease.fd is not None and session.lease.app is None
+        assert not session._unrestricted_repl
+        await session.end_turn()
+        held = await CuaActTool(session).execute({"app": "dev.fixture", "actions": [
+            {"type": "key", "key": "super+Tab"},
+        ]}, context)
+        assert not held.success and held.metadata["cua_stats"]["replaced_by_observation"]
+    finally:
+        await session.close()
