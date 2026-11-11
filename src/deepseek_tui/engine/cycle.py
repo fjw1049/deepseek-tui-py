@@ -33,6 +33,7 @@ class CycleConfig:
 
     enabled: bool = True
     cycle_ratio: float = 0.90
+    max_input_tokens: int = 250_000
     briefing_max_tokens: int = DEFAULT_BRIEFING_MAX_TOKENS
 
 
@@ -133,7 +134,10 @@ def should_advance_cycle(
 
     window = max(1, int(configured_context_window(model, model_config) or DEFAULT_CONTEXT_WINDOW_TOKENS))
     ratio = active_input_tokens / window
-    return ratio >= float(config.cycle_ratio or 0.90)
+    return (
+        active_input_tokens >= config.max_input_tokens
+        or ratio >= float(config.cycle_ratio or 0.90)
+    )
 
 
 def extract_carry_forward(raw: str) -> str:
@@ -181,6 +185,9 @@ async def produce_briefing(
     conversation: list[Message],
     max_briefing_tokens: int,
     model_config: object | None = None,
+    *,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     """Run the briefing turn to produce a <carry_forward> block."""
     if not conversation:
@@ -190,12 +197,17 @@ async def produce_briefing(
 
     from deepseek_tui.protocol.messages import Message as Msg
     from deepseek_tui.protocol.messages import MessageRequest
-    from deepseek_tui.protocol.responses import StreamDone, StreamError, StreamTextDelta
+    from deepseek_tui.protocol.responses import (
+        StreamDone,
+        StreamError,
+        StreamTextDelta,
+        StreamToolCallComplete,
+    )
 
     messages = list(conversation)
     messages.append(
         Msg.user(
-            f"[CYCLE BOUNDARY] The next turn starts in a fresh context.\n\n"
+            f"[CYCLE BOUNDARY] The next turn starts in a fresh context.\n\n{handoff_template}\n\n"
             f"Produce your `<carry_forward>` block now. "
             f"Stay under {max_briefing_tokens} tokens. "
             f"Output only the block — no other text."
@@ -205,7 +217,8 @@ async def produce_briefing(
     request = MessageRequest(
         model=model,
         messages=messages,
-        system_prompt=handoff_template,
+        system_prompt=system_prompt,
+        tools=tools or [],
         max_tokens=min(max_briefing_tokens * 2, 8192),
         temperature=0.2,
     )
@@ -218,6 +231,8 @@ async def produce_briefing(
 
     async with aclosing(client.stream_chat_completion(request)) as stream:
         async for event in stream:
+            if isinstance(event, StreamToolCallComplete):
+                raise ValueError("Cycle briefing requested a tool instead of a text handoff")
             if isinstance(event, StreamError):
                 raise ValueError(f"Cycle briefing stream failed: {event.message}")
             if isinstance(event, StreamDone) and event.truncated:

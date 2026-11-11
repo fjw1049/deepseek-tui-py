@@ -28,6 +28,7 @@ def test_should_compact_uses_rewrite_ratio():
     msgs += [Message.user(f"recent-{i}") for i in range(4)]
     cfg = CompactionConfig(
         rewrite_ratio=0.75,
+        max_input_tokens=1_000_000,
         auto_floor_ratio=0.20,
         keep_recent_tokens=50,  # message-floor (4) dominates; leave bulk to summarize
     )

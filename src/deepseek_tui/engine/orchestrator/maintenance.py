@@ -469,6 +469,8 @@ class SessionMaintenanceMixin:
                     model,
                     messages,
                     self.cycle_config.briefing_max_tokens,
+                    system_prompt=system_prompt,
+                    tools=tools,
                     model_config=getattr(self, "_app_config", None),
                 )
         except Exception as exc:  # noqa: BLE001

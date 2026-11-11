@@ -25,16 +25,6 @@ KEEP_RECENT_MESSAGES = 4
 KEEP_RECENT_TOKENS = 20_000
 MIN_SUMMARIZE_MESSAGES = 6
 MAX_WORKING_SET_PATHS = 24
-SUMMARY_TEXT_SNIPPET_CHARS = 800
-SUMMARY_TOOL_RESULT_SNIPPET_CHARS = 240
-SUMMARY_INPUT_MAX_CHARS = 24_000
-SUMMARY_INPUT_HEAD_CHARS = 14_000
-SUMMARY_INPUT_TAIL_CHARS = 6_000
-LARGE_CONTEXT_SUMMARY_TEXT_SNIPPET_CHARS = 2_000
-LARGE_CONTEXT_SUMMARY_TOOL_RESULT_SNIPPET_CHARS = 4_000
-LARGE_CONTEXT_SUMMARY_INPUT_MAX_CHARS = 120_000
-LARGE_CONTEXT_SUMMARY_INPUT_HEAD_CHARS = 72_000
-LARGE_CONTEXT_SUMMARY_INPUT_TAIL_CHARS = 36_000
 LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
@@ -62,12 +52,13 @@ L0_HARD_CLEAR_MIN_RECLAIM = 16_000
 
 @dataclass
 class CompactionConfig:
-    """Ratio-based conversation compaction policy (relative to model window)."""
+    """Conversation compaction at the earlier of an absolute cap or window ratio."""
 
     enabled: bool = True
     model: str | None = None  # None = inherit main model
     auto_floor_ratio: float = 0.20
     rewrite_ratio: float = 0.75
+    max_input_tokens: int = 150_000
     keep_recent_tokens: int = KEEP_RECENT_TOKENS
     l0_prune_ratio: float = 0.50
     l0_prune_enabled: bool = True
@@ -92,12 +83,7 @@ class ToolPruneConfig:
 
 @dataclass
 class SummaryInputLimits:
-    """Input limits for summary based on model context window."""
-    text_snippet_chars: int = SUMMARY_TEXT_SNIPPET_CHARS
-    tool_result_snippet_chars: int = SUMMARY_TOOL_RESULT_SNIPPET_CHARS
-    input_max_chars: int = SUMMARY_INPUT_MAX_CHARS
-    input_head_chars: int = SUMMARY_INPUT_HEAD_CHARS
-    input_tail_chars: int = SUMMARY_INPUT_TAIL_CHARS
+    """Output budget for the handoff, based on model context window."""
     max_tokens: int = 1_536
     word_limit: int = 700
 
@@ -146,100 +132,12 @@ def _summary_input_limits_for_model(model: str, model_config: object | None = No
 
     if is_large_context:
         return SummaryInputLimits(
-            text_snippet_chars=LARGE_CONTEXT_SUMMARY_TEXT_SNIPPET_CHARS,
-            tool_result_snippet_chars=LARGE_CONTEXT_SUMMARY_TOOL_RESULT_SNIPPET_CHARS,
-            input_max_chars=LARGE_CONTEXT_SUMMARY_INPUT_MAX_CHARS,
-            input_head_chars=LARGE_CONTEXT_SUMMARY_INPUT_HEAD_CHARS,
-            input_tail_chars=LARGE_CONTEXT_SUMMARY_INPUT_TAIL_CHARS,
             max_tokens=LARGE_CONTEXT_SUMMARY_MAX_TOKENS,
             word_limit=1_200,
         )
     else:
         return SummaryInputLimits()
 
-
-
-def _elide_middle(text: str, max_chars: int) -> str:
-    """Trim *text* to *max_chars* keeping both ends, and say that you did.
-
-    The summarizer's per-block limit used to be a silent head cut. Two things
-    went wrong with that. A conclusion sits at the *end* of a message — "so
-    I'll use X because Y", the assertion line of a traceback — so head-only
-    keeps the exploration and drops the decision. And with no marker the
-    summarizer cannot tell a complete short message from a severed long one,
-    so it records half a decision as the whole decision. L0 prune already
-    trims tool results head+tail for the same reason.
-    """
-    if max_chars <= 0:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    marker_template = "\n[... {} characters omitted ...]\n"
-    # Reserve room for the marker so the result honours max_chars.
-    budget = max_chars - len(marker_template.format(len(text)))
-    if budget < 2:
-        return _truncate_chars(text, max_chars)
-    head_chars = (budget * 2) // 3
-    tail_chars = budget - head_chars
-    omitted = len(text) - head_chars - tail_chars
-    return (
-        text[:head_chars]
-        + marker_template.format(omitted)
-        + text[len(text) - tail_chars :]
-    )
-
-
-_TOOL_ARG_VALUE_CHARS = 160
-_TOOL_ARGS_TOTAL_CHARS = 480
-
-
-def _render_tool_args(args: dict[str, Any]) -> str:
-    """Say which action a tool call was, without reproducing its payload.
-
-    ``[Used tool: edit_file]`` does not tell the summarizer which file was
-    edited, so ``### Done`` cannot name the patches it is asked to name.
-
-    Size separates the two kinds of argument on its own, which is why there
-    is no per-tool table here: the ones that identify the action — path,
-    command, pattern, url — are short, and the ones carrying a body —
-    content, old_string, prompt — are not. A table would also have to be
-    kept in step with every new tool and could never cover MCP tools
-    registered at runtime. Oversized values collapse to their size, which
-    still records that a body was there.
-    """
-    if not args:
-        return ""
-    parts: list[str] = []
-    used = 0
-    for key, value in args.items():
-        rendered = value if isinstance(value, str) else repr(value)
-        if len(rendered) > _TOOL_ARG_VALUE_CHARS:
-            rendered = f"<{len(rendered)} chars>"
-        part = f"{key}={rendered}"
-        if used + len(part) > _TOOL_ARGS_TOTAL_CHARS:
-            parts.append("...")
-            break
-        parts.append(part)
-        used += len(part)
-    return ", ".join(parts)
-
-
-def _truncate_chars(text: str, max_chars: int) -> str:
-    """Keep the first *max_chars* characters, respecting Unicode."""
-    if max_chars == 0:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars]
-
-
-def _tail_chars(text: str, max_chars: int) -> str:
-    """Extract last max_chars characters from text."""
-    if max_chars <= 0:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    return text[-max_chars:]
 
 
 def _extract_paths_from_text(text: str, workspace: Path | None = None) -> list[str]:
@@ -381,7 +279,7 @@ def should_compact(
 
     Primary signal is context-used *ratio* vs ``config.rewrite_ratio``
     (default 0.75). Below ``auto_floor_ratio`` (default 0.20) auto rewrite
-    never fires — L0 pruning handles that band.
+    never fires unless the absolute input cap is reached.
 
     Pass *system_prompt* and *tools* whenever available: on the estimate
     path they are a multi-thousand-token constant that the message list
@@ -401,9 +299,10 @@ def should_compact(
         tools=tools,
         model_config=model_config,
     )
-    if pressure.ratio < config.auto_floor_ratio:
+    at_cap = pressure.tokens >= config.max_input_tokens
+    if not at_cap and pressure.ratio < config.auto_floor_ratio:
         return False
-    if pressure.ratio >= config.rewrite_ratio:
+    if at_cap or pressure.ratio >= config.rewrite_ratio:
         # Still require enough unpinned material to be worth summarizing.
         plan = plan_compaction(
             messages,
@@ -529,11 +428,13 @@ async def compact_messages_safe(
         try:
             summary = await _create_summary(
                 client,
-                messages_to_summarize,
+                messages,
                 effective_model,
                 previous_summary=prev,
                 model_config=model_config,
                 output_multiplier=output_multiplier,
+                system_prompt=system_prompt,
+                tools=tools,
             )
             validation_error = validate_compaction_summary(summary)
             if validation_error:
@@ -627,96 +528,54 @@ async def _create_summary(
     previous_summary: str | None = None,
     model_config: object | None = None,
     output_multiplier: int = 1,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     """Create a structured compaction handoff using the compact.md contract."""
-    from deepseek_tui.engine.context_pressure import is_synthetic_user_message
-
-    limits = _summary_input_limits_for_model(model, model_config)
-
-    # Format conversation for summarization
-    conversation_text = ""
-    for msg in messages:
-        # Reminders and cycle seeds all ride the user role.
-        # Labelling them "User" lets the summarizer attribute harness text to
-        # the human, which then replays as a user constraint after compaction.
-        if msg.role != "user":
-            role = "Assistant"
-        elif is_synthetic_user_message(msg):
-            role = "Harness"
-        else:
-            role = "User"
-        for block in msg.content:
-            if hasattr(block, "text"):
-                text = getattr(block, "text", "")
-                snippet = _elide_middle(str(text), limits.text_snippet_chars)
-                conversation_text += f"{role}: {snippet}\n\n"
-            elif hasattr(block, "name"):
-                name = getattr(block, "name", "unknown")
-                args = _render_tool_args(getattr(block, "input", None) or {})
-                conversation_text += f"{role}: [Used tool: {name}({args})]\n\n"
-            elif hasattr(block, "content"):
-                content = getattr(block, "content", "")
-                snippet = _elide_middle(
-                    str(content), limits.tool_result_snippet_chars
-                )
-                conversation_text += f"Tool result: {snippet}\n\n"
-
-    # Truncate conversation if too long (head + tail pattern)
-    conv_chars = len(conversation_text)
-    if conv_chars > limits.input_max_chars:
-        head = _truncate_chars(conversation_text, limits.input_head_chars)
-        tail = _tail_chars(conversation_text, limits.input_tail_chars)
-        omitted = max(0, conv_chars - len(head) - len(tail))
-        conversation_text = f"{head}\n\n[... {omitted} characters omitted ...]\n\n{tail}"
-
+    from deepseek_tui.engine.context_pressure import (
+        collect_user_requests,
+        format_user_requests_block,
+    )
     from deepseek_tui.engine.prompts import COMPACT_TEMPLATE
 
-    handoff_contract = COMPACT_TEMPLATE().strip()
-    system_prompt = (
-        "You are the coding agent whose session is being compacted, writing a "
-        "handoff note to your own next turn. Follow the contract. Prefer "
-        "continuity and concrete detail over prose polish, and keep the shape "
-        "the task calls for rather than filling every heading. Do not call "
-        "tools. Lines labelled 'Harness:' are automated injections from the "
-        "agent runtime, not the human — never record their wording as a user "
-        "request or user constraint."
+    limits = _summary_input_limits_for_model(model, model_config)
+    instruction = (
+        "[CONTEXT COMPACTION] Write a handoff to your next turn using the entire "
+        "conversation above. Do not execute tools or continue the task. "
+        "Treat harness reminders as runtime context, not user instructions. "
+        "Preserve user constraints, concrete evidence, unresolved work and next steps.\n\n"
+        + COMPACT_TEMPLATE().strip()
+        + f"\nKeep the note under {limits.word_limit} words when possible."
     )
-    previous_block = ""
-    if previous_summary and previous_summary.strip():
-        previous_block = (
-            "Your previous handoff note is continuity context, not evidence. "
-            "PRESERVE still-supported facts, ADD new progress, and UPDATE "
-            "Next step:\n"
-            f"<previous-summary>\n{previous_summary.strip()}\n</previous-summary>\n\n"
-        )
-    user_prompt = (
-        f"{handoff_contract}\n\n"
-        f"Keep the note under {limits.word_limit} words when possible; the two "
-        "required headings and the detail needed to continue take priority over "
-        "the word limit.\n\n"
-        f"{previous_block}"
-        "---\n\n"
-        "Conversation to archive:\n\n"
-        f"{conversation_text}"
+    instruction += (
+        "\nThe conversation above uses native message roles, not flattened line labels. "
+        "User-role runtime injections are not human requests. The authoritative "
+        "human request ledger is:\n"
+        + format_user_requests_block(collect_user_requests(messages))
     )
-
+    # A previous bridge already lives in messages. Do not duplicate its envelope.
+    if previous_summary and not any("<archived_context>" in m.text_content() for m in messages):
+        instruction += f"\nPrevious handoff (unverified notes):\n{previous_summary}"
     request = MessageRequest(
         model=model,
-        messages=[Message.user(user_prompt)],
-        max_tokens=limits.max_tokens * min(4, max(1, output_multiplier)),
+        messages=[*messages, Message.user(instruction)],
         system_prompt=system_prompt,
+        tools=tools or [],
+        max_tokens=limits.max_tokens * min(4, max(1, output_multiplier)),
     )
 
     validate_summary_request_budget(request, model_config)
     response = client.stream_chat_completion(request)
 
-    from deepseek_tui.protocol.responses import StreamDone, StreamError
+    from deepseek_tui.protocol.responses import StreamDone, StreamError, StreamToolCallComplete
 
     summary = ""
     async with aclosing(response):
         async for event in response:
             if isinstance(event, StreamError):
                 raise ValueError(f"Compaction stream failed: {event.message}")
+            if isinstance(event, StreamToolCallComplete):
+                raise ValueError("Compaction requested a tool instead of a text handoff")
             if isinstance(event, StreamDone) and event.truncated:
                 raise SummaryTruncatedError("Compaction stream was truncated")
             if hasattr(event, "text"):
@@ -727,13 +586,17 @@ async def _create_summary(
 
 
 def _turn_ages(messages: list[Message]) -> list[int]:
-    """Count real user turns once, rather than scanning a suffix per result."""
+    """Age by user turns or tool rounds, including single-user agent runs."""
     from deepseek_tui.engine.context_pressure import is_synthetic_user_message
 
     ages = [0] * len(messages)
-    turns = 0
+    from deepseek_tui.protocol.messages import ToolUseBlock
+
+    turns = tool_rounds = 0
     for i in range(len(messages) - 1, -1, -1):
-        ages[i] = turns
+        ages[i] = max(turns, tool_rounds)
+        if any(isinstance(block, ToolUseBlock) for block in messages[i].content):
+            tool_rounds += 1
         if not is_synthetic_user_message(messages[i]):
             turns += 1
     return ages

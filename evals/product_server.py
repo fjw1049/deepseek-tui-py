@@ -42,6 +42,9 @@ def main() -> None:
     # An eval has nobody to answer: a question must not wait out the turn timeout.
     config.unattended = True
     hide_user_skills()
+    from evals.compression_experiment import configure_compression
+
+    configure_compression()
     options = AppServerOptions(
         host="127.0.0.1",
         port=args.port,

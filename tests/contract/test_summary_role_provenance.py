@@ -34,11 +34,11 @@ class _CapturingClient:
 
 
 def _summary_prompt(client: _CapturingClient) -> str:
-    return client.request.messages[0].text_content()
+    return client.request.messages[-1].text_content()
 
 
 @pytest.mark.asyncio
-async def test_synthetic_user_messages_are_labelled_harness() -> None:
+async def test_synthetic_user_messages_are_excluded_from_authoritative_ledger() -> None:
     reminder = Message.user(
         "<system-reminder>Keep the checklist current.</system-reminder>"
     )
@@ -50,9 +50,9 @@ async def test_synthetic_user_messages_are_labelled_harness() -> None:
     await _create_summary(client, [reminder, real], "deepseek-chat")  # type: ignore[arg-type]
 
     prompt = _summary_prompt(client)
-    assert "Harness: <system-reminder>Keep the checklist current." in prompt
-    assert "User: Rename getCwd to getCurrentWorkingDirectory" in prompt
-    assert "User: <system-reminder>" not in prompt
+    assert client.request.messages[:-1] == [reminder, real]
+    assert "Rename getCwd to getCurrentWorkingDirectory" in prompt
+    assert "Keep the checklist current" not in prompt
 
 
 @pytest.mark.asyncio
@@ -63,9 +63,8 @@ async def test_summarizer_is_told_what_harness_means() -> None:
     client = _CapturingClient()
     await _create_summary(client, [real], "deepseek-chat")  # type: ignore[arg-type]
 
-    system_prompt = client.request.system_prompt
-    assert "Harness:" in system_prompt
-    assert "not the human" in system_prompt
+    assert client.request.system_prompt is None
+    assert "runtime injections are not human requests" in _summary_prompt(client)
 
 
 @pytest.mark.asyncio
@@ -75,4 +74,6 @@ async def test_assistant_messages_keep_their_label() -> None:
         client, [Message.assistant("I renamed the helper")], "deepseek-chat"
     )
 
-    assert "Assistant: I renamed the helper" in _summary_prompt(client)
+    assert client.request.messages[0].role == "assistant"
+    assert client.request.messages[0].text_content() == "I renamed the helper"
+    assert "I renamed the helper" not in _summary_prompt(client)

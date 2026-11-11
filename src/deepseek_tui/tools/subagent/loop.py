@@ -500,9 +500,15 @@ async def _compact_subagent_messages(messages: list[Message]) -> list[Message]:
     cheaper and better targeted. When there is nothing left to prune the
     request overflows again and the loop fails the run loudly.
     """
-    from deepseek_tui.engine.capacity import prune_old_tool_results
+    from deepseek_tui.engine.capacity import ToolPruneConfig, plan_compaction, prune_old_tool_results
 
-    prune_old_tool_results(messages)
+    plan = plan_compaction(messages, keep_recent_tokens=0)
+    boundary = min(plan.pinned_indices, default=len(messages))
+    prune_old_tool_results(
+        messages,
+        config=ToolPruneConfig(keep_last_n_turns=0, hard_clear_age_turns=0),
+        mutate_before_index=boundary,
+    )
     return messages
 
 
