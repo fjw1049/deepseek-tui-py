@@ -437,3 +437,25 @@ Chrome 与 Electron 真实验证（2026-10-29，`deepseek-flash`）：收尾时�
 标记为已有标签页；`Capability is not available` 归为平台不支持的调用形式。本地表单新标签页任务
 修复前 2 次均为 partial（其一 71 轮），修复后 2 次均 completed（9–10 轮）；本地 Electron 表单
 2 次均 completed。以原生应用方式操作 Chrome 会读到其他标签页标题且状态频繁变化，应使用浏览器接口。
+
+
+## 过期目标统一由宿主观察（2026-11-10）
+
+以下四处改变了上文的对应说法，以本节为准：
+
+- 重新取得已释放的应用（切换应用后返回、`completion_summary` 之后继续、被其他任务用过）时，
+  `cua_js` 不再报错要求模型自己调用 `cua_observe`：macOS 上宿主直接观察该应用，把当前状态作为
+  这次结果返回，代码未执行。原因文字改为如实描述（“已释放或被其他任务用过”），不再一律说“桌面换主”。
+  无法确定单个应用时仍按原样提示。只含 `cua.getApp(...)` 的重新绑定会打印应用状态，同样算作已查看。
+- 结果未知的操作不再等到下一次 `cua_js` 执行完才告知。macOS 上，下一次带代码的 `cua_js` 先由宿主观察
+  上次操作的应用并返回状态与提示，代码未执行；模型自己调用 `cua_observe` 时，提示随观察结果给出。
+  两种情况都只告知一次，随后记录清除。应用无法观察时沿用旧行为：代码照常执行，提示附在结果里。
+- 回合结束时不再把“缺少 `completion_summary`”记为未决事项，也不再因此提醒模型或在核验状态里显示。
+  桌面轮次本来就由宿主在回合结束时关闭；`completion_summary` 仍可用于提前释放应用。
+- `cua_observe` 的参数与描述只列出当前平台可用的原生目标：macOS 为 `app`，其他平台为 `window_id`。
+
+验证：在缺少部分项目依赖的 Linux 环境中，用替身模块运行了 `tests/test_cua.py`、
+`tests/test_cua_observation.py`、`tests/engine/test_completion.py`、`tests/test_cua_native_parallel.py`、
+`tests/test_cua_app_queue.py`，并把平台替换为 macOS 再跑一遍：新增 5 项测试通过，其余结果与改动前一致
+（改动前后相同的 9 项因缺少 fastapi、httpx 等依赖无法运行）。`tests/test_subagent_ui_delivery.py` 的改动
+未能在该环境运行。完整测试套件和真实运行时尚未验证。

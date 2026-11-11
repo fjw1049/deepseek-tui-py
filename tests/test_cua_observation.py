@@ -36,7 +36,7 @@ async def test_recovery_allows_observation_and_keeps_blocking_actions(session, t
 
 
 @pytest.mark.asyncio
-async def test_unknown_outcome_survives_observation_and_settles_once_told(session, tmp_path):
+async def test_unknown_outcome_is_told_with_the_next_observation_and_settles(session, tmp_path):
     await session.connect()
     await session.record_outcome("old-turn", "uncertain-click", "unknown",
                                  code=_code_fingerprint({"code": "click"}))
@@ -45,18 +45,58 @@ async def test_unknown_outcome_survives_observation_and_settles_once_told(sessio
     register_tools(registry, session)
     try:
         result = await registry.get("cua_observe").execute({"app": "dev.fixture"}, context)
-        assert result.success
-        assert session.unresolved["call_id"] == "uncertain-click"
-        other = await registry.get("cua_js").execute({"code": "read"}, context)
-        assert other.success and "unknown outcome" in other.content
-        again = await registry.get("cua_js").execute({"code": "read more"}, context)
-        assert "unknown outcome" not in again.content
-        # Told once, it is the model's to check: gone in memory and on disk.
+        assert result.success and "unknown outcome" in result.content
+        # Told once beside the state to check it against: gone in memory and on disk.
         assert session.unresolved is None
+        other = await registry.get("cua_js").execute({"code": "read"}, context)
+        assert other.success and "unknown outcome" not in other.content
         restored = CuaSession(session.config, tmp_path, "other", owner_id="session-a")
         assert restored.unresolved is None
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+async def test_code_after_an_unknown_outcome_gets_the_app_state_first(
+        session, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from deepseek_tui.cua import session as cua_session
+
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    await session.connect()
+    try:
+        tool = CuaTool(session, session.descriptors[0])
+        await tool.execute({"code": "surface:dev.fixture"}, context)
+        await session.record_outcome("t", "lost", "unknown")
+        held = await tool.execute({"code": "click"}, context)
+        assert not held.success and "unknown outcome" in held.content
+        assert "1 text Saved" in held.content
+        assert "click" not in [c["args"]["code"] for c in _calls(tmp_path)]
+        assert session.unresolved is None
+        assert (await tool.execute({"code": "click"}, context)).success
+        # An app that cannot be observed still runs the code, told the old way.
+        await tool.execute({"code": "surface:dev.unobservable"}, context)
+        await session.record_outcome("t", "lost-again", "unknown")
+        ran = await tool.execute({"code": "press"}, context)
+        assert ran.success and "unknown outcome" in ran.content
+    finally:
+        await session.close()
+
+
+def test_observe_schema_offers_only_this_platforms_native_target(session, monkeypatch):
+    from types import SimpleNamespace
+
+    from deepseek_tui.cua import tools
+
+    observe = CuaObserveTool(session)
+    for platform, native, other in (("darwin", "app", "window_id"), ("linux", "window_id", "app")):
+        monkeypatch.setattr(tools, "sys", SimpleNamespace(platform=platform))
+        schema = observe.input_schema()
+        assert native in schema["properties"] and other not in schema["properties"]
+        assert schema["oneOf"] == [{"required": [native]}, {"required": ["browser", "tab_id"]}]
+        assert f"Supply {native}" in observe.description()
 
 
 def observed(text):

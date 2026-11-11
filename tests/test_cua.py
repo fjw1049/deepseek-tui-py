@@ -1650,3 +1650,48 @@ async def test_unscoped_code_names_the_app_still_awaiting_observation(
         assert _calls(tmp_path)[-1]["args"]["code"] == "globalThis.x = 1"
     finally:
         await session.close()
+
+
+async def test_rebinding_a_released_app_counts_as_looking_at_it(session, tmp_path, monkeypatch):
+    from deepseek_tui.cua import app_scope
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    bind = {"code": 'let player = await cua.getApp("com.soda.music");'}
+    click = {"code": "await player.click(29);"}
+    try:
+        await session.call("js", bind, "t", "1")
+        await session.end_turn()
+        with pytest.raises(ToolError, match="cua_observe"):
+            await session.call("js", click, "t", "2")
+        # Binding prints the app's state, so it satisfies the wait like an observation.
+        await session.call("js", bind, "t", "3")
+        await session.call("js", click, "t", "4")
+        assert [r["call"] for r in _calls(tmp_path) if r.get("args") == click] == ["4"]
+    finally:
+        await session.close()
+
+
+async def test_returning_to_a_released_app_shows_its_state_instead_of_an_error(
+    session, tmp_path, monkeypatch
+):
+    from deepseek_tui.cua import app_scope
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    click = {"code": "await player.click(29);"}
+    try:
+        await session.connect()
+        tool = CuaTool(session, session.descriptors[0])
+        await tool.execute({"code": 'let player = await cua.getApp("dev.fixture");'}, context)
+        await session.end_turn()
+        held = await tool.execute(click, context)
+        assert not held.success and "observed dev.fixture for you" in held.content
+        assert "released or used by another task" in held.content
+        assert "1 text Saved" in held.content
+        assert click not in [r.get("args") for r in _calls(tmp_path)]
+        assert (await tool.execute(click, context)).success
+    finally:
+        await session.close()

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 import time
 import unicodedata
 from dataclasses import replace
 from typing import Any
 
 from deepseek_tui.cua.ax_text import is_listing, shorten
-from deepseek_tui.cua.session import CuaSession
+from deepseek_tui.cua.session import CuaSession, StaleTarget
 from deepseek_tui.surfaces import CUA_TOOLS  # noqa: F401 - re-exported for CUA wiring
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
 from deepseek_tui.utils import current_tool, current_turn
@@ -47,6 +48,12 @@ UNCERTAIN_OBSERVED_NOTE = (
     "[Host: this call may have changed the app before it failed. The host observed {app} "
     "just now; the state below is current. Decide from it and do not repeat an action that "
     "already took effect. Element indices from before may be stale.]"
+)
+UNKNOWN_OUTCOME_NOTE = (
+    "Not executed: an earlier computer-use call has an unknown outcome and may already have "
+    "taken effect. The host observed {app} for you first; the state below is current. "
+    "Variables and element indices from before may be gone. Check whether that effect "
+    "happened, then bind the app again and issue only what is still needed."
 )
 SHORTENED_NOTE = (
     "[Host: this accessibility listing was too large to show whole, so long lists are "
@@ -409,10 +416,24 @@ class CuaTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         context.metadata["cua_session"] = self.session
-        if (self.descriptor["name"] == "js" and self.session.outside_change
+        js = self.descriptor["name"] == "js"
+        if js and self.session.outside_change and (target := self.session.heal_target()):
+            return await self._observe_instead(target, context, self.session.outside_change)
+        if (js and input_data.get("code") and self.session.unresolved
                 and (target := self.session.heal_target())):
-            return await self._observe_instead(target, context)
-        result = await self._execute(input_data, context)
+            # The observation tells the model about the unknown outcome and settles it.
+            observed = await CuaObserveTool(self.session, self.cancel_events).execute(
+                target, context)
+            if observed.success:
+                return _with_stats(replace(observed, success=False, content=(
+                    UNKNOWN_OUTCOME_NOTE.format(app=target["app"]) + "\n" + observed.content)),
+                    replaced_by_observation=True)
+        try:
+            result = await self._execute(input_data, context)
+        except StaleTarget as stale:
+            if not stale.app:
+                raise
+            return await self._observe_instead({"app": stale.app}, context, stale.reason)
         if not result.success and self.descriptor["name"] == "js":
             kind = result.metadata.get("cua_error_kind")
             if kind == "user_intervened":
@@ -445,14 +466,15 @@ class CuaTool(ToolSpec):
         ), delivery="uncertain", observed_after_failure=True,
             observe_runtime_ms=observed.metadata.get("cua_stats", {}).get("runtime_ms"))
 
-    async def _observe_instead(self, target: dict[str, str], context: ToolContext) -> ToolResult:
+    async def _observe_instead(
+        self, target: dict[str, str], context: ToolContext, reason: str,
+    ) -> ToolResult:
         """Code waits on a fresh observation; take it now instead of refusing the call."""
-        reason = self.session.outside_change
         observed = await CuaObserveTool(self.session, self.cancel_events).execute(target, context)
         if not observed.success:
             # Some apps cannot be observed at all (custom-drawn, windowless). Holding code
             # until an observation succeeds would block them for good, so open the gate.
-            self.session.outside_change = ""
+            self.session.stop_waiting_on(target["app"])
             return _with_stats(replace(observed, content=(
                 f"Not executed: {reason} The host tried to observe {target['app']} for you and "
                 "could not:\n" + observed.content
@@ -594,9 +616,10 @@ class CuaObserveTool(CuaTool):
     def description(self) -> str:
         return (
             "Observe a native app or an existing browser tab without clicks or text input. "
-            "Supply app (name/bundle id; macOS, where an app that is not running is launched in "
-            "the background), window_id (Linux and Windows, from the runtime inventory), or "
-            "browser and tab_id from the runtime inventory. "
+            + ("Supply app (name/bundle id; an app that is not running is launched in the "
+               "background)" if sys.platform == "darwin" else
+               "Supply window_id (from the runtime inventory)")
+            + ", or browser and tab_id from the runtime inventory. "
             "Returns full accessibility state and a screenshot through the same CUA runtime; "
             "existing access permissions apply. Use after actions to verify the expected "
             "change, when the user changes the interface, and before reporting a result. "
@@ -606,22 +629,22 @@ class CuaObserveTool(CuaTool):
             "While an app is loading or finishing an action, add wait_ms (up to 30000) "
             "instead of observing repeatedly: the host returns one fresh observation after "
             "that long, or as soon as every expect fragment appears. "
-            "Works after a reset; does not restore old JavaScript bindings. "
-            "An unknown submission remains unresolved even when inspection succeeds."
+            "Works after a reset; does not restore old JavaScript bindings."
         )
 
     def input_schema(self) -> dict[str, Any]:
+        # Only the form this platform's runtime accepts for a native target.
+        native = ({"app": {"type": "string", "minLength": 1}} if sys.platform == "darwin"
+                  else {"window_id": {"type": "integer", "minimum": 0}})
         return {"type": "object", "properties": {
-            "app": {"type": "string", "minLength": 1},
-            "window_id": {"type": "integer", "minimum": 0},
+            **native,
             "browser": {"type": "string", "minLength": 1},
             "tab_id": {"type": "string", "minLength": 1},
             "expect": {"type": "array", "maxItems": 8,
                        "items": {"type": "string", "minLength": 1}},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_MS},
         }, "additionalProperties": False,
-            "oneOf": [{"required": ["app"]}, {"required": ["window_id"]},
-                      {"required": ["browser", "tab_id"]}]}
+            "oneOf": [{"required": list(native)}, {"required": ["browser", "tab_id"]}]}
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         target = {k: v for k, v in input_data.items() if k not in {"expect", "wait_ms"}}

@@ -107,15 +107,11 @@ class _ActingDesktop(RepeatingScreen):
         from deepseek_tui.tools.registry import ToolResult
 
         self.calls += 1
-        if input_data.get("completion_summary"):
-            return ToolResult(True, "Completion summary received.")
         return ToolResult(True, "clicked", metadata={
             "cua_trace": {"ready": True, "actions": [{"action": "click", "ok": True}]}})
 
 
-@pytest.mark.parametrize("summarized", [False, True])
-async def test_parent_learns_when_a_childs_desktop_steps_were_not_wrapped_up(
-        tmp_path, monkeypatch, summarized):
+async def test_a_childs_desktop_steps_need_no_closing_summary(tmp_path, monkeypatch):
     from deepseek_tui.tools import registry
 
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
@@ -127,10 +123,7 @@ async def test_parent_learns_when_a_childs_desktop_steps_were_not_wrapped_up(
         return result
 
     monkeypatch.setattr(registry, "build_subagent_registry", with_desktop)
-    scripts = [call("cua_js", "act", code="await app.click(3)")]
-    if summarized:
-        scripts.append(call("cua_js", "done", completion_summary="Saved the file"))
-    snap = await _run([*scripts, REPORT], tmp_path, [])
+    snap = await _run([call("cua_js", "act", code="await app.click(3)"), REPORT], tmp_path, [])
     assert snap.status.kind == SubAgentStatusKind.COMPLETED
-    assert ("the desktop steps were not wrapped up" in snap.result) is not summarized
-    assert (snap.task_outcome["status"] == "partial") is not summarized
+    assert "wrapped up" not in snap.result
+    assert snap.task_outcome["status"] != "partial"

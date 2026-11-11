@@ -114,24 +114,13 @@ def test_unknown_desktop_outcome_makes_the_turn_partial():
     assert "桌面操作结果未知" in facts.note(pending, [])
 
 
-def test_stopping_after_desktop_input_without_a_closing_summary_is_open():
+def test_stopping_after_desktop_input_needs_no_closing_summary():
+    # The host ends the desktop turn itself; a missing completion_summary is not open work.
     session = SimpleNamespace(unresolved=False, outside_change=False, reset_reason="")
-    metadata = {"cua_session": session}
     acted = {"cua_trace": {"ready": True, "actions": [{"action": "click", "ok": True}]}}
-    looked = {"cua_trace": {"ready": True, "actions": [{"action": "getAXState", "observe": True}]}}
     facts = TurnFacts()
-    facts.record("cua_js", {"code": "await app.getAXState()"}, success=True, metadata=looked)
-    assert facts.pending(metadata) == []
     facts.record("cua_js", {"code": "await app.click(3)"}, success=True, metadata=acted)
-    assert facts.pending(metadata) == ["cua_completion_summary_missing"]
-    facts.record("cua_js", {"completion_summary": "Saved the file"}, success=True)
-    # Looking again after the summary does not reopen it.
-    facts.record("cua_js", {"code": "await app.getAXState()"}, success=True, metadata=looked)
-    assert facts.pending(metadata) == []
-    facts.record("cua_js", {"code": "await app.click(4)"}, success=True, metadata=acted)
-    facts.assistance_requests.append({"reason": "Touch ID"})
-    # A handoff to the person is its own open state; the summary comes after it.
-    assert facts.pending(metadata) == []
+    assert facts.pending({"cua_session": session}) == []
 
 
 def test_a_problem_alone_still_reaches_the_user():

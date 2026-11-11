@@ -55,6 +55,16 @@ def reset_runtime_cache() -> None:
     _RUNTIMES.clear()
 
 
+class StaleTarget(ToolError):
+    """Code was held until an app is looked at again; the host may look on the model's behalf."""
+
+    def __init__(self, reason: str, app: str | None, target: str):
+        super().__init__(f"{reason} Nothing was executed. Use cua_observe on {target}, "
+                         "then act on the fresh state.")
+        self.reason = reason
+        self.app = app
+
+
 class DesktopLease(_DesktopLease):
     def __init__(self, path: Path | None = None):
         uid = getattr(os, "getuid", lambda: 0)()
@@ -151,6 +161,11 @@ class CuaSession:
     def invalidate_observation(self, reason: str) -> None:
         self.outside_change = reason
         self.observation_generation += 1
+
+    def stop_waiting_on(self, app: str | None) -> None:
+        """An app that cannot be observed must not hold code for good."""
+        self.outside_change = ""
+        self._needs_observation.discard(app)
 
     def control_state(self) -> dict[str, Any]:
         return {
@@ -601,8 +616,9 @@ class CuaSession:
                 # Unscoped code may touch any app still awaiting observation: name them.
                 pending = sorted(a for a in ({app} if app else self._needs_observation) if a)
                 target = ", ".join(pending) or "the intended app"
-                raise ToolError("The desktop changed owners. Nothing was executed. Use cua_observe "
-                                f"on {target}, then act on the fresh state.")
+                raise StaleTarget(
+                    f"{target} was released or used by another task since you last looked at it.",
+                    pending[0] if len(pending) == 1 else None, target)
             observed_generation = self.observation_generation
             try:
                 # Write before dispatch so a host crash cannot turn an uncertain
@@ -649,10 +665,22 @@ class CuaSession:
                         self._needs_observation.discard(app)
                         self.outside_change = ""
                         self.reset_reason = ""
+                        if self._unresolved and not arguments.get("poll"):
+                            # The state shown is what the model checks an unknown outcome
+                            # against, so telling it here settles it as a code result would.
+                            result.setdefault("content", []).append(
+                                {"type": "text", "text": self._unknown_note()})
+                            last = self._unresolved[-1]
+                            await self.record_outcome(
+                                last["turn_id"], last["call_id"], "returned", settle=True)
                 if binding:
                     self._app_bindings.pop(binding[0], None)
                     if not result.get("isError"):
                         self._app_bindings[binding[0]] = binding[1]
+                if (name == "js" and app and not result.get("isError")
+                        and binding_only(arguments.get("code") or "")):
+                    # Binding prints the app's current state: the model has looked at it.
+                    self._needs_observation.discard(app)
                 if name == "js" and not app and not summary and not discovery_only(
                     arguments.get("code") or ""
                 ):
@@ -703,14 +731,17 @@ class CuaSession:
             if not result.get("isError") and any(
                     a.get("observe") and a.get("ok") for a in actions):
                 self.reset_reason = ""
-        pending_ids = tuple(r["call_id"] for r in self._unresolved)
-        if pending_ids:
-            notes.append("[Host: an earlier computer-use call has an unknown outcome and may "
-                         "already have taken effect. Check the app before repeating that "
-                         f"effect. Pending call IDs: {pending_ids}.]")
+        if self._unresolved:
+            notes.append(self._unknown_note())
         if notes:
             result.setdefault("content", []).append({"type": "text", "text": "\n".join(notes)})
-        return bool(pending_ids)
+        return bool(self._unresolved)
+
+    def _unknown_note(self) -> str:
+        pending_ids = tuple(r["call_id"] for r in self._unresolved)
+        return ("[Host: an earlier computer-use call has an unknown outcome and may "
+                "already have taken effect. Check the app before repeating that "
+                f"effect. Pending call IDs: {pending_ids}.]")
 
     async def _serve_previews(self):
         while self.lease.ticket is not None:
