@@ -1,6 +1,13 @@
 PYTHON := .venv/bin/python
 PRE_COMMIT := .venv/bin/pre-commit
 
+.PHONY: requirements-lock check-lock
+requirements-lock:
+	$(PYTHON) scripts/export-requirements.py
+
+check-lock:
+	$(PYTHON) scripts/export-requirements.py --check
+
 .PHONY: install-dev format lint typecheck test eval-validate eval-typecheck eval-offline eval-serve eval-full eval-history eval-personal check pre-commit-install
 
 install-dev:
@@ -42,7 +49,7 @@ eval-history: eval-validate
 eval-personal: eval-validate
 	$(FLASH_EVAL) --suite personal_sessions
 
-check: lint typecheck test eval-typecheck eval-offline
+check: check-lock lint typecheck test eval-typecheck eval-offline
 
 pre-commit-install:
 	$(PRE_COMMIT) install

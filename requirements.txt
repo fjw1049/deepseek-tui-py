@@ -1,6 +1,6 @@
 # Runtime dependencies for deepseek-tui-py
 # Floor versions only — for an exact-version reproducible install use
-# requirements.lock (generated via `uv pip freeze` after a clean install).
+# requirements.lock (generated from uv.lock by scripts/export-requirements.py).
 #
 # Install: pip install -r requirements.txt
 #         (or: uv pip install -r requirements.txt)
@@ -14,11 +14,19 @@ tomli>=2.0.1; python_version < "3.11"
 anyio>=4.2.0
 rich>=13.7.0
 jsonschema>=4.20.0
+PyYAML>=6.0
+tiktoken>=0.7.0
+regex>=2024.0
 aiofiles>=23.2.1
 fastapi>=0.110.0
 uvicorn>=0.27.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 croniter>=2.0.0
+pillow>=10.4
+python-docx>=1.1
+openpyxl>=3.1
+python-pptx>=1.0
 
 octop-browser==1.0.0; python_version >= "3.11"
+browser-cookie3==0.20.1; python_version >= "3.11"
