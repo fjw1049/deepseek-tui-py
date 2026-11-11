@@ -186,6 +186,8 @@ type QueuedComposerMessage = {
 }
 
 const paneAttachments = new Map<string, ComposerAttachment[]>()
+// A first send has no thread ID yet; keep its retry draft scoped to its pane.
+const homeRetryDrafts = new WeakMap<ReturnType<typeof useChatStoreApi>, string[]>()
 
 type Props = {
   sessionKey?: string
@@ -845,12 +847,14 @@ export function FloatingComposer({
   }
 
   const restoreRetryDraft = useCallback((): void => {
-    if (!activeThreadId || inputRef.current.trim()) return
-    const draft = takeComposerRetryDraft(activeThreadId)
+    if (inputRef.current.trim()) return
+    const homeDrafts = activeThreadId ? undefined : homeRetryDrafts.get(chatStore)
+    const draft = activeThreadId ? takeComposerRetryDraft(activeThreadId) : homeDrafts?.shift()
+    if (homeDrafts?.length === 0) homeRetryDrafts.delete(chatStore)
     if (!draft) return
     setInput(draft)
     if (paneFocused) window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [activeThreadId, setInput, paneFocused])
+  }, [activeThreadId, setInput, paneFocused, chatStore])
 
   useEffect(() => {
     if (!focusRequestId) return
@@ -1496,6 +1500,8 @@ export function FloatingComposer({
       } else if (mountedRef.current && sentThreadId === null && currentId === null) {
         setInput([sentInput, inputRef.current].filter(Boolean).join('\n'))
         setAttachments((current) => [...sentAttachments, ...current])
+      } else if (sentThreadId === null) {
+        homeRetryDrafts.set(chatStore, [...(homeRetryDrafts.get(chatStore) ?? []), payload])
       }
     }
     void onSend(payload).then((started) => {

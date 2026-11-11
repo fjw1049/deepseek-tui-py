@@ -18,6 +18,7 @@ import { RunStateIcon } from './RunActivity'
 import { RunSwitcher, type RunOption } from './RunSwitcher'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
 import { RunContext } from './RunContext'
+import { TaskFiles } from './TaskFiles'
 import './run-panel.css'
 
 export function RunPanel(): ReactElement {
@@ -105,7 +106,7 @@ function RunDetail({ target, blocks, options, onSelect }: {
   const resumableIds = agent?.cardKind === 'fanout' && selectedId === agent.agentId
     ? (agent.workers ?? []).filter((item) => item.status === 'failed' || item.status === 'cancelled').map((item) => item.id)
     : status === 'failed' || status === 'cancelled' || status === 'interrupted' ? [selectedId] : []
-  const canResume = isTask ? !!detail && isResumableTaskStatus(detail.status) : resumableIds.length > 0
+  const canResume = isTask ? !!detail && !detail.fileRestoreStarted && isResumableTaskStatus(detail.status) : resumableIds.length > 0
   const resume = async (): Promise<void> => {
     setResuming(true)
     setError(null)
@@ -189,6 +190,7 @@ function RunDetail({ target, blocks, options, onSelect }: {
             ) : null}
             {error || failed ? <p role="alert" className="ds-run-error">{error || t('runPanelLoadFailed')}</p> : null}
             {isTask && loading ? <p className="ds-run-empty">{t('contextRailTaskLoading')}</p> : null}
+            {isTask && detail && !active ? <TaskFiles taskId={target.id} onRestored={() => setRefresh((value) => value + 1)} /> : null}
             {!isTask && !root ? <p className="ds-run-empty">{t('runPanelUnavailable')}</p> : null}
             <RunMessageTimeline
               key={selectedId}

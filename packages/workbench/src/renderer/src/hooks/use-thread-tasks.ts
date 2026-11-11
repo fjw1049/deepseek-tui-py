@@ -28,6 +28,7 @@ export type TaskDetail = {
   /** Accumulated live text while the task is running (null once settled). */
   liveText: string | null
   timeline: TaskTimelineEntry[]
+  fileRestoreStarted?: boolean
 }
 
 function parseTimeline(raw: unknown): TaskTimelineEntry[] {
@@ -75,7 +76,8 @@ export async function fetchTaskDetail(id: string): Promise<TaskDetail | null> {
     error: typeof t.error === 'string' ? t.error : null,
     liveText: typeof t.live_text === 'string' ? t.live_text : null,
     durationMs: typeof t.duration_ms === 'number' ? t.duration_ms : null,
-    timeline: parseTimeline(t.timeline)
+    timeline: parseTimeline(t.timeline),
+    fileRestoreStarted: t.file_restore_started === true
   }
 }
 

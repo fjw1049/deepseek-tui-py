@@ -2,7 +2,7 @@ import { AppWindow, Plug, ShieldCheck } from 'lucide-react'
 import { CuaApprovedApps } from '../cua-preview/CuaApprovedApps'
 import { CuaPermissionsDialog } from '../cua-preview/CuaPermissionsDialog'
 import { CuaSetupChecklist } from './CuaSetupChecklist'
-import { usePluginNow } from './start-chat-with-plugin'
+import { startChatWithPlugin } from './start-chat-with-plugin'
 import { PluginDescription } from './PluginDescription'
 import { createPortal } from 'react-dom'
 import { PluginListItem } from './PluginListItem'
@@ -79,7 +79,7 @@ export function ComputerUsePluginCard(): React.JSX.Element {
       removeDisabled={!status?.enabled && (!status?.supported || !status?.installed)}
       onUse={() => { void (async () => {
         if (!status?.enabled && !await toggle()) { setOpen(true); return }
-        await usePluginNow('computer-use')
+        await startChatWithPlugin('computer-use')
       })() }}
       onRemove={() => { void toggle().then(ok => { if (!ok) setOpen(true) }) }}
       removeLabel={t(status?.enabled ? 'computerUseDisable' : 'computerUseEnable')} />

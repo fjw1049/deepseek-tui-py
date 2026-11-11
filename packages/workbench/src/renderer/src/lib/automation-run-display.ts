@@ -26,6 +26,9 @@ export function formatRunDeliveryStatus(
   automation: AutomationRecord | undefined,
   t: Translate
 ): string {
+  if (run.delivery_state === 'uncertain') return t('automationDeliveryUncertain')
+  if (run.delivery_state === 'sending') return t('automationDeliverySending')
+  if (run.delivery_state === 'sent') return t('automationRunDelivered')
   if (!automationHasDelivery(automation)) {
     return t('automationRunDeliveryNotConfigured')
   }
@@ -56,7 +59,8 @@ export function formatRunStatus(run: AutomationRunRecord, t: Translate): string 
   const labels: Record<string, string> = {
     completed: 'automationCompleted', succeeded: 'automationCompleted', success: 'automationCompleted',
     failed: 'automationRunFailed', error: 'automationRunFailed', running: 'automationRunRunning',
-    queued: 'automationRunQueued', canceled: 'automationRunCanceled'
+    queued: 'automationRunQueued', canceled: 'automationRunCanceled',
+    skipped: 'automationRunSkipped'
   }
   return labels[run.status] ? t(labels[run.status]) : run.status
 }

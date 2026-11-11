@@ -19,6 +19,7 @@ vi.mock('../../lib/resolve-channel-delivery', async (original) => ({
 }))
 vi.mock('../../lib/automation-runtime-client', async (original) => ({
   ...await original<typeof import('../../lib/automation-runtime-client')>(),
+  listPendingAutomationDeliveries: async () => [],
   listAutomations: async () => [{
     id: 'job', name: 'Project check', prompt: 'check', schedule: '0 * * * *',
     timezone: 'UTC', status: 'active'

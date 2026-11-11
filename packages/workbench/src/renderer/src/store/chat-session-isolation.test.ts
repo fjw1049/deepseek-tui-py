@@ -6,7 +6,8 @@ const provider = vi.hoisted(() => ({
   getThreadDetail: vi.fn(), subscribeThreadEvents: vi.fn(), interruptTurn: vi.fn(),
   fetchPendingApprovals: vi.fn(), fetchPendingUserInputs: vi.fn(), fetchPendingElevations: vi.fn(),
   warmThread: vi.fn(), submitApprovalDecision: vi.fn(), listThreads: vi.fn(),
-  sendUserMessage: vi.fn(), renameThread: vi.fn(), getThreadPauseState: vi.fn(), steerUserMessage: vi.fn()
+  sendUserMessage: vi.fn(), renameThread: vi.fn(), getThreadPauseState: vi.fn(), steerUserMessage: vi.fn(),
+  createThread: vi.fn()
 }))
 vi.mock('../agent/registry', () => ({ getProvider: () => provider }))
 import { createChatSessionStore } from './chat-store'
@@ -110,6 +111,30 @@ it('does not attach an old send to a newly selected task after auto-title', asyn
   expect(pane.store.getState().activeThreadId).toBe('b')
   expect(pane.store.getState().currentTurnId).toBe('turn-b')
   expect(provider.subscribeThreadEvents.mock.calls.filter(args => args[0] === 'a')).toHaveLength(0)
+})
+
+it.each(['success', 'failure'])('keeps the selected task when first thread creation finishes with %s', async (outcome) => {
+  const pane = session()
+  Object.assign(window.dsGui, { getSettings: vi.fn(async () => ({ workspaceRoot: '/project' })) })
+  provider.listThreads.mockResolvedValue([{ id: 'other', title: 'Other' }, { id: 'created', title: 'Created' }])
+  let resolveCreate!: (value: { id: string }) => void
+  let rejectCreate!: (error: Error) => void
+  provider.createThread.mockImplementation(() => new Promise((resolve, reject) => {
+    resolveCreate = resolve
+    rejectCreate = reject
+  }))
+  const sending = pane.store.getState().sendMessage('first message')
+  await vi.waitFor(() => expect(provider.createThread).toHaveBeenCalledOnce())
+  await pane.store.getState().selectThread('other')
+  const otherStream = provider.subscribeThreadEvents.mock.calls.at(-1)![3] as AbortSignal
+  if (outcome === 'success') resolveCreate({ id: 'created' })
+  else rejectCreate(new Error('create failed'))
+  expect(await sending).toBe(false)
+  expect(pane.store.getState().activeThreadId).toBe('other')
+  expect(pane.store.getState().currentTurnId).toBe('turn-other')
+  expect(pane.store.getState().error).toBeNull()
+  expect(otherStream.aborted).toBe(false)
+  expect(provider.sendUserMessage).not.toHaveBeenCalled()
 })
 
 it('does not retry a queued message while its turn still needs approval', async () => {

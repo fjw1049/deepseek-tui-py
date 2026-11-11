@@ -30,6 +30,7 @@ import {
 import { loadChannelDeliveryState } from '../../lib/resolve-channel-delivery'
 import { useChatStore } from '../../store/chat-store'
 import { SettingsSelect } from '../settings/SettingsSelect'
+import { AutomationPermissions } from './AutomationPermissions'
 
 type Props = {
   runtimeReady: boolean
@@ -611,6 +612,7 @@ export function AutomationTaskForm({
             </div>
           </fieldset>
         </div>
+        {initialAutomation ? <AutomationPermissions key={initialAutomation.id} automationId={initialAutomation.id} /> : null}
       </div>
     </div>
   )

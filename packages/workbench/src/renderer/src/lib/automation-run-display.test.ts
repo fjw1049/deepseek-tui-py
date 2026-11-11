@@ -15,6 +15,16 @@ const automationWithFeishu: AutomationRecord = {
 }
 
 describe('automation-run-display', () => {
+  it('uses the confirmed journal outcome ahead of legacy errors or changed channel config', () => {
+    const run: AutomationRunRecord = {
+      id: 'r1', automation_id: 'a1', scheduled_for: '', created_at: '', status: 'completed',
+      delivery_state: 'uncertain', delivery_done: false, error: 'delivery failed previously'
+    }
+    expect(formatRunDeliveryStatus(run, undefined, t)).toBe('automationDeliveryUncertain')
+    expect(formatRunDeliveryStatus({ ...run, delivery_state: 'sent', delivery_done: true }, undefined, t))
+      .toBe('automationRunDelivered')
+  })
+
   it('shows not configured when automation has no delivery', () => {
     const run: AutomationRunRecord = {
       id: 'r1',
@@ -77,4 +87,5 @@ describe('automation-run-display', () => {
    expect(formatRunStatus(run, t)).toBe('automationRunFailed')
    expect(formatRunStatus({ ...run, error: 'execution crashed' }, t)).toBe('automationRunFailed')
    expect(formatRunStatus({ ...run, status: 'completed', delivery_error: 'timeout' }, t)).toBe('automationCompleted')
+   expect(formatRunStatus({ ...run, status: 'skipped' }, t)).toBe('automationRunSkipped')
  })

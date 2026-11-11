@@ -1,6 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { AppSettingsV1 } from '../shared/app-settings'
@@ -14,13 +13,13 @@ import { applyStoredEmailPasswordToEnv } from './channel-secrets'
 import { readEmailPasswordEnvKey } from './email-automation-config'
 import { resolveDeepseekConfigPath } from './deepseek-config'
 import { getRuntimeBaseUrl } from './settings-store'
+import { resolveUserDeepseekDir } from './deepseek-paths'
 
 let child: ChildProcess | null = null
 let lastResolvedBinary: string | null = null
 
 export function runtimeTokenFilePath(): string {
-  const base = process.env.DEEPSEEK_HOME?.trim() || join(homedir(), '.deepseek')
-  return join(base, 'runtime.token')
+  return join(resolveUserDeepseekDir(), 'runtime.token')
 }
 
 /** Delete the cached token file so the next runtime spawn regenerates it. */

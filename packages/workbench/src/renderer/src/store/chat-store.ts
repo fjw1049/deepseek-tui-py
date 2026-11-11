@@ -2833,6 +2833,9 @@ const store = create<ChatState>((set, get) => ({
     const previousTurnReasoningLastAtByUserId = get().turnReasoningLastAtByUserId
     const previousQueuedMessages = get().queuedMessages
     const previousActivePlugin = get().activePlugin
+    const sendSelectionVersion = selectionVersion
+    const creationIsStale = (): boolean => disposed || selectionVersion !== sendSelectionVersion ||
+      get().activeThreadId !== previousActiveThreadId
     resetBusyRecoveryAttempts()
     set((s) => ({
       busy: true,
@@ -2866,6 +2869,7 @@ const store = create<ChatState>((set, get) => ({
     if (!activeThreadId) {
       try {
         const settings = await window.dsGui.getSettings()
+        if (creationIsStale()) return false
         const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
         if (!workspaceRoot) {
           set({
@@ -2884,6 +2888,7 @@ const store = create<ChatState>((set, get) => ({
           return false
         }
         const reusableThreadId = await findReusableEmptyThreadId(get(), p, workspaceRoot)
+        if (creationIsStale()) return false
         const reusableThread = reusableThreadId
           ? get().threads.find((thread) => thread.id === reusableThreadId) ?? null
           : null
@@ -2905,6 +2910,10 @@ const store = create<ChatState>((set, get) => ({
                 model: selectedModel.modelId
               })
             : null
+        if (creationIsStale()) {
+          if (!disposed) void get().refreshThreads()
+          return false
+        }
         const threadId = reusableThreadId ?? createdThread?.id ?? null
         if (!threadId) {
           throw new Error('Failed to resolve target thread id.')
@@ -2928,6 +2937,7 @@ const store = create<ChatState>((set, get) => ({
         void window.dsGui.logError('create-thread', 'Failed to create thread', {
           message: e instanceof Error ? e.message : String(e)
         })
+        if (creationIsStale()) return false
         set({
           activeThreadId: previousActiveThreadId,
           blocks: previousBlocks,

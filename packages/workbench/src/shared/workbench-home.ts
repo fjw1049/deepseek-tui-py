@@ -17,9 +17,20 @@ export function resolveWorkbenchHome(home?: string): string {
   if (home !== undefined) {
     return join(home, '.deepseek')
   }
-  const fromEnv = process.env.DEEPSEEK_HOME?.trim()
+  const fromEnv = process.env.DEEPSEEK_HOME
   if (fromEnv) {
-    return resolve(fromEnv)
+    // Match Python's expandvars followed by expanduser; unknown variables stay literal.
+    let expanded = fromEnv.replace(/\$\{([^}]*)\}|\$([A-Za-z0-9_]+)/g,
+      (match, braced: string | undefined, bare: string | undefined) =>
+        process.env[braced ?? bare!] ?? match)
+    if (process.platform === 'win32') {
+      expanded = expanded.replace(/%([^%]+)%/g, (match, name: string) => process.env[name] ?? match)
+    }
+    if (expanded === '~' || expanded.startsWith('~/') ||
+      (process.platform === 'win32' && expanded.startsWith('~\\'))) {
+      expanded = homedir() + expanded.slice(1)
+    }
+    return resolve(expanded)
   }
   return join(homedir(), '.deepseek')
 }

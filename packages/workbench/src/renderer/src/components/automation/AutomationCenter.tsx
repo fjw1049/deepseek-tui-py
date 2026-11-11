@@ -22,9 +22,11 @@ import {
   formatAutomationWhen,
   listAutomationRuns,
   listAutomations,
+  listPendingAutomationDeliveries,
   openAutomationDiscussion,
   pauseAutomation,
   resumeAutomation,
+  resolveAutomationDelivery,
   runAutomationNow,
   updateAutomation,
   type AutomationRecord,
@@ -137,6 +139,9 @@ export function AutomationCenter({
   const [runsLoading, setRunsLoading] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [discussionRunId, setDiscussionRunId] = useState<string | null>(null)
+  const [deliveryRunId, setDeliveryRunId] = useState<string | null>(null)
+  const [pendingDeliveries, setPendingDeliveries] = useState<Awaited<ReturnType<typeof listPendingAutomationDeliveries>>>([])
+  const [pendingDeliveryError, setPendingDeliveryError] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [tab, setTab] = useState<TabId>('tasks')
   const [sort, setSort] = useState<SortMode>('active-first')
@@ -153,6 +158,23 @@ export function AutomationCenter({
   selectedIdRef.current = selectedId
 
   const selected = rows.find((row) => row.id === selectedId) ?? null
+
+  const resolveDelivery = async (run: AutomationRunRecord, action: 'received' | 'retry'): Promise<void> => {
+    if (deliveryRunId) return
+    setDeliveryRunId(run.id)
+    try {
+      const updated = await resolveAutomationDelivery(run.automation_id, run.id, action)
+      setPendingDeliveries(current => current.filter(item => !(item.id === run.id && item.automation_id === run.automation_id)))
+      if (selectedIdRef.current === run.automation_id) {
+        setRuns(current => current.map(item => item.id === updated.id ? updated : item))
+      }
+      void fetchAllRuns()
+    } catch (error) {
+      setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setDeliveryRunId(null)
+    }
+  }
 
   const discussRun = async (run: AutomationRunRecord): Promise<void> => {
     if (discussionRunId || !onOpenThread) return
@@ -228,12 +250,20 @@ export function AutomationCenter({
       }
       setLoading(true)
       try {
-        const [automations, channels] = await Promise.all([
+        const [automations, channels, pending] = await Promise.allSettled([
           listAutomations(),
-          loadChannelDeliveryState().catch(() => null)
+          loadChannelDeliveryState(),
+          listPendingAutomationDeliveries()
         ])
-        setRows(automations)
-        if (channels) setChannelDelivery(channels)
+        if (channels.status === 'fulfilled') setChannelDelivery(channels.value)
+        if (pending.status === 'fulfilled') {
+          setPendingDeliveries(pending.value)
+          setPendingDeliveryError(null)
+        } else {
+          setPendingDeliveryError(pending.reason instanceof Error ? pending.reason.message : String(pending.reason))
+        }
+        if (automations.status === 'rejected') throw automations.reason
+        setRows(automations.value)
         if (opts?.notify) {
           setNotice({ tone: 'success', message: t('listReloaded') })
         }
@@ -524,6 +554,39 @@ export function AutomationCenter({
       {/* Content */}
       <div className="ds-automation-scroll min-h-0 flex-1 overflow-auto px-8 py-6">
         <div className="mx-auto max-w-6xl">
+          {runtimeReady && pendingDeliveryError && (
+            <p role="status" className="mb-3 text-[13px] text-ds-muted">
+              {t('automationDeliveryLoadFailed')} · {pendingDeliveryError}
+            </p>
+          )}
+          {runtimeReady && pendingDeliveries.length > 0 && (
+            <section className="mb-5 space-y-3 rounded-lg border border-ds-border p-4" aria-label={t('automationDeliveryUncertain')}>
+              <h3>{t('automationDeliveryUncertain')}</h3>
+              <p className="text-[13px] text-ds-muted">{t('automationDeliveryUncertainHelp')}</p>
+              {pendingDeliveries.map(run => (
+                <div key={`${run.automation_id}/${run.id}`} className="flex flex-wrap items-center gap-2 text-[13px]">
+                  <span className="mr-auto">{run.automation_name} · {formatAutomationWhen(run.created_at)} · {run.id}</span>
+                  {run.delivery_error && <p className="w-full text-ds-muted">{run.delivery_error}</p>}
+                  {run.delivery_snapshot && (
+                    <details className="w-full">
+                      <summary className="cursor-pointer">{t('automationDeliveryPreview')} · {run.delivery_snapshot.config.mode}
+                        {['email', 'feishu'].includes(run.delivery_snapshot.config.mode)
+                          ? ` · ${run.delivery_snapshot.config.to || run.delivery_snapshot.config.chat_id || ''}` : ''}
+                      </summary>
+                      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words">{run.delivery_snapshot.summary}</pre>
+                    </details>
+                  )}
+                  {(['received', 'retry'] as const).map(action => (
+                    <button key={action} type="button" disabled={deliveryRunId !== null}
+                      onClick={() => void resolveDelivery(run, action)}
+                      className="rounded-md border border-ds-border px-3 py-1.5 hover:bg-ds-hover disabled:opacity-50">
+                      {t(action === 'received' ? 'automationDeliveryReceived' : 'automationDeliveryRetryConfirmed')}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </section>
+          )}
           {!runtimeReady ? (
             <div className="rounded-xl border border-ds-border bg-ds-card px-6 py-12 text-center">
               <CalendarClock className="mx-auto h-8 w-8 text-ds-faint" />

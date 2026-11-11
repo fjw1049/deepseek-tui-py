@@ -1,4 +1,4 @@
-import { usePluginNow } from './start-chat-with-plugin'
+import { startChatWithPlugin } from './start-chat-with-plugin'
 import { PluginDescription } from './PluginDescription'
 import { PluginListItem } from './PluginListItem'
 import { PluginIcon } from './PluginIcon'
@@ -635,6 +635,6 @@ function PluginCard({ plugin, busy, onRemove, onOpenDetails }: {
   return <PluginListItem pluginId={plugin.name}
     title={pluginDisplayTitle(plugin.name, i18n.language)}
     summary={pluginDisplaySummary(plugin.name, i18n.language, plugin.description)}
-    onOpen={onOpenDetails} busy={busy} onUse={() => void usePluginNow(plugin.name)}
+    onOpen={onOpenDetails} busy={busy} onUse={() => void startChatWithPlugin(plugin.name)}
     onRemove={plugin.scope === 'claude' || plugin.scope === 'override' ? undefined : onRemove} />
 }

@@ -1,5 +1,5 @@
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
+import { resolveWorkbenchHome } from '../shared/workbench-home'
 
 export type DeepseekPaths = {
   home: string
@@ -14,11 +14,7 @@ export type DeepseekPaths = {
 
 /** User-level ``~/.deepseek`` (or ``$DEEPSEEK_HOME``). */
 export function resolveUserDeepseekDir(): string {
-  const fromEnv = process.env.DEEPSEEK_HOME?.trim()
-  if (fromEnv) {
-    return resolve(fromEnv)
-  }
-  return join(homedir(), '.deepseek')
+  return resolveWorkbenchHome()
 }
 
 export function resolveDeepseekPaths(): DeepseekPaths {

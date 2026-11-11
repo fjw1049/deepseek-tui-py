@@ -165,7 +165,7 @@ describe('macOS translucent sidebar material', () => {
     )?.groups?.body
     expect(chromeFillRule).toContain('position: absolute;')
     expect(chromeFillRule).toContain('background: var(--app-chrome-fill);')
-    expect(chromeFillRule).toContain('transition: left 300ms cubic-bezier(0.32, 0.72, 0, 1);')
+    expect(chromeFillRule).toContain('transition: left var(--ds-sidebar-motion-duration, 220ms) cubic-bezier(0.32, 0.72, 0, 1);')
     expect(chromeFillRule).toContain('pointer-events: none;')
 
     const macWedgeRule = stylesheet.match(

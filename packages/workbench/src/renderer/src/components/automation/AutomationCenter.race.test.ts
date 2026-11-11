@@ -9,6 +9,7 @@ vi.mock('./AutomationListCard', () => ({ AutomationListCard: (props: { title: st
 vi.mock('../../lib/resolve-channel-delivery', async (original) => ({ ...await original<typeof import('../../lib/resolve-channel-delivery')>(), loadChannelDeliveryState: async () => ({}) }))
 vi.mock('../../lib/automation-runtime-client', async (original) => ({
   ...await original<typeof import('../../lib/automation-runtime-client')>(),
+  listPendingAutomationDeliveries: async () => [],
   listAutomations: async () => ['A', 'B'].map(id => ({ id, name: id, prompt: id, schedule: '0 * * * *', timezone: 'UTC', status: 'active' })),
   listAutomationRuns: api.listAutomationRuns
 }))

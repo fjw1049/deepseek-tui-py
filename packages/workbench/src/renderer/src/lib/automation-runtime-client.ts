@@ -53,6 +53,12 @@ export type AutomationRunRecord = {
   delivery_done?: boolean
   /** Set when delivery gave up; `delivery_done` alone does not mean sent. */
   delivery_error?: string | null
+  delivery_state?: 'pending' | 'sending' | 'uncertain' | 'sent' | 'failed'
+  delivery_snapshot?: {
+    summary: string
+    automation_name: string
+    config: { mode: string; to?: string | null; chat_id?: string | null }
+  } | null
   conversation_thread_id?: string | null
   conversation_written?: boolean
 }
@@ -223,4 +229,14 @@ export async function listAutomationRuns(
     'GET'
   )
   return Array.isArray(rows) ? rows : []
+}
+
+export async function resolveAutomationDelivery(
+  automationId: string, runId: string, action: 'received' | 'retry'
+): Promise<AutomationRunRecord> {
+  return runtimeJson(`/v1/automations/${encodeURIComponent(automationId)}/runs/${encodeURIComponent(runId)}/delivery`, 'POST', { action })
+}
+
+export async function listPendingAutomationDeliveries(): Promise<(AutomationRunRecord & { automation_name: string })[]> {
+  return runtimeJson('/v1/automations/deliveries/pending', 'GET')
 }

@@ -48,6 +48,25 @@ it('does not add the previous conversation attachment after switching', async ()
   expect(host.textContent).not.toContain('old-chat.txt')
 })
 
+it('restores a failed first message on returning home without overwriting another chat', async () => {
+  let finish!: (sent: boolean) => void
+  const onSend = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve }))
+  const setInput = vi.fn()
+  useChatStore.setState({ activeThreadId: null, threads: [{ id: 'other', title: 'Other' }] as never })
+  await act(async () => root.render(createElement(FloatingComposer, { ...props, input: 'first draft', setInput, onSend })))
+  await act(async () => host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  expect(onSend).toHaveBeenCalledWith('first draft')
+  await act(async () => {
+    useChatStore.setState({ activeThreadId: 'other' })
+    root.render(createElement(FloatingComposer, { ...props, input: '', setInput, onSend }))
+  })
+  setInput.mockClear()
+  await act(async () => finish(false))
+  expect(setInput).not.toHaveBeenCalled()
+  await act(async () => useChatStore.setState({ activeThreadId: null }))
+  expect(setInput).toHaveBeenLastCalledWith('first draft')
+})
+
 it('shows a pending stop and prevents duplicate requests until it settles', async () => {
   let finish!: () => void
   const onInterrupt = vi.fn(() => new Promise<void>((resolve) => { finish = resolve }))
