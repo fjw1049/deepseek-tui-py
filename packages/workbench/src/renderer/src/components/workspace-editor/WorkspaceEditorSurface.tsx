@@ -344,7 +344,7 @@ const PreparedWorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, 
             fontFamily,
             readOnly,
             domReadOnly: readOnly,
-            hover: { enabled: !readOnly, delay: 500 },
+            hover: { enabled: readOnly ? 'off' : 'on', delay: 500 },
             find: {
               addExtraSpaceOnTop: false,
               autoFindInSelection: 'never',

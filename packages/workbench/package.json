@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "audit:fonts": "electron scripts/check-bilingual-fonts.cjs",
     "audit:rendering": "electron scripts/check-code-rendering.cjs",
+    "prepare:runtime": "uv run --no-project --python 3.12 ../../scripts/build-python-runtime.py --output .cache/python-runtime --replace",
     "dist": "npm run build && npx --yes electron-builder@26.8.1 --config electron-builder.config.cjs --publish never",
     "dist:mac": "npm run dist -- --mac dmg zip --arm64 --x64",
     "dist:mac:signed": "MAC_SIGN=1 npm run dist -- --mac dmg zip --arm64 --x64",
@@ -43,13 +44,14 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "d3-dsv": "^3.0.1",
+    "dompurify": "^3.4.17",
     "electron-store": "^10.1.0",
     "extract-zip": "^2.0.1",
     "hast-util-raw": "^9.1.0",
     "i18next": "^25.4.2",
     "lucide-react": "^0.544.0",
     "mermaid": "^11.16.0",
-    "monaco-editor": "^0.55.1",
+    "monaco-editor": "^0.57.0",
     "node-pty": "^1.1.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
@@ -93,5 +95,13 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/XingYu-Zhong/DeepSeek-GUI.git"
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "^3.4.17"
+    },
+    "mermaid": {
+      "katex": "^0.18.2"
+    }
   }
 }

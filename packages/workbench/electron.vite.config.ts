@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
-import { join, resolve } from 'path'
+import { dirname, join, resolve } from 'path'
 import type { Plugin } from 'vite'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
@@ -175,7 +175,10 @@ export default defineConfig({
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),
-        '@shared': resolve('src/shared')
+        '@shared': resolve('src/shared'),
+        // Monaco vendors DOMPurify separately from its declared dependency.
+        // Resolve that import to our patched, locked copy during dev and build.
+        './dompurify/dompurify.js': join(dirname(createRequire(import.meta.url).resolve('dompurify')), 'purify.es.mjs')
       }
     },
     // Pre-bundle deps that are only reachable through the lazily-loaded

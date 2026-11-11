@@ -20,7 +20,7 @@ set -euo pipefail
 # Speed knobs:
 #   MAC_RELEASE_PARALLEL=force      force parallel arm64/x64 builds even when signing
 #   RELEASE_UPLOAD_CONCURRENCY=4    GitHub/R2 upload concurrency
-#   DEEPSEEK_GUI_RUNTIME_CACHE=0    disable bundled runtime cache
+#   DEEPSEEK_GUI_PYTHON_RUNTIME=... native runtime collection (darwin-arm64/darwin-x64)
 #
 # After this completes, run on Windows (same version):
 #   ./scripts/release-win.sh --tag v<RELEASE_VERSION from output> --r2 --r2-promote --publish

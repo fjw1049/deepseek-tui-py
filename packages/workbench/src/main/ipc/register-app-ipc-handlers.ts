@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import extract from 'extract-zip'
+import { extractSkillArchive } from '../skill-archive'
 import { z } from 'zod'
 import type { AppSettingsPatch, AppSettingsV1 } from '../../shared/app-settings'
 import { DEV_BROWSER_PARTITION } from '../../shared/browser-bridge'
@@ -870,16 +870,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     try {
       await mkdir(rootPath, { recursive: true })
       await writeFile(zipPath, bytes)
-      // zip-slip guard: reject any entry that would resolve outside extractDir.
-      await extract(zipPath, {
-        dir: extractDir,
-        onEntry: (entry) => {
-          const dest = resolve(extractDir, entry.fileName)
-          if (dest !== resolve(extractDir) && !dest.startsWith(resolve(extractDir) + sep)) {
-            throw new Error(`Unsafe zip entry: ${entry.fileName}`)
-          }
-        }
-      })
+      await extractSkillArchive(zipPath, extractDir)
 
       const skillContentDir = await findShallowestSkillDir(extractDir)
       if (!skillContentDir) {

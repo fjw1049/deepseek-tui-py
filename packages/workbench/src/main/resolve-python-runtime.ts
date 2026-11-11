@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
-import { resolveDeepseekConfigPath, resolveMcpConfigPath } from './deepseek-paths'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, delimiter, join, resolve } from 'node:path'
+import { resolveDeepseekConfigPath, resolveMcpConfigPath, resolveUserDeepseekDir } from './deepseek-paths'
 
 export type RuntimeLauncher = {
   bin: string
@@ -8,6 +8,19 @@ export type RuntimeLauncher = {
 }
 
 const PYTHON_MAIN_MARKER = join('src', 'deepseek_tui', '__main__.py')
+
+export function bundledPythonRuntime(resources = process.resourcesPath): { bin: string; packages: string } | undefined {
+  if (!resources) return undefined
+  const root = join(resources, 'python-runtime')
+  const manifestPath = join(root, 'manifest.json')
+  if (!existsSync(manifestPath)) return undefined
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  const bin = resolve(root, String(manifest.python))
+  if (manifest.platform !== process.platform || manifest.arch !== process.arch || !bin.startsWith(root + (process.platform === 'win32' ? '\\' : '/')) || !existsSync(bin)) {
+    throw new Error('Bundled Python runtime is invalid or built for another platform')
+  }
+  return { bin, packages: join(root, 'site-packages') }
+}
 
 /** Monorepo root containing ``src/deepseek_tui`` (set by dev-workbench.sh or auto-detect). */
 export function resolveRepoRoot(): string | undefined {
@@ -41,7 +54,7 @@ function repoVenvPythonBin(): string | undefined {
 export function resolveDefaultPythonBin(): string {
   const fromEnv = process.env.DEEPSEEK_PYTHON?.trim()
   if (fromEnv) return fromEnv
-  return repoVenvPythonBin() ?? 'python3'
+  return bundledPythonRuntime()?.bin ?? repoVenvPythonBin() ?? 'python3'
 }
 
 function isPythonInterpreterPath(path: string): boolean {
@@ -84,19 +97,28 @@ export function runtimeLauncherLabel(launcher: RuntimeLauncher): string {
 /** Env vars for spawning the Python runtime from the monorepo checkout. */
 export function runtimeSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...base }
-  const repoRoot = resolveRepoRoot()
+  const bundled = process.env.DEEPSEEK_PYTHON?.trim() ? undefined : bundledPythonRuntime()
+  const repoRoot = bundled ? undefined : resolveRepoRoot()
+  if (bundled) {
+    env.PYTHONPATH = bundled.packages
+    env.PYTHONNOUSERSITE = '1'
+    delete env.PYTHONHOME
+    delete env.DEEPSEEK_REPO_ROOT
+  }
   if (repoRoot) {
     env.DEEPSEEK_REPO_ROOT = repoRoot
     const srcPath = join(repoRoot, 'src')
-    env.PYTHONPATH = env.PYTHONPATH ? `${srcPath}:${env.PYTHONPATH}` : srcPath
+    env.PYTHONPATH = env.PYTHONPATH ? `${srcPath}${delimiter}${env.PYTHONPATH}` : srcPath
     // User state (config, mcp, skills, runtime.token) defaults to ~/.deepseek.
     // Repo .deepseek/config.toml is merged as a project override by ConfigLoader.
   }
   env.DEEPSEEK_CONFIG_PATH = resolveDeepseekConfigPath()
   env.DEEPSEEK_MCP_CONFIG = resolveMcpConfigPath()
+  // The child may start in another cwd; pass the same absolute home used by GUI/token storage.
+  env.DEEPSEEK_HOME = resolveUserDeepseekDir()
   return env
 }
 
 export function runtimeSpawnCwd(): string | undefined {
-  return resolveRepoRoot()
+  return !process.env.DEEPSEEK_PYTHON?.trim() && bundledPythonRuntime() ? undefined : resolveRepoRoot()
 }

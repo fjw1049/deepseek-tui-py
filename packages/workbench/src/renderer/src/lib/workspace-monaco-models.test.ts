@@ -6,7 +6,7 @@ import { workspaceModelPath, prepareWorkspaceModel } from './workspace-monaco-mo
 vi.mock('monaco-editor', async () => {
   // Exercise Monaco's actual URI validation without loading its browser editor.
   // @ts-expect-error Monaco does not publish declarations for this internal module.
-  const { URI } = await import('monaco-editor/esm/vs/base/common/uri.js')
+  const { URI } = await import('monaco-editor/base/common/uri')
   return { Uri: URI, editor: { getModel: vi.fn(), createModel: vi.fn(), colorizeModelLine: vi.fn() } }
 })
 vi.mock('../store/workspace-editor-store', () => ({

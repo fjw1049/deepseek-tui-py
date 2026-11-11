@@ -5,6 +5,12 @@ const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { pathToFileURL } = require('node:url')
 const assert = require('node:assert/strict')
+// Optional installed bundle: load its exact main/preload/renderer instead of checkout output.
+const resources = process.env.DEEPSEEK_ACCEPTANCE_RESOURCES
+if (resources) {
+  Object.defineProperty(process, 'resourcesPath', { value: resources, configurable: true })
+  app.setAppPath(join(resources, 'app.asar'))
+}
 
 const directory = mkdtempSync(join(tmpdir(), 'workbench-startup-'))
 const home = join(directory, 'settings')
@@ -27,7 +33,7 @@ function finish(error) {
   finished = true
   clearTimeout(timeout)
   if (error) console.error('STARTUP_SMOKE_FAILED', error)
-  else console.log('STARTUP_SMOKE_PASSED: main initialized, renderer loaded, settings IPC available')
+  else console.log(`STARTUP_SMOKE_PASSED: ${resources ? 'packaged' : 'checkout'} main initialized, renderer loaded, settings IPC available`)
   app.exit(error ? 1 : 0)
 }
 const timeout = setTimeout(() => finish(new Error('Startup timed out')), 30000)
@@ -45,4 +51,4 @@ app.on('browser-window-created', (_event, window) => {
     } catch (error) { finish(error) }
   })
 })
-import(pathToFileURL(join(__dirname, '../out/main/index.js')).href).catch(finish)
+import(pathToFileURL(resources ? join(resources, 'app.asar/out/main/index.js') : join(__dirname, '../out/main/index.js')).href).catch(finish)
