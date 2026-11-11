@@ -164,6 +164,7 @@ def should_resample_midstream(
 # user message — do NOT mutate system_prompt (that destroys the KV prefix).
 CompactFnResult = list[Message] | tuple[list[Message], str | None]
 CompactFn = Callable[[list[Message]], Awaitable[CompactFnResult]]
+CompactRequestFn = Callable[[MessageRequest], Awaitable[CompactFnResult]]
 
 
 def _apply_compact_result(
@@ -220,11 +221,20 @@ class TurnLoop:
         client: LLMClient,
         compact_fn: CompactFn | None = None,
         model_config: object | None = None,
+        *,
+        compact_request_fn: CompactRequestFn | None = None,
     ) -> None:
         self.client = client
         self.model_config = model_config
         self._compact_fn = compact_fn
+        self._compact_request_fn = compact_request_fn
         self.locale = "zh"
+
+    async def _compact(self, request: MessageRequest) -> CompactFnResult:
+        if self._compact_request_fn is not None:
+            return await self._compact_request_fn(request)
+        assert self._compact_fn is not None
+        return await self._compact_fn(request.messages)
 
     async def run(
         self,
@@ -311,6 +321,15 @@ class TurnLoop:
             output_token_limit = request.max_tokens or max_output_tokens_for_model(
                 request.model
             )
+            stream_request = request.model_copy(update={
+                "messages": list(request.messages),
+                "tools": active_tools or [],
+                "tool_choice": request.tool_choice if request.tool_choice is not None else (
+                    {"type": "auto"} if active_tools else None
+                ),
+                "max_tokens": output_token_limit,
+                "stream": True,
+            })
             if request.messages:
                 input_budget = context_input_budget(request.model, output_token_limit, self.model_config)
                 if input_budget is not None:
@@ -349,11 +368,11 @@ class TurnLoop:
                                 error_message=msg,
                             )
                         state.context_recovery_attempts += 1
-                        if self._compact_fn is not None:
+                        if self._compact_fn is not None or self._compact_request_fn is not None:
                             before_compact = estimated_input_tokens(request.messages)
                             _apply_compact_result(
                                 request,
-                                await self._compact_fn(request.messages),
+                                await self._compact(stream_request),
                             )
                             if estimated_input_tokens(request.messages) >= before_compact:
                                 msg = ("Context recovery made no progress; history was preserved. "
@@ -365,30 +384,6 @@ class TurnLoop:
                                     error_message=msg,
                                 )
                         continue
-
-            stream_request = MessageRequest(
-                model=request.model,
-                messages=request.messages,
-                system_prompt=request.system_prompt,
-                tools=active_tools or [],
-                tool_choice=(
-                    request.tool_choice
-                    if request.tool_choice is not None
-                    else ({"type": "auto"} if active_tools else None)
-                ),
-                max_tokens=output_token_limit,
-                # Forward reasoning / sampling controls from the upstream
-                # request so non-streaming Engine config (Config.reasoning_effort
-                # etc.) reaches the LLM client. Without this propagation the
-                # rebuilt request below would silently drop these fields and
-                # reasoning models (DeepSeek-R1 / V4) would never enable
-                # thinking.
-                temperature=request.temperature,
-                top_p=request.top_p,
-                reasoning_effort=request.reasoning_effort,
-                extra_body=dict(request.extra_body),
-                stream=True,
-            )
 
             # Attempt to stream response with timeout guards
             try:
@@ -496,7 +491,9 @@ class TurnLoop:
                         # instead of surfacing a raw API error.
                         if (
                             not any_content_received
-                            and self._compact_fn is not None
+                            and (
+                                self._compact_fn is not None or self._compact_request_fn is not None
+                            )
                             and state.context_recovery_attempts
                             < MAX_CONTEXT_RECOVERY_ATTEMPTS
                             and is_context_length_error_message(stream_event.message)
@@ -510,7 +507,7 @@ class TurnLoop:
                             before_compact = estimated_input_tokens(request.messages)
                             _apply_compact_result(
                                 request,
-                                await self._compact_fn(request.messages),
+                                await self._compact(stream_request),
                             )
                             if estimated_input_tokens(request.messages) >= before_compact:
                                 msg = ("Context recovery made no progress; history was preserved. "

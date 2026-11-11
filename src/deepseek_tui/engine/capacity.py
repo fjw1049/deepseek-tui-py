@@ -11,7 +11,7 @@ import asyncio
 import logging
 import re
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ KEEP_RECENT_MESSAGES = 4
 KEEP_RECENT_TOKENS = 20_000
 MIN_SUMMARIZE_MESSAGES = 6
 MAX_WORKING_SET_PATHS = 24
-LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
+LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 8_192
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
 # L0 mid-session tool-result prune (grok-style).
@@ -84,7 +84,7 @@ class ToolPruneConfig:
 @dataclass
 class SummaryInputLimits:
     """Output budget for the handoff, based on model context window."""
-    max_tokens: int = 1_536
+    max_tokens: int = 4_096
     word_limit: int = 700
 
 
@@ -122,6 +122,7 @@ class CompactionResult:
     retries_used: int = 0
     success: bool = False
     failure_reason: str | None = None
+    model_calls: int = 0
 
 
 def _summary_input_limits_for_model(model: str, model_config: object | None = None) -> SummaryInputLimits:
@@ -263,6 +264,34 @@ def plan_compaction(
     return plan
 
 
+def _compaction_work(
+    messages: list[Message], pinned_indices: set[int] | None
+) -> tuple[list[Message], set[int] | None]:
+    """Remove the old bridge and remap explicit pins before planning."""
+    from deepseek_tui.engine.context_pressure import is_compaction_bridge_message
+
+    indexed_work = [
+        (old_index, message)
+        for old_index, message in enumerate(messages)
+        if not is_compaction_bridge_message(message)
+    ]
+    work_messages = [message for _old_index, message in indexed_work]
+    remapped_pins = (
+        {
+            new_index
+            for new_index, (old_index, _message) in enumerate(indexed_work)
+            if old_index in pinned_indices
+        }
+        if pinned_indices
+        else None
+    )
+    if not work_messages:
+        work_messages = list(messages)
+        remapped_pins = pinned_indices
+
+    return work_messages, remapped_pins
+
+
 def should_compact(
     messages: list[Message],
     config: CompactionConfig,
@@ -304,9 +333,10 @@ def should_compact(
         return False
     if at_cap or pressure.ratio >= config.rewrite_ratio:
         # Still require enough unpinned material to be worth summarizing.
+        work_messages, remapped_pins = _compaction_work(messages, pinned_indices)
         plan = plan_compaction(
-            messages,
-            pinned_indices,
+            work_messages,
+            remapped_pins,
             keep_recent_tokens=config.keep_recent_tokens,
         )
         return len(plan.summarize_indices) >= MIN_SUMMARIZE_MESSAGES
@@ -351,6 +381,7 @@ async def compact_messages_safe(
     tools: list[dict[str, Any]] | None = None,
     output_reserve: int = 0,
     model_config: object | None = None,
+    request_template: MessageRequest | None = None,
 ) -> CompactionResult:
     """Compact messages with retry and backoff for transient errors.
 
@@ -359,40 +390,20 @@ async def compact_messages_safe(
     summary into the system prompt (that destroys the stable KV prefix).
     ``summary_prompt`` remains the bridge body for persistence / debugging.
     """
+    result = CompactionResult(messages=messages)
     if not messages or not config.enabled:
-        return CompactionResult(messages=messages)
+        return replace(result, messages=messages)
 
     from deepseek_tui.engine.context_pressure import (
         build_compaction_bridge_text,
         collect_user_requests,
         extract_compaction_bridge_text,
         find_last_real_user_query,
-        is_compaction_bridge_message,
         prepend_compaction_bridge,
     )
 
-    # Drop any prior bridge from the plan input; its text becomes previous_summary.
-    # Remap caller-provided pins at the same time: their indices refer to the
-    # original list, so removing a leading bridge otherwise shifts every pin.
     prior_bridge = extract_compaction_bridge_text(messages)
-    indexed_work = [
-        (old_index, message)
-        for old_index, message in enumerate(messages)
-        if not is_compaction_bridge_message(message)
-    ]
-    work_messages = [message for _old_index, message in indexed_work]
-    remapped_pins = (
-        {
-            new_index
-            for new_index, (old_index, _message) in enumerate(indexed_work)
-            if old_index in pinned_indices
-        }
-        if pinned_indices
-        else None
-    )
-    if not work_messages:
-        work_messages = list(messages)
-        remapped_pins = pinned_indices
+    work_messages, remapped_pins = _compaction_work(messages, pinned_indices)
 
     prev = previous_summary or prior_bridge
     last_real_query = find_last_real_user_query(work_messages)
@@ -407,8 +418,10 @@ async def compact_messages_safe(
     )
 
     if not plan.summarize_indices:
-        return CompactionResult(
-            messages=messages, failure_reason="All messages are retained by recent-history or pin rules"
+        return replace(
+            result,
+            messages=messages,
+            failure_reason="All messages are retained by recent-history or pin rules",
         )
 
     messages_to_summarize = [
@@ -416,7 +429,8 @@ async def compact_messages_safe(
     ]
 
     if len(messages_to_summarize) < MIN_SUMMARIZE_MESSAGES:
-        return CompactionResult(
+        return replace(
+            result,
             messages=messages, failure_reason="Too few unpinned messages to summarize safely"
         )
 
@@ -435,6 +449,8 @@ async def compact_messages_safe(
                 output_multiplier=output_multiplier,
                 system_prompt=system_prompt,
                 tools=tools,
+                request_template=request_template,
+                stats=result,
             )
             validation_error = validate_compaction_summary(summary)
             if validation_error:
@@ -479,7 +495,8 @@ async def compact_messages_safe(
                 raise CompactionBudgetError(
                     f"Retained context exceeds estimated budget: {after} + {output_reserve} > {window}"
                 )
-            return CompactionResult(
+            return replace(
+                result,
                 messages=compacted,
                 summary_prompt=bridge_text,
                 removed_messages=messages_to_summarize,
@@ -488,16 +505,21 @@ async def compact_messages_safe(
             )
 
         except SummaryTruncatedError as exc:
-            if attempt < max_retries - 1:
+            current_budget = (
+                _summary_input_limits_for_model(effective_model, model_config).max_tokens
+                * output_multiplier
+            )
+            if attempt < max_retries - 1 and current_budget < LARGE_CONTEXT_SUMMARY_MAX_TOKENS:
                 output_multiplier *= 2
                 logger.warning("compact_output_truncated next_multiplier=%d", output_multiplier)
                 continue
-            return CompactionResult(
+            return replace(
+                result,
                 messages=messages, failure_reason=str(exc), retries_used=attempt + 1
             )
         except CompactionBudgetError as exc:
             logger.warning("compact_budget_rejected: %s", exc)
-            return CompactionResult(messages=messages, failure_reason=str(exc), retries_used=attempt)
+            return replace(result, messages=messages, failure_reason=str(exc), retries_used=attempt)
         except Exception as exc:
             logger.warning(
                 "compact_attempt_failed attempt=%d/%d error=%s",
@@ -513,11 +535,12 @@ async def compact_messages_safe(
                 max_retries,
                 exc_info=True,
             )
-            return CompactionResult(
+            return replace(
+                result,
                 messages=messages, failure_reason=str(exc), retries_used=attempt + 1
             )
 
-    return CompactionResult(messages=messages)
+    return replace(result, messages=messages)
 
 
 async def _create_summary(
@@ -530,6 +553,8 @@ async def _create_summary(
     output_multiplier: int = 1,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
+    request_template: MessageRequest | None = None,
+    stats: CompactionResult | None = None,
 ) -> str:
     """Create a structured compaction handoff using the compact.md contract."""
     from deepseek_tui.engine.context_pressure import (
@@ -556,15 +581,20 @@ async def _create_summary(
     # A previous bridge already lives in messages. Do not duplicate its envelope.
     if previous_summary and not any("<archived_context>" in m.text_content() for m in messages):
         instruction += f"\nPrevious handoff (unverified notes):\n{previous_summary}"
-    request = MessageRequest(
-        model=model,
-        messages=[*messages, Message.user(instruction)],
-        system_prompt=system_prompt,
-        tools=tools or [],
-        max_tokens=limits.max_tokens * min(4, max(1, output_multiplier)),
+    template = request_template or MessageRequest(
+        model=model, system_prompt=system_prompt, tools=tools or [],
     )
+    request = template.model_copy(update={
+        "model": model,
+        "messages": [*messages, Message.user(instruction)],
+        "max_tokens": min(
+            LARGE_CONTEXT_SUMMARY_MAX_TOKENS, limits.max_tokens * max(1, output_multiplier)
+        ),
+    })
 
     validate_summary_request_budget(request, model_config)
+    if stats is not None:
+        stats.model_calls += 1
     response = client.stream_chat_completion(request)
 
     from deepseek_tui.protocol.responses import StreamDone, StreamError, StreamToolCallComplete
@@ -584,19 +614,26 @@ async def _create_summary(
     return summary.strip()
 
 
+def clear_old_tool_results(messages: list[Message]) -> list[Message]:
+    """Emergency-only relief, retaining the last complete tool exchanges."""
+    output = [message.model_copy(deep=True) for message in messages]
+    plan = plan_compaction(output, keep_recent_tokens=0)
+    prune_old_tool_results(
+        output,
+        config=ToolPruneConfig(keep_last_n_turns=0, hard_clear_age_turns=0),
+        mutate_before_index=min(plan.pinned_indices, default=len(output)),
+    )
+    return output
+
 
 def _turn_ages(messages: list[Message]) -> list[int]:
-    """Age by user turns or tool rounds, including single-user agent runs."""
+    """Age by real user turns; normal tool rounds keep the cache prefix stable."""
     from deepseek_tui.engine.context_pressure import is_synthetic_user_message
 
     ages = [0] * len(messages)
-    from deepseek_tui.protocol.messages import ToolUseBlock
-
-    turns = tool_rounds = 0
+    turns = 0
     for i in range(len(messages) - 1, -1, -1):
-        ages[i] = max(turns, tool_rounds)
-        if any(isinstance(block, ToolUseBlock) for block in messages[i].content):
-            tool_rounds += 1
+        ages[i] = turns
         if not is_synthetic_user_message(messages[i]):
             turns += 1
     return ages

@@ -77,9 +77,9 @@ async def test_single_user_child_overflow_reclaims_old_bodies():
     assert result[0].text_content() == "Investigate; keep config.toml unchanged"
 
 
-def test_single_user_l0_ages_by_tool_rounds():
+def test_single_user_l0_preserves_tool_round_prefix():
     messages = single_user_history()
-    assert prune_old_tool_results(messages) > 0
+    assert prune_old_tool_results(messages) == 0
 
 
 @pytest.mark.parametrize("operation", ["summary", "cycle"])

@@ -18,6 +18,7 @@ from deepseek_tui.engine.capacity import (
     CompactionResult,
     ToolPruneConfig,
     _estimate_tokens_for_message,
+    clear_old_tool_results,
     compact_messages_safe,
     fold_superseded_observations,
     prune_old_tool_results,
@@ -28,7 +29,7 @@ from deepseek_tui.engine.cycle import (
     archive_cycle,
     should_advance_cycle,
 )
-from deepseek_tui.protocol.messages import Message
+from deepseek_tui.protocol.messages import Message, MessageRequest
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,7 @@ class SessionMaintenanceMixin:
         self, messages: list[Message], *, model: str | None = None,
         system_prompt: str | None = None, tools: list[dict[str, Any]] | None = None,
         output_reserve: int = 0,
+        request_template: MessageRequest | None = None,
     ) -> CompactionResult:
         """Run compaction and return the full result (incl. success flag).
 
@@ -194,9 +196,6 @@ class SessionMaintenanceMixin:
         """
         from deepseek_tui.engine.usage_ledger import usage_source
 
-        pinned = self.working_set.pinned_message_indices(
-            messages, self.tool_context.working_directory
-        )
         paths = self.working_set.top_paths(MAX_WORKING_SET_PATHS)
 
         with usage_source("compaction"):
@@ -205,7 +204,6 @@ class SessionMaintenanceMixin:
                 messages,
                 self.compaction_config,
                 workspace=self.tool_context.working_directory,
-                pinned_indices=pinned or None,
                 working_set_paths=paths or None,
                 model_override=self.compaction_config.model or model or self.default_model,
                 previous_summary=self._compaction_summary_prompt,
@@ -214,6 +212,7 @@ class SessionMaintenanceMixin:
                 tools=tools,
                 output_reserve=output_reserve,
                 model_config=getattr(self, "_app_config", None),
+                request_template=request_template,
             )
         self._record_compaction_summary(result.summary_prompt)
         if result.success:
@@ -232,15 +231,25 @@ class SessionMaintenanceMixin:
         return result
 
     async def _emergency_compact(
-        self, messages: list[Message]
+        self, request: MessageRequest
     ) -> tuple[list[Message], str | None]:
-        """Emergency compaction for TurnLoop / capacity overflow recovery.
-
-        Returns ``(messages, bridge_text)``. The bridge is already inside
-        ``messages``; the second value is for logging only.
-        """
-        result = await self._run_compaction(messages)
-        return result.messages, result.summary_prompt
+        """Try a request-shaped summary, then deterministic overflow relief."""
+        result = await self._run_compaction(
+            request.messages, model=request.model, system_prompt=request.system_prompt,
+            tools=request.tools, output_reserve=request.max_tokens or 0,
+            request_template=request,
+        )
+        messages = result.messages if result.success else clear_old_tool_results(request.messages)
+        reclaimed = sum(map(_estimate_tokens_for_message, request.messages)) - sum(
+            map(_estimate_tokens_for_message, messages)
+        )
+        interventions.record(
+            "compaction", "overflow",
+            outcome="compacted" if result.success else ("pruned" if reclaimed > 0 else "failed"),
+            tokens_affected=reclaimed, failure_reason=result.failure_reason,
+            model_calls=result.model_calls,
+        )
+        return messages, result.summary_prompt
 
     def _fold_browser_observations(self, messages: list[Message]) -> None:
         reclaimed = fold_superseded_observations(messages)
@@ -391,6 +400,7 @@ class SessionMaintenanceMixin:
         *,
         system_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        request_template: MessageRequest | None = None,
     ) -> None:
         """Archive a full cycle to disk and trim history when threshold crossed.
 
@@ -471,6 +481,7 @@ class SessionMaintenanceMixin:
                     self.cycle_config.briefing_max_tokens,
                     system_prompt=system_prompt,
                     tools=tools,
+                    request_template=request_template,
                     model_config=getattr(self, "_app_config", None),
                 )
         except Exception as exc:  # noqa: BLE001

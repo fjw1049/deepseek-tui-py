@@ -178,13 +178,15 @@ class SnapshotConfig(BaseModel):
 
 
 class ContextConfig(BaseModel):
-    """Layered context policy — ratios of the live model context window."""
+    """Layered context policy — window ratios and absolute input caps."""
 
     model_config = ConfigDict(extra="forbid")
 
     l0_prune_ratio: float = 0.50
     rewrite_ratio: float = 0.75
     cycle_ratio: float = 0.90
+    max_input_tokens: int = Field(default=150_000, gt=0)
+    cycle_max_input_tokens: int = Field(default=250_000, gt=0)
 
 
 class SubagentConfig(BaseModel):

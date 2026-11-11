@@ -7074,6 +7074,8 @@ class RuntimeThreadManager:
                         "outcome": event.outcome,
                         "round_idx": event.round_idx,
                         "tokens_affected": event.tokens_affected,
+                        "failure_reason": event.failure_reason,
+                        "model_calls": event.model_calls,
                     },
                 )
 

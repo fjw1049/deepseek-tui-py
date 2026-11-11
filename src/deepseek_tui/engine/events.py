@@ -246,6 +246,8 @@ class HarnessInterventionEvent:
     outcome: str
     round_idx: int
     tokens_affected: int = 0
+    failure_reason: str | None = None
+    model_calls: int = 0
 
 
 @dataclass(frozen=True, slots=True)

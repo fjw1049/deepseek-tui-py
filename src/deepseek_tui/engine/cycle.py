@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
-    from deepseek_tui.protocol.messages import Message
+    from deepseek_tui.protocol.messages import Message, MessageRequest
 
 CYCLE_ARCHIVE_SCHEMA_VERSION = 1
 DEFAULT_BRIEFING_MAX_TOKENS = 3_000
@@ -188,6 +188,7 @@ async def produce_briefing(
     *,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
+    request_template: MessageRequest | None = None,
 ) -> str:
     """Run the briefing turn to produce a <carry_forward> block."""
     if not conversation:
@@ -214,14 +215,14 @@ async def produce_briefing(
         )
     )
 
-    request = MessageRequest(
-        model=model,
-        messages=messages,
-        system_prompt=system_prompt,
-        tools=tools or [],
-        max_tokens=min(max_briefing_tokens * 2, 8192),
-        temperature=0.2,
+    template = request_template or MessageRequest(
+        model=model, system_prompt=system_prompt, tools=tools or [],
     )
+    request = template.model_copy(update={
+        "model": model,
+        "messages": messages,
+        "max_tokens": min(max_briefing_tokens * 2, 8192),
+    })
 
     from deepseek_tui.engine.capacity import validate_summary_request_budget
 

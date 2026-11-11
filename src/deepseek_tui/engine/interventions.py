@@ -24,6 +24,8 @@ class Intervention:
     reason: str
     outcome: str
     tokens_affected: int = 0
+    failure_reason: str | None = None
+    model_calls: int = 0
 
 
 _sink: ContextVar[Callable[[Intervention], None] | None] = ContextVar(
@@ -37,8 +39,12 @@ def bind_sink(sink: Callable[[Intervention], None]) -> None:
 
 
 def record(
-    kind: InterventionKind, reason: str, *, outcome: str, tokens_affected: int = 0
+    kind: InterventionKind, reason: str, *, outcome: str, tokens_affected: int = 0,
+    failure_reason: str | None = None, model_calls: int = 0,
 ) -> None:
     sink = _sink.get()
     if sink is not None:
-        sink(Intervention(kind, reason[:300], outcome, tokens_affected))
+        sink(Intervention(
+            kind, reason[:300], outcome, tokens_affected,
+            failure_reason[:1000] if failure_reason else None, model_calls,
+        ))

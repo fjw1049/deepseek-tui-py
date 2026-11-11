@@ -323,7 +323,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         # bridge is a leading user message in session_messages — never the
         # system prompt (KV prefix cache).
         self._compaction_summary_prompt: str | None = None
-        self.turn_loop = TurnLoop(client, compact_fn=self._emergency_compact)
+        self.turn_loop = TurnLoop(client, compact_request_fn=self._emergency_compact)
         # Cumulative session cost (USD / CNY), accumulated per turn from
         # the DeepSeek usage payload via the pricing module. The footer
         # reads these to render the cost chip and the ``/cost`` slash
@@ -709,6 +709,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 outcome=item.outcome,
                 round_idx=self._intervention_round,
                 tokens_affected=item.tokens_affected,
+                failure_reason=item.failure_reason,
+                model_calls=item.model_calls,
             )
         )
 
@@ -1438,7 +1440,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             else:
                 engine.client = MeteredLLMClient(client, engine.turn_usage_ledger)
             engine.turn_loop = TurnLoop(
-                engine.client, compact_fn=engine._emergency_compact, model_config=cfg
+                engine.client, compact_request_fn=engine._emergency_compact, model_config=cfg
             )
             engine._owns_tool_runtime = not isinstance(tool_runtime, ToolRuntime)
             # Register plugin index + skill names for prompt rendering.
@@ -1499,7 +1501,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             engine.cycle_config = CycleConfig(
                 enabled=bool(getattr(cfg, "cycle_enabled", False)),
                 cycle_ratio=float(getattr(ctx_cfg, "cycle_ratio", 0.90) or 0.90),
+                max_input_tokens=getattr(ctx_cfg, "cycle_max_input_tokens", 250_000),
             )
+            engine.compaction_config.max_input_tokens = getattr(ctx_cfg, "max_input_tokens", 150_000)
             engine.compaction_config.rewrite_ratio = float(
                 getattr(ctx_cfg, "rewrite_ratio", 0.75) or 0.75
             )
@@ -3318,7 +3322,14 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         # 输入逼近窗口上限时，归档全量历史到磁盘、只留最近 8 条继续
         if self.cycle_config.enabled:
             await self._maybe_advance_cycle(
-                messages, model, system_prompt=system_prompt, tools=tools
+                messages, model, system_prompt=system_prompt, tools=tools,
+                request_template=MessageRequest(
+                    model=model, messages=messages, system_prompt=system_prompt, tools=tools,
+                    tool_choice={"type": "auto"} if tools else None,
+                    temperature=self.default_temperature, top_p=self.default_top_p,
+                    reasoning_effort=reasoning_effort or self.default_reasoning_effort,
+                    extra_body=dict(self.default_extra_body),
+                ),
             )
         turn_id = self.tool_context.metadata.get("turn_latency_turn_id")
         from deepseek_tui.server.metrics import get_turn_latency
@@ -3442,6 +3453,18 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             self._maybe_l0_prune_tool_results(
                 messages, model, system_prompt=system_prompt, tools=tools
             )
+            request = MessageRequest(
+                model=model,
+                messages=messages,
+                system_prompt=system_prompt,
+                tools=tools,
+                tool_choice={"type": "auto"} if tools else None,
+                max_tokens=max_tokens,
+                temperature=self.default_temperature,
+                top_p=self.default_top_p,
+                reasoning_effort=reasoning_effort or self.default_reasoning_effort,
+                extra_body=dict(self.default_extra_body),
+            )
             should_trigger = self._compact_cooldown_rounds <= 0 and should_compact(
                 messages,
                 self.compaction_config,
@@ -3461,9 +3484,10 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     self._compact_cooldown_rounds,
                 )
                 compact_result = await self.handle.pause.model_request(
-                    lambda tools=tools: self._run_compaction(
+                    lambda tools=tools, request=request: self._run_compaction(
                         messages, model=model, system_prompt=system_prompt, tools=tools,
                         output_reserve=max_tokens or max_output_tokens_for_model(model),
+                        request_template=request,
                     ), self.handle.cancel_event,
                 )
                 if compact_result is None:
@@ -3478,6 +3502,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     "pressure",
                     outcome="compacted" if compact_result.success else "failed",
                     tokens_affected=reclaimed,
+                    failure_reason=compact_result.failure_reason,
+                    model_calls=compact_result.model_calls,
                 )
                 logger.info(
                     "compact_done after_count=%d bridge_attached=%s success=%s",
@@ -3500,19 +3526,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
             self._flush_pending_lsp_diagnostics(messages)
-            # tool_choice is resolved in turn_loop (auto by default; bare
-            # string "required" only when config.strict_tool_mode is set).
-            request = MessageRequest(
-                model=model,
-                messages=messages,
-                system_prompt=system_prompt,
-                tools=tools,
-                max_tokens=max_tokens,
-                temperature=self.default_temperature,
-                top_p=self.default_top_p,
-                reasoning_effort=reasoning_effort or self.default_reasoning_effort,
-                extra_body=dict(self.default_extra_body),
-            )
+            request.messages = list(messages)
             from deepseek_tui.engine.context_pressure import estimate_request_tokens
 
             request_input_estimate = estimate_request_tokens(

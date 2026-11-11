@@ -332,7 +332,8 @@ async def test_a_live_turn_writes_interventions_to_the_thread_events(
     async def pump() -> None:
         await asyncio.wait_for(asyncio.shield(ready), timeout=5)
         await handle.emit(HarnessInterventionEvent(
-            kind="guard", reason="Shell cannot rm", outcome="blocked", round_idx=3,
+            kind="compaction", reason="pressure", outcome="failed", round_idx=3,
+            failure_reason="Too few unpinned messages", model_calls=0,
         ))
         await handle.emit(TurnCompleteEvent(assistant_message=None))
 
@@ -350,6 +351,7 @@ async def test_a_live_turn_writes_interventions_to_the_thread_events(
     assert len(events) == 1
     assert events[0].turn_id == "turn_cccccccc"
     assert events[0].payload == {
-        "kind": "guard", "reason": "Shell cannot rm", "outcome": "blocked",
+        "kind": "compaction", "reason": "pressure", "outcome": "failed",
         "round_idx": 3, "tokens_affected": 0,
+        "failure_reason": "Too few unpinned messages", "model_calls": 0,
     }

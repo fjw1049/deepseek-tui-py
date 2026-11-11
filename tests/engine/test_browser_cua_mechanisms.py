@@ -102,7 +102,9 @@ async def test_summary_truncation_increases_budget_and_closes_each_stream():
                 closed.append(request.max_tokens)
 
     messages = [Message.user("Requirement " + str(i) + " x" * 3000) for i in range(20)]
-    result = await compact_messages_safe(Client(), messages, CompactionConfig(keep_recent_tokens=0))
+    result = await compact_messages_safe(
+        Client(), messages, CompactionConfig(keep_recent_tokens=0, model="gpt-4o")
+    )
     assert result.success
     assert budgets[1] == 2 * budgets[0]
     assert closed == budgets

@@ -133,9 +133,9 @@ def test_real_user_text_is_not_misclassified_as_a_compaction_bridge():
 
 def test_summary_limits_use_configured_window_not_model_name():
     with patch("deepseek_tui.config.providers.context_window_for_model", return_value=8192):
-        assert _summary_input_limits_for_model("custom-reasoner").max_tokens == 1536
+        assert _summary_input_limits_for_model("custom-reasoner").max_tokens == 4096
     with patch("deepseek_tui.config.providers.context_window_for_model", return_value=1000000):
-        assert _summary_input_limits_for_model("unfamiliar-model").max_tokens == 2048
+        assert _summary_input_limits_for_model("unfamiliar-model").max_tokens == 8192
 
 
 async def test_explicit_compaction_model_is_honored(tmp_path):
