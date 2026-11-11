@@ -452,8 +452,8 @@ export function SettingsView(): ReactElement {
 
   if (category === 'setup') {
     return (
-      <div className="ds-settings-page ds-page-scroll ds-no-drag flex h-full min-h-0 min-w-0 flex-1 items-center justify-center overflow-y-auto px-8 py-12 sm:px-10">
-        <div className="w-full translate-y-4 sm:translate-y-6">
+      <div className="ds-settings-page ds-page-scroll ds-no-drag flex h-full min-h-0 min-w-0 flex-1 items-start justify-center overflow-y-auto px-8 py-10 sm:px-10">
+        <div className="w-full">
           <InitialSetupPanel />
         </div>
       </div>

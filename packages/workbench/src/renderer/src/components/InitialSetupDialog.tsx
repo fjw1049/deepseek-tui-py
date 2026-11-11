@@ -7,9 +7,8 @@ import {
 } from '@shared/app-settings'
 import { applyTheme } from '../lib/apply-theme'
 import { useChatStore } from '../store/chat-store'
-import { Eye, EyeOff, ExternalLink, Rocket } from 'lucide-react'
+import { Eye, EyeOff, ExternalLink, ChevronRight, Sparkles, KeyRound, FolderOpen, ShieldCheck } from 'lucide-react'
 import { GlassSegmentedControl } from './settings/GlassSegmentedControl'
-import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 
 type ThemePref = AppSettingsV1['theme']
 type SetupFormPatch = Partial<Omit<AppSettingsV1, 'deepseek' | 'llmProviders'>> & {
@@ -20,21 +19,23 @@ type SetupFormPatch = Partial<Omit<AppSettingsV1, 'deepseek' | 'llmProviders'>> 
 const DEEPSEEK_USAGE_URL = 'https://platform.deepseek.com/usage'
 
 const fieldClass =
-  'w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3.5 py-3 text-[15px] text-ds-ink shadow-sm outline-none transition placeholder:text-ds-faint focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
+  'w-full min-w-0 h-10 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm outline-none transition placeholder:text-ds-faint focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
 
 function Row({
   title,
+  icon,
   description,
   control
 }: {
   title: string
+  icon?: ReactNode
   description?: ReactNode
   control: ReactNode
 }): ReactElement {
   return (
     <div className="ds-guide-row">
       <div className="ds-guide-row__label">
-        <div className="ds-guide-row__title">{title}</div>
+        <div className="ds-guide-row__title">{icon ? <span className="ds-guide-row__icon" aria-hidden="true">{icon}</span> : null}{title}</div>
         {description ? <div className="ds-guide-row__desc">{description}</div> : null}
       </div>
       <div className="ds-guide-row__control">{control}</div>
@@ -45,12 +46,15 @@ function Row({
 /** First-run / quick-setup panel rendered inside Settings → setup. */
 export function InitialSetupPanel(): ReactElement {
   const { t } = useTranslation('settings')
+  const openSettings = useChatStore((s) => s.openSettings)
   const closeInitialSetup = useChatStore((s) => s.closeInitialSetup)
   const applyI18n = useChatStore((s) => s.applyI18nFromSettings)
   const reloadUiSettings = useChatStore((s) => s.reloadUiSettings)
   const probeRuntime = useChatStore((s) => s.probeRuntime)
 
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [loadError, setLoadError] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,14 +62,16 @@ export function InitialSetupPanel(): ReactElement {
 
   useEffect(() => {
     let cancelled = false
-    if (typeof window.dsGui === 'undefined') return
-    void window.dsGui.getSettings().then((s) => {
+    setLoadError(false)
+    void Promise.resolve().then(() => window.dsGui.getSettings()).then((s) => {
       if (!cancelled) setForm(s)
+    }).catch(() => {
+      if (!cancelled) setLoadError(true)
     })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loadAttempt])
 
   const updateForm = (patch: SetupFormPatch) => {
     if (!form) return
@@ -132,7 +138,7 @@ export function InitialSetupPanel(): ReactElement {
 
   const handleSave = async () => {
     if (!form) return
-    if (!form.deepseek.apiKey.trim()) {
+    if (!Object.values(form.llmProviders).some((provider) => provider.apiKey.trim())) {
       setError(t('firstRunApiKeyValidation'))
       return
     }
@@ -157,7 +163,7 @@ export function InitialSetupPanel(): ReactElement {
       const next = await window.dsGui.setSettings(payload)
       setForm(next)
       await applyI18n(next.locale)
-      void reloadUiSettings()
+      await reloadUiSettings()
       void probeRuntime('background')
       closeInitialSetup()
     } catch (e) {
@@ -170,62 +176,122 @@ export function InitialSetupPanel(): ReactElement {
   if (!form) {
     return (
       <div className="mx-auto flex max-w-[1000px] justify-center py-10 text-sm text-ds-muted">
-        {t('loading')}
+        {loadError ? <div role="alert" className="space-y-3 text-center"><p>{t('setupLoadError')}</p><button className="ds-guide-btn-ghost" onClick={() => setLoadAttempt((n) => n + 1)}>{t('setupRetry')}</button></div> : t('loading')}
       </div>
     )
   }
 
-  const approvalValue: ApprovalPolicy =
-    form.deepseek.approvalPolicy === 'suggest' ? 'on-request' : form.deepseek.approvalPolicy
-
   return (
-    <div className="ds-guide-sheet mx-auto max-w-[1000px]">
+    <div className="ds-guide-sheet mx-auto w-full max-w-[880px]">
       <section className="ds-guide-panel">
         <header className="ds-guide-hero">
-          <div className="ds-guide-hero__grid" aria-hidden />
-          <div className="ds-guide-hero__blob ds-guide-hero__blob--a" aria-hidden />
-          <div className="ds-guide-hero__blob ds-guide-hero__blob--b" aria-hidden />
-          <div className="ds-guide-hero__orbit" aria-hidden>
-            <div className="ds-guide-hero__orbit-ring">
-              <span className="ds-guide-hero__orbit-dot" />
-            </div>
-            <div className="ds-guide-hero__orbit-ring ds-guide-hero__orbit-ring--inner" />
-          </div>
-          <svg className="ds-guide-hero__trail" viewBox="0 0 260 42" fill="none" aria-hidden>
-            <path
-              className="ds-guide-hero__trail-path"
-              d="M6 30 C 54 30, 78 8, 124 12 S 190 36, 246 14"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-            <path
-              d="M238 8 L250 14 L238 20"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <circle cx="124" cy="12" r="2.5" fill="currentColor" opacity="0.55" />
-          </svg>
-          <div className="ds-guide-hero__body">
-            <div className="ds-guide-hero__pad" aria-hidden>
-              <Rocket className="ds-guide-hero__pad-rocket h-8 w-8" strokeWidth={1.9} />
-            </div>
-            <div className="min-w-0">
-              <div className="ds-guide-hero__meta">{t('firstRunMeta')}</div>
-              <h1 className="ds-guide-hero__title">{t('setup')}</h1>
-              <p className="ds-guide-hero__sub">{t('firstRunSubtitle')}</p>
-            </div>
+          <span className="ds-guide-hero__mark" aria-hidden="true"><Sparkles size={24} strokeWidth={1.6} /></span>
+          <div>
+            <h1 className="ds-guide-hero__title">{t('firstRunTitle')}</h1>
+            <p className="ds-guide-hero__sub">{t('firstRunSubtitle')}</p>
           </div>
         </header>
 
-        <div className="ds-guide-body divide-y divide-ds-border-muted">
-          <div className="ds-guide-section">{t('firstRunSectionUi')}</div>
+        <fieldset disabled={saving} className="ds-guide-body ds-content-card rounded-2xl min-w-0">
+          <Row
+            title={t('apiKey')}
+            icon={<KeyRound size={16} strokeWidth={1.7} />}
+            description={
+              <button
+                type="button"
+                onClick={handleOpenOfficialApiPage}
+                className="inline-flex items-center gap-1 text-[13px] font-medium text-accent transition hover:brightness-110"
+              >
+                <span>{t('firstRunBuyApiAction')}</span>
+                <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.9} />
+              </button>
+            }
+            control={
+              <div className="space-y-2">
+                <div className="relative w-full">
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    aria-label={t('apiKey')}
+                    value={form.deepseek.apiKey}
+                    onChange={(e) => handleApiKeyChange(e.target.value)}
+                    placeholder="sk-..."
+                    className={`${fieldClass} pr-10 tracking-[0.02em]`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey((v) => !v)}
+                    aria-label={showApiKey ? t('hideSecret') : t('showSecret')}
+                    className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-ds-faint transition-colors hover:text-ds-muted"
+                  >
+                    {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <button type="button" className="ds-guide-provider-link text-[13px] text-ds-muted hover:text-accent" onClick={() => { void reloadUiSettings(); openSettings('models') }}>
+                  {t('setupOtherProvider')}
+                </button>
+              </div>
+            }
+          />
+          <Row
+            title={t('workspaceRoot')}
+            icon={<FolderOpen size={16} strokeWidth={1.7} />}
+            description={
+              workspacePickerError ? (
+                <p className="text-[13px] leading-5 text-amber-700 dark:text-amber-300">
+                  {workspacePickerError}
+                </p>
+              ) : undefined
+            }
+            control={
+              <div className="flex w-full min-w-0 items-center gap-2">
+                <input
+                  className={`${fieldClass} flex-1`}
+                  aria-label={t('workspaceRoot')}
+                  value={form.workspaceRoot}
+                  onChange={(e) => updateForm({ workspaceRoot: e.target.value })}
+                  placeholder={t('workspaceRootPlaceholder')}
+                  title={form.workspaceRoot}
+                />
+                <div className="shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void pickWorkspace()}
+                    className="ds-guide-directory-button"
+                  >
+                    {t('browse')}
+                  </button>
+                </div>
+              </div>
+            }
+          />
+          <Row
+            title={t('approvalPolicy')}
+            icon={<ShieldCheck size={16} strokeWidth={1.7} />}
+            description={t(`setupApprovalHelp.${form.deepseek.approvalPolicy}`)}
+            control={
+              <GlassSegmentedControl
+                ariaLabel={t('approvalPolicy')}
+                className="w-full"
+                segmentClassName="px-2.5 py-1.5"
+                value={form.deepseek.approvalPolicy}
+                items={[
+                  { value: 'on-request', label: t('firstRunApprovalOnRequest') },
+                  { value: 'untrusted', label: t('firstRunApprovalUntrusted') },
+                  { value: 'auto', label: t('firstRunApprovalAuto') },
+                  ...(form.deepseek.approvalPolicy === 'never' || form.deepseek.approvalPolicy === 'suggest'
+                    ? [{ value: form.deepseek.approvalPolicy, label: t(form.deepseek.approvalPolicy === 'never' ? 'approvalNever' : 'approvalSuggest') }] : [])
+                ]}
+                onChange={handleApprovalChange}
+              />
+            }
+          />
+          <details className="ds-guide-preferences">
+            <summary><ChevronRight size={15} />{t('setupPreferences')}</summary>
           <Row
             title={t('language')}
             control={
               <GlassSegmentedControl
+                ariaLabel={t('language')}
                 className="w-full"
                 value={form.locale}
                 items={[
@@ -243,6 +309,7 @@ export function InitialSetupPanel(): ReactElement {
             title={t('theme')}
             control={
               <GlassSegmentedControl
+                ariaLabel={t('theme')}
                 className="w-full"
                 value={form.theme}
                 items={[
@@ -254,99 +321,17 @@ export function InitialSetupPanel(): ReactElement {
               />
             }
           />
-          <div className="ds-guide-section">{t('firstRunSectionStart')}</div>
-          <Row
-            title={t('apiKey')}
-            description={
-              <button
-                type="button"
-                onClick={handleOpenOfficialApiPage}
-                className="inline-flex items-center gap-1 text-[13px] font-medium text-accent transition hover:brightness-110"
-              >
-                <span>{t('firstRunBuyApiAction')}</span>
-                <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.9} />
-              </button>
-            }
-            control={
-              <div className="relative w-full">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  value={form.deepseek.apiKey}
-                  onChange={(e) => handleApiKeyChange(e.target.value)}
-                  placeholder="sk-..."
-                  className={`${fieldClass} pr-10 tracking-[0.02em]`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey((v) => !v)}
-                  aria-label={showApiKey ? t('hideSecret') : t('showSecret')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ds-faint transition-colors hover:text-ds-muted"
-                >
-                  {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            }
-          />
-          <Row
-            title={t('workspaceRoot')}
-            description={
-              workspacePickerError ? (
-                <p className="text-[13px] leading-5 text-amber-700 dark:text-amber-300">
-                  {workspacePickerError}
-                </p>
-              ) : undefined
-            }
-            control={
-              <div className="flex w-full min-w-0 items-center gap-3">
-                <input
-                  className={`${fieldClass} flex-1`}
-                  value={form.workspaceRoot}
-                  onChange={(e) => updateForm({ workspaceRoot: e.target.value })}
-                  placeholder={t('workspaceRootPlaceholder')}
-                  title={form.workspaceRoot}
-                />
-                <div className="w-[7.5rem] shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => void pickWorkspace()}
-                    className={settingsBlockButtonClass()}
-                  >
-                    {t('browse')}
-                  </button>
-                </div>
-              </div>
-            }
-          />
-          <Row
-            title={t('approvalPolicy')}
-            control={
-              <GlassSegmentedControl
-                className="w-full"
-                segmentClassName="px-2.5 py-1.5"
-                value={
-                  approvalValue === 'never'
-                    ? 'on-request'
-                    : approvalValue
-                }
-                items={[
-                  { value: 'on-request', label: t('firstRunApprovalOnRequest') },
-                  { value: 'untrusted', label: t('firstRunApprovalUntrusted') },
-                  { value: 'auto', label: t('firstRunApprovalAuto') }
-                ]}
-                onChange={handleApprovalChange}
-              />
-            }
-          />
-        </div>
+          </details>
+        </fieldset>
 
         {error ? (
-          <div className="mx-4 mb-2 rounded-xl border border-[var(--ds-danger)]/20 bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]">
+          <div role="alert" className="mx-4 mb-2 rounded-xl border border-[var(--ds-danger)]/20 bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-danger)]">
             {error}
           </div>
         ) : null}
 
         <div className="ds-guide-actions">
-          <button type="button" onClick={handleClose} className="ds-guide-btn-ghost">
+          <button type="button" disabled={saving} onClick={handleClose} className="ds-guide-btn-ghost">
             {t('firstRunClose')}
           </button>
           <button
