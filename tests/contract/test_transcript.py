@@ -169,6 +169,7 @@ async def test_interventions_reach_the_event_stream(tmp_path: Path) -> None:
 
 async def test_pending_state_reminder_is_recorded_once(tmp_path: Path) -> None:
     from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
     from tests.engine.test_ui_task_turns import FakeDesktopTool
 
@@ -178,6 +179,7 @@ async def test_pending_state_reminder_is_recorded_once(tmp_path: Path) -> None:
         "stopping",
     ])
     engine.tool_registry.register(FakeDesktopTool())
+    engine._prepare_cua = AsyncMock()  # Injected desktop, no runtime lifecycle.
     engine.tool_context.metadata["cua_session"] = SimpleNamespace(
         unresolved=True, outside_change=False, reset_reason="")
     try:

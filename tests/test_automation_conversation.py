@@ -302,7 +302,7 @@ async def test_delivery_failure_does_not_lose_or_duplicate_chat_result(setup):
     )
     with patch(
         "deepseek_tui.automation.pipeline._FeishuSink.deliver",
-        new=AsyncMock(side_effect=RuntimeError("offline")),
+        new=AsyncMock(side_effect=ConnectionRefusedError("offline")),
     ):
         await setup.automations.reconcile_run_statuses(setup.tasks)
         run = setup.automations.list_runs(automation.id)[0]
@@ -507,3 +507,72 @@ async def test_follow_up_model_request_contains_result_after_warmup_or_restart(s
         assert "检查了 20 项" in text
     finally:
         await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_notify_retry_after_local_write_is_idempotent(setup, monkeypatch):
+    from deepseek_tui.automation.pipeline import try_deliver_completed_run
+
+    thread = await setup.threads.create_thread(CreateThreadRequest())
+    automation, run = _job(setup, delivery={
+        "mode": "notify", "thread_id": thread.id, "best_effort": False,
+    })
+    original = setup.threads.append_automation_notice
+    calls = 0
+
+    async def write_then_fail(*args, **kwargs):
+        nonlocal calls
+        await original(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            raise OSError("receipt failed after the item reached disk")
+
+    monkeypatch.setattr(setup.threads, "append_automation_notice", write_then_fail)
+    await try_deliver_completed_run(automation, run, setup.tasks,
+                                   thread_manager=setup.threads,
+                                   save_run=setup.automations.save_run)
+    assert run.delivery_state == "pending"
+    # Crash with the persisted 'sending' journal, after the local write.
+    stale = setup.automations.list_runs(automation.id)[0]
+    assert stale.delivery_state == "sending"
+    await try_deliver_completed_run(automation, stale, setup.tasks,
+                                   thread_manager=setup.threads,
+                                   save_run=setup.automations.save_run)
+    assert stale.delivery_state == "sent"
+    items = [item for turn in setup.threads.store.list_turns_for_thread(thread.id)
+             for item in setup.threads.store.list_items_for_turn(turn.id)]
+    assert len(items) == 1
+    assert items[0].id.startswith("automation_delivery_")
+    assert "两个问题" in items[0].detail
+
+
+@pytest.mark.asyncio
+async def test_discussing_other_run_does_not_wait_for_slow_delivery(setup, monkeypatch):
+    from deepseek_tui.automation import pipeline
+
+    runtime = AppRuntime(config=setup.config, working_directory=setup.workspace)
+    runtime._tool_runtime = SimpleNamespace(automation_manager=setup.automations,
+                                           task_manager=setup.tasks)
+    _job(setup, delivery={"mode": "email", "to": "fixture@example.test"})
+    other, run = _job(setup)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_delivery(**kwargs):
+        entered.set()
+        await release.wait()
+
+    original_sink = pipeline._sink_for_mode
+    monkeypatch.setattr(pipeline, "_sink_for_mode", lambda mode, **kwargs:
+                        SimpleNamespace(deliver=slow_delivery) if mode == "email"
+                        else original_sink(mode, **kwargs))
+    reconcile = asyncio.create_task(setup.automations.reconcile_run_statuses(setup.tasks))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        assert setup.automations._scheduler_lock.locked()
+        result = await asyncio.wait_for(runtime.open_automation_discussion(other.id, run.id), 1)
+        assert result["ok"]
+        assert len(automation_result_items(setup.threads.store, result["thread_id"])) == 1
+    finally:
+        release.set()
+        await reconcile

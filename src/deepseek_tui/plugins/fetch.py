@@ -265,7 +265,13 @@ def _download_archive(url: str, max_bytes: int) -> bytes:
 
 
 def _common_prefix(members: list[tarfile.TarInfo]) -> str:
-    prefixes = {PurePosixPath(member.name).parts[0] for member in members if member.name}
+    prefixes = set()
+    for member in members:
+        parts = PurePosixPath(member.name).parts
+        # Strip only a wrapper directory, never a root file or the archive root.
+        if not parts or (len(parts) == 1 and not member.isdir()):
+            return ""
+        prefixes.add(parts[0])
     return next(iter(prefixes)) if len(prefixes) == 1 else ""
 
 
@@ -311,7 +317,7 @@ def _extract_archive(
             raw_path = PurePosixPath(member.name)
             if raw_path.is_absolute() or ".." in raw_path.parts or "\\" in member.name:
                 raise RemoteFetchError(f"remote archive path is unsafe: {member.name}")
-            relative = _strip_prefix(member.name, prefix)
+            relative = _strip_prefix(raw_path.as_posix(), prefix)
             if not relative:
                 continue
             target = (destination / relative).resolve(strict=False)

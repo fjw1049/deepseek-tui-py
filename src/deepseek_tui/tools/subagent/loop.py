@@ -124,7 +124,7 @@ async def _subagent_auto_approve_enabled(
     return bool(auto_approve)
 
 
-async def _execute_subagent_tool(
+async def _run_subagent_tool(
     registry: object,
     context: object,
     *,
@@ -136,7 +136,8 @@ async def _execute_subagent_tool(
     model: str = "",
     interrupt: asyncio.Event | None = None,
     pause_generation: int | None = None,
-) -> str:
+) -> tuple[bool, str]:
+    """Run one tool for a sub-agent; ``ok`` comes from the result, not its text."""
     from deepseek_tui.tools.approval import (
         ApprovalDecision,
         approval_request_for_tool,
@@ -153,15 +154,34 @@ async def _execute_subagent_tool(
     tool_name, normalized_input = normalize_legacy_tool_call(tool_name, tool_input)
     tool_input = normalized_input if isinstance(normalized_input, dict) else tool_input
     _reject_subagent_interactive_shell(tool_name, tool_input)
+    if getattr(context, "metadata", {}).get("cron_restricted"):
+        from deepseek_tui.engine.tool_profiles import cron_tool_allowed
+
+        from deepseek_tui.automation.permissions import browser_authorized
+
+        if not cron_tool_allowed(tool_name, allow_browser=browser_authorized(context)):
+            from deepseek_tui.tools.user_input import unattended_tool_denial
+
+            return False, unattended_tool_denial(context, tool_name,
+                f"'{tool_name}' is unavailable in unattended automation").content
     if not registry.contains(tool_name):
         # Filtered out by the sub-agent's type allowlist (or hallucinated by
         # the model). Return a clean error rather than letting registry.get()
         # raise an uncaught ToolError out of the loop.
-        return (
+        return False, (
             f"Error: Tool '{tool_name}' is not available to this sub-agent "
             "type and was blocked."
         )
     tool = registry.get(tool_name)
+    if isinstance(context, ToolContext) and context.metadata.get("cron_restricted"):
+        from deepseek_tui.tools.user_input import unattended_tool_denial
+
+        for path, writing in tool.path_accesses(tool_input):
+            access = context.check_path(path, write=writing, allow_read_roots=not writing)
+            if not access.allowed or (writing and not context._within(
+                    access.path, context.working_directory.resolve())):
+                return False, unattended_tool_denial(context, tool_name,
+                    f"Path requires interactive authorization: {path}").content
     policy = getattr(getattr(runtime, "config", None), "approval_policy", None)
     if policy is None and hasattr(context, "metadata"):
         policy = (context.metadata or {}).get("approval_policy")  # type: ignore[union-attr]
@@ -190,8 +210,16 @@ async def _execute_subagent_tool(
         else path_prompt.request if path_prompt is not None
         else approval_request_for_tool(tool, policy, args_or_none)
     )
+    from deepseek_tui.automation.permissions import browser_authorized
+
+    if tool_name == "browser_use" and context.metadata.get("cron_restricted") and browser_authorized(context):
+        required = None
+    if required is not None and required.force_prompt and getattr(context, "metadata", {}).get("cron_restricted"):
+        from deepseek_tui.tools.user_input import unattended_tool_denial
+
+        return False, unattended_tool_denial(context, tool_name, required.reason or "Interactive approval required").content
     if required is not None and (required.reason or "").startswith(NEVER_BLOCKED_PREFIX):
-        return f"Error: {path_prompt.denial_message() if path_prompt else required.reason}"
+        return False, f"Error: {path_prompt.denial_message() if path_prompt else required.reason}"
     from deepseek_tui.integrations.hooks import HookContext, aggregate_hook_decision
 
     hook_executor = getattr(runtime, "hook_executor", None)
@@ -200,7 +228,7 @@ async def _execute_subagent_tool(
     hook_results = await hook_executor.execute("tool_call_before", hook_ctx) if hook_executor else []
     hook_decision = aggregate_hook_decision(hook_results)
     if hook_decision.blocked:
-        return f"Error: Tool call blocked by hook: {hook_decision.reason}"
+        return False, f"Error: Tool call blocked by hook: {hook_decision.reason}"
     path_approved = False
     forced = required is not None and required.force_prompt
     approval_request = None if effective_auto and not forced else required
@@ -211,7 +239,7 @@ async def _execute_subagent_tool(
     if approval_request is not None:
         handler = getattr(runtime, "approval_handler", None) if runtime else None
         if handler is None:
-            return (
+            return False, (
                 f"Error: Tool {tool_name} requires approval and cannot run "
                 "inside this sub-agent without a parent approval bridge"
             )
@@ -256,16 +284,16 @@ async def _execute_subagent_tool(
                 else await handler.request_approval(call_id, approval_request)
             )
             if decision is None:
-                return "Error: Not executed: approval interrupted by new user input."
+                return False, "Error: Not executed: approval interrupted by new user input."
         if decision not in (
             ApprovalDecision.APPROVED,
             ApprovalDecision.APPROVED_SESSION,
         ):
             if removal is not None and approval_request is removal.request:
-                return f"Error: {removal.denial}"
+                return False, f"Error: {removal.denial}"
             if path_prompt is not None and approval_request is path_prompt.request:
-                return f"Error: {path_prompt.denial_message()}"
-            return f"Error: Tool {tool_name} denied by approval policy"
+                return False, f"Error: {path_prompt.denial_message()}"
+            return False, f"Error: Tool {tool_name} denied by approval policy"
         if removal is not None and context.metadata.get("turn_facts") is not None:
             context.metadata["turn_facts"].approved_removals.update(removal.paths)
         if path_prompt is not None and approval_request is path_prompt.request:
@@ -275,7 +303,7 @@ async def _execute_subagent_tool(
     if pause is not None and (pause.paused or (
         pause_generation is not None and pause.generation != pause_generation
     )):
-        return "Error: Not executed: human intervention invalidated this operation."
+        return False, "Error: Not executed: human intervention invalidated this operation."
     execution_context = (
         path_prompt.grant(context)  # type: ignore[union-attr]
         if path_approved and path_prompt is not None
@@ -284,7 +312,7 @@ async def _execute_subagent_tool(
     progress = context.metadata.get("ui_progress")
     if progress is not None and is_task_call(tool_name, tool_input) and (
             blocked := progress.blocked_content(tool_name)):
-        return f"Error: {blocked}"
+        return False, f"Error: {blocked}"
     if tool_name in {"cua_act", "cua_js", "cua_js_reset", "cua_observe"}:
         context.metadata["cua_call_id"] = tool_call_id
     try:
@@ -326,7 +354,7 @@ async def _execute_subagent_tool(
             for image in result.images:
                 context.metadata.setdefault("image_assets", {})[image.asset_id] = image.model_dump()
         if not result.success:
-            return f"Error: {result.content}"
+            return False, f"Error: {result.content}"
         # Same ingress compaction the parent orchestrator applies before a
         # tool result enters the transcript. Sub-agents used to append
         # result.content raw, so one oversized result (observed: a 7 714-path
@@ -334,13 +362,19 @@ async def _execute_subagent_tool(
         # context and degraded every following round.
         from deepseek_tui.engine.context import compact_tool_result_for_context
 
-        return compact_tool_result_for_context(
+        return True, compact_tool_result_for_context(
             model, tool_name, result, model_config=getattr(runtime, "config", None)
         )
     except ToolError as exc:
-        return f"Error: {exc}"
+        return False, f"Error: {exc}"
     except Exception as exc:  # noqa: BLE001
-        return f"Error: {exc}"
+        return False, f"Error: {exc}"
+
+
+async def _execute_subagent_tool(*args: Any, **kwargs: Any) -> str:
+    """Text-only view of :func:`_run_subagent_tool` (failures read ``Error: ...``)."""
+    _ok, text = await _run_subagent_tool(*args, **kwargs)
+    return text
 
 
 def _structured_output_contract() -> str:
@@ -373,6 +407,27 @@ _SUBAGENT_STRUCTURED_OUTPUT_NUDGE = (
     "MUST be a single structured_output tool call whose arguments match the "
     "schema. Do not emit a prose or Markdown final answer."
 )
+
+
+# The report is there; only the heading the harness parses is missing. Saying
+# "too brief" here sent children off to redo work they had already finished.
+_SUBAGENT_MISSING_HEADING_NUDGE = (
+    "Your report is usable but is missing the required `### SUMMARY` heading. "
+    "Send the same report again with `### SUMMARY` at the top: one paragraph "
+    "stating the outcome, then the rest as you wrote it. Do not call tools or "
+    "redo the work."
+)
+# Visible text at least this long reads as a report rather than a next-step
+# note ("I'll read X next"); CJK is denser than ASCII.
+_REPORT_MIN_CHARS = 200
+_REPORT_MIN_CHARS_CJK = 80
+
+
+def _looks_like_report(text: str) -> bool:
+    from deepseek_tui.tools.subagent.completion import _CJK_RE
+
+    bound = _REPORT_MIN_CHARS_CJK if _CJK_RE.search(text) else _REPORT_MIN_CHARS
+    return len(text.strip()) >= bound
 
 
 _SUBAGENT_SUMMARY_CONTINUATION_NUDGE = (
@@ -559,7 +614,7 @@ async def run_subagent_loop(
     # Trust is explicit configuration only. ``auto_approve`` must NOT imply
     # it: an auto-approved (fire-and-forget) child would otherwise bypass
     # workspace path confinement and get a danger-full-access sandbox.
-    trust_mode = bool(getattr(runtime, "trust_mode", False))
+    trust_mode = bool(getattr(runtime, "trust_mode", False)) and not runtime.cron_restricted
     parent_task_id = getattr(runtime, "active_task_id", None)
     if isinstance(parent_task_id, str):
         parent_task_id = parent_task_id.strip() or None
@@ -573,6 +628,8 @@ async def run_subagent_loop(
         "task_model": effective_model,
         "auto_approve": runtime.auto_approve,
         "approval_policy": approval_policy,
+        "cron_restricted": runtime.cron_restricted,
+        "unattended": runtime.cron_restricted,
     }
     if parent_task_id is not None:
         metadata["task_id"] = parent_task_id
@@ -591,12 +648,19 @@ async def run_subagent_loop(
         active_task_id=parent_task_id,
         metadata=metadata,
         on_file_mutation=_parent_mutation_sink,
+        pre_write_capture=getattr(runtime.manager, "pre_write_capture", None),
         mutation_agent_id=agent.id,
         policy=getattr(runtime, "policy", None),
         network_policy=getattr(runtime, "network_policy", None),
     )
+    automation_browser = getattr(runtime.manager, "automation_browser", None)
+    if automation_browser is not None:
+        automation_browser.bind(context)
     if getattr(runtime, "path_grants", None) is not None:
         context.path_grants = runtime.path_grants
+    task_checkpoints = getattr(runtime.manager, "task_file_checkpoints", None)
+    if task_checkpoints is not None:
+        task_checkpoints.bind(context)
     context.metadata["hook_executor"] = runtime.hook_executor
     from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 
@@ -604,7 +668,7 @@ async def run_subagent_loop(
         "agent",
         agent.workspace,
         trust_mode=context.trust_mode,
-        sandbox_mode=getattr(runtime.config, "sandbox_mode", None),
+        sandbox_mode="workspace-write" if runtime.cron_restricted else getattr(runtime.config, "sandbox_mode", None),
         approval_policy=approval_policy if isinstance(approval_policy, str) else None,
     )
     facts = TurnFacts()
@@ -613,6 +677,12 @@ async def run_subagent_loop(
     context.metadata["session_started_at"] = agent.started_at_ms / 1000
     registry.set_context(context)
     api_tools = registry.to_api_tools()
+    if runtime.cron_restricted:
+        from deepseek_tui.engine.tool_profiles import filter_tools_for_profile
+
+        from deepseek_tui.automation.permissions import browser_authorized
+
+        api_tools = filter_tools_for_profile(api_tools, "cron", allow_browser=browser_authorized(context))
 
     transcript_path = subagent_transcript_path(Path(agent.workspace), agent.id)
     existing = load_transcript(transcript_path)
@@ -661,6 +731,8 @@ async def run_subagent_loop(
     structured_received = False
     attempt_start_steps = steps
     agent.max_steps_reached = False
+    # Set when the budget, not the child, decided this was the last round.
+    budget_forced = False
     # Consecutive bad rounds. Any round that makes progress clears them, so the
     # budgets bound a run of failures rather than a whole run's worth.
     round_failures = 0
@@ -717,6 +789,8 @@ async def run_subagent_loop(
         max_retries=2,
     )
     summary_recoveries = 0
+    # A report without its heading is asked to add it once, then accepted.
+    heading_requested = False
 
     def _try_summary_recovery() -> bool:
         nonlocal summary_recoveries, force_summary
@@ -735,6 +809,46 @@ async def run_subagent_loop(
                 reminders.SUBAGENT_OUTPUT_NUDGE, summary_requirement.reminder
             )
         )
+        return True
+
+    # Children whose outcome this agent already saw through its own tools.
+    reported_children: set[str] = set()
+
+    async def _deliver_children() -> bool:
+        """Hand this agent its children's results before it may stop.
+
+        Only the main engine gets completion callbacks, so without this a
+        child that spawned without waiting would end with its own children
+        still running and their reports unread. Children still running after
+        the handoff budget are stopped: nothing would read them later.
+        """
+        manager = runtime.manager
+        child_ids = getattr(manager, "child_ids", None)
+        if not callable(child_ids):
+            return False
+        pending = [cid for cid in child_ids(agent.id) if cid not in reported_children]
+        if not pending:
+            return False
+        running = child_ids(agent.id, running_only=True)
+        if running:
+            await manager.wait(
+                running, mode="all", timeout_ms=int(manager.handoff_timeout_secs * 1000)
+            )
+            await manager.cancel_children(agent.id)
+        from deepseek_tui.tools.subagent.completion import build_completion_payload
+        from deepseek_tui.tools.subagent.handoff_ledger import build_handoff_ledger
+
+        snaps = [await manager.get_result(cid) for cid in pending]
+        ledger = build_handoff_ledger(snaps)
+        if ledger:
+            messages.append(reminders.reminder_message(reminders.SUBAGENT_HANDOFF, ledger))
+        for snap in snaps:
+            reported_children.add(snap.agent_id)
+            messages.append(
+                reminders.reminder_message(
+                    reminders.SUBAGENT_DONE, build_completion_payload(snap)
+                )
+            )
         return True
 
     # True once a subagent_stop hook has blocked completion (delivered to
@@ -907,6 +1021,22 @@ async def run_subagent_loop(
             history.settle()
             steps += 1
             agent.steps_taken = steps
+            if (
+                steps - attempt_start_steps == DEFAULT_MAX_STEPS
+                and not force_summary
+                and not structured_received
+            ):
+                # Last round of the budget: take the tools away so the child
+                # writes its report instead of being cut off mid-exploration.
+                force_summary = budget_forced = True
+                messages.append(
+                    reminders.reminder_message(
+                        reminders.SUBAGENT_OUTPUT_NUDGE,
+                        _SUBAGENT_STRUCTURED_OUTPUT_NUDGE
+                        if use_structured_output
+                        else _SUBAGENT_FINAL_REPORT_NUDGE,
+                    )
+                )
 
             round_tools = api_tools
             if force_summary:
@@ -998,7 +1128,9 @@ async def run_subagent_loop(
                         reminders.SUBAGENT_OUTPUT_NUDGE, _SUBAGENT_TRUNCATED_NUDGE
                     )
                 )
-                history.discard("本轮输出超出长度上限，已丢弃并重新生成")
+                from deepseek_tui.utils.user_text import user_text
+
+                history.discard(user_text("round_truncated", _locale if _locale in ("zh", "en") else None))
                 continue
 
             round_failures = 0
@@ -1023,26 +1155,51 @@ async def run_subagent_loop(
             if narration and runtime.mailbox is not None:
                 runtime.mailbox.send(MailboxMessage.progress(agent.id, narration))
 
+            async def _may_stop() -> bool:
+                """True when the run should end now; False means loop again."""
+                nonlocal force_summary
+                if await _subagent_stop_allowed():
+                    if pause is not None and (
+                        pause.paused or pause.generation != pause_generation
+                    ):
+                        return False
+                    if not agent.input_queue.empty() or await _deliver_children():
+                        _save_complete_checkpoint("round")
+                        return False
+                    return True
+                # Blocked by a hook: give the agent its tools back and keep going.
+                force_summary = False
+                _save_complete_checkpoint("round")
+                return False
+
             if not result.tool_calls:
                 # The only stop signal is a ### SUMMARY report. Length and
                 # wording do not graduate the child — no heading means the
                 # assignment is still open, same as an empty thinking round.
                 if round_text and has_summary_section(round_text):
-                    if _try_summary_recovery():
+                    if await _may_stop():
+                        break
+                    continue
+                if (
+                    round_text
+                    and not use_structured_output
+                    and "### SUMMARY" not in round_text
+                    and _looks_like_report(round_text)
+                ):
+                    if not heading_requested:
+                        heading_requested = True
+                        force_summary = True
+                        messages.append(
+                            reminders.reminder_message(
+                                reminders.SUBAGENT_OUTPUT_NUDGE,
+                                _SUBAGENT_MISSING_HEADING_NUDGE,
+                            )
+                        )
                         _save_complete_checkpoint("round")
                         continue
-                    if await _subagent_stop_allowed():
-                        if pause is not None and (
-                            pause.paused or pause.generation != pause_generation
-                        ):
-                            continue
-                        if not agent.input_queue.empty():
-                            _save_complete_checkpoint("round")
-                            continue
+                    # Asked once already: hand over what it wrote.
+                    if await _may_stop():
                         break
-                    # Blocked: give the agent its tools back and keep going.
-                    force_summary = False
-                    _save_complete_checkpoint("round")
                     continue
                 # No report. Keep the tools and ask for the next concrete
                 # action. Forcing the summary here used to confiscate the
@@ -1081,15 +1238,8 @@ async def run_subagent_loop(
                 if _try_summary_recovery():
                     _save_complete_checkpoint("round")
                     continue
-                if await _subagent_stop_allowed():
-                    if pause is not None and (pause.paused or pause.generation != pause_generation):
-                        continue
-                    if not agent.input_queue.empty():
-                        _save_complete_checkpoint("round")
-                        continue
+                if await _may_stop():
                     break
-                force_summary = False
-                _save_complete_checkpoint("round")
                 continue
 
             # Tool calls are progress: the stall budget bounds a run of rounds
@@ -1145,7 +1295,7 @@ async def run_subagent_loop(
                         structured_value = tool_result.metadata.get("value")
                         structured_received = True
                 else:
-                    output = await _execute_subagent_tool(
+                    ok, output = await _run_subagent_tool(
                         registry,
                         context,
                         tool_name=tc.name,
@@ -1157,7 +1307,6 @@ async def run_subagent_loop(
                         interrupt=agent.interrupt_event,
                         pause_generation=pause_generation,
                     )
-                    ok = not output.startswith("Error:")
                     # Here, not inside: denials and hook blocks return early as "Error:" text.
                     facts.record(tc.name, tc.arguments, success=ok, error=output,
                                  metadata=context.metadata.get("tool_result_metadata", {})
@@ -1176,6 +1325,19 @@ async def run_subagent_loop(
                             .get(tc.id, {}).get("cua_surface"),
                         )
                     )
+                if tc.name in ("agent", "task_output", "task_stop"):
+                    from deepseek_tui.tools.subagent.completion import terminal_agent_ids
+
+                    args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                    restarted = args.get("resume") or (
+                        args.get("agent_id") if args.get("action") == "send_input" else None
+                    )
+                    if isinstance(restarted, str):
+                        reported_children.discard(restarted)
+                    elif ok:
+                        reported_children.update(terminal_agent_ids(
+                            context.metadata.get("tool_result_metadata", {}).get(tc.id)
+                        ))
                 history.tool(
                     tc.id, tc.name, tc.arguments,
                     context.metadata.get("tool_result_content", {}).pop(tc.id, output), ok,
@@ -1238,10 +1400,20 @@ async def run_subagent_loop(
             # that means the budget ran out from under it. Whatever it did write
             # still goes to the parent — labelled, not passed off as finished.
             agent.max_steps_reached = True
+        if budget_forced:
+            # The report was written because the budget ran out; the parent
+            # still needs to know the assignment may be unfinished.
+            agent.max_steps_reached = True
     except asyncio.CancelledError:
         _save_cancel_checkpoint()
         raise
     finally:
+        cancel_children = getattr(runtime.manager, "cancel_children", None)
+        if callable(cancel_children):
+            try:
+                await cancel_children(agent.id)
+            except Exception:  # noqa: BLE001 — cleanup must not mask the run's outcome
+                _LOG.warning("subagent child cleanup failed id=%s", agent.id, exc_info=True)
         if cua_session is not None:
             try:
                 await cua_session.end_turn(interrupted=_subagent_cancelled(cancel, agent))

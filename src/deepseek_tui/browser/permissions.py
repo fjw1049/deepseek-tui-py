@@ -78,7 +78,8 @@ def origin_of(url: str) -> str | None:
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         return None
     port = f":{parts.port}" if parts.port else ""
-    return f"{parts.scheme}://{parts.hostname}{port}"
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    return f"{parts.scheme}://{host}{port}"
 
 
 def _address(host: str) -> ipaddress._BaseAddress | None:

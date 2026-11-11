@@ -46,6 +46,8 @@ async def desktop_engine(tmp_path, replies, *, drop=()):
         start_mcp=False,
     )
     engine.tool_registry.register(FakeDesktopTool())
+    # These tests inject a desktop tool; CUA lifecycle is exercised separately.
+    engine._prepare_cua = AsyncMock()
     for name in drop:
         engine.tool_registry.remove(name)
     engine._handle_approval_flow = AsyncMock(return_value=False)

@@ -30,6 +30,7 @@ async def test_compact_thread_emits_context_compaction_item(
         from deepseek_tui.tools.registry import ToolContext
 
         engine = SimpleNamespace(
+            configure_interaction_mode=lambda *args, **kwargs: None,
             tool_context=ToolContext(working_directory=kwargs["working_directory"]),
             session_messages=[
                 Message.user("a"),

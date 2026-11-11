@@ -70,7 +70,7 @@ never permit bypassing a denial, sandbox restriction, or tool visibility limit.
   replacement; batch independent edits in the same turn).
 - Brand-new file or full rewrite: `write_file`.
 - Inspect git state: `exec_shell` with `git` (status/diff/log/show/blame).
-- Web lookup: `web_search` / `fetch_url`. If `web_search` fails on an AnySearch/Tavily key and a Bing Search MCP tool is in this turn's list (`mcp_*bing*`), use it. If it is not listed, do not mention MCP.
+- Web lookup: `web_search` / `fetch_url`. If `web_search` fails for lack of a search key and an MCP search tool is in your tool list, use that. If none is listed, do not mention MCP.
 - Run tests / build / format / lint: `exec_shell`.
 
 Always read the relevant file content before patching it. Patches written blind

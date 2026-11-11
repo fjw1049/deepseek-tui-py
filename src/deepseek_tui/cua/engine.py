@@ -16,7 +16,14 @@ logger = logging.getLogger(__name__)
 class CuaEngineMixin:
     async def _prepare_cua(self) -> None:
         config = getattr(getattr(self, "_app_config", None), "cua", None)
-        if not config or not config.enabled or self.mode == "plan":
+        if (not config or not config.enabled or self.mode in {"plan", "ask"}
+                or self.tool_context.metadata.get("cron_restricted")):
+            await self._close_cua()
+            self._cua_session = None
+            self._cua_error = ""
+            self.tool_context.metadata.pop("cua_session", None)
+            for name in CUA_TOOLS:
+                self.tool_registry.remove(name)
             return
         runtime = getattr(self, "tool_runtime", None)
         if runtime is not None and self.tool_registry is runtime.registry:
@@ -82,7 +89,8 @@ class CuaEngineMixin:
     def _cua_surfaces(self) -> frozenset[str]:
         """Surfaces CUA can offer this turn, judged from config alone (never connects)."""
         config = getattr(getattr(self, "_app_config", None), "cua", None)
-        if not config or not config.enabled or self.mode == "plan":
+        if (not config or not config.enabled or self.mode in {"plan", "ask"}
+                or self.tool_context.metadata.get("cron_restricted")):
             return frozenset()
         from deepseek_tui.cua.readiness import vision_error
 
@@ -98,7 +106,7 @@ class CuaEngineMixin:
         if getattr(self, "_cua_error", ""):
             return "\n\nComputer use unavailable: " + self._cua_error
         session = getattr(self, "_cua_session", None)
-        if session is None or self.mode == "plan":
+        if session is None or self.mode in {"plan", "ask"}:
             return ""
         config = getattr(getattr(self, "_app_config", None), "cua", None)
         unattended = ""

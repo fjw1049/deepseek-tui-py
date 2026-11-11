@@ -13,6 +13,9 @@ if TYPE_CHECKING:
     from deepseek_tui.tools.task.manager import TaskManager
 
 _MAX_SUMMARY_CHARS = 2000
+# task_output is the only way to read a task's result, so it gets the same
+# budget as a sub-agent report instead of the short status preview.
+_TASK_OUTPUT_RESULT_CHARS = 32_768
 
 
 def _summarize(text: str, limit: int) -> str:
@@ -159,6 +162,29 @@ def _task_id_from_input(
     return value
 
 
+def resolve_inside_workspace(raw: str | None, context: ToolContext) -> str:
+    """Resolve a model-supplied directory; it must stay in the session workspace.
+
+    Detached runs (tasks, cron jobs) use it as their working directory, so a
+    model must not point them elsewhere. Relative paths are workspace-relative.
+    """
+    base = context.working_directory.resolve()
+    if raw is None:
+        return str(base)
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError:
+        raise ToolError(
+            "workspace must be inside the current session workspace "
+            f"({base}); got {resolved}"
+        ) from None
+    return str(resolved)
+
+
 def _require_manager(context: ToolContext) -> TaskManager:
     manager = context.task_manager
     if manager is None:
@@ -166,7 +192,9 @@ def _require_manager(context: ToolContext) -> TaskManager:
     return manager
 
 
-def _task_result_content(action: str, task: TaskRecord) -> str:
+def _task_result_content(
+    action: str, task: TaskRecord, result_limit: int = _MAX_SUMMARY_CHARS
+) -> str:
     """Build model-visible tool content for task CRUD tools.
 
     The orchestrator only injects ``ToolResult.content`` into the LLM
@@ -181,7 +209,7 @@ def _task_result_content(action: str, task: TaskRecord) -> str:
     summary = (task.result_summary or "").strip()
     if summary:
         lines.append("result:")
-        lines.append(_summarize(summary, _MAX_SUMMARY_CHARS))
+        lines.append(_summarize(summary, result_limit))
     elif task.timeline:
         # Prefer the final assistant text; fall back to a short timeline
         # tail so tool-heavy tasks still expose something readable.
@@ -197,12 +225,14 @@ def _task_result_content(action: str, task: TaskRecord) -> str:
     return "\n".join(lines)
 
 
-def _task_result(action: str, task: TaskRecord) -> ToolResult:
+def _task_result(
+    action: str, task: TaskRecord, result_limit: int = _MAX_SUMMARY_CHARS
+) -> ToolResult:
     summary = task.result_summary or task.error or ""
     return ToolResult(
         success=task.status is not TaskStatus.FAILED
         and task.status is not TaskStatus.TIMED_OUT,
-        content=_task_result_content(action, task),
+        content=_task_result_content(action, task, result_limit),
         metadata={
             "task_id": task.id,
             "status": task.status.value,

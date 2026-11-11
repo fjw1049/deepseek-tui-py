@@ -75,6 +75,13 @@ class ToolResultEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolContextEvent:
+    """Final model-facing tool message, distinct from the raw UI receipt."""
+    tool_call_id: str
+    message: Message
+
+
+@dataclass(frozen=True, slots=True)
 class ApprovalRequiredEvent:
     tool_call_id: str
     request: ApprovalRequest
@@ -261,6 +268,7 @@ EngineEvent = (
     | AgentRoundCompleteEvent
     | ModelRequestInterruptedEvent
     | ToolResultEvent
+    | ToolContextEvent
     | ApprovalRequiredEvent
     | ApprovalResolvedEvent
     | SandboxDeniedEvent

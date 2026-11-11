@@ -351,6 +351,8 @@ class Config(BaseModel):
     # via ``<workspace>/.deepseek/skills`` discovery, not these Config paths.
     skills_dir: Path = Field(default_factory=user_skills_dir)
     mcp_config_path: Path = Field(default_factory=user_mcp_config_path)
+    # Explicit user trust; tool/server readOnlyHint never grants this permission.
+    mcp_read_only_tools: list[str] = Field(default_factory=list)
     notes_path: Path = Field(default_factory=user_notes_path)
     max_subagents: int = Field(default=10, gt=0)
     instructions: list[Path] = Field(default_factory=list)

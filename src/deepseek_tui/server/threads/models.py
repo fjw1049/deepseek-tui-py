@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -259,6 +259,7 @@ class ResolvePublishRequest(BaseModel):
 
 class StartTurnRequest(BaseModel):
     prompt: str
+    tool_profile: Literal["full", "cron", "automation_composer"] | None = None
     input_summary: str | None = None
     provider: str | None = None
     model: str | None = None

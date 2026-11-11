@@ -102,6 +102,8 @@ _PROJECT_SENSITIVE_KEYS = (
     "profile",
     "managed_config_path",
     "mcp_config_path",
+    "mcp_read_only_tools",
+    "notes_path",
     "requirements_path",
     "skills_dir",
 )
@@ -126,6 +128,7 @@ _PROJECT_SENSITIVE_ENV_KEYS = frozenset(
         "DEEPSEEK_MCP_CONFIG",
         "DEEPSEEK_REQUIREMENTS_PATH",
         "DEEPSEEK_SKILLS_DIR",
+        "DEEPSEEK_NOTES_PATH",
         # Trust-root pointers: not in ENV_TO_FIELD, but they redirect
         # user_config_path() / user_deepseek_dir() / active profile
         # before the overlay filter runs.

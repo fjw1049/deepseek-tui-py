@@ -390,15 +390,28 @@ class TurnCheckpointStore:
             self._save(checkpoint)
         return checkpoint
 
-    def record_pre_write(self, turn_id: str, path: str, old_text: str | None) -> None:
+    def record_pre_write(self, turn_id: str, path: str, old_text: str | bytes | None) -> None:
         """Record a tool write's pre-image; first touch of a path wins."""
         norm = _normalize_relative_path(path)
         with self._lock:
             checkpoint = self.load(turn_id)
             if checkpoint is None or norm in checkpoint.mutated:
+                if isinstance(old_text, bytes) and (checkpoint is None or norm not in checkpoint.raw_pre_images):
+                    raise RawCheckpointError([norm], "no attributable byte pre-image is available")
+                return
+            root = _existing_checkpoint_root(checkpoint)
+            if isinstance(old_text, bytes):
+                if root is None:
+                    raise RawCheckpointError([norm], "checkpoint root is unavailable")
+                payload = self._raw_sidecar_path(turn_id, norm, "pre")
+                image = _capture_raw_sidecar_image(root, norm, payload)
+                if payload.read_bytes() != old_text:
+                    raise RawCheckpointError([norm], "file changed before checkpoint")
+                checkpoint.raw_pre_images[norm] = image
+                checkpoint.mutated.append(norm)
+                self._save(checkpoint)
                 return
             checkpoint.pre_contents[norm] = old_text
-            root = _existing_checkpoint_root(checkpoint)
             if root is not None:
                 mode = _mode_matching_content(root, norm, old_text)
                 if mode is not _MISSING:
@@ -407,7 +420,8 @@ class TurnCheckpointStore:
             self._save(checkpoint)
 
     def record_tool_write(
-        self, turn_id: str, path: str, before: str | None, after: str | None
+        self, turn_id: str, path: str, before: str | bytes | None, after: str | None,
+        *, capture_post_image: bool = False,
     ) -> None:
         """Keep tool-authored post-images separate from end-of-turn disk state."""
         norm = _normalize_relative_path(path)
@@ -416,6 +430,29 @@ class TurnCheckpointStore:
             checkpoint = self.load(turn_id)
             if checkpoint is None:
                 return
+            if norm in checkpoint.raw_pre_images:
+                root = _existing_checkpoint_root(checkpoint)
+                if root is None:
+                    raise RawCheckpointError([norm], "checkpoint root is unavailable")
+                mode = _read_regular_mode(root, norm)
+                if mode is _MISSING:
+                    raise RawCheckpointError([norm], "file mode unavailable after write")
+                previous = checkpoint.raw_post_images.get(norm)
+                before_bytes = before if isinstance(before, bytes) else (before or "").encode("utf-8")
+                if previous and previous["signature"] != f"file:{mode:o}:{hashlib.sha256(before_bytes).hexdigest()}":
+                    if norm not in checkpoint.ownership_conflicts:
+                        checkpoint.ownership_conflicts.append(norm)
+                data = after.encode("utf-8") if after is not None else None
+                if data is None:
+                    image = {"kind": "missing", "mode": None, "signature": "missing"}
+                else:
+                    payload = self._raw_sidecar_path(turn_id, norm, "post")
+                    payload.write_bytes(data)
+                    with payload.open("rb") as stream:
+                        os.fsync(stream.fileno())
+                    image = {"kind": "file", "mode": mode,
+                             "signature": f"file:{mode:o}:{hashlib.sha256(data).hexdigest()}"}
+                checkpoint.raw_post_images[norm] = image
             if (
                 norm in checkpoint.tool_post_contents
                 and checkpoint.tool_post_contents[norm] != before
@@ -423,6 +460,15 @@ class TurnCheckpointStore:
             ):
                 checkpoint.ownership_conflicts.append(norm)
             checkpoint.tool_post_contents[norm] = after
+            if capture_post_image:
+                # Detached tasks must survive a crash before end-of-turn capture.
+                # Record the tool's actual output, never adopt external disk edits.
+                checkpoint.post_contents[norm] = after
+                root = _existing_checkpoint_root(checkpoint)
+                if root is not None:
+                    mode = _mode_matching_content(root, norm, after)
+                    if mode is not _MISSING:
+                        checkpoint.post_modes[norm] = mode
             self._save(checkpoint)
 
     def record_out_of_band(
@@ -832,6 +878,10 @@ class TurnCheckpointStore:
                     states[key] = state
                 if state.done:
                     continue
+                if path in checkpoint.ownership_conflicts:
+                    conflicted.add(path)
+                    state.done = True
+                    continue
                 before = pre[path]
                 after = post[path]
                 if state.current_signature not in {
@@ -1240,6 +1290,10 @@ class TurnCheckpointStore:
             for path in raw_paths:
                 key = (root_key, path)
                 if key in raw_done:
+                    continue
+                if path in checkpoint.ownership_conflicts:
+                    statuses[path] = STATUS_CONFLICTED
+                    raw_done.add(key)
                     continue
                 current = raw_current.setdefault(
                     key, _raw_path_signature(target, path)

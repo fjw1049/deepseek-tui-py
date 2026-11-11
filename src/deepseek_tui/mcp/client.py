@@ -254,6 +254,16 @@ class McpClient:
             raise
         return [item for item in resources if isinstance(item, dict)]
 
+    async def list_resource_templates(self) -> list[dict[str, Any]]:
+        if self.supports_capability("resources") is False:
+            return []
+        try:
+            return await self._list_pages("resources/templates/list", "resourceTemplates")
+        except McpError as exc:
+            if is_method_not_found(exc):
+                return []
+            raise
+
     async def _list_pages(self, method: str, field: str) -> list[dict[str, Any]]:
         async def collect() -> list[dict[str, Any]]:
             items: list[dict[str, Any]] = []

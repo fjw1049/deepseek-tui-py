@@ -438,7 +438,7 @@ def _switch_mode(app: DeepSeekTUI, mode: str) -> None:
                     app.handle.cancel(reason="goal_mode_changed"),
                     name="goal-mode-change-cancel",
                 )
-        app._engine.mode = mode
+        app._engine.configure_interaction_mode(mode, reason="tui_mode_command")
         app.run_worker(
             app._engine.run_lifecycle_hook("mode_change", previous_mode=previous_mode),
             name="mode-change-hook",
@@ -995,9 +995,8 @@ def cmd_plan(args: str, app: DeepSeekTUI) -> CommandResult:
 def cmd_yolo(args: str, app: DeepSeekTUI) -> CommandResult:
     if app._engine is None:
         return CommandResult(error="Engine not started")
-    from deepseek_tui.engine.handle import AutoApprovalHandler
-    app._engine.approval_handler = AutoApprovalHandler()
-    return CommandResult(output="YOLO mode enabled — all tool approvals auto-accepted.")
+    _switch_mode(app, "yolo")
+    return CommandResult(output=f"Mode → {app._interaction_mode}")
 
 
 # ── /logout ──────────────────────────────────────────────────────────────

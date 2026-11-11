@@ -8,6 +8,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+
+from deepseek_tui.automation.delivery import DeliveryNotSent
 from unittest.mock import AsyncMock, MagicMock
 
 from deepseek_tui.config.models import Config, FeatureConfig
@@ -477,7 +479,7 @@ async def test_reconcile_caps_delivery_retry_attempts(tmp_path: Path) -> None:
         mgr, created.id, attempts=_MAX_DELIVERY_ATTEMPTS
     )
 
-    deliver = AsyncMock(side_effect=RuntimeError("feishu down"))
+    deliver = AsyncMock(side_effect=DeliveryNotSent("feishu down"))
     with patch("deepseek_tui.automation.pipeline._FeishuSink.deliver", deliver):
         await mgr.reconcile_run_statuses(_completed_task_manager())
 
@@ -803,3 +805,101 @@ def test_pruning_waits_for_required_postprocessing(
         mgr.save_run(old)
         mgr.prune_runs(job.id)
         assert [r.id for r in mgr.list_runs(job.id)] == ["new"]
+
+
+def _active_run(mgr: AutomationManager, automation_id: str, task_id: str) -> None:
+    """An earlier slot of this job whose run record still says running."""
+    from deepseek_tui.tools.automation import AutomationRunRecord
+
+    mgr.save_run(AutomationRunRecord(
+        id="earlier", automation_id=automation_id,
+        scheduled_for="2026-01-01T01:00:00+00:00",
+        status=AutomationRunStatus.RUNNING,
+        created_at="2026-01-01T01:00:00+00:00", task_id=task_id,
+    ))
+
+
+def _task_manager_with(status) -> MagicMock:  # noqa: ANN001
+    task = MagicMock()
+    task.status = status
+    tm = MagicMock()
+    tm.get_task = AsyncMock(return_value=task)
+    return tm
+
+
+@pytest.mark.asyncio
+async def test_slot_is_skipped_while_the_previous_run_is_still_going(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    """Overlap policy: skip, so a slow job cannot stack runs behind itself."""
+    from deepseek_tui.tools.automation import SKIPPED_OVERLAP_REASON
+    from deepseek_tui.tools.task import TaskStatus
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _daily_automation_due(mgr, seconds_ago=60)
+    _active_run(mgr, automation_id, "task-running")
+
+    await mgr.scheduler_tick(_task_manager_with(TaskStatus.RUNNING))
+
+    assert fired_slots == []
+    skipped = [r for r in mgr.list_runs(automation_id) if r.status is AutomationRunStatus.SKIPPED]
+    assert len(skipped) == 1 and skipped[0].error == SKIPPED_OVERLAP_REASON
+    # Re-armed to the next slot rather than retried every tick.
+    assert _parse(mgr.get_automation(automation_id).next_run_at) > datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_slot_fires_when_the_previous_task_already_ended(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    """The run record lags reconcile by a tick; the task's own status decides."""
+    from deepseek_tui.tools.task import TaskStatus
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _daily_automation_due(mgr, seconds_ago=60)
+    _active_run(mgr, automation_id, "task-done")
+
+    await mgr.scheduler_tick(_task_manager_with(TaskStatus.COMPLETED))
+
+    assert len(fired_slots) == 1
+
+
+@pytest.mark.asyncio
+async def test_one_shot_is_never_skipped(tmp_path: Path, fired_slots: list[str]) -> None:
+    from deepseek_tui.tools.task import TaskStatus
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _one_shot_due(mgr, seconds_ago=60)
+    _active_run(mgr, automation_id, "task-manual")  # e.g. an earlier run_now
+
+    await mgr.scheduler_tick(_task_manager_with(TaskStatus.RUNNING))
+
+    assert len(fired_slots) == 1
+
+
+@pytest.mark.asyncio
+async def test_skipped_run_needs_no_result_write_or_delivery(tmp_path: Path) -> None:
+    from deepseek_tui.tools.automation import AutomationRunRecord
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    record = mgr.create_automation(CreateAutomationRequest(
+        name="n", prompt="p", schedule="0 9 * * *",
+        delivery={"mode": "notify"}, conversation_thread_id="th-1",
+    ))
+    mgr.save_run(AutomationRunRecord(
+        id="s1", automation_id=record.id, scheduled_for="2026-01-01T01:00:00+00:00",
+        status=AutomationRunStatus.SKIPPED, created_at="2026-01-01T01:00:00+00:00",
+        conversation_thread_id="th-1",
+    ))
+    tm = MagicMock()
+    tm.get_task = AsyncMock()
+    thread_manager = MagicMock()
+    thread_manager.append_automation_result = AsyncMock()
+    thread_manager.append_automation_notice = AsyncMock()
+    mgr.thread_manager = thread_manager
+
+    await mgr.reconcile_run_statuses(tm)
+
+    tm.get_task.assert_not_awaited()
+    thread_manager.append_automation_result.assert_not_awaited()
+    thread_manager.append_automation_notice.assert_not_awaited()

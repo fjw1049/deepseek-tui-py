@@ -96,13 +96,30 @@ def test_sentinel_stays_parseable_with_a_report_appended() -> None:
     assert data["agent_id"] == "a1"
     assert data["status"] == "completed"
     assert data["steps"] == 7
+    # The summary is the payload's first line; the sentinel does not repeat it.
+    assert "summary" not in data
+    # A finished slot carries no resume invitation.
+    assert "resume_hint" not in data
+
+
+@pytest.mark.parametrize(
+    "snap",
+    [
+        _snap(_REPORT, status=SubAgentStatus.failed("boom")),
+        _snap(_REPORT, status=SubAgentStatus.cancelled()),
+        _snap("Done."),  # no ### SUMMARY: the assignment is still open
+    ],
+    ids=["failed", "cancelled", "empty"],
+)
+def test_unfinished_slots_say_how_to_resume(snap: SubAgentResult) -> None:
+    data = json.loads(_SENTINEL_RE.search(build_completion_payload(snap)).group(1))
     assert 'agent(resume="a1")' in data["resume_hint"]
 
 
 def test_report_is_not_duplicated_when_it_is_only_the_summary_line() -> None:
     """A one-line result already shows as the summary; repeating it is noise."""
     payload = build_completion_payload(_snap("Fixed it."))
-    assert payload.count("Fixed it.") == 2  # summary line + sentinel JSON only
+    assert payload.count("Fixed it.") == 1  # the summary line only
 
 
 # --- bounds ---------------------------------------------------------------

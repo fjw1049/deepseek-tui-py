@@ -13,7 +13,7 @@ import uuid
 from asyncio.subprocess import Process
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
 
 from deepseek_tui.tools.output_capture import OutputCapture, collect_process
 from deepseek_tui.tools.approval import Decision
@@ -97,6 +97,7 @@ class ExecShellTool(ToolSpec):
             "locate files by name, or cat to read a file — use grep_files, "
             "file_search, and read_file respectively; exec_shell is for "
             "builds, tests, git, and process management. "
+            "Declare expected_exit_codes for probes such as grep, test and diff; default is [0]. "
             "Commands may run under an OS sandbox: writable paths are the "
             "workspace, /tmp and $TMPDIR, and allowed tool caches; "
             ".deepseek/ under the workspace is read-only to shell. On "
@@ -122,6 +123,11 @@ class ExecShellTool(ToolSpec):
                         "user's language. Shown to the user in place of the "
                         "command text while it runs."
                     ),
+                },
+                "expected_exit_codes": {
+                    "type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "minItems": 1, "maxItems": 256, "default": [0],
+                    "description": "Exit codes considered successful, declared before execution; defaults to [0]. Actual exit code is always reported.",
                 },
                 "background": {
                     "type": "boolean",
@@ -248,6 +254,8 @@ class ExecShellTool(ToolSpec):
 
     async def _execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         if input_data.get("process_id") is not None:
+            if "expected_exit_codes" in input_data:
+                raise ToolError("expected_exit_codes must be declared when starting the process")
             if input_data.get("command") is not None:
                 raise ToolError(
                     "'process_id' (interact) is mutually exclusive with "
@@ -255,6 +263,7 @@ class ExecShellTool(ToolSpec):
                 )
             return await _execute_interact(input_data, context)
         command = _require_string(input_data, "command")
+        expected_exit_codes = _expected_exit_codes(input_data.get("expected_exit_codes"))
         background = bool(input_data.get("background", False))
         use_pty = bool(input_data.get("pty", False))
         timeout_ms = _resolve_timeout_ms(input_data.get("timeout_ms"))
@@ -281,7 +290,7 @@ class ExecShellTool(ToolSpec):
                 cwd=str(context.working_directory),
                 background=background,
                 context=context,
-                timeout_ms=timeout_ms,
+                timeout_ms=timeout_ms, expected_exit_codes=expected_exit_codes,
             )
 
         shell_env = await _shell_env_from_hooks(context, command)
@@ -293,10 +302,12 @@ class ExecShellTool(ToolSpec):
             shell_env,
             timeout_ms,
         )
+        _require_automation_sandbox(context, exec_env)
         process = await _spawn_from_exec_env(exec_env)
         if background:
             process_id = _register_background_process(
-                context, process, command=command, exec_env=exec_env, detached=True
+                context, process, command=command, exec_env=exec_env, detached=True,
+                expected_exit_codes=expected_exit_codes
             )
             metadata: dict[str, Any] = {
                 "background": True,
@@ -356,7 +367,7 @@ class ExecShellTool(ToolSpec):
                 process,
                 command=command,
                 exec_env=exec_env,
-                collector=collector,
+                collector=collector, expected_exit_codes=expected_exit_codes,
                 # Not detached: the model asked for this result in the
                 # foreground, so the turn hands it off instead of ending.
                 detached=False,
@@ -377,8 +388,21 @@ class ExecShellTool(ToolSpec):
             stderr,
             exec_env=exec_env,
             command=command,
-            policy=policy,
+            policy=policy, expected_exit_codes=expected_exit_codes,
         )
+
+
+def _expected_exit_codes(raw: object) -> tuple[int, ...]:
+    if raw is None:
+        return (0,)
+    if (not isinstance(raw, list) or not raw or len(raw) > 256 or
+            any(type(code) is not int or not 0 <= code <= 255 for code in raw)):
+        raise ToolError("expected_exit_codes must be a nonempty list of integers from 0 to 255")
+    return tuple(dict.fromkeys(raw))
+
+
+def _process_expected_codes(context: ToolContext, process_id: str) -> tuple[int, ...]:
+    return context.metadata.get("shell_expected_exit_codes", {}).get(process_id, (0,))
 
 
 def _resolve_timeout_ms(raw: object) -> int:
@@ -519,12 +543,14 @@ def _register_background_process(
     exec_env: ExecEnv,
     collector: asyncio.Task[tuple[bytes | None, bytes | None]] | None = None,
     detached: bool,
+    expected_exit_codes: tuple[int, ...] = (0,),
 ) -> str:
     process_id = str(uuid.uuid4())
     _process_store(context)[process_id] = process
     _exec_env_store(context)[process_id] = exec_env
     _command_store(context)[process_id] = command
     _detached_store(context)[process_id] = detached
+    context.metadata.setdefault("shell_expected_exit_codes", {})[process_id] = expected_exit_codes
     if collector is not None:
         _collector_store(context)[process_id] = collector
     else:
@@ -540,12 +566,14 @@ def _register_background_pty(
     command: str,
     exec_env: ExecEnv,
     detached: bool,
+    expected_exit_codes: tuple[int, ...] = (0,),
 ) -> str:
     process_id = str(uuid.uuid4())
     _pty_store(context)[process_id] = proc
     _exec_env_store(context)[process_id] = exec_env
     _command_store(context)[process_id] = command
     _detached_store(context)[process_id] = detached
+    context.metadata.setdefault("shell_expected_exit_codes", {})[process_id] = expected_exit_codes
     _arm_process_completion_watch(context, process_id)
     return process_id
 
@@ -651,6 +679,8 @@ def _emit_shell_process_done(
             "command": command,
             "returncode": returncode,
             "output": snippet,
+            "expected_exit_codes": list(_process_expected_codes(context, process_id)),
+            "success": returncode in _process_expected_codes(context, process_id),
         }
     )
 
@@ -687,6 +717,7 @@ async def wait_background_process(
             "status": "completed",
             "process_id": process_id,
             "pty": True,
+            "expected_exit_codes": list(_process_expected_codes(context, process_id)),
         }
         if exec_env is not None:
             apply_sandbox_metadata(
@@ -696,8 +727,8 @@ async def wait_background_process(
                 stderr=text,
             )
         return ToolResult(
-            success=pty_proc.exit_code == 0,
-            content=text.strip(),
+            success=pty_proc.exit_code in _process_expected_codes(context, process_id),
+            content=f"[exit {pty_proc.exit_code}]\n{text}".strip(),
             metadata=metadata,
         )
 
@@ -725,7 +756,7 @@ async def wait_background_process(
         stdout,
         stderr,
         extra_metadata={"process_id": process_id},
-        exec_env=exec_env,
+        exec_env=exec_env, expected_exit_codes=_process_expected_codes(context, process_id),
     )
 
 
@@ -946,11 +977,13 @@ def _build_shell_result(
     exec_env: ExecEnv | None = None,
     command: str | None = None,
     policy: ExecutionSandboxPolicy | None = None,
+    expected_exit_codes: tuple[int, ...] = (0,),
 ) -> ToolResult:
     stdout_text = _decode_stream(stdout)
     stderr_text = _decode_stream(stderr)
     metadata: dict[str, Any] = {
         "returncode": process.returncode,
+        "expected_exit_codes": list(expected_exit_codes),
         "stdout": stdout_text,
         "stderr": stderr_text,
         "status": "completed",
@@ -974,6 +1007,10 @@ def _build_shell_result(
             f"[exit {process.returncode}] stderr:\n{stderr_text}\n"
             f"--- stdout ---\n{_decode_stream(stdout)}"
         ).strip()
+    elif process.returncode not in (0, None):
+        # Without stderr the failed result was bare stdout, or empty: the model
+        # saw an error with no exit code (`grep` with no match, `test -f`).
+        content = f"[exit {process.returncode}]\n{content}".strip()
     if (
         exec_env is not None
         and policy is not None
@@ -997,7 +1034,7 @@ def _build_shell_result(
             f"{content}\n\nNetwork may be blocked by the sandbox policy."
         ).strip()
     return ToolResult(
-        success=process.returncode == 0,
+        success=process.returncode in expected_exit_codes,
         content=content,
         metadata=metadata,
     )
@@ -1105,11 +1142,12 @@ class PtyProcess:
     id plus a master fd for stdin / stdout multiplex.
     """
 
-    __slots__ = ("pid", "master_fd", "_exit_code", "_done", "_output", "_reader_task")
+    __slots__ = ("pid", "master_fd", "_exit_code", "_done", "_output", "_reader_task", "_process")
 
-    def __init__(self, pid: int, master_fd: int) -> None:
+    def __init__(self, pid: int, master_fd: int, process: Process | None = None) -> None:
         self.pid = pid
         self.master_fd = master_fd
+        self._process = process
         self._exit_code: int | None = None
         self._done = asyncio.Event()
         self._output = OutputCapture()
@@ -1135,6 +1173,9 @@ class PtyProcess:
             self._output.close()
             self._close_master()
             # Wait for process exit to record status.
+            if self._process is not None:
+                self._exit_code = await self._process.wait()
+                return
             try:
                 pid, status = await loop.run_in_executor(
                     None, lambda: os.waitpid(self.pid, 0)
@@ -1187,19 +1228,6 @@ def _safe_read(fd: int, n: int) -> bytes:
         return b""
 
 
-def _exec_with_scrubbed_env(exec_env: ExecEnv) -> NoReturn:
-    """Exec the command with a fully replaced, scrubbed environment.
-
-    Used in the PTY fork child: ``execvp`` would inherit the parent's
-    ``os.environ`` (including any secrets), so the scrubbed mapping must
-    replace the environment wholesale via ``execvpe`` — merging into
-    ``os.environ`` first would leave secret keys in place.
-    """
-    os.execvpe(
-        exec_env.command[0], exec_env.command, build_child_env(exec_env.env)
-    )
-
-
 async def _run_pty(
     command: str,
     *,
@@ -1207,6 +1235,7 @@ async def _run_pty(
     background: bool,
     context: ToolContext,
     timeout_ms: int = EXEC_DEFAULT_TIMEOUT_MS,
+    expected_exit_codes: tuple[int, ...] = (0,),
 ) -> ToolResult:
     shell_env = await _shell_env_from_hooks(context, command)
     policy = _resolve_policy(context)
@@ -1217,38 +1246,33 @@ async def _run_pty(
         shell_env,
         timeout_ms,
     )
+    _require_automation_sandbox(context, exec_env)
     master_fd, slave_fd = pty.openpty()
-    pid = os.fork()
-    if pid == 0:
-        # Child: wire slave_fd to std{in,out,err}, then exec sandboxed shell.
-        try:
-            os.close(master_fd)
-            os.setsid()
-            os.dup2(slave_fd, 0)
-            os.dup2(slave_fd, 1)
-            os.dup2(slave_fd, 2)
-            if slave_fd > 2:
-                os.close(slave_fd)
-            os.chdir(cwd)
-            _exec_with_scrubbed_env(exec_env)
-        except Exception:
-            os._exit(127)
-
-    # Parent.
-    os.close(slave_fd)
-    proc = PtyProcess(pid=pid, master_fd=master_fd)
+    try:
+        # No Python runs between fork and exec in a multithreaded host.
+        child = await asyncio.create_subprocess_exec(
+            *exec_env.command, cwd=cwd, env=build_child_env(exec_env.env),
+            stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, start_new_session=True,
+        )
+    except BaseException:
+        os.close(master_fd)
+        raise
+    finally:
+        os.close(slave_fd)
+    proc = PtyProcess(pid=child.pid, master_fd=master_fd, process=child)
     proc.start_reader()
 
     if background:
         process_id = _register_background_pty(
-            context, proc, command=command, exec_env=exec_env, detached=True
+            context, proc, command=command, exec_env=exec_env, detached=True,
+            expected_exit_codes=expected_exit_codes
         )
         return ToolResult(
             success=True,
             content=process_id,
             metadata={
                 "background": True,
-                "pid": pid,
+                "pid": proc.pid,
                 "pty": True,
                 "sandboxed": exec_env.is_sandboxed(),
                 "sandbox_type": exec_env.sandbox_type.value,
@@ -1275,14 +1299,16 @@ async def _run_pty(
         raise
     except asyncio.TimeoutError:
         process_id = _register_background_pty(
-            context, proc, command=command, exec_env=exec_env, detached=False
+            context, proc, command=command, exec_env=exec_env, detached=False,
+            expected_exit_codes=expected_exit_codes
         )
         return _timeout_background_result(
-            command, context, process_id, timeout_ms, pid, pty=True
+            command, context, process_id, timeout_ms, proc.pid, pty=True
         )
     text = proc.output.decode("utf-8", errors="replace")
     metadata: dict[str, Any] = {
         "returncode": proc.exit_code,
+        "expected_exit_codes": list(expected_exit_codes),
         "stdout": text,
         "stderr": "",
         "status": "completed",
@@ -1295,8 +1321,8 @@ async def _run_pty(
         stderr=text,
     )
     return ToolResult(
-        success=proc.exit_code == 0,
-        content=text.strip(),
+        success=proc.exit_code in expected_exit_codes,
+        content=f"[exit {proc.exit_code}]\n{text}".strip(),
         metadata=metadata,
     )
 
@@ -1412,6 +1438,14 @@ def list_background_processes(context: ToolContext) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _require_automation_sandbox(context: ToolContext, exec_env: ExecEnv) -> None:
+    if context.metadata.get("cron_restricted") and not exec_env.is_sandboxed():
+        from deepseek_tui.tools.user_input import unattended_tool_denial
+
+        result = unattended_tool_denial(context, "exec_shell", "Unattended shell needs an available OS sandbox")
+        raise ToolError(result.content)
 
 
 def _resolve_policy(

@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
+from deepseek_tui.tools.registry import ApprovalRequirement, ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.utils.sensitive import is_sensitive_path
 from deepseek_tui.tools.utils.validation import (
@@ -27,30 +27,66 @@ from deepseek_tui.tools.utils.validation import (
 class NoteTool(ToolSpec):
     """Append a quick note to the user notes file."""
 
+    def __init__(self, *, read_only: bool = False) -> None:
+        self._read_only = read_only
+
     def name(self) -> str:
         return "note"
 
     def description(self) -> str:
-        return "Append a short note to the shared user notes file for later reference."
+        if self._read_only:
+            return "Read the latest 64 KiB of saved user notes with action=read."
+        return (
+            "Read saved user notes with action=read (latest 64 KiB), or append a short "
+            "note with action=append and content. Notes persist across sessions but "
+            "are retrieved only when requested, not automatically injected."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string", "enum": ["read"] if self._read_only else ["read", "append"],
+                    "default": "read" if self._read_only else "append",
+                    "description": "Read the latest saved notes or append content to them.",
+                },
                 "content": {
                     "type": "string",
                     "description": "The note content.",
                 }
             },
-            "required": ["content"],
+            "required": ["action"] if self._read_only else [],
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.WRITES_FILES]
+        return [ToolCapability.READ_ONLY if self._read_only else ToolCapability.WRITES_FILES]
+
+    def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
+        return input_data.get("action", "append" if "content" in input_data else "read" if self._read_only else "append") == "read"
+
+    def approval_requirement_for_input(self, input_data: dict[str, Any]) -> ApprovalRequirement:
+        if self.is_read_only_for_input(input_data):
+            return ApprovalRequirement.AUTO
+        return super().approval_requirement_for_input(input_data)
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        content = _require_string(input_data, "content")
         notes_path = _notes_path(context)
+        action = input_data.get("action", "append" if "content" in input_data else "read" if self._read_only else "append")
+        if action == "read":
+            def read_notes() -> str:
+                try:
+                    with notes_path.open("rb") as stream:
+                        size = stream.seek(0, 2)
+                        stream.seek(max(0, size - 65536))
+                        text = stream.read(65536).decode("utf-8", errors="replace")
+                    return ("[Showing latest 64 KiB of notes]\n" if size > 65536 else "") + text
+                except FileNotFoundError:
+                    return "No saved notes."
+            return ToolResult(True, await asyncio.to_thread(read_notes), metadata={"path": str(notes_path)})
+        if action != "append" or self._read_only:
+            raise ToolError("note only permits action=read in read-only mode")
+        content = _require_string(input_data, "content")
         notes_path.parent.mkdir(parents=True, exist_ok=True)
 
         entry = f"\n---\n{content.strip()}\n"
@@ -200,8 +236,8 @@ class SkillLoadTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Load a skill (SKILL.md body + companion file list) into the "
-            "next turn's context. Use this when the user names a skill or "
+            "Load a skill: returns its SKILL.md body and companion file list "
+            "as this call's result. Use this when the user names a skill or "
             "the task clearly matches a skill listed in the system prompt's "
             "`## Skills` section. Faster than read_file + file_search."
         )
@@ -308,6 +344,8 @@ class SkillLoadTool(ToolSpec):
 
         companions = _collect_companion_files(skill)
         body = _format_skill_body(skill, companions=companions)
+        root = Path(skill.path).parent.resolve()
+        context.skill_read_roots = tuple(dict.fromkeys((*context.skill_read_roots, root)))
         return ToolResult(
             success=True,
             content=body,
@@ -358,8 +396,8 @@ def _format_skill_body(skill: Any, *, companions: list[Path] | None = None) -> s
         out.append("## Companion files")
         out.append("")
         out.append(
-            "Sibling files in the skill directory. Use `read_file` to "
-            "open them when the task requires."
+            "Files and subdirectories in the skill directory. Use `read_file` for "
+            "files and `file_search` for directories when the task requires."
         )
         out.append("")
         for path in companions:
@@ -368,11 +406,7 @@ def _format_skill_body(skill: Any, *, companions: list[Path] | None = None) -> s
 
 
 def _collect_companion_files(skill: Any) -> list[Path]:
-    """List sibling files of SKILL.md.
-
-    Skips the ``SKILL.md`` itself and any nested directories so the
-    listing stays focused on at-hand resources. Sorted for determinism.
-    """
+    """List sibling files and directory entries, without recursive traversal."""
     parent = skill.path.parent if isinstance(skill.path, Path) else Path(skill.path).parent
     if not parent.is_dir():
         return []
@@ -380,7 +414,7 @@ def _collect_companion_files(skill: Any) -> list[Path]:
     for index, path in enumerate(parent.iterdir()):
         if index >= 10000:
             raise ToolError("Skill directory exceeds 10000 entries; narrow its contents")
-        if path.is_file() and path.name != "SKILL.md":
+        if path.name != "SKILL.md" and (path.is_file() or path.is_dir()):
             paths.append(path)
         if len(paths) > 1000:
             raise ToolError("Skill has more than 1000 companion files")
@@ -404,6 +438,9 @@ def _notes_path(context: ToolContext) -> Path:
     env = os.environ.get("DEEPSEEK_NOTES_PATH", "").strip()
     if env:
         return Path(env).expanduser()
+    configured = context.metadata.get("notes_path")
+    if configured:
+        return Path(configured).expanduser()
     return user_notes_path()
 
 

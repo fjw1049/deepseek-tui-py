@@ -360,6 +360,7 @@ async def create_tool_runtime(
             sandbox_mode = sandbox_mode_for_approval_tier(approval_policy)
 
         metadata["allow_shell"] = cfg.allow_shell and cfg.features.shell_tool
+        metadata["notes_path"] = str(cfg.notes_path)
         context = ToolContext(
             working_directory=workspace,
             trust_mode=trust_mode,
@@ -367,7 +368,7 @@ async def create_tool_runtime(
             policy=policy,
             task_manager=task_manager,
             subagent_manager=subagent_manager,
-            network_policy=None,
+            network_policy=None,  # Opt-in for embedders; no app-level network policy is enabled.
             execution_sandbox_policy=resolve_execution_sandbox_policy(
                 mode,
                 workspace,
@@ -587,6 +588,31 @@ def extract_spillover_path_from_text(text: str) -> str | None:
         return None
     path = match.group("path").strip()
     return path or None
+
+
+def point_compacted_output_to_disk(
+    tool_id: str, tool_name: str, raw: str, compacted: str
+) -> str:
+    """Give a context-compacted tool result a way back to its full text.
+
+    Ingress compaction keeps a head/tail snippet only. Spillover covers
+    successes above 100 KiB, so a failing test log, or any output between the
+    compaction limit and that threshold, lost its middle for good; a pointer
+    already inside the text (shell spill marker) sat in the dropped middle.
+    """
+    if not compacted.startswith(f"[{tool_name} output compacted to protect context]"):
+        return compacted
+    path = extract_spillover_path_from_text(raw)
+    if path is None:
+        try:
+            path = str(write_spillover(tool_id, raw))
+        except OSError as err:
+            logger.warning("compacted output spill failed tool_id=%s: %s", tool_id, err)
+            return compacted
+    return (
+        f"{compacted}\nFull output saved to {path}. Use read_file (offset/limit) "
+        "or grep_files on that path for the omitted part."
+    )
 
 
 def is_tool_result_omitted_placeholder(text: str) -> bool:

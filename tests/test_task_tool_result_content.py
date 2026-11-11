@@ -13,7 +13,11 @@ import pytest
 
 from deepseek_tui.engine.context import compact_tool_result_for_context
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.task.helpers import _task_result, _task_result_content
+from deepseek_tui.tools.task.helpers import (
+    _TASK_OUTPUT_RESULT_CHARS,
+    _task_result,
+    _task_result_content,
+)
 from deepseek_tui.tools.task.manager import TaskManager
 from deepseek_tui.tools.task.models import (
     NewTaskRequest,
@@ -122,3 +126,12 @@ async def test_task_output_and_list_tools_expose_result_in_content(
     assert list_result.content.startswith("1 task(s):")
 
     await manager.shutdown()
+
+
+def test_task_output_returns_result_beyond_the_status_preview() -> None:
+    body = "x" * 5000
+    task = _completed_record(result_summary=body)
+    assert body not in _task_result_content("task_create", task)
+    assert body in _task_result_content(
+        "task_output", task, _TASK_OUTPUT_RESULT_CHARS
+    )

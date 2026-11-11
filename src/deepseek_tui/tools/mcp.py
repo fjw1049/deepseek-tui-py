@@ -44,6 +44,23 @@ class ListMcpResourcesTool(ToolSpec):
         return _json_result(resources)
 
 
+class ListMcpResourceTemplatesTool(ListMcpResourcesTool):
+    def name(self) -> str:
+        return "list_mcp_resource_templates"
+
+    def description(self) -> str:
+        return (
+            "List parameterized resource URI templates exposed by MCP servers. "
+            "Fill the URI template parameters, then use read_mcp_resource with "
+            "the resulting URI and server name."
+        )
+
+    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
+        server = _optional_string(input_data, "server")
+        templates = await _manager(context).list_resource_templates(server)
+        return _json_result(templates)
+
+
 class ReadMcpResourceTool(ToolSpec):
     def name(self) -> str:
         return "read_mcp_resource"
@@ -63,7 +80,8 @@ class ReadMcpResourceTool(ToolSpec):
                     "type": "string",
                     "description": (
                         "Resource URI exactly as returned by "
-                        "list_mcp_resources."
+                        "list_mcp_resources, or a URI expanded from "
+                        "list_mcp_resource_templates."
                     ),
                 },
             },

@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -24,6 +24,7 @@ class ToolCapability(str, Enum):
     """Capabilities a tool may have or require."""
 
     READ_ONLY = "read_only"
+    MUTATES_STATE = "mutates_state"
     WRITES_FILES = "writes_files"
     EXECUTES_CODE = "executes_code"
     NETWORK = "network"
@@ -152,9 +153,10 @@ class ToolContext:
     # Extra directories that read-only tools may read from even though they
     # lie outside ``working_directory`` (e.g. a mounted plugin's own dir).
     # Only consulted when a caller passes ``allow_read_roots=True``; writes
-    # stay confined to the workspace. Skills' companion-file roots can be
-    # appended here later with no API change.
+    # stay confined to the workspace. Loaded skill roots are tracked separately.
     extra_read_roots: tuple[Path, ...] = ()
+    # Named skills loaded in this session; independent of transient plugin mounts.
+    skill_read_roots: tuple[Path, ...] = ()
     # Paths the user authorized (mentions, attachments, approvals). Shared
     # with sub-agents; see tools/path_access.py.
     path_grants: PathGrants = field(default_factory=_new_path_grants)
@@ -182,7 +184,7 @@ class ToolContext:
     # Optional pre-write hook (server turn checkpoints for rewind): called
     # with the workspace-relative path and the file's current text (None when
     # the file does not exist yet) right before a write tool overwrites it.
-    pre_write_capture: Callable[[str, str | None], None] | None = None
+    pre_write_capture: Callable[[str, str | bytes | None], None] | None = None
     # Subagent id when tools run inside a child agent (projected into ledger).
     mutation_agent_id: str | None = None
     # Resolved path -> (st_mtime_ns, st_size) as of the last time this session
@@ -191,6 +193,8 @@ class ToolContext:
     # per-engine: a shared registry would let one session's write mark another
     # session's stale read as current, which is the one error worth avoiding.
     file_reads: dict[Path, tuple[int, int]] = field(default_factory=dict)
+    # Per-call authorization callback; metadata remains shared turn state.
+    network_approval: Callable[[str, str], Awaitable[bool]] | None = None
     # (working directory, (project root, copy root) or None) once looked up.
     _isolated_project: tuple[Path, tuple[Path, Path] | None] | None = field(
         default=None, init=False, repr=False
@@ -279,21 +283,27 @@ class ToolContext:
             payload["agent_id"] = self.mutation_agent_id
         try:
             self.on_file_mutation(payload)
+        except ToolError:
+            raise
         except Exception:
             logging.getLogger(__name__).debug(
                 "on_file_mutation_failed", exc_info=True
             )
 
-    def capture_pre_write(self, path: str, old_text: str | None) -> None:
+    def capture_pre_write(self, path: str, old_text: str | bytes | None) -> None:
         """Notify the turn checkpoint store about an impending file write."""
         if self.pre_write_capture is None:
             return
         try:
             self.pre_write_capture(path, old_text)
+        except ToolError:
+            raise
         except Exception:
             logging.getLogger(__name__).debug(
                 "pre_write_capture_failed", exc_info=True
             )
+            if isinstance(old_text, bytes):
+                raise ToolError("Cannot safely checkpoint the existing non-UTF-8 file")
 
     @staticmethod
     def _within(child: Path, parent: Path) -> bool:
@@ -347,6 +357,7 @@ class ToolContext:
             return PathAccess(resolved, write, allowed=True)
         if not write and allow_read_roots and (
             any(self._within(resolved, root) for root in self.extra_read_roots)
+            or any(self._within(resolved, root) for root in self.skill_read_roots)
             or self._within_spillover_root(resolved)
             or self._within_cycle_archive_root(resolved)
         ):
@@ -427,19 +438,20 @@ _LOG = logging.getLogger(__name__)
 
 
 def _strip_additional_properties(node: Any) -> Any:
-    """Deep-copy a schema with every ``additionalProperties`` key removed.
+    """Deep-copy a schema, relaxing ``additionalProperties: false`` only.
 
     Tool schemas intentionally leave ``additionalProperties`` permissive:
     the execution layer keeps accepting legacy alias parameters (task's
     ``id``, agent's ``message``/``objective``, checklist's ``items``), so
-    registry-level validation must never reject extra properties — only
-    required / type / enum violations.
+    registry-level validation accepts extra aliases. A schema-valued
+    additionalProperties still validates dictionary values; dropping it
+    would silently discard their type constraints.
     """
     if isinstance(node, dict):
         return {
             key: _strip_additional_properties(value)
             for key, value in node.items()
-            if key != "additionalProperties"
+            if key != "additionalProperties" or value is not False
         }
     if isinstance(node, list):
         return [_strip_additional_properties(item) for item in node]
@@ -742,6 +754,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         CronCreateTool,
         CronDeleteTool,
         CronListTool,
+        CronUpdateTool,
     )
     from deepseek_tui.tools.file import (
         EditFileTool,
@@ -751,6 +764,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     from deepseek_tui.tools.knowledge import NoteTool, PlanUpdateTool, SkillLoadTool
     from deepseek_tui.tools.mcp import (
         ListMcpResourcesTool,
+        ListMcpResourceTemplatesTool,
         ReadMcpResourceTool,
     )
     from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
@@ -815,6 +829,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     if cfg.features.mcp:
         for tool in [
             ListMcpResourcesTool(),
+            ListMcpResourceTemplatesTool(),
             ReadMcpResourceTool(),
         ]:
             registry.register(tool)
@@ -851,20 +866,14 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         else:
             registry.register(AgentTool())
 
-    # Cron tools create/delete scheduled work — the whole family is
-    # excluded from read-only plan mode (cron_list alone would dangle).
-    if cfg.features.automations and mode != "plan":
-        for tool in [
-            CronCreateTool(),
-            CronListTool(),
-            CronDeleteTool(),
-        ]:
-            registry.register(tool)
+    if cfg.features.automations:
+        registry.register(CronListTool())
+        if mode != "plan":
+            for tool in [CronCreateTool(), CronUpdateTool(), CronDeleteTool()]:
+                registry.register(tool)
 
-    # Knowledge / memory / review tools. ``note`` writes persistent memory,
-    # so it is excluded from read-only plan mode.
-    if mode != "plan":
-        registry.register(NoteTool())
+    # Knowledge / memory tools expose only note reads in ask/plan mode.
+    registry.register(NoteTool(read_only=mode in {"ask", "plan"}))
     registry.register(PlanUpdateTool())
     registry.register(SkillLoadTool())
 
@@ -881,6 +890,11 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     if mode != "plan":
         for tool in goal_tools():
             registry.register(tool)
+
+    if mode == "ask":
+        from deepseek_tui.engine.tools import ASK_MODE_TOOL_ALLOWLIST
+
+        registry.filter_by_names(set(ASK_MODE_TOOL_ALLOWLIST))
 
     return registry
 
@@ -909,10 +923,15 @@ def build_subagent_registry(
 
     # The sub-agent loop executes tools directly: engine-intercepted tools and
     # browser-task delivery controls would always fail there.
+    # Cron tools need the AutomationManager, which a child context never has.
     for name in GOAL_TOOL_NAMES | {
         REQUEST_USER_INPUT_NAME,
         ENTER_PLAN_MODE_NAME,
         EXIT_PLAN_MODE_NAME,
+        "cron_create",
+        "cron_list",
+        "cron_update",
+        "cron_delete",
     }:
         registry.remove(name)
     if allowed_tools is not None:

@@ -209,6 +209,8 @@ class McpManager:
         self._last_mtime: float | None = None
         self._config_hash: str | None = None
         self._discovered_tools_cache: list[dict[str, Any]] | None = None
+        self._discovered_servers: set[str] = set()
+        self._request_limits: dict[str, asyncio.Semaphore] = {}
         self._stale_cache: list[dict[str, Any]] | None = None
         self._background_refresh_task: asyncio.Task[None] | None = None
         self._connect_task: asyncio.Task[None] | None = None
@@ -705,6 +707,8 @@ class McpManager:
                 return False
             self._generation += 1
             self._configs = {cfg.name: cfg for cfg in configs}
+            self._discovered_servers.clear()
+            self._request_limits.clear()
             self._config_hash = new_hash
             clients = list(self._clients.values())
             tasks = list(self._connection_tasks.values())
@@ -806,6 +810,19 @@ class McpManager:
             _ingest(tools)
         return grouped
 
+    def can_validate_tool_name(self, qualified: str) -> bool:
+        """Only diagnose a missing name after a successful discovery, even if empty."""
+        server = self._match_configured_server(qualified)
+        candidates = ([self._configs[server]] if server is not None else
+                      [cfg for cfg in self._configs.values() if cfg.enabled])
+        return all(
+            cfg.enabled and cfg.name not in self._discover_errors and (
+                cfg.name in self._focus_api_tools if cfg.is_on_focus else
+                cfg.name in self._discovered_servers
+            )
+            for cfg in candidates
+        )
+
     def _focus_warm_timeout(self, cfg: McpServerConfig) -> float:
         base = cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]
         return max(base, FOCUS_WARM_TIMEOUT_S)
@@ -896,6 +913,7 @@ class McpManager:
                 {
                     "server": server_name,
                     "name": raw_name,
+                    "model_name": qualified,
                     "description": description if isinstance(description, str) else "",
                 }
             )
@@ -969,6 +987,7 @@ class McpManager:
         for name, cfg in self._configs.items():
             if cfg.enabled and not cfg.is_on_focus:
                 self._discover_errors.pop(name, None)
+                self._discovered_servers.discard(name)
 
         async def _discover_one(
             server_name: str, cfg: McpServerConfig
@@ -1016,6 +1035,9 @@ class McpManager:
 
         self._check_generation(generation)
         api_tools: list[dict[str, Any]] = []
+        self._discovered_servers.update(
+            name for name, _ in enabled if name not in self._discover_errors
+        )
         self._tool_map.clear()
         for server_results in all_results:
             for qualified, server_name, raw_name, api_dict in server_results:
@@ -1071,6 +1093,8 @@ class McpManager:
             except (McpError, asyncio.TimeoutError, Exception):  # noqa: BLE001
                 continue
             self._check_generation(generation)
+            self._discovered_servers.add(server_name)
+            self._discover_errors.pop(server_name, None)
             for qualified, srv, raw_name, api_dict in _tools_from_descriptors(
                 server_name, cfg, descriptors
             ):
@@ -1122,6 +1146,11 @@ class McpManager:
                 self._tool_map[qualified] = mapping
         self._restore_focus_into_tool_map()
 
+    def _request_limit(self, server: str) -> asyncio.Semaphore:
+        if server not in self._request_limits:
+            self._request_limits[server] = asyncio.Semaphore(self._configs[server].max_concurrency)
+        return self._request_limits[server]
+
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         await self.reload_if_config_changed()
         generation = self._generation
@@ -1132,18 +1161,24 @@ class McpManager:
         cfg = self._configs.get(server_name)
         if cfg is None or not cfg.enabled or (cfg.tool_filter and not cfg.tool_filter.accepts(tool_name)):
             raise McpError("MCP tool is disabled by current configuration")
-        client = await self._ensure_client(server_name)
-        self._check_generation(generation)
-        if self._resolve_qualified(qualified_name) != mapping:
-            raise McpError("MCP tool route changed during connection")
-        return await client.call_tool(tool_name, arguments)
+        async with self._request_limit(server_name):
+            self._check_generation(generation)
+            client = await self._ensure_client(server_name)
+            self._check_generation(generation)
+            if self._resolve_qualified(qualified_name) != mapping:
+                raise McpError("MCP tool route changed during connection")
+            return await client.call_tool(tool_name, arguments)
 
     async def list_resources(self, server: str | None = None) -> dict[str, list[dict[str, Any]]]:
         return await self._collect(server, "list_resources")
 
+    async def list_resource_templates(self, server: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        return await self._collect(server, "list_resource_templates")
+
     async def read_resource(self, server: str, uri: str) -> dict[str, Any]:
         client = await self._ensure_client(server)
-        return await client.read_resource(uri)
+        async with self._request_limit(server):
+            return await client.read_resource(uri)
 
     async def _ensure_client(self, server_name: str) -> McpClient:
         await self.reload_if_config_changed()
@@ -1204,7 +1239,8 @@ class McpManager:
             try:
                 client = await self._ensure_client(name)
                 method = getattr(client, method_name)
-                output[name] = await method()
+                async with self._request_limit(name):
+                    output[name] = await method()
             except McpError as exc:
                 if is_method_not_found(exc):
                     logger.info(

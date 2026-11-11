@@ -89,6 +89,105 @@ async def test_data_inventory_reports_counts(
     assert body["home_dir"]
 
 
+async def test_inventory_reads_each_turn_once(runtime_app, runtime_data_dir, monkeypatch):
+    from deepseek_tui.server.data_inventory import collect_inventory
+    from deepseek_tui.server.threads.store import RuntimeThreadStore
+
+    mgr = runtime_app.state.thread_manager
+    for index in range(3):
+        thread = await mgr.create_thread(
+            CreateThreadRequest(title=str(index), workspace=str(runtime_data_dir / "ws"))
+        )
+        _seed_turn(
+            mgr, thread_id=thread.id, turn_id=f"turn_{index}",
+            user_id=f"user_{index}", asst_id=f"asst_{index}",
+            when=datetime.now(timezone.utc),
+        )
+
+    reads = []
+    original = RuntimeThreadStore._load_listing_record
+
+    def track(self, path, model):
+        if model is TurnRecord:
+            reads.append(path)
+        return original(self, path, model)
+
+    monkeypatch.setattr(RuntimeThreadStore, "_load_listing_record", track)
+    result = collect_inventory(threads_dir=mgr.store.root)
+    assert result["thread_count"] == 3
+    assert result["message_count"] == result["item_count"] == 6
+    assert len(reads) == 3
+
+
+@pytest.mark.parametrize("operation", ["optimize", "clear-history"])
+async def test_bulk_maintenance_scans_linearly(
+    runtime_app, client, runtime_data_dir, monkeypatch, operation
+):
+    from deepseek_tui.server import data_inventory
+    from deepseek_tui.server.threads.store import RuntimeThreadStore
+
+    mgr = runtime_app.state.thread_manager
+    for index in range(4):
+        thread = await mgr.create_thread(
+            CreateThreadRequest(title=str(index), workspace=str(runtime_data_dir / "ws"))
+        )
+        _seed_turn(
+            mgr, thread_id=thread.id, turn_id=f"bulk_{index}",
+            user_id=f"user_{index}", asst_id=f"asst_{index}",
+            when=datetime.now(timezone.utc),
+        )
+
+    root_scans = []
+    turn_reads = []
+    original_size = data_inventory.directory_size
+    original_load = RuntimeThreadStore._load_listing_record
+
+    def measure(path):
+        if path == mgr.store.root:
+            root_scans.append(path)
+        return original_size(path)
+
+    def load(self, path, model):
+        if model is TurnRecord:
+            turn_reads.append(path)
+        return original_load(self, path, model)
+
+    monkeypatch.setattr(data_inventory, "directory_size", measure)
+    monkeypatch.setattr(RuntimeThreadStore, "_load_listing_record", load)
+    response = await client.post(f"/v1/data/{operation}")
+    assert response.status_code == 200, response.text
+    assert len(root_scans) == 2
+    assert len(turn_reads) <= 8
+    if operation == "optimize":
+        assert len(mgr.store.list_threads()) == 4
+        assert mgr.store.load_item("asst_3").detail == "world"
+    else:
+        assert response.json()["threads_deleted"] == 4
+        assert response.json()["bytes_reclaimed"] > 0
+        assert mgr.store.list_threads() == []
+        assert mgr.store.iter_turns() == mgr.store.iter_items() == []
+
+
+async def test_delete_thread_sweeps_unlisted_items(runtime_app, runtime_data_dir):
+    from deepseek_tui.server.data_inventory import delete_thread_tree
+
+    mgr = runtime_app.state.thread_manager
+    thread = await mgr.create_thread(
+        CreateThreadRequest(title="delete", workspace=str(runtime_data_dir / "ws"))
+    )
+    _seed_turn(
+        mgr, thread_id=thread.id, turn_id="deleted_turn",
+        user_id="listed_user", asst_id="listed_assistant", when=datetime.now(timezone.utc),
+    )
+    for item_id, turn_id in (("unlisted", "deleted_turn"), ("keep", "other_turn")):
+        mgr.store.save_item(TurnItemRecord(
+            id=item_id, turn_id=turn_id, kind=TurnItemKind.AGENT_MESSAGE,
+            status=TurnItemLifecycleStatus.COMPLETED, summary="saved before turn index",
+        ))
+    assert delete_thread_tree(mgr.store, mgr.checkpoints, thread.id) > 0
+    assert [item.id for item in mgr.store.iter_items()] == ["keep"]
+
+
 @pytest.mark.asyncio
 async def test_optimize_strips_deltas_keeps_messages(
     runtime_app, client: AsyncClient, runtime_data_dir: Path

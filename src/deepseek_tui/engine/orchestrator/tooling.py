@@ -33,6 +33,7 @@ from deepseek_tui.engine.events import (
     UserInputResolvedEvent,
 )
 from deepseek_tui.engine.tools import (
+    ASK_MODE_TOOL_ALLOWLIST,
     PLAN_MODE_TOOL_ALLOWLIST,
     REQUEST_USER_INPUT_NAME,
     missing_tool_error_message,
@@ -76,12 +77,14 @@ def _normalise_tool_call(name: str, arguments: Any) -> tuple[str, Any]:
 
 def _allowed_tool_names(api_tools: list[dict[str, Any]]) -> set[str]:
     """Canonical names from the exact catalog sent with this request."""
+    from deepseek_tui.tools.encoding import from_api_tool_name
+
     names: set[str] = set()
     for definition in api_tools:
         function = definition.get("function") or definition
         name = function.get("name") if isinstance(function, dict) else None
         if isinstance(name, str) and name:
-            names.add(_normalise_tool_call(name, {})[0])
+            names.add(_normalise_tool_call(from_api_tool_name(name), {})[0])
     return names
 
 
@@ -136,6 +139,16 @@ class ToolExecutionMixin:
                 ToolUseBlock(id=tool_call.id, name=tool_call.name, input=tool_call.arguments)
                 for tool_call in tool_calls
             ]
+        )
+
+    def _is_trusted_readonly_mcp(self, tool_name: str) -> bool:
+        from deepseek_tui.mcp.execute import is_external_mcp_tool
+
+        trusted = getattr(getattr(self, "_app_config", None), "mcp_read_only_tools", [])
+        return (
+            isinstance(trusted, list)
+            and tool_name in trusted
+            and is_external_mcp_tool(tool_name, self.tool_registry.contains(tool_name))
         )
 
     def _mcp_declared_capabilities(self, tool_name: str) -> list[str]:
@@ -217,9 +230,9 @@ class ToolExecutionMixin:
                                 id=tc.id,
                                 name=tc.name,
                                 input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                                read_only=mcp_tool_is_read_only(tc.name),
-                                supports_parallel=mcp_tool_is_parallel_safe(tc.name),
-                                approval_required=plan_requires_mcp_approval(
+                                read_only=mcp_tool_is_read_only(tc.name) or self._is_trusted_readonly_mcp(tc.name),
+                                supports_parallel=mcp_tool_is_parallel_safe(tc.name) or self._is_trusted_readonly_mcp(tc.name),
+                                approval_required=not (self.mode in {"ask", "plan"} and self._is_trusted_readonly_mcp(tc.name)) and plan_requires_mcp_approval(
                                     tc.name,
                                     policy,
                                 ),
@@ -327,6 +340,9 @@ class ToolExecutionMixin:
                                 duration_ms,
                             )
                             denied = f"Tool {tool_call.name} denied by approval policy"
+                            # Close the tool item; otherwise it spins until turn end and
+                            # is then relabelled "Turn ended before tool result".
+                            await self._emit_tool_failure(tool_call, denied)
                             facts = self.tool_context.metadata.get("turn_facts")
                             if facts:
                                 facts.record(tool_call.name, tool_call.arguments,
@@ -389,6 +405,11 @@ class ToolExecutionMixin:
 
     async def _publish_tool_result(self, tool_call: ToolCall, result: ToolResult) -> None:
         """Publish completion independently of ordered context bookkeeping."""
+        completed = getattr(self, "_completed_tool_messages", None)
+        if completed is not None:
+            completed[tool_call.id] = Message.tool_result(
+                tool_call.id, result.content, is_error=not result.success, images=result.images,
+            )
         await self.handle.emit(
             ToolResultEvent(
                 tool_call_id=tool_call.id,
@@ -472,6 +493,7 @@ class ToolExecutionMixin:
             await self._run_post_edit_lsp_hook(tool_call.name, tool_call.arguments)
         from deepseek_tui.tools.runtime import apply_spillover
 
+        dedup_observation = result.content or ""
         result = apply_spillover(result, tool_call.id)
         output_for_context = compact_tool_result_for_context(
             model,
@@ -480,11 +502,22 @@ class ToolExecutionMixin:
             pressure_ratio=self._ingress_pressure_ratio(model),
             model_config=getattr(self, "_app_config", None),
         )
+        from deepseek_tui.tools.runtime import point_compacted_output_to_disk
+
+        output_for_context = await asyncio.to_thread(
+            point_compacted_output_to_disk,
+            tool_call.id,
+            tool_call.name,
+            result.content or "",
+            output_for_context,
+        )
         if not result.images:
             self._tool_dedup.record(
                 decision.key,
                 output_for_context,
                 is_error=not result.success,
+                observation_content=dedup_observation,
+                runtime_waited=result.metadata.get("runtime_waited") is True,
             )
         for image in result.images:
             self.tool_context.metadata.setdefault("image_assets", {})[image.asset_id] = (
@@ -505,6 +538,9 @@ class ToolExecutionMixin:
                 images=result.images,
             )
         )
+        completed = getattr(self, "_completed_tool_messages", None)
+        if completed is not None:
+            completed[tool_call.id] = results[-1]
         return result
 
     async def _finish_tool_error(
@@ -639,6 +675,8 @@ class ToolExecutionMixin:
                     await self._emit_tool_failure(tc, err)
                 elif result is not None:
                     await self._publish_tool_result(tc, result)
+                else:
+                    await self._emit_tool_failure(tc, f"Tool {tc.name} denied")
         finally:
             for job in jobs:
                 if not job.done():
@@ -761,10 +799,18 @@ class ToolExecutionMixin:
                         content="Tool call denied by the user (hook escalation)",
                     )
         self._check_human_intervention()
-        # Expose parent transcript for fork_context spawns.
-        self.tool_context.metadata["parent_session_messages"] = [
-            m.model_dump(mode="json") for m in self.session_messages
-        ]
+        # Expose parent transcript for fork_context spawns. Only ``agent``
+        # reads it; serialising the whole session for every other tool call
+        # made each call O(history).
+        if tool_name == "agent":
+            from deepseek_tui.engine.history import complete_tool_prefix
+
+            context_messages = getattr(self, "_active_context_messages", None)
+            self.tool_context.metadata["parent_session_messages"] = [
+                m.model_dump(mode="json") for m in complete_tool_prefix(
+                    context_messages if context_messages is not None else self.session_messages
+                )
+            ]
         from deepseek_tui.engine.usage_ledger import usage_source
 
         # usage_source("tool") 是一个上下文管理器，把这期间产生的 token 用量都归类到 "tool" 来源
@@ -806,6 +852,21 @@ class ToolExecutionMixin:
         """Inner tool dispatch (lifecycle hooks handled by wrapper)."""
         # Map bridge/legacy aliases before policy checks and registry dispatch.
         tool_name, arguments = _normalise_tool_call(tool_call.name, tool_call.arguments)
+        trusted_read = self._is_trusted_readonly_mcp(tool_name)
+        cron_restricted = bool(self.tool_context.metadata.get("cron_restricted"))
+        from deepseek_tui.automation.permissions import browser_authorized
+
+        browser_granted = cron_restricted and tool_name == "browser_use" and browser_authorized(self.tool_context)
+        if cron_restricted:
+            from deepseek_tui.engine.tool_profiles import cron_tool_allowed
+
+            if not cron_tool_allowed(tool_name, (tool_name,) if trusted_read else (), allow_browser=browser_granted):
+                from deepseek_tui.tools.user_input import unattended_tool_denial
+
+                return unattended_tool_denial(self.tool_context, tool_name,
+                    f"'{tool_name}' is unavailable in unattended automation")
+        if self.mode == "ask" and tool_name not in ASK_MODE_TOOL_ALLOWLIST and not trusted_read:
+            raise ToolError(f"Tool '{tool_name}' is unavailable in ask mode (read-only).")
         # 写文件类工具执行前拍快照（供 /undo）。
         self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
 
@@ -819,7 +880,11 @@ class ToolExecutionMixin:
             return await self._handle_exit_plan_mode(tool_call.id)
 
         mode = (self.mode or "agent").strip() or "agent"
-        if mode == "plan" and tool_name not in PLAN_MODE_TOOL_ALLOWLIST:
+        if mode in {"ask", "plan"} and tool_name == "note":
+            note_tool = self.tool_registry.get("note")
+            if note_tool is not None and not note_tool.is_read_only_for_input(arguments):
+                raise ToolError("Only reading notes is allowed in read-only mode")
+        if mode == "plan" and tool_name not in PLAN_MODE_TOOL_ALLOWLIST and not trusted_read:
             raise ToolError(
                 f"Tool '{tool_name}' is unavailable in plan mode "
                 "(read-only). Finish with exit_plan_mode when the plan is ready."
@@ -843,7 +908,7 @@ class ToolExecutionMixin:
             # read-resource 已被上面 normalize 改写为注册表工具名，会落到下方注册表分支。
             if self.mcp_manager is None:
                 raise ToolError(f"MCP tool '{tool_name}' called but no MCP manager configured")
-            approval_request = approval_request_for_mcp(
+            approval_request = None if trusted_read and (mode in {"ask", "plan"} or cron_restricted) else approval_request_for_mcp(
                 tool_name,
                 self.exec_policy.approval_policy,
                 self._mcp_declared_capabilities(tool_name),
@@ -866,6 +931,11 @@ class ToolExecutionMixin:
 
         tool = self.tool_registry.get(tool_name)
 
+        if mode in {"ask", "plan"} and tool_name == "task_output" and not tool.is_read_only_for_input(
+            arguments if isinstance(arguments, dict) else {}
+        ):
+            raise ToolError(f"Archiving process output on a task is unavailable in {mode} mode (read-only)")
+
         from deepseek_tui.tools.approval import (
             PATH_ACCESS_FINGERPRINT,
             approval_request_for_tool,
@@ -874,6 +944,15 @@ class ToolExecutionMixin:
         )
 
         args = arguments if isinstance(arguments, dict) else None
+        if cron_restricted:
+            from deepseek_tui.tools.user_input import unattended_tool_denial
+
+            for path, writing in tool.path_accesses(args or {}):
+                access = self.tool_context.check_path(path, write=writing, allow_read_roots=not writing)
+                if not access.allowed or (writing and not self.tool_context._within(
+                        access.path, self.tool_context.working_directory.resolve())):
+                    return unattended_tool_denial(self.tool_context, tool_name,
+                        f"Path requires interactive authorization: {path}")
         removal = removal_prompt(tool, args, self.tool_context, self.exec_policy.approval_policy)
         if removal is not None:
             if await self._handle_approval_flow(tool_call, removal.request, use_cache=False):
@@ -903,6 +982,8 @@ class ToolExecutionMixin:
             approval_request = approval_request_for_tool(
                 tool, self.exec_policy.approval_policy, args
             )
+        if browser_granted:
+            approval_request = None
         if approval_request is not None:
             # Fingerprint the *normalized* call so legacy names share the
             # same cache entry as their merged successors (and so
@@ -916,6 +997,25 @@ class ToolExecutionMixin:
             if denied:
                 return None
 
+        if tool_name in {"fetch_url", "web_search"} and execution_context.network_policy is not None:
+            from dataclasses import replace
+            from urllib.parse import urlparse
+            from deepseek_tui.tools.approval import build_approval_request
+            from deepseek_tui.tools.registry import ToolCapability
+
+            async def approve_network(url: str, source: str) -> bool:
+                if execution_context.metadata.get("unattended"):
+                    return False
+                host = urlparse(url).hostname or ""
+                request = build_approval_request(
+                    source, [ToolCapability.NETWORK],
+                    reason=f"Allow network access to {host}",
+                    blocked_never=self.exec_policy.approval_policy == "never",
+                )
+                request.force_prompt = True
+                return not await self._handle_approval_flow(tool_call, request, use_cache=False)
+
+            execution_context = replace(execution_context, network_approval=approve_network)
         self._check_human_intervention()
         with self.handle.pause.tool_execution():
             session = getattr(self, "_cua_session", None)
@@ -950,7 +1050,12 @@ class ToolExecutionMixin:
         from deepseek_tui.tools.approval import enrich_approval_request
 
         # It must reach a human and there is none: waiting would only run out the turn.
-        if approval_request.force_prompt and self.tool_context.metadata.get("unattended"):
+        if approval_request.force_prompt and (self.tool_context.metadata.get("unattended") or self.tool_context.metadata.get("cron_restricted")):
+            from deepseek_tui.tools.user_input import unattended_tool_denial
+
+            if self.tool_context.metadata.get("cron_restricted"):
+                unattended_tool_denial(self.tool_context, tool_call.name,
+                    approval_request.reason or "This operation requires interactive approval")
             return True
         fp_name = fingerprint_name if fingerprint_name is not None else tool_call.name
         fp_args = (
@@ -1510,12 +1615,11 @@ class ToolExecutionMixin:
     def _set_approved_plan(self, approved: bool) -> None:
         self.tool_context.metadata["approved_plan"] = bool(approved)
 
-    async def apply_interaction_mode(self, mode: str, *, reason: str = "") -> None:
-        """Switch interaction mode and notify listeners.
+    def configure_interaction_mode(self, mode: str, *, reason: str = "") -> str | None:
+        """Switch mode synchronously; return the previous mode when changed.
 
         Rebuilds a private registry when this engine owns its tool runtime.
-        Shared registries stay intact — plan restrictions are enforced via
-        ``PLAN_MODE_TOOL_ALLOWLIST`` filtering instead.
+        Shared registries stay intact; mode-specific catalogs restrict them.
         """
         previous = (self.mode or "agent").strip() or "agent"
         next_mode = (mode or "agent").strip() or "agent"
@@ -1542,6 +1646,8 @@ class ToolExecutionMixin:
             from deepseek_tui.engine.handle import AutoApprovalHandler
 
             self.approval_handler = AutoApprovalHandler()
+        else:
+            self.approval_handler = self._default_approval_handler
 
         if getattr(self, "_owns_tool_runtime", False):
             cfg = getattr(self, "_app_config", None)
@@ -1561,9 +1667,19 @@ class ToolExecutionMixin:
                         exc_info=True,
                     )
 
+        return previous
+
+    async def apply_interaction_mode(self, mode: str, *, reason: str = "") -> None:
+        """Switch interaction mode and notify listeners."""
+        previous = self.configure_interaction_mode(mode, reason=reason)
+        if previous is None:
+            return
+        self.tool_context.metadata["session_auto_approve"] = bool(
+            await self.approval_handler.auto_approve_enabled()
+        )
         await self.handle.emit(
             ModeChangedEvent(
-                mode=next_mode,
+                mode=self.mode,
                 previous_mode=previous,
                 reason=reason,
             )

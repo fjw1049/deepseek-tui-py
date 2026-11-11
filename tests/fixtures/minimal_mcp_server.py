@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 
 def _respond(msg_id: object, result: dict) -> None:
@@ -29,6 +30,7 @@ def _error(msg_id: object, message: str) -> None:
 
 
 def main() -> None:
+    resource_root = Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[1] == "--resources" else None
     for raw in sys.stdin:
         line = raw.strip()
         if not line:
@@ -43,12 +45,23 @@ def main() -> None:
                 msg_id,
                 {
                     "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
+                    "capabilities": {"tools": {}, **({"resources": {}} if resource_root else {})},
                     "serverInfo": {"name": "minimal-mcp-fixture", "version": "0.1.0"},
                 },
             )
         elif method == "notifications/initialized":
             continue
+        elif resource_root and method == "resources/list":
+            _respond(msg_id, {"resources": []})
+        elif resource_root and method == "resources/templates/list":
+            if params.get("cursor") == "page2":
+                _respond(msg_id, {"resourceTemplates": [{"name": "docs", "uriTemplate": "fixture:///docs/{name}"}]})
+            else:
+                _respond(msg_id, {"resourceTemplates": [{"name": "files", "uriTemplate": "fixture:///{name}"}], "nextCursor": "page2"})
+        elif resource_root and method == "resources/read":
+            uri = params["uri"]
+            body = (resource_root / Path(uri).name).read_text()
+            _respond(msg_id, {"contents": [{"uri": uri, "text": body}]})
         elif method == "tools/list":
             _respond(
                 msg_id,

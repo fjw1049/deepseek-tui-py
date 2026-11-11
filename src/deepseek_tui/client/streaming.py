@@ -36,7 +36,7 @@ def parse_json_object(raw: str) -> dict[str, Any]:
 
     # Stage 2+: deterministic repair ladder (trailing commas, control chars,
     # unbalanced braces)
-    from deepseek_tui.engine.dispatch import repair
+    from deepseek_tui.engine.tool_arguments import repair
 
     return repair(raw)
 

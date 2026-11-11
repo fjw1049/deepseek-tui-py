@@ -12,6 +12,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from deepseek_tui.mcp.transport import (
     McpTransportError,
     StdioTransport,
@@ -208,27 +210,47 @@ def test_aws_access_key_id_flagged():
     assert is_secret_env_name("AWS_ACCESS_KEY_ID")
 
 
-def test_pty_child_exec_replaces_environment(monkeypatch):
-    """The PTY fork child must exec with a wholesale-replaced env.
+@pytest.mark.asyncio
+async def test_pty_child_exec_replaces_environment(monkeypatch, tmp_path):
+    """Exercise the actual asyncio PTY spawn, not the retired fork helper."""
+    import shlex
+    import sys
+    from deepseek_tui.tools.registry import ToolContext
 
-    Merging scrubbed keys into ``os.environ`` would leave inherited
-    secrets in place; ``execvpe`` with the scrubbed mapping does not.
-    """
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-secret")
-    captured: dict[str, object] = {}
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fixture-secret")
+    code = "import os; print('SECRET_PRESENT=' + str('DEEPSEEK_API_KEY' in os.environ)); print('PATH_PRESENT=' + str('PATH' in os.environ))"
+    result = await shell._run_pty(
+        f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}",
+        cwd=str(tmp_path), background=False, context=ToolContext(working_directory=tmp_path),
+        timeout_ms=5000,
+    )
+    assert result.success
+    assert "SECRET_PRESENT=False" in result.content
+    assert "PATH_PRESENT=True" in result.content
 
-    def fake_execvpe(file, args, env):
-        captured["file"] = file
-        captured["args"] = args
-        captured["env"] = env
 
-    class _ExecEnv:
-        env = {"EXPLICIT_TOKEN": "ok"}
-        command = ["/bin/echo", "hi"]
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [True, False])
+async def test_pty_background_and_timeout_return_real_pid(tmp_path, background):
+    import shlex
+    from deepseek_tui.tools.registry import ToolContext
+    from deepseek_tui.tools.task.tools import TaskOutputTool
 
-    monkeypatch.setattr(shell.os, "execvpe", fake_execvpe)
-    shell._exec_with_scrubbed_env(_ExecEnv())
-    env = captured["env"]
-    assert "DEEPSEEK_API_KEY" not in env
-    assert env["EXPLICIT_TOKEN"] == "ok"
-    assert "PATH" in env
+    context = ToolContext(working_directory=tmp_path)
+    script = "import time; time.sleep(.15); print('pty finished')"
+    result = await shell._run_pty(
+        f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}",
+        cwd=str(tmp_path), background=background, context=context, timeout_ms=20,
+    )
+    assert result.metadata["pid"] > 0
+    process_id = result.metadata["process_id"]
+    try:
+        output = await TaskOutputTool().execute(
+            {"process_id": process_id, "block": True, "timeout_ms": 2000}, context,
+        )
+        assert "pty finished" in output.content
+    finally:
+        process = shell._get_pty(context, process_id)
+        if process is not None:
+            shell._kill_pty_process_group(process)
+            await process.wait()

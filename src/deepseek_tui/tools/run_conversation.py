@@ -19,6 +19,18 @@ from deepseek_tui.utils import utc_now_iso, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
+# The whole history is rewritten on every tool call, so one huge tool output
+# (a long file read, a big search) made every later save slow. The model's
+# own transcript keeps the full text; the display only needs enough to read.
+_DISPLAY_TEXT_CHARS = 20_000
+
+
+def _bounded(value: Any) -> Any:
+    if isinstance(value, str) and len(value) > _DISPLAY_TEXT_CHARS:
+        cut = len(value) - _DISPLAY_TEXT_CHARS
+        return value[:_DISPLAY_TEXT_CHARS] + f"\n… [{cut} more characters not shown]"
+    return value
+
 
 def conversation_path(kind: str, owner_id: str) -> Path:
     if kind not in {"task", "subagent"} or not re.fullmatch(r"[\w-]+", owner_id):
@@ -62,7 +74,9 @@ class RunConversation:
                 if block.get("status") == "running":
                     block["status"] = "error"
                     block.setdefault("detail", "Execution interrupted")
-            self.append("system", "继续执行")
+            from deepseek_tui.utils.user_text import user_text
+
+            self.append("system", user_text("run_resumed"))
         self.save()
 
     def save(self, *, streaming: bool = False) -> None:
@@ -160,10 +174,14 @@ class RunConversation:
         block.update(
             summary=f"{name}: ",
             status="running" if success is None else "success" if success else "error",
-            meta={**(metadata or {}), "tool_name": name, "tool_input": args},
+            meta={
+                **(metadata or {}),
+                "tool_name": name,
+                "tool_input": {key: _bounded(value) for key, value in args.items()},
+            },
         )
         if output is not None:
-            block["detail"] = output
+            block["detail"] = _bounded(output)
         self.save()
 
     def finish(self, status: str, error: str | None = None) -> None:

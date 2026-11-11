@@ -20,17 +20,28 @@ logger = logging.getLogger(__name__)
 
 REQUEST_USER_INPUT_NAME = "request_user_input"
 
+# Ask answers questions using inspection tools only. Unlike plan, it never
+# writes a plan, tracks a checklist, or proposes a mode transition.
+ASK_MODE_TOOL_ALLOWLIST = frozenset({
+    "read_file", "grep_files", "file_search", "web_search", "fetch_url",
+    "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "load_skill",
+    "task_list", "task_output", "cron_list", "GetGoal", "note", REQUEST_USER_INPUT_NAME,
+})
+
 # Tools visible/executable while interaction mode is plan. Used to filter a
 # shared (agent-built) registry when mode flips mid-session without rebuild.
 PLAN_MODE_TOOL_ALLOWLIST = frozenset(
     {
         "agent",
         "checklist",
+        "cron_list",
         "fetch_url",
         "file_search",
         "grep_files",
         "list_mcp_resources",
+        "list_mcp_resource_templates",
         "load_skill",
+        "note",
         "read_file",
         "read_mcp_resource",
         REQUEST_USER_INPUT_NAME,

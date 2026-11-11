@@ -144,7 +144,8 @@ class ReadFileTool(ToolSpec):
         offset = _optional_non_negative_int(input_data, "offset")
         limit = _optional_non_negative_int(input_data, "limit")
         start = max((offset or 0) - 1, 0)
-        effective_limit = _DEFAULT_READ_LIMIT if limit is None else limit
+        # limit=0 would return an empty page; treat it like an omitted limit.
+        effective_limit = limit or _DEFAULT_READ_LIMIT
         page = await asyncio.to_thread(
             _read_text_page,
             path,
@@ -198,8 +199,9 @@ class WriteFileTool(ToolSpec):
             "or full rewrites; for partial changes use edit_file. "
             "A successful result means the content is on disk; do not read it back to check. "
             "Paths are workspace-relative: path=\"notes.md\" lands at "
-            "<workspace>/notes.md. Do not use ~/ or absolute paths outside "
-            "the workspace — they are rejected."
+            "<workspace>/notes.md. Paths outside the workspace require user "
+            "authorization for writing. If access is refused, report it; "
+            "do not bypass it with shell."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -245,14 +247,22 @@ class WriteFileTool(ToolSpec):
         expected = _file_stamp(path)
         existed = expected is not None
         old_text = ""
+        old_bytes: bytes | None = None
         if existed:
             try:
-                old_text = await _read_text(path)
-            except (OSError, ToolError) as exc:
+                import asyncio
+
+                raw = await asyncio.to_thread(path.read_bytes)
+                try:
+                    old_text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    old_bytes = raw
+                    old_text = "[Non-UTF-8 file; exact bytes retained for undo]\n"
+            except OSError as exc:
                 raise ToolError(f"Cannot capture existing content for {path}: {exc}") from exc
         context.capture_pre_write(
             _workspace_rel(path, context.working_directory, rel),
-            old_text if existed else None,
+            old_bytes if old_bytes is not None else old_text if existed else None,
         )
         await _write_text(path, content, expected=expected)
         context.note_file_content(path)
@@ -271,7 +281,7 @@ class WriteFileTool(ToolSpec):
         context.report_file_mutation(
             {
                 **meta["mutation"],
-                "_before_content": old_text if existed else None,
+                "_before_content": old_bytes if old_bytes is not None else old_text if existed else None,
                 "_after_content": content,
             }
         )
@@ -619,6 +629,9 @@ async def _read_text(
         return await asyncio.to_thread(read)
     except FileNotFoundError as exc:
         raise _not_found_error(path, display_path=display_path, cwd=cwd) from exc
+    except UnicodeDecodeError as exc:
+        # Same wording as read_file, instead of a bare codec traceback line.
+        raise ToolError(f"{display_path or path} is not a UTF-8 text file.") from exc
 
 
 def _file_stamp(path: Path) -> tuple[int, int] | None:

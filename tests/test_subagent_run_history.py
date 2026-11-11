@@ -256,3 +256,37 @@ async def test_round_budget_reminder_repeats_every_interval(
     assert seen == [0, 0, 1, 1, 2, 2]
     assert "used 4 of" in client.requests[4].model_dump_json()
     assert all(request.tools for request in client.requests)
+
+
+
+def test_display_history_bounds_huge_tool_output(tmp_path) -> None:
+    import json
+
+    from deepseek_tui.tools.run_conversation import RunConversation
+
+    history = RunConversation("subagent", "agent_big1", "prompt", tmp_path)
+    history.tool("c1", "read_file", {"path": "x", "content": "y" * 50_000}, "z" * 50_000, True)
+    saved = json.loads(history.path.read_text())
+    block = next(b for b in saved["blocks"] if b.get("kind") == "tool")
+    assert len(block["detail"]) < 21_000
+    assert "more characters not shown" in block["detail"]
+    assert len(block["meta"]["tool_input"]["content"]) < 21_000
+
+
+def test_optimize_prunes_only_old_subagent_checkpoints(tmp_path) -> None:
+    import os
+    import time
+
+    from deepseek_tui.server.data_inventory import _prune_subagent_checkpoints
+
+    old = tmp_path / "agent_old" / "transcript.json"
+    fresh = tmp_path / "agent_new" / "transcript.json"
+    for path in (old, fresh):
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
+    long_ago = time.time() - 40 * 86400
+    os.utime(old, (long_ago, long_ago))
+
+    assert _prune_subagent_checkpoints(max_age_days=30, root=tmp_path) == 1
+    assert not old.exists() and not old.parent.exists()
+    assert fresh.exists()

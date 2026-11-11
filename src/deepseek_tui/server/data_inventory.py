@@ -34,7 +34,7 @@ from deepseek_tui.config.paths import (
     user_threads_dir,
     user_worktrees_dir,
 )
-from deepseek_tui.server.threads.models import TurnItemKind
+from deepseek_tui.server.threads.models import TurnItemKind, TurnRecord
 from deepseek_tui.server.threads.store import RuntimeThreadStore
 from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
 
@@ -214,8 +214,9 @@ def collect_inventory(
     thread_count = len(threads)
     message_count = 0
     item_count = 0
+    turns_by_thread = store.list_turns_by_thread(threads)
     for thread in threads:
-        for turn in store.list_turns_for_thread(thread.id):
+        for turn in turns_by_thread.get(thread.id, []):
             for item in store.list_items_for_turn(turn.id):
                 item_count += 1
                 if item.kind in _MESSAGE_KINDS:
@@ -264,6 +265,7 @@ class OptimizeReport:
     cycle_archives_pruned: int = 0
     crash_checkpoints_cleared: int = 0
     tool_outputs_pruned: int = 0
+    subagent_checkpoints_pruned: int = 0
     details: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -278,6 +280,7 @@ class OptimizeReport:
             "cycle_archives_pruned": self.cycle_archives_pruned,
             "crash_checkpoints_cleared": self.crash_checkpoints_cleared,
             "tool_outputs_pruned": self.tool_outputs_pruned,
+            "subagent_checkpoints_pruned": self.subagent_checkpoints_pruned,
             "details": list(self.details),
         }
 
@@ -320,12 +323,28 @@ def delete_thread_tree(
 ) -> int:
     """Delete one thread and all turns/items/events/checkpoints. Returns bytes removed."""
     before = directory_size(store.root)
-    for turn in store.list_turns_for_thread(thread_id):
+    deleted_turn_ids = _delete_thread_tree(store, checkpoints, thread_id)
+    # Items can reach disk before the turn's item_ids index is saved.
+    for item in store.iter_items():
+        if item.turn_id in deleted_turn_ids:
+            store.delete_item(item.id)
+    after = directory_size(store.root)
+    return max(0, before - after)
+
+
+def _delete_thread_tree(
+    store: RuntimeThreadStore,
+    checkpoints: TurnCheckpointStore,
+    thread_id: str,
+    *,
+    turns: list[TurnRecord] | None = None,
+) -> set[str]:
+    """Remove records; the caller measures bytes once for its entire operation."""
+    if turns is None:
+        turns = store.list_turns_for_thread(thread_id)
+    for turn in turns:
         for item_id in list(turn.item_ids):
             store.delete_item(item_id)
-        # Also sweep any items that still claim this turn_id.
-        for item in store.list_items_for_turn(turn.id):
-            store.delete_item(item.id)
         store.delete_turn(turn.id)
         checkpoints.delete(turn.id)
     for cp in checkpoints.list_for_thread(thread_id):
@@ -342,8 +361,7 @@ def delete_thread_tree(
             plan_path.unlink()
     except (ValueError, OSError):
         logger.debug("delete_thread_plan_failed thread=%s", thread_id, exc_info=True)
-    after = directory_size(store.root)
-    return max(0, before - after)
+    return {turn.id for turn in turns}
 
 
 def optimize_storage(
@@ -364,11 +382,12 @@ def optimize_storage(
         report.events_stripped += stripped
 
     # 2) Orphan turns/items (not referenced by any remaining thread).
-    live_thread_ids = {t.id for t in store.list_threads()}
+    live_threads = store.list_threads()
+    live_thread_ids = {t.id for t in live_threads}
     live_turn_ids: set[str] = set()
     live_item_ids: set[str] = set()
-    for thread_id in live_thread_ids:
-        for turn in store.list_turns_for_thread(thread_id):
+    for turns in store.list_turns_by_thread(live_threads).values():
+        for turn in turns:
             live_turn_ids.add(turn.id)
             live_item_ids.update(turn.item_ids)
 
@@ -405,7 +424,13 @@ def optimize_storage(
     )
     report.crash_checkpoints_cleared = _prune_stale_crash_checkpoint(sessions_root)
 
-    # 5) Tool output spillover (existing helper).
+    # 5) Sub-agent resume checkpoints. They hold model context only (the
+    # run's display history is kept), and nothing removed them before.
+    report.subagent_checkpoints_pruned = _prune_subagent_checkpoints(
+        max_age_days=CYCLE_ARCHIVE_MAX_AGE_DAYS
+    )
+
+    # 6) Tool output spillover (existing helper).
     try:
         from deepseek_tui.tools.runtime import prune_older_than
 
@@ -431,8 +456,10 @@ def clear_conversation_history(
     sessions_root = sessions_dir or user_sessions_dir()
     before = directory_size(store.root) + directory_size(sessions_root)
     report = ClearHistoryReport()
-    for thread in list(store.list_threads()):
-        delete_thread_tree(store, checkpoints, thread.id)
+    threads = store.list_threads()
+    turns_by_thread = store.list_turns_by_thread(threads)
+    for thread in threads:
+        _delete_thread_tree(store, checkpoints, thread.id, turns=turns_by_thread.get(thread.id, []))
         report.threads_deleted += 1
 
     # Sweep any leftover orphan files under the store root.
@@ -473,6 +500,33 @@ def _prune_cycle_archives(sessions_root: Path, *, max_age_days: int) -> int:
             if path.stat().st_mtime < cutoff:
                 path.unlink(missing_ok=True)
                 removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def _prune_subagent_checkpoints(*, max_age_days: int, root: Path | None = None) -> int:
+    """Remove ``agents/runs/<id>/`` checkpoints untouched for *max_age_days*.
+
+    A running child rewrites its checkpoint every round, so age alone keeps
+    live ones. A pruned child can no longer be resumed from where it stopped.
+    """
+    from deepseek_tui.config.paths import user_subagent_runs_dir
+
+    runs = root or user_subagent_runs_dir()
+    if not runs.is_dir() or max_age_days < 1:
+        return 0
+    cutoff = time.time() - (max_age_days * 86400)
+    removed = 0
+    for path in runs.glob("*/transcript.json"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+                removed += 1
+                try:
+                    path.parent.rmdir()
+                except OSError:
+                    pass
         except OSError:
             continue
     return removed

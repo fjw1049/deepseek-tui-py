@@ -212,6 +212,8 @@ async def test_task_output_process_peek_does_not_archive(tmp_path) -> None:
     updated = await manager.get_task(task.id)
     assert not updated.artifacts
     assert not any(e.kind == "shell_completed" for e in updated.timeline)
+    # Peeking may finish before the child exits; reap it before this loop closes.
+    await TaskOutputTool().execute({"process_id": pid, "block": True}, ctx)
 
 
 # --- task_stop: three branches -------------------------------------------------
@@ -267,17 +269,17 @@ async def test_task_stop_requires_explicit_id_even_with_active_task(
     assert updated.status is TaskStatus.QUEUED
 
 
-async def test_task_output_block_ignored_for_durable_task(tmp_path) -> None:
+async def test_task_output_bounded_wait_preserves_durable_task(tmp_path) -> None:
     manager = _task_manager(tmp_path)
     task = await manager.add_task(NewTaskRequest(prompt="durable work"))
     ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
 
     result = await TaskOutputTool().execute(
-        {"task_id": task.id, "block": True}, ctx
+        {"task_id": task.id, "block": True, "timeout_ms": 10}, ctx
     )
 
-    assert result.metadata["block_ignored"] is True
-    assert "block' is ignored" in result.content
+    assert result.metadata["timed_out"] is True
+    assert (await manager.get_task(task.id)).status is TaskStatus.QUEUED
     assert result.metadata["task_id"] == task.id
 
 

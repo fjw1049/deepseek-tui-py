@@ -4,10 +4,48 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from typing import TYPE_CHECKING
 from dataclasses import dataclass
 from typing import Any
 from deepseek_tui.utils import optional_text as _opt_str
+
+
+class DeliveryNotSent(RuntimeError):
+    """The channel rejected the request or failed before sending any message."""
+
+
+def delivery_target_fingerprint(config: DeliveryConfig) -> str:
+    """Identify a webhook destination without copying its credential into a run."""
+    from deepseek_tui.automation.inbox import _parse_wecom_webhook_key
+
+    target = config.to or config.chat_id or ""
+    target = _parse_wecom_webhook_key(target) or target
+    return hashlib.sha256(target.encode()).hexdigest()
+
+
+def public_delivery_config(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    result = dict(raw)
+    if str(raw.get("mode", "")).strip().lower() in {"wecom", "wecom_webhook", "wework"}:
+        result["to"] = None
+        result["chat_id"] = None
+    return result
+
+
+def sanitized_delivery_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    result = dict(snapshot)
+    raw_config = result.get("config")
+    if isinstance(raw_config, dict) and str(raw_config.get("mode", "")).strip().lower() in {"wecom", "wecom_webhook", "wework"}:
+        target = raw_config.get("to") or raw_config.get("chat_id")
+        if target:
+            config = DeliveryConfig(mode="wecom", to=str(target))
+            result["target_fingerprint"] = delivery_target_fingerprint(config)
+        result["config"] = public_delivery_config(raw_config)
+    return result
 
 if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
@@ -21,8 +59,10 @@ _SKIP_DELIVERY_MARKERS = (
 )
 
 _CRON_PREFIX = re.compile(r"^\[cron:[^\]]+\]\s*", re.MULTILINE)
+# Rules echoed back by the model: the legacy header, or a whole unattended block.
 _PLAYBOOK_HEADER = re.compile(
-    r"\[Cron execution playbook\][\s\S]*?(?=\n\n|\Z)",
+    r"\[Cron execution playbook\][\s\S]*?(?=\n\n|\Z)"
+    r"|\[Unattended run\][\s\S]*?\[/Unattended run\]\s*",
     re.IGNORECASE,
 )
 _TOOL_ERROR = re.compile(r"\[tool error\][^\n]*", re.IGNORECASE)
@@ -53,59 +93,47 @@ def should_skip_delivery_for_error(error: str | None) -> bool:
     return any(marker in lower for marker in _SKIP_DELIVERY_MARKERS)
 
 
-def classify_task_error_for_user(error: str) -> str:
+def classify_task_error_for_user(error: str, locale: str | None = None) -> str:
     """Map internal task errors to canned user-facing copy (no raw leaks)."""
+    from deepseek_tui.utils.user_text import user_text
+
     lower = error.strip().lower()
     if not lower:
-        return "自动化任务未能完成。请稍后重试，或在 Workbench 查看任务详情。"
-
-    if "stale after restart" in lower or "task interrupted (stale" in lower:
-        return "服务重启中断了正在运行的后台任务。下次调度时会自动重试。"
-
-    if "original conversation no longer exists" in lower:
-        return "创建该自动化的对话已被删除，无法确定要使用的模型。请重新创建该自动化。"
-
-    if (
+        key = "error_generic"
+    elif "stale after restart" in lower or "task interrupted (stale" in lower:
+        key = "error_restart"
+    elif "original conversation no longer exists" in lower:
+        key = "error_thread_gone"
+    elif (
         "tool round-trip limit" in lower
         or "max tool" in lower
         or "maximum tool iterations" in lower
         or "too many tool" in lower
     ):
-        return (
-            "任务步骤过多已自动停止。请简化自动化描述，或检查工具是否陷入重复调用。"
-        )
-
-    if "web_search failed" in lower or (
+        key = "error_too_many_steps"
+    elif "web_search failed" in lower or (
         "web_search" in lower and "not configured" in lower
     ):
-        return (
-            "网络搜索失败。可改用默认的 Bing Search 连接器（无需 Tavily/AnySearch key）。"
-            "若仍要走 web_search，请检查 ANYSEARCH_API_KEY / TAVILY_API_KEY "
-            "或 config.toml 中的 anysearch_api_key / tavily_api_key 后重启服务。"
-        )
-
-    if any(
+        key = "error_web_search"
+    elif any(
         marker in lower
         for marker in (
             "http 401", "http 403", "authentication_error", "authentication fails",
             "api key invalid", "invalid api key", "missing_api_key", "unauthorized",
         )
     ):
-        return "模型服务认证失败。请检查该自动化所用服务商的 API 密钥和访问权限，再重新运行。"
-
-    if "canceled" in lower or "cancelled" in lower:
-        return "任务已取消。"
-
-    if "timeout" in lower or "timed out" in lower:
-        return "任务执行超时。请缩小任务范围或稍后重试。"
-
-    if "delivery failed" in lower:
-        return "任务已完成，但消息投递失败。请检查飞书/邮件配置。"
-
-    if "failed to enqueue" in lower:
-        return "任务未能启动。请稍后重试。"
-
-    return "自动化任务未能完成。请稍后重试，或在 Workbench 查看任务详情。"
+        key = "error_auth"
+    elif "canceled" in lower or "cancelled" in lower:
+        key = "error_canceled"
+    elif "timeout" in lower or "timed out" in lower:
+        key = "error_timeout"
+    elif "delivery failed" in lower:
+        key = "error_delivery"
+    elif "failed to enqueue" in lower:
+        key = "error_enqueue"
+    else:
+        key = "error_generic"
+    return user_text(key, locale)
 
 
 def _strip_internal_markup(text: str) -> str:
@@ -129,7 +157,9 @@ def sanitize_delivery_text(raw: str) -> str:
 def format_delivery_success(raw: str, automation_name: str) -> str:
     body = sanitize_delivery_text(raw)
     if not body:
-        return f"✅ {automation_name}\n\n本次任务已完成，但未生成可投递的正文。"
+        from deepseek_tui.utils.user_text import user_text
+
+        return f"✅ {automation_name}\n\n{user_text('delivery_empty_body')}"
     return body
 
 
@@ -179,6 +209,7 @@ class DeliveryConfig:
     to: str | None = None
     best_effort: bool = True
     thread_id: str | None = None
+    credential_ref: str | None = None
 
     def is_active(self) -> bool:
         return self.mode.strip().lower() not in ("", "silent", "none")
@@ -195,11 +226,20 @@ class DeliveryConfig:
             raise ValueError(f"Unknown delivery mode: {mode}")
         if not isinstance(raw.get("best_effort", True), bool):
             raise ValueError("delivery.best_effort must be a boolean")
+        target = _opt_str(raw.get("to"))
+        reference = _opt_str(raw.get("credential_ref"))
+        if mode == "wecom" and reference and not (target or _opt_str(raw.get("chat_id"))):
+            from deepseek_tui.state.secrets import load_delivery_secret
+
+            target = load_delivery_secret(reference)
+            if not target:
+                raise ValueError("Delivery credential unavailable; restore the local credential store")
         return cls(
             mode=mode,
             chat_id=_opt_str(raw.get("chat_id")),
             channel=_opt_str(raw.get("channel")),
-            to=_opt_str(raw.get("to")),
+            to=target,
+            credential_ref=reference,
             best_effort=bool(raw.get("best_effort", True)),
             thread_id=_opt_str(raw.get("thread_id")),
         )
@@ -227,10 +267,15 @@ class DigestConfig:
 
 def cron_prompt_prefix(automation_id: str, name: str) -> str:
     """Align with OpenHuman ``[cron:{id} {name}]`` prefix."""
-    return f"[cron:{automation_id} {name}] "
+    # A "]" in the name would end the marker early, so _CRON_PREFIX could
+    # no longer strip it from delivered text.
+    safe = " ".join(name.replace("]", ")").split())
+    return f"[cron:{automation_id} {safe}] "
 
 
-CRON_EXECUTION_PLAYBOOK = """\
+# Tasks queued before the unattended block existed carry this text verbatim;
+# it is kept only so their prompts can still be cleaned for display.
+_LEGACY_CRON_PLAYBOOK = """\
 [Cron execution playbook]
 You are running a scheduled background task. Follow these rules:
 
@@ -252,6 +297,46 @@ Output contract (this final reply IS the message users receive):
 13. If data is unavailable, state what is missing and one actionable fix — do not dump tool errors or retry logs.
 """
 
+_UNATTENDED_OPEN = "[Unattended run]"
+_UNATTENDED_CLOSE = "[/Unattended run]"
 
-def cron_execution_prefix(automation_id: str, name: str) -> str:
-    return cron_prompt_prefix(automation_id, name) + CRON_EXECUTION_PLAYBOOK + "\n\n"
+# Rules for any run nobody is watching. The tool list is deliberately not
+# repeated here: the model sees the real one.
+_UNATTENDED_RULES = """\
+This run was started by a schedule or trigger; nobody is watching it.
+- Do not ask questions. Where something is ambiguous, take the most reasonable reading and say which one in your result.
+- Prefer installed MCP tools (mcp_*) for structured data sources that match the task; otherwise use web_search / fetch_url. If web_search fails for lack of a search key and an MCP search tool is in your tool list, use that.
+- Use load_skill when a listed skill matches the work.
+- Keep shell commands non-interactive; install packages only when the task needs them.
+- If something stays unavailable after a couple of attempts, stop retrying and report what is missing.
+
+Your final message is this run's result: it is what the user reads instead of watching the run. Give the outcome, not the process: no narration of steps ("I'll…", "Let me…", "我来…") and no raw tool errors or retry logs. If part could not be done, say what is missing and one concrete fix. Write in the language of the task."""
+
+_DELIVERY_RULES = """\
+The system sends that final message to the user automatically. Do not send it yourself through any channel, and do not mention delivery, webhooks or chat ids. Keep it scannable: a title, the key facts, then a one-line takeaway if useful."""
+
+
+def unattended_preamble(*, delivery_active: bool) -> str:
+    """Rules prepended to a cron or trigger run's prompt."""
+    body = _UNATTENDED_RULES
+    if delivery_active:
+        body += "\n" + _DELIVERY_RULES
+    return f"{_UNATTENDED_OPEN}\n{body}\n{_UNATTENDED_CLOSE}\n\n"
+
+
+_UNATTENDED_BLOCK = re.compile(
+    re.escape(_UNATTENDED_OPEN) + r"[\s\S]*?" + re.escape(_UNATTENDED_CLOSE) + r"\s*"
+)
+
+
+def strip_unattended_preamble(text: str) -> str:
+    """The task's own instruction, without the rules the harness added."""
+    return _UNATTENDED_BLOCK.sub("", text.replace(_LEGACY_CRON_PLAYBOOK, "", 1), count=1)
+
+
+def cron_execution_prefix(
+    automation_id: str, name: str, *, delivery_active: bool = False
+) -> str:
+    return cron_prompt_prefix(automation_id, name) + unattended_preamble(
+        delivery_active=delivery_active
+    )

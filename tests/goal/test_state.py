@@ -69,3 +69,20 @@ def test_complete_snapshot_is_restored() -> None:
     restored = state_from_dict(state_to_dict(completed))
     assert restored.status is GoalStatus.COMPLETE
     assert restored.terminal_reason == "finished"
+
+
+def test_disk_restore_keeps_usage_but_resets_progress_window(tmp_path):
+    import json
+
+    state = new_goal("Continue after restarting the app")
+    state.tokens_used = 123
+    state.turns_used = 4
+    state.last_progress_signature = "previous-result"
+    state.stalled_turns = 2
+    path = tmp_path / "goal.json"
+    path.write_text(json.dumps(state_to_dict(state)), encoding="utf-8")
+    restored = state_from_dict(json.loads(path.read_text(encoding="utf-8")))
+    assert restored is not None
+    assert restored.status is GoalStatus.PAUSED
+    assert restored.tokens_used == 123 and restored.turns_used == 4
+    assert restored.last_progress_signature == "" and restored.stalled_turns == 0

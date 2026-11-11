@@ -343,3 +343,44 @@ class SecretsManager:
             return config.api_key
 
         return None
+
+
+def _delivery_secret_db():
+    """Private local credential references; this is not an OS keychain."""
+    import sqlite3
+    from deepseek_tui.config.paths import user_deepseek_dir
+
+    directory = user_deepseek_dir() / "secrets"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = directory / "delivery.sqlite3"
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    os.close(fd)
+    os.chmod(path, 0o600)
+    connection = sqlite3.connect(path, timeout=10)
+    connection.execute("CREATE TABLE IF NOT EXISTS credentials (ref TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    return connection
+
+
+def store_delivery_secret(value: str) -> str:
+    """Commit before callers remove any legacy copy from a run record."""
+    import hashlib
+
+    reference = "delivery_" + hashlib.sha256(value.encode()).hexdigest()
+    connection = _delivery_secret_db()
+    try:
+        with connection:
+            connection.execute("INSERT OR IGNORE INTO credentials VALUES (?, ?)", (reference, value))
+    finally:
+        connection.close()
+    return reference
+
+
+def load_delivery_secret(reference: str) -> str | None:
+    if not re.fullmatch(r"delivery_[0-9a-f]{64}", reference):
+        return None
+    connection = _delivery_secret_db()
+    try:
+        row = connection.execute("SELECT value FROM credentials WHERE ref = ?", (reference,)).fetchone()
+        return row[0] if row else None
+    finally:
+        connection.close()

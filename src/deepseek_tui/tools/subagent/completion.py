@@ -76,6 +76,33 @@ def summary_section_text(body: str) -> str | None:
     return " ".join(lines)
 
 
+_TERMINAL_KINDS = frozenset({"completed", "failed", "cancelled", "interrupted"})
+
+
+def terminal_agent_ids(metadata: object) -> set[str]:
+    """Agent ids a tool result already reported as finished.
+
+    Reads the ``_result_to_json`` shape: one snapshot, or ``{"agents": [...]}``.
+    """
+    if not isinstance(metadata, dict):
+        return set()
+    raw_items = metadata.get("agents")
+    items = raw_items if isinstance(raw_items, list) else [metadata]
+    out: set[str] = set()
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        agent_id = raw.get("agent_id")
+        status = raw.get("status")
+        if (
+            isinstance(agent_id, str)
+            and isinstance(status, dict)
+            and status.get("kind") in _TERMINAL_KINDS
+        ):
+            out.add(agent_id)
+    return out
+
+
 def summarize_subagent_result(snap: SubAgentResult) -> str:
     """One-line human summary for the parent sidebar / transcript."""
 
@@ -98,7 +125,13 @@ def summarize_subagent_result(snap: SubAgentResult) -> str:
 
 
 def subagent_done_sentinel(snap: SubAgentResult) -> str:
-    """Build ``<deepseek:subagent.done>`` JSON sentinel."""
+    """Build ``<deepseek:subagent.done>`` JSON sentinel.
+
+    The one-line summary is not repeated here: it is the payload's first line.
+    ``resume_hint`` appears only when the slot is unfinished, so a clean
+    success is not read as an invitation to resume.
+    """
+    from deepseek_tui.tools.subagent.handoff_ledger import is_resumable
 
     resume_hint = (
         f'agent(resume="{snap.agent_id}") continues this child from its '
@@ -106,24 +139,18 @@ def subagent_done_sentinel(snap: SubAgentResult) -> str:
         "does not cover the assignment."
     )
     if snap.status.kind is SubAgentStatusKind.FAILED:
-        payload = json.dumps(
-            {
-                "agent_id": snap.agent_id,
-                "status": "failed",
-                "error": snap.status.message or "unknown",
-                "resume_hint": resume_hint,
-            },
-            ensure_ascii=False,
-        )
-    else:
         body: dict[str, Any] = {
+            "agent_id": snap.agent_id,
+            "status": "failed",
+            "error": snap.status.message or "unknown",
+        }
+    else:
+        body = {
             "agent_id": snap.agent_id,
             "agent_type": snap.agent_type.value,
             "status": snap.status.kind.value,
             "duration_ms": snap.duration_ms,
             "steps": snap.steps_taken,
-            "summary": summarize_subagent_result(snap),
-            "resume_hint": resume_hint,
         }
         # Only present when it happened: a parent that has never seen the key
         # cannot misread its absence, and the common case stays unchanged.
@@ -131,7 +158,9 @@ def subagent_done_sentinel(snap: SubAgentResult) -> str:
             body["task_outcome"] = snap.task_outcome
         if snap.max_steps_reached:
             body["max_steps_reached"] = True
-        payload = json.dumps(body, ensure_ascii=False)
+    if is_resumable(snap):
+        body["resume_hint"] = resume_hint
+    payload = json.dumps(body, ensure_ascii=False)
     return f"<deepseek:subagent.done>{payload}</deepseek:subagent.done>"
 
 

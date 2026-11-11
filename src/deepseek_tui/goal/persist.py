@@ -64,6 +64,9 @@ def state_from_dict(data: dict[str, Any] | None) -> GoalState | None:
     ):
         status = GoalStatus.BUDGET_LIMITED
     goal_id = data.get("goal_id")
+    # Progress signatures are persisted for diagnostics only. Restoring pauses
+    # active work; the next explicit resume starts a fresh stagnation window,
+    # matching GoalService.resume rather than inheriting pre-restart failures.
     state = GoalState(
         goal_id=str(goal_id) if goal_id else "restored",
         queue_item_id=data.get("queue_item_id") if isinstance(data.get("queue_item_id"), str) else None,

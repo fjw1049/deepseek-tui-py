@@ -1,6 +1,6 @@
-"""Tool execution dispatch and argument repair.
+"""Tool execution dispatch.
 
-Consolidates dispatch.py, executors.py, arg_repair.py.
+Argument repair and compatibility adapters live in dedicated modules.
 Tool dispatch — plan/execute helpers for the per-turn tool batch.
 
 Owns:
@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from collections.abc import Awaitable, Callable
 import json
-import re
+
+from deepseek_tui.engine.legacy_tools import (
+    normalize_legacy_tool_call as normalize_legacy_tool_call,
+    _normalize_legacy_tool_call as _normalize_legacy_tool_call,
+)
+from deepseek_tui.engine.tool_arguments import repair as repair
 
 # --- Types ---------------------------------------------------------------
 
@@ -124,6 +129,7 @@ def should_force_update_plan_first(mode: str, content: str) -> bool:
 _MCP_PARALLEL_SAFE = frozenset(
     {
         "list_mcp_resources",
+        "list_mcp_resource_templates",
         "mcp_read_resource",
         "read_mcp_resource",
     }
@@ -199,7 +205,7 @@ from deepseek_tui.engine.events import (
     UserInputRequiredEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.tools.task import CRON_PROMPT_MARKER
+from deepseek_tui.tools.task import RUN_POLICIES, TaskKind
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.subagent import SubAgent
@@ -208,165 +214,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Durable background tasks (not short interactive turns). Align round budget
-# with the main Engine / sub-agent loop (100); keep a wall-clock ceiling so a
-# wedged emit/queue cannot run forever. Cron stays tighter — scheduled jobs
-# should finish promptly — but still large enough for search + a few tool
-# rounds rather than toy limits that abort mid-work.
-TASK_MAX_TOOL_ROUND_TRIPS = 100
-CRON_MAX_TOOL_ROUND_TRIPS = 40
-# 2h ordinary / 15min cron. Timeout → TIMED_OUT (resumable via transcript).
-TASK_WALL_CLOCK_SECONDS = 7200
-CRON_TASK_WALL_CLOCK_SECONDS = 900
-
-
-def _is_cron_task(prompt: str) -> bool:
-    return prompt.lstrip().startswith(CRON_PROMPT_MARKER)
-
-
-def normalize_legacy_tool_call(name: str, arguments: Any) -> tuple[str, Any]:
-    """Fold retired tool names onto their merged successors (debug-logged).
-
-    The schema only advertises the merged tools; the old names keep working
-    at the execution layer for one deprecation cycle, forwarding to the same
-    logic:
-
-    - ``agent_resume {agent_id}`` → ``agent {resume: agent_id}``
-    - ``agent(action=list)`` → ``task_list``; ``agent(action=result)`` →
-      ``task_output``; ``agent(action=cancel)`` → ``task_stop`` (the merged
-      task tools took over background-entity inspect/stop; ids and
-      block/timeout_ms already share the target parameter names). A
-      ``result`` call carrying ``agent_ids``/``wait_mode`` is **not**
-      forwarded — it was never valid for ``result`` and the unknown-action
-      error steers the model.
-    - ``exec_shell_interact {process_id, input, close_stdin}`` →
-      ``exec_shell`` with the same arguments (names already match the
-      merged interact branch).
-    - ``task_read`` → ``task_output``; ``task_cancel`` → ``task_stop``;
-      ``task_resume {task_id}`` → ``task_create(resume=...)``;
-      ``task_shell_wait`` → ``task_output(process_id=..., task_id=...)``
-      (arguments pass through; names already match).
-    - ``task_shell_start {command, pty}`` → ``exec_shell(command=...,
-      background=true, pty=true)``. The old task_id → process_id ownership
-      mapping (``task_shell_process_ids``) is dropped — the merged surface
-      tracks background processes independently of durable tasks.
-    - ``automation_create`` → ``cron_create`` (arguments pass through)
-    - ``automation_list`` → ``cron_list``; ``automation_read`` →
-      ``cron_list(automation_id=...)``
-    - ``automation_delete`` → ``cron_delete``
-
-    ``task_gate_run`` is intentionally **not** forwarded: the gate heuristic
-    survives only in the implementation layer (decision D3), so the
-    unknown-tool error steers the model off the retired surface. Same for
-    ``automation_update`` / ``automation_pause`` / ``automation_resume`` /
-    ``automation_run``: they have no equivalent on the merged surface
-    (edit = delete + recreate; run = ``cron_create(run_now=true)``).
-    """
-    if name == "agent_resume":
-        logger.debug(
-            "legacy tool name 'agent_resume' used; forwarding to agent(resume=...)"
-        )
-        args = dict(arguments) if isinstance(arguments, dict) else {}
-        agent_id = args.pop("agent_id", None) or args.pop("id", None)
-        if isinstance(agent_id, str) and agent_id and "resume" not in args:
-            args["resume"] = agent_id
-        return "agent", args
-    if name == "agent" and isinstance(arguments, dict):
-        action = arguments.get("action")
-        if action == "list":
-            logger.debug(
-                "legacy agent action 'list' used; forwarding to task_list"
-            )
-            # include_archived has no equivalent on the merged surface.
-            return "task_list", {}
-        if action == "result":
-            if "agent_ids" in arguments or "wait_mode" in arguments:
-                # Multi-id wait_mode calls were never valid for 'result' —
-                # leave them to the unknown-action steering error.
-                return name, arguments
-            logger.debug(
-                "legacy agent action 'result' used; forwarding to task_output"
-            )
-            args = {
-                k: v
-                for k, v in arguments.items()
-                if k in ("agent_id", "process_id", "id", "block", "timeout_ms")
-            }
-            return "task_output", args
-        if action == "cancel":
-            logger.debug(
-                "legacy agent action 'cancel' used; forwarding to task_stop"
-            )
-            args = {
-                k: v
-                for k, v in arguments.items()
-                if k in ("agent_id", "process_id", "id")
-            }
-            return "task_stop", args
-        return name, arguments
-    if name == "exec_shell_interact":
-        logger.debug(
-            "legacy tool name 'exec_shell_interact' used; "
-            "forwarding to exec_shell(process_id=...)"
-        )
-        return "exec_shell", arguments
-    if name == "task_read":
-        logger.debug(
-            "legacy tool name 'task_read' used; forwarding to task_output"
-        )
-        return "task_output", arguments
-    if name == "task_cancel":
-        logger.debug(
-            "legacy tool name 'task_cancel' used; forwarding to task_stop"
-        )
-        return "task_stop", arguments
-    if name == "task_resume":
-        logger.debug(
-            "legacy tool name 'task_resume' used; "
-            "forwarding to task_create(resume=...)"
-        )
-        args = dict(arguments) if isinstance(arguments, dict) else {}
-        task_id = args.pop("task_id", None) or args.pop("id", None)
-        if isinstance(task_id, str) and task_id and "resume" not in args:
-            args["resume"] = task_id
-        return "task_create", args
-    if name == "task_shell_wait":
-        logger.debug(
-            "legacy tool name 'task_shell_wait' used; "
-            "forwarding to task_output(process_id=...)"
-        )
-        args = dict(arguments) if isinstance(arguments, dict) else {}
-        # The old tool always blocked until the process exited.
-        args.setdefault("block", True)
-        return "task_output", args
-    if name == "task_shell_start":
-        logger.debug(
-            "legacy tool name 'task_shell_start' used; "
-            "forwarding to exec_shell(background=true)"
-        )
-        args = dict(arguments) if isinstance(arguments, dict) else {}
-        # The task_id → process_id ownership mapping is dropped (see docstring).
-        args.pop("task_id", None)
-        args.pop("id", None)
-        args["background"] = True
-        args.setdefault("pty", True)
-        return "exec_shell", args
-    if name == "automation_create":
-        logger.debug(
-            "legacy tool name 'automation_create' used; forwarding to cron_create"
-        )
-        return "cron_create", arguments
-    if name in ("automation_list", "automation_read"):
-        logger.debug(
-            "legacy tool name %r used; forwarding to cron_list", name
-        )
-        return "cron_list", arguments
-    if name == "automation_delete":
-        logger.debug(
-            "legacy tool name 'automation_delete' used; forwarding to cron_delete"
-        )
-        return "cron_delete", arguments
-    return name, arguments
+# Per-kind limits live in ``tools.task.models.RUN_POLICIES``. A wall-clock
+# timeout ends as TIMED_OUT (resumable via transcript). Aliases kept for callers.
+TASK_MAX_TOOL_ROUND_TRIPS = RUN_POLICIES[TaskKind.TASK].max_rounds
+CRON_MAX_TOOL_ROUND_TRIPS = RUN_POLICIES[TaskKind.CRON].max_rounds
+TASK_WALL_CLOCK_SECONDS = RUN_POLICIES[TaskKind.TASK].wall_clock_secs
+CRON_TASK_WALL_CLOCK_SECONDS = RUN_POLICIES[TaskKind.CRON].wall_clock_secs
 
 
 # Primary argument shown next to a tool name in the task run log, so a line
@@ -834,9 +687,10 @@ async def _run_task_engine_turn(
         update={"tasks": True, "subagents": True, "mcp": True, "automations": False}
     )
     # Execute the stored task authority, including when global settings changed.
+    cron_restricted = task.kind in {TaskKind.CRON, TaskKind.TRIGGER}
     cfg.allow_shell = task.allow_shell
     cfg.approval_policy = "auto" if task.auto_approve else "on-request"
-    cfg.sandbox_mode = "danger-full-access" if task.trust_mode else "workspace-write"
+    cfg.sandbox_mode = "danger-full-access" if task.trust_mode and not cron_restricted else "workspace-write"
     cfg.hooks = HooksConfig(enabled=False, hooks=[])
     handle = EngineHandle()
     client = build_llm_client(cfg)
@@ -844,6 +698,8 @@ async def _run_task_engine_turn(
 
     shared_mcp = getattr(task.task_manager, "_shared_mcp_manager", None)
     runtime = None
+    automation_browser = None
+    engine = None
     try:
         runtime = await create_tool_runtime(
             config=cfg,
@@ -855,17 +711,13 @@ async def _run_task_engine_turn(
         )
 
         # Auto approval alone must not grant filesystem trust to child agents.
-        runtime.context.trust_mode = task.trust_mode
+        runtime.context.trust_mode = task.trust_mode and not cron_restricted
 
         # Default auto_approve=True for fire-and-forget. When False, bridge tool
         # approvals onto the origin thread (HttpApprovalHandler + ApprovalBridge)
         # so the Workbench can confirm — same UX as the main session.
         approval_handler = _build_task_approval_handler(task)
-        max_rounds = (
-            CRON_MAX_TOOL_ROUND_TRIPS
-            if _is_cron_task(task.prompt)
-            else TASK_MAX_TOOL_ROUND_TRIPS
-        )
+        max_rounds = task.policy.max_rounds
 
         engine = await Engine.create(
             handle=handle,
@@ -879,24 +731,48 @@ async def _run_task_engine_turn(
             tool_runtime=runtime,
             subagent_session_id=task.id,
         )
+        if data_dir is not None and cron_restricted:
+            from deepseek_tui.automation.permissions import AutomationBrowser, browser_grant_valid
+
+            if browser_grant_valid(task.browser_grant):
+                automation_browser = AutomationBrowser(Path(data_dir), task.id, task.browser_grant)
+                automation_browser.bind(engine.tool_context)
+                if engine.tool_context.subagent_manager is not None:
+                    engine.tool_context.subagent_manager.automation_browser = automation_browser
+        if data_dir is not None:
+            from deepseek_tui.tools.task.file_checkpoints import TaskFileCheckpoints
+
+            file_checkpoints = TaskFileCheckpoints(Path(data_dir), task.id, workspace)
+            file_checkpoints.bind(engine.tool_context)
+            if engine.tool_context.subagent_manager is not None:
+                engine.tool_context.subagent_manager.task_file_checkpoints = file_checkpoints
     except BaseException:
         # A stop can arrive during initialization, before the turn's finally block.
         try:
+            if automation_browser is not None:
+                await automation_browser.close()
+            if engine is not None:
+                await engine.shutdown()
             if runtime is not None:
                 await runtime.shutdown()
         finally:
             await client.close()
         raise
-    engine.tool_context.trust_mode = task.trust_mode
+    engine.tool_context.trust_mode = task.trust_mode and not cron_restricted
+    # Pinned, not sniffed from the prompt: a resume sends CONTINUE_NUDGE.
+    engine.pinned_tool_profile = task.policy.tool_profile
     engine.tool_context.active_task_id = task.id
     engine.tool_context.metadata["task_id"] = task.id
     # Detached runs have no UI for questions: anything that needs a person must fail fast.
     engine.tool_context.metadata["unattended"] = True
+    engine.tool_context.metadata["cron_restricted"] = cron_restricted
     # Engine.create attaches SubAgentRuntime before the task id is known;
     # bind it now so nested sub-agents inherit the nest-depth guard.
     sub_mgr = engine.tool_context.subagent_manager
     if sub_mgr is not None and hasattr(sub_mgr, "bind_active_task_id"):
         sub_mgr.bind_active_task_id(task.id)
+        if sub_mgr.loop_runtime is not None:
+            sub_mgr.loop_runtime.cron_restricted = cron_restricted
 
     if resuming and existing is not None:
         engine.session_messages = dicts_to_messages(existing.messages)
@@ -1043,8 +919,12 @@ async def _run_task_engine_turn(
         # built above is closed — otherwise every task leaks its HTTP
         # connection pool. SessionEndedEvent is swallowed by try/except
         # inside shutdown(); drain_events() clears it either way.
-        await engine.shutdown()
-        handle.drain_events()
+        try:
+            await engine.shutdown()
+        finally:
+            if automation_browser is not None:
+                await automation_browser.close()
+            handle.drain_events()
 
 
 async def real_task_executor(
@@ -1053,11 +933,7 @@ async def real_task_executor(
     """Run one Engine turn for a queued task (shared TaskManager)."""
     from deepseek_tui.tools.task import TaskExecutionResult
 
-    wall_clock = (
-        CRON_TASK_WALL_CLOCK_SECONDS
-        if _is_cron_task(task.prompt)
-        else TASK_WALL_CLOCK_SECONDS
-    )
+    wall_clock = task.policy.wall_clock_secs
     try:
         return await asyncio.wait_for(
             _run_task_engine_turn(task, cancel),
@@ -1068,10 +944,10 @@ async def real_task_executor(
         # Finalize path keys off ``timed_out=True`` → TaskStatus.TIMED_OUT.
         cancel.set()
         logger.warning(
-            "[task_executor] wall-clock timeout task_id=%s after=%ds cron=%s",
+            "[task_executor] wall-clock timeout task_id=%s after=%ds kind=%s",
             task.id,
             wall_clock,
-            _is_cron_task(task.prompt),
+            task.kind.value,
         )
         return TaskExecutionResult(
             summary="",
@@ -1132,177 +1008,3 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> Agen
     if isinstance(out, AgentRunOutput):
         return out
     return AgentRunOutput(text=str(out), structured=None)
-
-
-# Deterministic JSON argument repair ladder.
-# LLM streaming can produce malformed JSON in tool call arguments:
-# - Truncated streams → unclosed braces/brackets
-# - Control characters (0x00-0x1F) inside string values
-# - Trailing commas before } or ]
-# - Excess closing delimiters from delta corruption
-# The repair ladder attempts increasingly aggressive fixes, guaranteeing
-# a valid dict is always returned (worst case: empty {}).
-
-
-# Max input size — beyond this we bail to {} to avoid pathological regex.
-_MAX_INPUT_BYTES = 1_048_576  # 1 MiB
-
-
-def repair(raw: str) -> dict:
-    """Attempt to parse *raw* as JSON, applying repairs if needed.
-
-    Always returns a dict. Never raises.
-    """
-    if not raw or not raw.strip():
-        return {}
-
-    if len(raw) > _MAX_INPUT_BYTES:
-        return {}
-
-    # Stage 1: strict parse
-    result = _try_parse(raw)
-    if result is not None:
-        return result
-
-    # Stage 2: strip control chars inside string values
-    cleaned = _strip_control_chars_in_strings(raw)
-    if cleaned != raw:
-        result = _try_parse(cleaned)
-        if result is not None:
-            return result
-    else:
-        cleaned = raw
-
-    # Stage 3: strip trailing commas before } or ]
-    no_trailing = _strip_trailing_commas(cleaned)
-    if no_trailing != cleaned:
-        result = _try_parse(no_trailing)
-        if result is not None:
-            return result
-    else:
-        no_trailing = cleaned
-
-    # Stage 4: balance braces/brackets
-    balanced = _balance_braces(no_trailing)
-    if balanced != no_trailing:
-        result = _try_parse(balanced)
-        if result is not None:
-            return result
-
-    # Stage 5: strip excess closers
-    stripped = _strip_excess_closers(no_trailing)
-    if stripped != no_trailing:
-        result = _try_parse(stripped)
-        if result is not None:
-            return result
-
-    # Fallback: empty object
-    return {}
-
-
-def _try_parse(s: str) -> dict | None:
-    """Return parsed dict or None."""
-    try:
-        obj = json.loads(s)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if isinstance(obj, dict):
-        return obj
-    # Non-dict JSON (e.g. array, scalar) — wrap it
-    return {"value": obj}
-
-
-def _strip_control_chars_in_strings(s: str) -> str:
-    """Remove 0x00-0x1F (except \\t \\n \\r) that appear inside JSON strings."""
-    out: list[str] = []
-    in_string = False
-    escape_next = False
-    for ch in s:
-        if escape_next:
-            out.append(ch)
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            out.append(ch)
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            out.append(ch)
-            continue
-        if in_string and ord(ch) < 0x20 and ch not in ('\t', '\n', '\r'):
-            continue  # drop control char
-        out.append(ch)
-    return "".join(out)
-
-
-# Pattern: comma followed by optional whitespace then } or ]
-_TRAILING_COMMA_RE = re.compile(r',\s*([}\]])')
-
-
-def _strip_trailing_commas(s: str) -> str:
-    """Remove trailing commas before closing delimiters."""
-    return _TRAILING_COMMA_RE.sub(r'\1', s)
-
-
-def _balance_braces(s: str) -> str:
-    """Append missing closing braces/brackets."""
-    stack: list[str] = []
-    in_string = False
-    escape_next = False
-    for ch in s:
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch in ('{', '['):
-            stack.append('}' if ch == '{' else ']')
-        elif ch in ('}', ']'):
-            if stack and stack[-1] == ch:
-                stack.pop()
-    # Append missing closers in reverse order
-    if stack:
-        return s + "".join(reversed(stack))
-    return s
-
-
-def _strip_excess_closers(s: str) -> str:
-    """Remove excess } or ] that have no matching opener."""
-    stack: list[str] = []
-    keep: list[bool] = [True] * len(s)
-    in_string = False
-    escape_next = False
-    for i, ch in enumerate(s):
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch in ('{', '['):
-            stack.append(ch)
-        elif ch == '}':
-            if stack and stack[-1] == '{':
-                stack.pop()
-            else:
-                keep[i] = False
-        elif ch == ']':
-            if stack and stack[-1] == '[':
-                stack.pop()
-            else:
-                keep[i] = False
-    if all(keep):
-        return s
-    return "".join(ch for ch, k in zip(s, keep) if k)

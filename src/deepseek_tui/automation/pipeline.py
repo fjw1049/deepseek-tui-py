@@ -6,7 +6,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -15,6 +16,8 @@ from deepseek_tui.automation.delivery import (
     format_delivery_body,
     sanitize_delivery_text,
     should_skip_delivery_for_error,
+    delivery_target_fingerprint,
+    sanitized_delivery_snapshot,
 )
 from deepseek_tui.automation.inbox import (
     build_digest_block,
@@ -24,10 +27,12 @@ from deepseek_tui.automation.inbox import (
     wecom_webhook_send_text,
 )
 from deepseek_tui.automation.delivery import (
-    CRON_EXECUTION_PLAYBOOK,
     DeliveryConfig,
+    DeliveryNotSent,
     DigestConfig,
     cron_execution_prefix,
+    strip_unattended_preamble,
+    unattended_preamble,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +46,28 @@ logger = logging.getLogger(__name__)
 # the first failure. Bound that so a permanently-broken channel (Feishu/SMTP
 # down, bad credentials) cannot re-hammer the endpoint every tick forever.
 _MAX_DELIVERY_ATTEMPTS = 5
+_DELIVERY_TIMEOUT_S = 30
+
+
+def _definitely_not_sent(exc: Exception) -> bool:
+    import httpx
+
+    if isinstance(exc, (
+        DeliveryNotSent, ConnectionRefusedError, httpx.ConnectError,
+        httpx.ConnectTimeout, httpx.PoolTimeout,
+    )):
+        return True
+    return (
+        isinstance(exc, httpx.HTTPStatusError)
+        and 400 <= exc.response.status_code < 500
+        and exc.response.status_code != 408
+    )
+
+
+def _mark_delivery_uncertain(run: AutomationRunRecord) -> None:
+    run.delivery_state = "uncertain"
+    run.delivery_done = False
+    run.delivery_error = "Delivery outcome unknown; check the recipient before confirming receipt or retrying."
 
 
 def _skip_internal_failure_delivery(
@@ -77,8 +104,9 @@ class _SilentSink:
 
 
 class _LogSink:
-    def __init__(self, thread_manager: RuntimeThreadManager | None = None) -> None:
+    def __init__(self, thread_manager: RuntimeThreadManager | None = None, delivery_id: str | None = None) -> None:
         self._thread_manager = thread_manager
+        self._delivery_id = delivery_id
 
     async def deliver(
         self,
@@ -102,6 +130,7 @@ class _LogSink:
                 config.thread_id,
                 automation_name=automation_name,
                 summary=summary,
+                item_id=f"automation_delivery_{self._delivery_id}" if self._delivery_id else None,
             )
 
 
@@ -116,8 +145,10 @@ class _EmailSink:
     ) -> None:
         to_addr = config.to or config.chat_id
         if not to_addr:
-            raise ValueError("delivery.mode=email requires to (recipient address)")
-        subject = f"{automation_name} · 自动化摘要"
+            raise DeliveryNotSent("delivery.mode=email requires to (recipient address)")
+        from deepseek_tui.utils.user_text import user_text
+
+        subject = user_text("email_subject", name=automation_name)
         await email_send_text(to_addr=to_addr, subject=subject, body=summary)
 
 
@@ -134,7 +165,7 @@ class _FeishuSink:
         if not chat_id:
             chat_id = default_feishu_chat_id_from_config()
         if not chat_id:
-            raise ValueError("delivery.mode=feishu requires chat_id or to")
+            raise DeliveryNotSent("delivery.mode=feishu requires chat_id or to")
         await feishu_send_text(receive_id=chat_id, text=summary)
 
 
@@ -155,6 +186,7 @@ def _sink_for_mode(
     mode: str,
     *,
     thread_manager: RuntimeThreadManager | None = None,
+    delivery_id: str | None = None,
 ) -> DeliverySink:
     key = mode.strip().lower()
     if key in ("email", "mail", "smtp"):
@@ -164,7 +196,7 @@ def _sink_for_mode(
     if key in ("wecom", "wecom_webhook", "wework"):
         return _WecomSink()
     if key in ("notify", "proactive"):
-        return _LogSink(thread_manager)
+        return _LogSink(thread_manager, delivery_id)
     if key in ("silent", "none", ""):
         return _SilentSink()
     raise ValueError(f"Unknown delivery mode: {mode}")
@@ -179,16 +211,34 @@ async def build_trigger_prompt(
     prompt: str,
     digest: dict[str, Any] | None = None,
     trigger_id: str | None = None,
+    delivery_active: bool = False,
 ) -> str:
     tid = trigger_id or uuid.uuid4().hex[:12]
     digest_cfg = DigestConfig.from_mapping(digest)
     block = await asyncio.wait_for(build_digest_block(digest_cfg), timeout=30)
-    return trigger_prompt_prefix(tid) + block + prompt.strip()
+    # A trigger run is as unattended as a cron run.
+    return (
+        trigger_prompt_prefix(tid)
+        + unattended_preamble(delivery_active=delivery_active)
+        + block
+        + prompt.strip()
+    )
+
+
+def _delivery_active(raw: dict[str, Any] | None) -> bool:
+    try:
+        return DeliveryConfig.from_mapping(raw).is_active()
+    except ValueError:
+        return False
 
 
 async def build_final_prompt(automation: AutomationRecord) -> str:
     digest = DigestConfig.from_mapping(automation.digest)
-    prefix = cron_execution_prefix(automation.id, automation.name)
+    prefix = cron_execution_prefix(
+        automation.id,
+        automation.name,
+        delivery_active=_delivery_active(automation.delivery),
+    )
     block = await asyncio.wait_for(build_digest_block(digest), timeout=30)
     return prefix + block + automation.prompt.strip()
 
@@ -200,10 +250,11 @@ async def enqueue_automation_task(
     *,
     provider: str | None = None,
     model: str | None = None,
+    browser_grant: dict[str, str] | None = None,
 ) -> None:
     """Read the current route at dispatch; only the resulting Task freezes it."""
     from deepseek_tui.tools.automation import AutomationRunStatus
-    from deepseek_tui.tools.task import NewTaskRequest, TaskStatus
+    from deepseek_tui.tools.task import NewTaskRequest, TaskKind, TaskStatus
 
     if run.task_id is not None:
         try:
@@ -236,6 +287,8 @@ async def enqueue_automation_task(
             allow_shell=True,
             trust_mode=False,
             auto_approve=True,
+            kind=TaskKind.CRON,
+            browser_grant=browser_grant,
         )
         task = await task_manager.add_task(new_task)
         run.status = AutomationRunStatus.QUEUED
@@ -270,6 +323,8 @@ async def try_write_run_result(
     }
     if run.status not in terminal_tasks:
         return False
+    from deepseek_tui.utils.user_text import user_text
+
     try:
         task = await task_manager.get_task(run.task_id) if run.task_id else None
         if task is not None and task.status not in terminal_tasks[run.status]:
@@ -281,15 +336,15 @@ async def try_write_run_result(
             succeeded=run.status is AutomationRunStatus.COMPLETED,
             raw_summary=task.result_summary if task is not None else None,
             automation_name=automation.name,
-            error=error or ("任务已取消。" if run.status is AutomationRunStatus.CANCELED else None),
+            error=error,
         )
         if run.status is AutomationRunStatus.CANCELED:
-            summary = "⏹ 任务已取消。"
+            summary = f"⏹ {user_text('error_canceled')}"
         elif run.status is AutomationRunStatus.FAILED:
             summary = f"❌ {classify_task_error_for_user(error or '')}"
         prompt = getattr(task, "prompt", None) if task is not None else None
         if isinstance(prompt, str):
-            prompt = sanitize_delivery_text(prompt.replace(CRON_EXECUTION_PLAYBOOK, "", 1))
+            prompt = sanitize_delivery_text(strip_unattended_preamble(prompt))
         await thread_manager.append_automation_result(
             run.conversation_thread_id,
             automation_id=automation.id,
@@ -325,6 +380,7 @@ async def try_deliver_completed_run(
     task_manager: TaskManager,
     *,
     thread_manager: RuntimeThreadManager | None = None,
+    save_run: Callable[[AutomationRunRecord], None] | None = None,
 ) -> bool:
     """Deliver once when a run reaches a terminal state (completed or failed)."""
     from deepseek_tui.tools.automation import AutomationRunStatus
@@ -332,6 +388,16 @@ async def try_deliver_completed_run(
 
     if run.delivery_done:
         return False
+    if run.delivery_state == "uncertain":
+        return False
+    if run.delivery_state == "sending":
+        # Previous process stopped after recording intent. The receiver may
+        # already have the message; never automatically replay this attempt.
+        old_config = (run.delivery_snapshot or {}).get("config") or run.delivery or automation.delivery
+        if str((old_config or {}).get("mode", "")).lower() != "notify":
+            _mark_delivery_uncertain(run)
+            return True
+        run.delivery_state = "pending"  # Local writes use a stable item id.
     if run.status not in (
         AutomationRunStatus.COMPLETED,
         AutomationRunStatus.FAILED,
@@ -339,16 +405,41 @@ async def try_deliver_completed_run(
         return False
 
     # HTTP-trigger runs carry their own per-request delivery config.
-    delivery = DeliveryConfig.from_mapping(
-        run.delivery if run.delivery is not None else automation.delivery
-    )
+    snapshot = run.delivery_snapshot
+    refresh_config = snapshot is not None and bool(snapshot.get("refresh_config"))
+    try:
+        delivery = DeliveryConfig.from_mapping(
+            snapshot["config"] if snapshot is not None and not refresh_config else
+            run.delivery if run.delivery is not None else automation.delivery
+        )
+    except (DeliveryNotSent, ValueError) as exc:
+        # Missing local credentials must never fall back to another destination.
+        run.delivery_error = str(exc)
+        return True
+    if snapshot is not None and not refresh_config and not delivery.credential_ref and snapshot.get("target_fingerprint"):
+        current = DeliveryConfig.from_mapping(
+            run.delivery if run.delivery is not None else automation.delivery
+        )
+        if current.mode == "wecom" and not (current.to or current.chat_id):
+            from deepseek_tui.automation.inbox import default_wecom_webhook_key_from_config
+
+            current = replace(current, to=default_wecom_webhook_key_from_config())
+        if (current.mode != "wecom" or
+                delivery_target_fingerprint(current) != snapshot["target_fingerprint"]):
+            _mark_delivery_uncertain(run)
+            run.delivery_error = "Original delivery target changed; restore it before retrying this message."
+            return True
+        delivery = replace(delivery, to=current.to, chat_id=current.chat_id)
     if not delivery.is_active():
         return False
 
-    summary: str | None = None
+    summary: str | None = snapshot["summary"] if snapshot is not None else None
+    delivery_name = snapshot["automation_name"] if snapshot is not None else automation.name
     failure_error: str | None = None
 
-    if run.status is AutomationRunStatus.FAILED:
+    if snapshot is not None:
+        pass  # A retry uses the recorded body even if the task was removed or changed.
+    elif run.status is AutomationRunStatus.FAILED:
         task = None
         if run.task_id is not None:
             try:
@@ -399,35 +490,73 @@ async def try_deliver_completed_run(
     if not summary:
         return False
 
-    sink = _sink_for_mode(delivery.mode, thread_manager=thread_manager)
+    if snapshot is None or refresh_config:
+        if delivery.mode == "feishu" and not (delivery.chat_id or delivery.to):
+            delivery = replace(delivery, chat_id=default_feishu_chat_id_from_config())
+        elif delivery.mode == "wecom" and not (delivery.chat_id or delivery.to):
+            from deepseek_tui.automation.inbox import default_wecom_webhook_key_from_config
+
+            delivery = replace(delivery, to=default_wecom_webhook_key_from_config())
+        run.delivery_snapshot = sanitized_delivery_snapshot({
+            "config": asdict(delivery), "summary": summary, "automation_name": delivery_name,
+            "delivery_id": uuid.uuid4().hex,
+        })
+    sink = _sink_for_mode(delivery.mode, thread_manager=thread_manager,
+                         delivery_id=(run.delivery_snapshot or {}).get("delivery_id") or run.id)
+    run.delivery_state = "sending"
+    run.delivery_attempts += 1
+    if save_run is not None:
+        # A failed journal write must prevent the external side effect.
+        save_run(run)
     try:
         await asyncio.wait_for(sink.deliver(
             config=delivery,
-            automation_name=automation.name,
+            automation_name=delivery_name,
             automation_id=automation.id,
             summary=summary,
-        ), timeout=30)
+        ), timeout=_DELIVERY_TIMEOUT_S)
+    except asyncio.CancelledError:
+        if delivery.mode == "notify":
+            run.delivery_state = "pending"
+        else:
+            _mark_delivery_uncertain(run)
+        if save_run is not None:
+            save_run(run)
+        raise
     except Exception as exc:
+        import httpx
+
+        # HTTP exception strings may contain the credential-bearing webhook URL.
+        detail = (f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
+                  else str(exc) if isinstance(exc, DeliveryNotSent) else type(exc).__name__)
         logger.warning(
             "[automation][delivery] failed automation=%s mode=%s: %s",
             automation.id,
             delivery.mode,
-            exc,
+            detail,
         )
+        if delivery.mode != "notify" and not _definitely_not_sent(exc):
+            _mark_delivery_uncertain(run)
+            return True
+        run.delivery_state = "failed"
+        # A repaired destination must be usable after a definite rejection.
+        if delivery.mode != "notify":
+            assert run.delivery_snapshot is not None
+            run.delivery_snapshot["refresh_config"] = True
         if not delivery.best_effort:
-            run.delivery_attempts += 1
             if run.delivery_attempts < _MAX_DELIVERY_ATTEMPTS:
                 # Retry on a later tick. Note the failure without clobbering
                 # the task's own result/error — the run's terminal status is
                 # unchanged, only delivery is still pending.
+                run.delivery_state = "pending"
                 return True
             # Out of retries: stop re-hammering the channel and record why.
             run.delivery_done = True
-            run.delivery_error = str(exc) or type(exc).__name__
+            run.delivery_error = detail
             # Keep a failed run's execution error; delivery_error carries this one.
             if not run.error:
                 run.error = (
-                    f"delivery failed after {run.delivery_attempts} attempts: {exc}"
+                    f"delivery failed after {run.delivery_attempts} attempts: {detail}"
                 )
             logger.warning(
                 "[automation][delivery] giving up automation=%s mode=%s attempts=%d",
@@ -437,7 +566,10 @@ async def try_deliver_completed_run(
             )
             return True
         # best_effort: one shot, mark done regardless — but not as sent.
-        run.delivery_error = str(exc) or type(exc).__name__
+        run.delivery_error = detail
+    else:
+        run.delivery_state = "sent"
+        run.delivery_error = None
     run.delivery_done = True
     return True
 
@@ -451,11 +583,19 @@ async def deliver_when_task_completes(
     label_id: str,
     thread_manager: RuntimeThreadManager | None = None,
     poll_s: float = 2.0,
-    timeout_s: float = 600.0,
+    timeout_s: float | None = None,
 ) -> None:
-    """Poll task until COMPLETED/FAILED, then run ``DeliverySink`` once."""
-    from deepseek_tui.tools.task import TaskStatus
+    """Legacy standalone helper: poll, then send once without restart recovery.
 
+    App integrations should pass an AutomationManager to fire_http_trigger
+    so delivery uses the persistent journal and human confirmation workflow.
+    Retained for callers that own their own task/poller lifecycle.
+    """
+    from deepseek_tui.tools.task import RUN_POLICIES, TaskKind, TaskStatus
+
+    if timeout_s is None:
+        # Outlive the task's own wall clock, plus time spent queued.
+        timeout_s = RUN_POLICIES[TaskKind.TRIGGER].wall_clock_secs + 1800.0
     delivery_cfg = DeliveryConfig.from_mapping(delivery)
     if not delivery_cfg.is_active():
         return
@@ -466,7 +606,7 @@ async def deliver_when_task_completes(
         except Exception:
             logger.warning("[automation][delivery] task gone task_id=%s", task_id)
             return
-        if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED):
+        if task.status.is_terminal():
             break
         await asyncio.sleep(poll_s)
     try:
@@ -474,7 +614,7 @@ async def deliver_when_task_completes(
     except Exception:
         return
     if task.status is not TaskStatus.COMPLETED:
-        if task.status is TaskStatus.FAILED:
+        if task.status in (TaskStatus.FAILED, TaskStatus.TIMED_OUT):
             if _skip_internal_failure_delivery(label_id, label, task.error):
                 return
             summary = format_delivery_body(
@@ -498,12 +638,12 @@ async def deliver_when_task_completes(
         )
     sink = _sink_for_mode(delivery_cfg.mode, thread_manager=thread_manager)
     try:
-        await sink.deliver(
+        await asyncio.wait_for(sink.deliver(
             config=delivery_cfg,
             automation_name=label,
             automation_id=label_id,
             summary=summary,
-        )
+        ), timeout=_DELIVERY_TIMEOUT_S)
     except Exception as exc:
         logger.warning("[automation][delivery] trigger delivery failed: %s", exc)
 
@@ -527,22 +667,18 @@ async def fire_http_trigger(
     channels like any cron run. Without a manager the response still reports
     delivery "scheduled" and the HTTP layer falls back to its poller.
     """
-    from deepseek_tui.tools.task import NewTaskRequest
+    from deepseek_tui.tools.task import NewTaskRequest, TaskKind
 
     decision = apply_triage(
         policy=triage_policy,
         prompt=prompt,
         metadata=triage_metadata,
     )
-    if decision.action is TRIAGE_DEFER:
-        logger.info(
-            "[automation][trigger] deferred reason=%s",
-            decision.reason,
-        )
-        return {"status": "deferred", "reason": decision.reason}
-
-    if decision.action is not TRIAGE_RUN:
-        return {"status": "deferred", "reason": decision.reason or "not runnable"}
+    if decision.action != TRIAGE_RUN:
+        status = "deferred" if decision.action == TRIAGE_DEFER else "dropped"
+        logger.info("[automation][trigger] %s reason=%s", status, decision.reason)
+        # Nothing is stored for later: a deferred trigger must be sent again.
+        return {"status": status, "queued": False, "reason": decision.reason}
 
     # Reject a bad delivery mode before enqueueing, or the caller sees an
     # error for a task that is already running (and retries into a duplicate).
@@ -552,6 +688,7 @@ async def fire_http_trigger(
         prompt=prompt,
         digest=digest,
         trigger_id=trigger_id,
+        delivery_active=delivery_cfg.is_active(),
     )
     from pathlib import Path
 
@@ -570,6 +707,7 @@ async def fire_http_trigger(
             allow_shell=False,
             trust_mode=False,
             auto_approve=True,
+            kind=TaskKind.TRIGGER,
         )
     )
     logger.info(
@@ -605,6 +743,9 @@ async def fire_http_trigger(
                     delivery=delivery,
                 )
             )
+            # Reconcile walks every stored run each tick; trigger runs have
+            # no scheduler tick to prune them.
+            automation_manager.prune_runs(HTTP_TRIGGER_RUNS_KEY)
     return outcome
 
 
@@ -656,24 +797,31 @@ async def wait_thread_turn_text(
         turn_id = (await mgr.get_thread(thread_id)).latest_turn_id
     if not turn_id:
         return ""
-    deadline = asyncio.get_event_loop().time() + timeout_s
-    while asyncio.get_event_loop().time() < deadline:
-        turn = mgr.store.load_turn(turn_id)
-        if turn.status in (RuntimeTurnStatus.COMPLETED, RuntimeTurnStatus.FAILED, RuntimeTurnStatus.INTERRUPTED):
-            break
-        await asyncio.sleep(poll_s)
-    turn = mgr.store.load_turn(turn_id)
-    if turn.status not in (
+    settled = (
         RuntimeTurnStatus.COMPLETED,
         RuntimeTurnStatus.FAILED,
         RuntimeTurnStatus.INTERRUPTED,
-    ):
+        RuntimeTurnStatus.CANCELED,
+    )
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while asyncio.get_event_loop().time() < deadline:
+        turn = mgr.store.load_turn(turn_id)
+        if turn.status in settled:
+            break
+        await asyncio.sleep(poll_s)
+    turn = mgr.store.load_turn(turn_id)
+    if turn.status not in settled:
         logger.warning(
             "[automation][feishu] turn not settled thread=%s turn=%s status=%s",
             thread_id,
             turn_id,
             turn.status,
         )
+        # Whatever was written so far is a fragment, not the answer; the
+        # turn keeps running, often on an approval only Workbench can give.
+        from deepseek_tui.utils.user_text import user_text
+
+        return user_text("turn_still_running")
     text = await _extract_turn_assistant_text(mgr, thread_id=thread_id, turn_id=turn_id)
     if text:
         return text
@@ -748,6 +896,7 @@ async def run_feishu_inbound_agent(
 TRIAGE_SKIP = "skip"
 TRIAGE_RUN = "run"
 TRIAGE_DEFER = "defer"
+TRIAGE_DROP = "drop"
 
 
 @dataclass(frozen=True, slots=True)
@@ -780,7 +929,7 @@ def apply_triage(
         return TriageDecision(TRIAGE_DEFER, f"policy={key}")
 
     if key in ("deny", "block", "drop"):
-        return TriageDecision(TRIAGE_DEFER, f"policy={key}")
+        return TriageDecision(TRIAGE_DROP, f"policy={key}")
 
     if key == "keyword":
         blocked = tuple(str(x).lower() for x in meta.get("block_keywords", ()))
@@ -788,8 +937,8 @@ def apply_triage(
         for token in blocked:
             if token and token in lowered:
                 logger.info("[automation][triage] blocked keyword=%s", token)
-                return TriageDecision(TRIAGE_DEFER, f"blocked keyword: {token}")
+                return TriageDecision(TRIAGE_DROP, f"blocked keyword: {token}")
         return TriageDecision(TRIAGE_RUN, "keyword pass")
 
-    logger.warning("[automation][triage] unknown policy=%s — treating as skip", key)
-    return TriageDecision(TRIAGE_RUN, "unknown policy fallback")
+    # A typo in a blocking policy must not silently let everything through.
+    raise ValueError(f"Unknown triage policy: {policy}")

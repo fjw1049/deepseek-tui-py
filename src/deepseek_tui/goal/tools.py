@@ -208,7 +208,7 @@ class UpdateGoalTool(ToolSpec):
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
+        return [ToolCapability.MUTATES_STATE]
 
     def supports_parallel(self) -> bool:
         return False
@@ -270,7 +270,7 @@ class SetGoalBudgetTool(ToolSpec):
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
+        return [ToolCapability.MUTATES_STATE]
 
     def supports_parallel(self) -> bool:
         return False

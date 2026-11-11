@@ -271,7 +271,7 @@ def is_sandbox_available() -> bool:
 
 def sandbox_policy_for_mode(mode: str, workspace: Path) -> ExecutionSandboxPolicy:
     normalized = (mode or "agent").strip().lower()
-    if normalized == "plan":
+    if normalized in {"plan", "ask"}:
         return ExecutionSandboxPolicy.read_only()
     if normalized in ("yolo", "trust"):
         return ExecutionSandboxPolicy.danger_full_access()
@@ -308,6 +308,8 @@ def resolve_execution_sandbox_policy(
     ``trust_mode`` / ``sandbox_mode=danger-full-access`` still win over the
     agent-mode default (workspace-write).
     """
+    if (mode or "").strip().lower() == "ask":
+        return ExecutionSandboxPolicy.read_only()
     sm = (sandbox_mode or "").strip().lower()
     if not sm and approval_policy is not None:
         sm = sandbox_mode_for_approval_tier(approval_policy)

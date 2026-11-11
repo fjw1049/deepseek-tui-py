@@ -164,19 +164,22 @@ class SubAgentManager:
             if a.status.kind is SubAgentStatusKind.RUNNING
         )
 
-    def running_foreground_count(self) -> int:
+    def running_foreground_ids(self) -> list[str]:
         """Running agents the parent turn should block on (handoff).
 
         Excludes ``background`` agents — those are detached from the handoff
         wait. Their ``<deepseek:subagent.done>`` sentinel is still delivered
         (active-turn handoff drain, or idle hidden follow-up turn).
         """
-        return sum(
-            1
-            for a in self._agents.values()
+        return [
+            aid
+            for aid, a in self._agents.items()
             if a.status.kind is SubAgentStatusKind.RUNNING
             and not getattr(a, "background", False)
-        )
+        ]
+
+    def running_foreground_count(self) -> int:
+        return len(self.running_foreground_ids())
 
     def list_filtered(self, include_archived: bool = False) -> list[SubAgentResult]:
         out: list[SubAgentResult] = []
@@ -256,6 +259,7 @@ class SubAgentManager:
                 output_schema=request.output_schema,
                 system_prompt=request.system_prompt,
                 background=request.background,
+                parent_id=(request.parent_agent_id or "").strip() or None,
             )
             self._claim_agent(agent)
             self._agents[agent.id] = agent
@@ -480,6 +484,25 @@ class SubAgentManager:
             except asyncio.TimeoutError:
                 pass
 
+    def child_ids(self, parent_id: str, *, running_only: bool = False) -> list[str]:
+        """Live agents spawned by sub-agent *parent_id*."""
+        return [
+            aid for aid, agent in self._agents.items()
+            if agent.parent_id == parent_id
+            and (not running_only or agent.status.kind is SubAgentStatusKind.RUNNING)
+        ]
+
+    async def cancel_children(self, parent_id: str) -> None:
+        """Stop children a sub-agent leaves running; nobody would read their results.
+
+        Each cancelled child's own loop does the same for its children.
+        """
+        for child_id in self.child_ids(parent_id, running_only=True):
+            try:
+                await self.cancel(child_id)
+            except KeyError:
+                continue
+
     def known_agent_ids(self) -> set[str]:
         """Snapshot the ids of every agent currently tracked.
 
@@ -663,6 +686,7 @@ class SubAgentRuntime:
     # auto-approved (fire-and-forget) child must not silently gain
     # workspace-confinement bypass / danger-full-access sandbox.
     trust_mode: bool = False
+    cron_restricted: bool = False
 
     policy: Any | None = None
     network_policy: Any | None = None
@@ -689,6 +713,7 @@ class SubAgentRuntime:
             approval_handler=self.approval_handler,
             emit_event=self.emit_event,
             trust_mode=self.trust_mode,
+            cron_restricted=self.cron_restricted,
             policy=self.policy,
             network_policy=self.network_policy,
             path_grants=self.path_grants,

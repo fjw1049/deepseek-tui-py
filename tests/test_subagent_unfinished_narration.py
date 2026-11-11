@@ -178,11 +178,11 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
         ),
         StreamDone(usage=None),
     ]
-    # Heading-less essays keep running. Two stalls, then a forced
-    # summary round writes the real report; resume continues from there.
+    # A heading-less report is asked once to add the heading (tools off),
+    # then writes the real report; resume continues from there.
     manager, client = await _attach(
         tmp_path,
-        [_LONG_NO_HEADING, _LONG_NO_HEADING, _LONG_NO_HEADING, _REAL_SUMMARY, follow_up],
+        [_LONG_NO_HEADING, _REAL_SUMMARY, follow_up],
     )
     try:
         spawned = await manager.spawn(
@@ -203,7 +203,10 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
             subagent_transcript_path(tmp_path, first.agent_id)
         )
         assert existing is not None
-        assert existing.steps_taken == 4
+        assert existing.steps_taken == 2
+        retry = client.requests[1]
+        assert not retry.tools
+        assert "missing the required `### SUMMARY` heading" in _request_text(retry)
 
         await manager.resume(first.agent_id)
         await manager.wait([first.agent_id], mode="all", timeout_ms=10_000)
@@ -211,13 +214,13 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
     finally:
         await manager.shutdown()
 
-    assert second.steps_taken == 5
+    assert second.steps_taken == 3
     assert has_summary_section(second.result)
     assert "store.py" in (second.result or "")
     # Resume reused the checkpoint; it did not restart from the raw prompt.
     assert any(
         "Continue from the checkpoint" in _request_text(req)
-        for req in client.requests[4:]
+        for req in client.requests[2:]
     )
 
 
@@ -297,3 +300,30 @@ async def test_a_real_report_can_still_resume(
         "Continue from the checkpoint" in _request_text(req)
         for req in client.requests[1:]
     )
+
+
+
+@pytest.mark.asyncio
+async def test_a_report_still_missing_its_heading_is_accepted_after_one_ask(
+    tmp_path: Path,
+) -> None:
+    """One reminder, then the work is handed over instead of redone."""
+    manager, client = await _attach(
+        tmp_path, [_LONG_NO_HEADING, _LONG_NO_HEADING, _REAL_SUMMARY]
+    )
+    try:
+        spawned = await manager.spawn(
+            SpawnRequest(
+                prompt="调研测试目录",
+                agent_type=SubAgentType.EXPLORE,
+                assignment=SubAgentAssignment(objective="heading", role="qa"),
+            )
+        )
+        await manager.wait([spawned.agent_id], mode="all", timeout_ms=10_000)
+        snapshot = await manager.get_result(spawned.agent_id)
+    finally:
+        await manager.shutdown()
+
+    assert len(client.requests) == 2
+    assert "plugin loader" in (snapshot.result or "")
+    assert "too brief" not in _request_text(client.requests[1])

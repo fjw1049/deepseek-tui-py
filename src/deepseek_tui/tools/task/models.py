@@ -34,11 +34,51 @@ MAX_WORKERS = 4
 _MAX_TERMINAL_IN_MEMORY = 50
 # On process restart, RUNNING tasks younger than this are re-queued for
 # transcript resume; older ones are marked FAILED (still resumable via
-# task_resume). Must be >= ordinary TASK_WALL_CLOCK_SECONDS in
-# engine.dispatch (7200) — a 5-minute stale window previously failed any
-# durable task that had already been running >5min when the process died.
+# task_create(resume=...)). Must be >= the longest wall clock in
+# RUN_POLICIES — a 5-minute stale window previously failed any durable task
+# that had already been running >5min when the process died.
 STALE_RUNNING_TASK_SECONDS = 7200
+# Legacy: tasks saved before ``kind`` existed are recognised by this prefix.
 CRON_PROMPT_MARKER = "[cron:"
+TRIGGER_PROMPT_MARKER = "[trigger:"
+
+
+class TaskKind(str, Enum):
+    """Who started a task. Decides its run policy, not its prompt text."""
+
+    TASK = "task"  # task_create from a conversation
+    CRON = "cron"  # a scheduled automation run
+    TRIGGER = "trigger"  # POST /v1/triggers
+
+
+@dataclass(frozen=True, slots=True)
+class RunPolicy:
+    max_rounds: int
+    wall_clock_secs: int
+    # At most one task of a serial kind runs at a time.
+    serial: bool = False
+    # Tool profile pinned for the whole run, resumes included.
+    tool_profile: str | None = None
+
+
+# One table for every per-kind limit. Cron stays tighter: scheduled jobs
+# should finish promptly, and one at a time.
+RUN_POLICIES: dict[TaskKind, RunPolicy] = {
+    TaskKind.TASK: RunPolicy(max_rounds=100, wall_clock_secs=7200),
+    TaskKind.CRON: RunPolicy(
+        max_rounds=40, wall_clock_secs=900, serial=True, tool_profile="cron"
+    ),
+    TaskKind.TRIGGER: RunPolicy(max_rounds=100, wall_clock_secs=7200, tool_profile="cron"),
+}
+
+
+def task_kind_from_legacy_prompt(prompt: str) -> TaskKind:
+    text = prompt.lstrip()
+    if text.startswith(CRON_PROMPT_MARKER):
+        return TaskKind.CRON
+    if text.startswith(TRIGGER_PROMPT_MARKER):
+        return TaskKind.TRIGGER
+    return TaskKind.TASK
 STALE_RESTART_ERROR = "Task interrupted (stale after restart)"
 
 
@@ -178,6 +218,8 @@ class TaskRecord:
     auto_approve: bool
     status: TaskStatus
     created_at: str
+    browser_grant: dict[str, str] | None = None
+    kind: TaskKind = TaskKind.TASK
     started_at: str | None = None
     ended_at: str | None = None
     duration_ms: int | None = None
@@ -261,6 +303,8 @@ class NewTaskRequest:
     thread_id: str | None = None
     config: Config | None = None
     idempotency_key: str | None = None
+    browser_grant: dict[str, str] | None = None
+    kind: TaskKind = TaskKind.TASK
 
 
 @dataclass(slots=True)
@@ -298,6 +342,12 @@ class ExecutionTask:
     task_manager: Any = None
     provider: str | None = None
     config: Config | None = None
+    browser_grant: dict[str, str] | None = None
+    kind: TaskKind = TaskKind.TASK
+
+    @property
+    def policy(self) -> RunPolicy:
+        return RUN_POLICIES[self.kind]
 
 
 @dataclass(slots=True)

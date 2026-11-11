@@ -144,8 +144,10 @@ def _parse_wait_ids(data: dict[str, Any]) -> list[str]:
 
 def _parse_wait_mode(data: dict[str, Any]) -> str:
     mode = _pick_str_aliased(data, "wait_mode", "mode") or "any"
-    if mode not in ("any", "all", "first"):
-        raise ToolError(f"Invalid wait_mode '{mode}'. Use: any, all, or first")
+    if mode == "first":  # older spelling of "any"; still accepted
+        return "any"
+    if mode not in ("any", "all"):
+        raise ToolError(f"Invalid wait_mode '{mode}'. Use: any or all")
     return mode
 
 
@@ -548,8 +550,13 @@ async def _execute_wait(input_data: dict[str, Any], context: ToolContext) -> Too
         )
     manager = _require_manager(context)
     agent_ids = _parse_wait_ids(input_data)
+    # A sub-agent shares this manager with its parent and siblings, so the
+    # caller itself is among the running agents and would never finish.
+    self_id = context.metadata.get("subagent_id")
+    if self_id in agent_ids:
+        raise ToolError("a sub-agent cannot wait on itself")
     if not agent_ids:
-        agent_ids = _running_agent_ids(manager)
+        agent_ids = [aid for aid in _running_agent_ids(manager) if aid != self_id]
     if not agent_ids:
         empty: list[dict[str, Any]] = []
         return ToolResult(
@@ -632,8 +639,8 @@ _ACTION_BLURBS: dict[str, str] = {
     ),
     "wait": (
         "wait: wait for one or more sub-agents to reach a terminal state "
-        "('agent_ids' list or a single 'agent_id'; 'wait_mode' any/all/"
-        "first, default any; 'timeout_ms'). With no ids, waits on all "
+        "('agent_ids' list or a single 'agent_id'; 'wait_mode' any/all, "
+        "default any; 'timeout_ms'). With no ids, waits on all "
         "currently running sub-agents. Also waits on background shell "
         "processes via 'process_ids'/'process_id' (same wait_mode); agent "
         "ids and process ids cannot be mixed in one call."
@@ -734,8 +741,9 @@ class AgentTool(ToolSpec):
                 "model": {
                     "type": "string",
                     "description": (
-                        "Optional model override (action=spawn; e.g., "
-                        "'deepseek-chat', 'deepseek-v4-pro')"
+                        "Optional model override (action=spawn); omit to use "
+                        "the configured sub-agent model. 'provider::model' "
+                        "picks another configured provider."
                     ),
                 },
                 "nickname": {
@@ -810,8 +818,11 @@ class AgentTool(ToolSpec):
                 },
                 "wait_mode": {
                     "type": "string",
-                    "enum": ["any", "all", "first"],
-                    "description": "Wait behavior (action=wait): any (default), all, or first",
+                    "enum": ["any", "all"],
+                    "description": (
+                        "Wait behavior (action=wait): any (default) returns "
+                        "when one target finishes, all when every target has"
+                    ),
                 },
             },
             "required": ["action"],
@@ -839,6 +850,8 @@ class AgentTool(ToolSpec):
             for cap in _ACTION_CAPABILITIES[action]:
                 if cap not in caps:
                     caps.append(cap)
+        if self._allow_resume or any(action not in READ_AGENT_ACTIONS for action in self._allowed_actions):
+            caps = [cap for cap in caps if cap != ToolCapability.READ_ONLY]
         return caps
 
     def approval_requirement_for_input(
@@ -856,11 +869,11 @@ class AgentTool(ToolSpec):
         return self.approval_requirement()
 
     def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
-        # Static capabilities are the union across actions (they include
-        # READ_ONLY), which would mark even spawn parallel-safe; decide per
-        # call instead.
+        # Resume restarts work even when paired with a read action.
+        if _pick_str(input_data, "resume") is not None:
+            return False
         action = input_data.get("action")
-        return isinstance(action, str) and action.strip() in READ_AGENT_ACTIONS
+        return isinstance(action, str) and action.strip() in READ_AGENT_ACTIONS and action.strip() in self._allowed_actions
 
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext

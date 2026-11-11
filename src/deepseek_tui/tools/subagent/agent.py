@@ -67,6 +67,7 @@ class SubAgent:
         system_prompt: str | None = None,
         background: bool = False,
         provider: str | None = None,
+        parent_id: str | None = None,
     ) -> None:
         self.id: str = f"agent_{uuid.uuid4().hex[:8]}"
         self.agent_type = agent_type
@@ -91,6 +92,8 @@ class SubAgent:
         self.session_boot_id = session_boot_id
         self.workspace = workspace or Path.cwd()
         self.spawn_depth = spawn_depth
+        # The sub-agent that spawned this one; None for the main engine's children.
+        self.parent_id = parent_id
         self.fork_messages = fork_messages
         self.parent_cancel = parent_cancel
         self.mailbox = mailbox

@@ -203,3 +203,16 @@ async def _slow_subagent_stub(agent, cancel):  # noqa: ANN001
     except asyncio.TimeoutError:
         return "finished"
     raise asyncio.CancelledError
+
+
+def test_subagent_personas_are_not_code_only_and_keep_granted_paths() -> None:
+    from deepseek_tui.tools.subagent.types import SubAgentType
+
+    for agent_type in SubAgentType:
+        text = agent_type.type_prompt()
+        assert "NEVER use absolute paths" not in text
+        assert "ignore the path" not in text
+    for agent_type in (SubAgentType.GENERAL, SubAgentType.IMPLEMENTER, SubAgentType.CUSTOM):
+        assert "granted" in agent_type.type_prompt()
+    assert "codebase" not in SubAgentType.EXPLORE.type_prompt()
+    assert "test suite" not in SubAgentType.VERIFIER.type_prompt()

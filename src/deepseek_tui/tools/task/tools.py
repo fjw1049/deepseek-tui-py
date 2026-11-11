@@ -20,8 +20,8 @@ decision D3) but is no longer exposed as a tool.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from deepseek_tui.tools.registry import (
@@ -33,12 +33,14 @@ from deepseek_tui.tools.registry import (
     ToolSpec,
 )
 from deepseek_tui.tools.task.helpers import (
+    _TASK_OUTPUT_RESULT_CHARS,
     _enforce_max_task_nest_depth,
     _optional_int,
     _optional_string,
     _require_manager,
     _require_string,
     _task_result,
+    resolve_inside_workspace,
 )
 from deepseek_tui.tools.task.models import (
     NewTaskRequest,
@@ -203,25 +205,13 @@ class TaskCreateTool(ToolSpec):
         workspace. Relative paths are treated as workspace-relative; the
         session workspace itself is allowed.
         """
-        raw = _optional_string(input_data, "workspace")
-        base = context.working_directory.resolve()
-        if raw is None:
-            return str(base)
-        candidate = Path(raw).expanduser()
-        if not candidate.is_absolute():
-            candidate = base / candidate
-        resolved = candidate.resolve()
-        try:
-            resolved.relative_to(base)
-        except ValueError:
-            raise ToolError(
-                "workspace must be inside the current session workspace "
-                f"({base}); got {resolved}"
-            ) from None
-        return str(resolved)
+        return resolve_inside_workspace(
+            _optional_string(input_data, "workspace"), context
+        )
 
 
 _TASK_KINDS = ("task", "agent", "process")
+_DEFAULT_TASK_LIST_LIMIT = 20
 
 
 class TaskListTool(ToolSpec):
@@ -233,7 +223,9 @@ class TaskListTool(ToolSpec):
             "List background work of all kinds: durable tasks (newest first), "
             "sub-agents, and background shell processes. Each entry carries a "
             "'kind' field (task | agent | process); pass 'kind' to restrict "
-            "to one source and 'limit' to cap the durable-task count."
+            "to one source. Durable tasks default to the newest "
+            f"{_DEFAULT_TASK_LIST_LIMIT} in this workspace; 'limit' and "
+            "'all_workspaces' widen that."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -245,7 +237,14 @@ class TaskListTool(ToolSpec):
                     "minimum": 1,
                     "description": (
                         "Maximum durable tasks to return (newest first); "
-                        "omit for all."
+                        f"default {_DEFAULT_TASK_LIST_LIMIT}."
+                    ),
+                },
+                "all_workspaces": {
+                    "type": "boolean",
+                    "description": (
+                        "Include durable tasks from other workspaces "
+                        "(default: only this workspace)."
                     ),
                 },
                 "kind": {
@@ -253,8 +252,8 @@ class TaskListTool(ToolSpec):
                     "enum": list(_TASK_KINDS),
                     "description": (
                         "Filter by kind: 'task' = durable background "
-                        "tasks, 'agent' = in-session sub-agents. Omit for "
-                        "both."
+                        "tasks, 'agent' = in-session sub-agents, 'process' "
+                        "= background shell processes. Omit for all."
                     ),
                 },
             },
@@ -273,16 +272,22 @@ class TaskListTool(ToolSpec):
                 f"kind must be one of: {', '.join(_TASK_KINDS)}"
             )
         limit_val = input_data.get("limit")
-        limit = int(limit_val) if isinstance(limit_val, int) else None
+        limit = int(limit_val) if isinstance(limit_val, int) else _DEFAULT_TASK_LIST_LIMIT
+        everywhere = input_data.get("all_workspaces") is True
 
-        # Source 1: durable tasks (newest first).
+        # Source 1: durable tasks (newest first). The store is user-level and
+        # shared by every project, so default to this one.
         task_payload: list[dict[str, Any]] = []
+        task_total = 0
         if kind_filter in (None, "task"):
             manager = _require_manager(context)
-            summaries = await manager.list_tasks(limit)
+            summaries = await manager.list_tasks(
+                workspace=None if everywhere else context.working_directory
+            )
+            task_total = len(summaries)
             task_payload = [
                 asdict(s) | {"status": s.status.value, "kind": "task"}
-                for s in summaries
+                for s in summaries[:limit]
             ]
 
         # Source 2: sub-agents (prior-session archived agents excluded,
@@ -310,7 +315,11 @@ class TaskListTool(ToolSpec):
 
         lines: list[str] = []
         if kind_filter in (None, "task"):
-            lines.append(f"{len(task_payload)} task(s):")
+            more = task_total - len(task_payload)
+            lines.append(
+                f"{len(task_payload)} task(s):"
+                + (f" ({more} older not shown; raise 'limit')" if more > 0 else "")
+            )
             for item in task_payload:
                 tid = item.get("id", "?")
                 status = item.get("status", "?")
@@ -373,13 +382,15 @@ class TaskOutputTool(ToolSpec):
             "Read the output of background work: a durable task record via "
             "'task_id', a sub-agent result via 'agent_id', or a background "
             "shell process via 'process_id' (at least one required). For "
-            "agents/processes, 'block': true waits for completion "
+            "all three kinds, 'block': true waits for completion "
             "('timeout_ms', default 180000, max 3600000); the default "
             "non-blocking peek returns status: running for unfinished jobs, "
             "which is a status report, not the result. When collecting a "
             "finished/long-running job, pass block: true. With 'process_id' "
             "plus 'task_id', the collected output is also archived as a task "
-            "artifact."
+            "artifact. Timing out or canceling the wait does not cancel the task. "
+            "After three unfinished peeks at the same target, the runtime automatically "
+            "waits up to 60 seconds on subsequent queries (except durable-task workers)."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -397,22 +408,65 @@ class TaskOutputTool(ToolSpec):
                 },
                 "block": {
                     "type": "boolean",
-                    "description": "Block until complete (agent/process)",
+                    "description": "Wait until complete, bounded by timeout_ms",
                 },
                 "timeout_ms": {
                     "type": "integer",
-                    "description": "Wait timeout in milliseconds (agent/process)",
+                    "description": "Wait timeout in milliseconds (default 180000, max 3600000)",
                 },
             },
             "additionalProperties": False,
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
+        # The combined process_id + task_id form archives output on disk.
+        return [ToolCapability.MUTATES_STATE]
 
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
+    def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
+        return not (input_data.get("process_id") and (input_data.get("task_id") or input_data.get("id")))
+
+    async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+        target = next(((key, input_data[key]) for key in ("process_id", "agent_id", "task_id", "id")
+                       if isinstance(input_data.get(key), str) and input_data[key]), None)
+        if target is None and context.active_task_id:
+            target = ("task_id", context.active_task_id)
+        prior = context.metadata.get("task_output_poll", {})
+        count = prior.get("count", 0) if prior.get("target") == target else 0
+        automatic = (target is not None and count >= 3 and not input_data.get("block")
+                     and not (context.active_task_id and target[0] in {"task_id", "id"}))
+        args = input_data
+        if automatic:
+            requested = input_data.get("timeout_ms")
+            timeout = min(60000, requested if type(requested) is int else 60000,
+                          context.timeout_ms if context.timeout_ms is not None else 60000)
+            args = {**input_data, "block": True, "timeout_ms": max(1, timeout)}
+        started = asyncio.get_running_loop().time()
+        result = await self._execute_output(args, context)
+        waited = bool(args.get("block")) and asyncio.get_running_loop().time() - started >= 1
+        if waited:
+            from dataclasses import replace
+
+            result = replace(result, metadata={**result.metadata, "runtime_waited": True})
+        status = result.metadata.get("status")
+        if isinstance(status, dict):
+            status = status.get("kind", status.get("state"))
+        unfinished = status in {"running", "queued", "pending", "working"}
+        context.metadata["task_output_poll"] = {
+            "target": target, "count": count + 1 if unfinished and not input_data.get("block") else 0,
+        }
+        if automatic:
+            from deepseek_tui.engine import interventions
+
+            from dataclasses import replace
+
+            result = replace(result,
+                content=result.content + f"\n[Runtime converted repeated polling to a bounded wait of up to {args['timeout_ms']} ms.]",
+                metadata={**result.metadata, "automatic_wait_ms": args["timeout_ms"]})
+            if count == 3:
+                interventions.record("guard", "repeated_poll_wait", outcome="waited")
+        return result
+
+    async def _execute_output(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
         process_id = _optional_string(input_data, "process_id")
         agent_id = _optional_string(input_data, "agent_id")
         if process_id is not None and agent_id is not None:
@@ -441,21 +495,27 @@ class TaskOutputTool(ToolSpec):
             task = await manager.get_task(task_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
-        result = _task_result("task_output", task)
-        # Durable tasks are fire-and-forget — block cannot wait for them.
         if bool(input_data.get("block", False)):
-            note = (
-                "note: 'block' is ignored for durable tasks — they do not "
-                "re-enter this turn. Re-call task_output later, or use "
-                "task_list to check status."
-            )
-            meta = dict(result.metadata)
-            meta["block_ignored"] = True
-            return ToolResult(
-                success=result.success,
-                content=f"{result.content}\n{note}",
-                metadata=meta,
-            )
+            if task.id == context.active_task_id and not task.status.is_terminal():
+                raise ToolError("A task cannot wait for its own completion")
+            if context.active_task_id and not task.status.is_terminal():
+                raise ToolError(
+                    "A running durable task cannot block waiting for another durable task: "
+                    "it may occupy the worker that task needs. Use block=false or finish "
+                    "this task so the queued work can run."
+                )
+            timeout_ms = _optional_int(input_data, "timeout_ms")
+            timeout = max(1, min(timeout_ms if timeout_ms is not None else 180000, 3600000)) / 1000
+            deadline = asyncio.get_running_loop().time() + timeout
+            while not task.status.is_terminal():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(0.1, remaining))
+                task = await manager.get_task(task.id)
+        result = _task_result("task_output", task, _TASK_OUTPUT_RESULT_CHARS)
+        if bool(input_data.get("block", False)) and not task.status.is_terminal():
+            result.metadata["timed_out"] = True
         return result
 
     async def _process_output(

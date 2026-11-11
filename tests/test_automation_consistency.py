@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from deepseek_tui.automation.delivery import DeliveryNotSent
+
 from deepseek_tui.config.models import Config
 from deepseek_tui.state.secrets import SecretsManager
 from deepseek_tui.tools.automation import (
@@ -201,7 +203,7 @@ async def test_resumed_task_updates_run_and_delivers_new_outcome_once(
             delivery={"mode": "feishu", "to": "synthetic", "best_effort": False},
         )
     )
-    deliver = AsyncMock(side_effect=RuntimeError("channel unavailable") if delivery_fails else None)
+    deliver = AsyncMock(side_effect=DeliveryNotSent("channel rejected send") if delivery_fails else None)
     monkeypatch.setattr("deepseek_tui.automation.pipeline._FeishuSink.deliver", deliver)
     await tasks.start()
     try:
@@ -237,7 +239,7 @@ async def test_resumed_task_updates_run_and_delivers_new_outcome_once(
         )
         assert saved.error == ("second attempt failed" if resume_fails else None)
         assert saved.ended_at == task.ended_at
-        assert saved.delivery_done and saved.delivery_attempts == 0
+        assert saved.delivery_done and saved.delivery_attempts == 1
         assert deliver.await_count == before + 1
         if not resume_fails:
             assert "recovered report" in deliver.await_args.kwargs["summary"]

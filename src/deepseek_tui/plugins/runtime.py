@@ -92,6 +92,12 @@ class CompositeMcpManager(McpManager):
             if self._manager_for_server(name) is manager
         }
 
+    def can_validate_tool_name(self, qualified: str) -> bool:
+        manager = self._manager_for_tool(qualified)
+        if manager is not None:
+            return manager.can_validate_tool_name(qualified)
+        return all(manager.can_validate_tool_name(qualified) for manager in self._managers)
+
     def tools_http_payload(self) -> list[dict[str, Any]]:
         return [tool for manager in self._managers for tool in manager.tools_http_payload()
                 if self._manager_for_tool(qualify_tool_name(tool["server"], tool["name"])) is manager]

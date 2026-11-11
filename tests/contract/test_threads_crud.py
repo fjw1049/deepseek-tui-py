@@ -89,7 +89,8 @@ async def test_thread_warmup_endpoint_loads_engine(
         calls += 1
         wd = kwargs.get("working_directory", Path("."))
         ctx = ToolContext(working_directory=Path(wd))  # type: ignore[arg-type]
-        return SimpleNamespace(tool_context=ctx, run=AsyncMock())
+        return SimpleNamespace(tool_context=ctx, run=AsyncMock(),
+                               configure_interaction_mode=lambda *args, **kwargs: None)
 
     monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
     monkeypatch.setattr(

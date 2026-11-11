@@ -216,6 +216,12 @@ class BrowserUseTool(ToolSpec):
         return False
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+        if context.metadata.get("cron_restricted"):
+            from deepseek_tui.automation.permissions import browser_authorized
+            from deepseek_tui.tools.user_input import unattended_tool_denial
+
+            if not browser_authorized(context):
+                return unattended_tool_denial(context, "browser_use", "Automation browser permission is absent, revoked or outdated")
         browser = context.metadata.get("browser_service")
         thread_id = context.metadata.get("runtime_thread_id")
         if browser is None or not thread_id:

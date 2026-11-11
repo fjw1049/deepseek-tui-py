@@ -183,6 +183,8 @@ async def test_engine_warns_then_pauses_a_dead_loop_until_the_next_turn(tmp_path
     )
     tool = RepeatingScreen()
     engine.tool_registry.register(tool)
+    # Keep the injected observation fixture independent of runtime startup.
+    engine._prepare_cua = AsyncMock()
     engine._handle_approval_flow = AsyncMock(return_value=False)
     try:
         result = await engine._run_conversation([Message.user("Open it")], "test", "sys", None)

@@ -306,7 +306,7 @@ class DeepSeekTUI(App[None]):
                 status.set_status("ready")
             else:
                 status.set_status(applied)
-            self._engine.mode = self._interaction_mode
+            self._engine.configure_interaction_mode(self._interaction_mode, reason="tui_start")
             self._announce_plugins()
             self._adopt_session(self._engine._cycle_session_id)
             await self._engine.run_lifecycle_hook("session_start")
@@ -593,7 +593,7 @@ class DeepSeekTUI(App[None]):
         self._engine._user_turn_index = len(turns)
         self._engine.default_model = thread.model
         self._interaction_mode = thread.mode
-        self._engine.mode = thread.mode
+        self._engine.configure_interaction_mode(thread.mode, reason="tui_restore")
         self.query_one(Transcript).hydrate_from_messages(restored)
         self.config.model = thread.model
         self.query_one(StatusBar).set_model(thread.model)

@@ -22,7 +22,7 @@ FIXTURE_SERVER = Path(__file__).resolve().parent / "fixtures" / "minimal_mcp_ser
 
 
 @pytest.fixture
-def mcp_manager() -> McpManager:
+async def mcp_manager():
     cfg = McpServerConfig(
         name="fixture",
         command=sys.executable,
@@ -31,11 +31,69 @@ def mcp_manager() -> McpManager:
         read_timeout=30.0,
         execute_timeout=30.0,
     )
-    return McpManager([cfg])
+    manager = McpManager([cfg])
+    try:
+        yield manager
+    finally:
+        await manager.stop_all()
 
 
 @pytest.mark.e2e
 class TestMcpStdioE2E:
+    @pytest.mark.parametrize("mode", ["ask", "plan"])
+    async def test_explicit_readonly_trust_and_revocation(self, mcp_manager, tmp_path, mode):
+        from deepseek_tui.config import Config
+        from deepseek_tui.tools.registry import ToolError
+
+        context = ToolContext(working_directory=tmp_path, metadata={MCP_MANAGER_KEY: mcp_manager})
+        engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=context,
+            exec_policy=ExecPolicyEngine(approval_policy="never"), approval_handler=AutoApprovalHandler())
+        engine.mode = mode
+        config = Config()
+        engine._app_config = config
+        engine._mcp_tools_cache = await mcp_manager.discover_tools()
+        assert not await engine._get_tools_with_mcp()
+        config.mcp_read_only_tools = ["mcp_fixture_echo"]
+        catalog = await engine._get_tools_with_mcp()
+        assert [entry["function"]["name"] for entry in catalog] == ["mcp_fixture_echo"]
+        call = ToolCall(id="trusted", name="mcp_fixture_echo", arguments={"message": "real read"})
+        result = await engine._execute_single_tool(call, catalog, "test")
+        assert result.success and result.content == "echo:real read"
+        config.mcp_read_only_tools = []
+        with pytest.raises(ToolError, match=f"{mode} mode"):
+            await engine._execute_single_tool(call, catalog, "test")
+
+    @pytest.mark.parametrize("mode", ["agent", "ask", "plan"])
+    async def test_template_discovery_and_real_file_read(self, tmp_path, mode):
+        (tmp_path / "report.txt").write_text("Inventory: 17 completed items", encoding="utf-8")
+        manager = McpManager([McpServerConfig(name="fixture", command=sys.executable,
+            args=[str(FIXTURE_SERVER), "--resources", str(tmp_path)])])
+        context = ToolContext(working_directory=tmp_path, metadata={MCP_MANAGER_KEY: manager})
+        from deepseek_tui.tools.mcp import ListMcpResourceTemplatesTool, ReadMcpResourceTool
+        from deepseek_tui.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(ListMcpResourceTemplatesTool())
+        registry.register(ReadMcpResourceTool())
+        engine = Engine(handle=EngineHandle(), client=AsyncMock(), tool_context=context,
+                        tool_registry=registry, exec_policy=ExecPolicyEngine(approval_policy="auto"),
+                        approval_handler=AutoApprovalHandler())
+        engine.mode = mode
+        try:
+            tools = await engine._get_tools_with_mcp()
+            assert "list_mcp_resource_templates" in [entry["function"]["name"] for entry in tools]
+            listed = await engine._execute_single_tool(ToolCall(id="list", name="list_mcp_resource_templates",
+                arguments={"server": "fixture"}), tools, "deepseek-chat")
+            assert listed.success
+            templates = listed.metadata["result"]["fixture"]
+            assert len(templates) == 2  # both pages from the real stdio process
+            uri = templates[0]["uriTemplate"].replace("{name}", "report.txt")
+            read = await engine._execute_single_tool(ToolCall(id="read", name="read_mcp_resource",
+                arguments={"server": "fixture", "uri": uri}), tools, "deepseek-chat")
+            assert read.success and "Inventory: 17 completed items" in read.content
+        finally:
+            await manager.stop_all()
+
     async def test_client_list_and_call_echo(self, mcp_manager: McpManager) -> None:
         client = await mcp_manager._ensure_client("fixture")  # noqa: SLF001
         tools = await client.list_tools()
@@ -72,6 +130,7 @@ class TestMcpStdioE2E:
         client = await mcp_manager._ensure_client("fixture")  # noqa: SLF001
         assert client.supports_capability("resources") is False
         assert await client.list_resources() == []
+        assert await client.list_resource_templates() == []
         assert await mcp_manager.list_resources() == {"fixture": []}
         assert await mcp_manager.list_resources("fixture") == {"fixture": []}
 

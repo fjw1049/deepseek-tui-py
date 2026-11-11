@@ -13,6 +13,7 @@ import httpx
 from deepseek_tui.client.network import NetworkSettings, read_network_settings
 
 if TYPE_CHECKING:
+    from deepseek_tui.config.models import Config
     from deepseek_tui.engine.usage_ledger import TurnUsageLedger
 
 import logging
@@ -76,7 +77,7 @@ class LLMClient(ABC):
         self._network_clients: dict[
             tuple[NetworkSettings, frozenset[str], str | None], httpx.AsyncClient
         ] = {}
-        self.media_config = None
+        self.media_config: Config | None = None
         self._vision_cache: dict[str, str] = {}
 
     async def prepare_media(self, request: MessageRequest) -> MessageRequest:

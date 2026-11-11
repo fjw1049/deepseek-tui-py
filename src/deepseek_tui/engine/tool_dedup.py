@@ -14,6 +14,7 @@ State is turn-local — reset at the start of each conversation turn.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -101,15 +102,21 @@ class ToolCallDeduplicator:
         self._consecutive_count = 0
         self._batch_results: dict[str, tuple[str, bool]] = {}
         self._batch_keys: list[str] = []
+        self._dynamic_keys: set[str] = set()
+        self._observations: dict[str, bytes] = {}
+        self._progressed: set[str] = set()
 
     def reset_turn(self) -> None:
         self._consecutive_key = None
         self._consecutive_count = 0
+        self._dynamic_keys.clear()
+        self._observations.clear()
         self.begin_batch()
 
     def begin_batch(self) -> None:
         self._batch_results.clear()
         self._batch_keys.clear()
+        self._progressed.clear()
 
     def end_batch(self) -> None:
         for key in self._batch_keys:
@@ -137,6 +144,10 @@ class ToolCallDeduplicator:
         if not allow_reuse or tool_name not in {"read_file", "grep_files", "file_search"}:
             self._batch_results.clear()
         key = make_tool_call_key(tool_name, args)
+        if tool_name in {"task_output", "task_list"} or (
+            tool_name == "agent" and isinstance(args, dict) and args.get("action") == "wait"
+        ):
+            self._dynamic_keys.add(key)
         prior = self._batch_results.get(key)
         if prior is not None and not prior[1]:
             content, is_error = prior
@@ -165,6 +176,8 @@ class ToolCallDeduplicator:
         content: str,
         *,
         is_error: bool,
+        observation_content: str | None = None,
+        runtime_waited: bool = False,
     ) -> None:
         """Remember a batch result so later same-key calls can reuse it.
 
@@ -174,11 +187,26 @@ class ToolCallDeduplicator:
         """
         if key not in self._batch_results:
             self._batch_keys.append(key)
+        if key in self._dynamic_keys and not is_error:
+            # Presentation may contain a fresh spill-file path on every call.
+            # Compare underlying output when the dispatcher provides it.
+            observation = hashlib.sha256(
+                (content if observation_content is None else observation_content).encode()
+            ).digest()
+            # A bounded runtime wait is not a busy-poll loop, even if the job
+            # has no new output. Turn/task deadlines still bound total execution.
+            if runtime_waited or observation != self._observations.get(key):
+                self._progressed.add(key)
+                if key == self._consecutive_key:
+                    self._consecutive_count = 0
+            self._observations[key] = observation
         self._batch_results[key] = (content, is_error)
 
     def decorate_execute_content(self, decision: DedupDecision, content: str) -> str:
         """Append an escalating reminder when the cross-round streak warrants it."""
         streak = decision.projected_streak
+        if decision.key in self._progressed:
+            return content
         if streak >= REPEAT_REMINDER_2_START:
             return content + _REMINDER_2
         if streak >= REPEAT_REMINDER_1_START:

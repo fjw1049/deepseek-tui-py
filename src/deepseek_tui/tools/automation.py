@@ -9,24 +9,23 @@ from __future__ import annotations
 
 # Model-visible cron tools backed by :class:`AutomationManager`.
 #
-# Three tools (Claude Code CronCreate / CronList / CronDelete shape):
+# Four tools (Claude Code CronCreate / CronList / CronDelete shape, plus update):
 #
 # ================ ==================================================
 # ``cron_create``  create a durable scheduled job (REQUIRES_APPROVAL);
 #                  ``run_now=true`` also fires it immediately
 # ``cron_list``    list jobs; with ``automation_id`` shows one job's
 #                  details + recent run history
+# ``cron_update``  change a job in place, including pause / resume
 # ``cron_delete``  delete (also wipes the job's run history)
 # ================ ==================================================
 #
-# There is deliberately no update/pause/resume/run tool: editing means
-# delete + recreate, and manual runs fold into ``cron_create(run_now)``.
-# The old ``automation_*`` names are retired from the schema; create /
-# list / read / delete keep working at the execution layer via
-# ``engine.dispatch.normalize_legacy_tool_call``.
+# Manual runs fold into ``cron_create(run_now)``. The old ``automation_*``
+# names are retired from the schema and forwarded at the execution layer
+# via ``engine.dispatch.normalize_legacy_tool_call``.
 #
 # The ``AutomationManager`` lives on ``ToolContext.metadata`` under the
-# key :data:`AUTOMATION_MANAGER_KEY`, set by ``Engine.create`` when the
+# key :data:`AUTOMATION_MANAGER_KEY`, set by ``create_tool_runtime`` when the
 # feature flag is enabled. If no manager is attached (feature flag off),
 # each tool returns a clean error so the LLM can fall back gracefully.
 #
@@ -50,21 +49,14 @@ import logging
 import os
 import shutil
 import uuid
-from dataclasses import dataclass, field
+from weakref import WeakValueDictionary
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 import asyncio
-
-__all__ = [
-    "AUTOMATION_MANAGER_KEY",
-    "CronCreateTool",
-    "CronDeleteTool",
-    "CronListTool",
-]
-
 
 AUTOMATION_MANAGER_KEY = "automation_manager"
 
@@ -103,6 +95,20 @@ def _optional_string_list(
     return out
 
 
+def _confined_cwds(input_data: dict[str, object], context: ToolContext) -> list[str] | None:
+    """Job directories, held to the session workspace like ``task_create``.
+
+    A job runs unattended with shell and auto-approval, so the model must not
+    aim it outside the folder the user opened.
+    """
+    from deepseek_tui.tools.task.helpers import resolve_inside_workspace
+
+    raw = _optional_string_list(input_data, "cwds")
+    if raw is None:
+        return None
+    return [resolve_inside_workspace(path, context) for path in raw]
+
+
 def _optional_int(input_data: dict[str, object], key: str) -> int | None:
     value = input_data.get(key)
     if value is None:
@@ -131,8 +137,10 @@ def _automation_to_payload(record: Any) -> dict[str, Any]:
 def _format_summary_line(record: Any) -> str:
     next_run = record.next_run_at or "—"
     last_run = record.last_run_at or "—"
+    # Full id: cron_list / cron_delete look jobs up by exact id, and this
+    # line is the only place the model sees it.
     return (
-        f"{record.id[:8]} | {record.status.value:<9} | "
+        f"{record.id} | {record.status.value:<9} | "
         f"next={next_run} | last={last_run} | {record.name}"
     )
 
@@ -194,6 +202,12 @@ def _resolve_delivery(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         return delivery
     if allowed:
         delivery["to"] = allowed[0]
+    elif mode in ("feishu", "email", "wecom"):
+        # Without a recipient every run would finish and then fail delivery.
+        raise ToolError(
+            f"delivery.mode={mode} has no configured recipient; configure the "
+            "default recipient first, or use mode 'notify' or 'silent'"
+        )
     return delivery
 
 
@@ -213,7 +227,9 @@ class CronCreateTool(ToolSpec):
             "expression ('0 9 * * *' = every day 09:00, '30 8 * * MON,FRI', "
             "'0 */2 * * *' = every 2 hours on the hour). One-shot jobs set "
             "run_at (ISO8601) and omit schedule — they fire once and are "
-            "then marked completed. Optional "
+            "then marked completed. If a recurring job is still running when "
+            "its next slot comes, that slot is skipped (recorded as skipped), "
+            "so runs never pile up. Optional "
             "delivery sends the task summary to feishu, email, or wecom after "
             "completion. For feishu include delivery.mode=feishu and "
             "delivery.to (open_chat_id); for wecom use delivery.mode=wecom "
@@ -222,14 +238,14 @@ class CronCreateTool(ToolSpec):
             "— this only applies at create time and cannot fire an "
             "already-existing job (use the Workbench Automations UI to run "
             "an existing job once). "
-            "When the job fires it may use: web_search, fetch_url, read_file, "
-            "grep_files, file_search, exec_shell, load_skill, and installed "
-            "MCP tools; delivery is handled by the system (do not ask the job "
-            "prompt to send Feishu/email itself). "
+            "The job runs unattended: it can search and fetch, read and edit "
+            "files in its workspace, run shell commands, load skills and use "
+            "installed MCP tools, but cannot ask questions. When delivery is "
+            "configured the system sends the result, so the job prompt should "
+            "not send it itself. "
             "After creating, tell the user they can view, pause, or delete "
             "the job in the Workbench sidebar Automations page. "
-            "To change an existing job, delete it with cron_delete and "
-            "recreate it (deleting wipes the job's run history). "
+            "To change an existing job, use cron_update. "
             "When created from a chat, each run's final summary is written "
             "back to that chat for follow-up discussion. "
             "Creation requires approval."
@@ -283,9 +299,11 @@ class CronCreateTool(ToolSpec):
                 "cwds": {
                     "type": "array",
                     "items": {"type": "string"},
+                    "maxItems": 1,
                     "description": (
-                        "Working directories the job runs in (absolute "
-                        "paths). Defaults to the current workspace."
+                        "The one working directory the job runs in, inside "
+                        "the current workspace. Defaults to the current "
+                        "workspace."
                     ),
                 },
                 "delivery": {
@@ -351,7 +369,7 @@ class CronCreateTool(ToolSpec):
         schedule = _optional_string(input_data, "schedule")
         run_at = _optional_string(input_data, "run_at")
         tz_name = _optional_string(input_data, "timezone")
-        cwds = _optional_string_list(input_data, "cwds") or [str(context.working_directory.resolve())]
+        cwds = _confined_cwds(input_data, context) or [str(context.working_directory.resolve())]
         delivery = _resolve_delivery(_optional_object(input_data, "delivery"))
         paused = bool(input_data.get("paused", False))
         run_now = bool(input_data.get("run_now", False))
@@ -379,7 +397,7 @@ class CronCreateTool(ToolSpec):
         if run_now:
             run = await _run_now(manager, record.id, context)
             content = f"{content}\nqueued run {run.id[:8]} (task_id={run.task_id or '—'})"
-            metadata["run"] = run.to_dict()
+            metadata["run"] = run.to_public_dict()
         return ToolResult(success=True, content=content, metadata=metadata)
 
 
@@ -402,6 +420,86 @@ async def _run_now(
         return await manager.run_now(automation_id, task_manager_raw)
     except KeyError as exc:
         raise ToolError(str(exc)) from exc
+
+
+class CronUpdateTool(ToolSpec):
+    """Change a scheduled job in place, keeping its id and run history."""
+
+    def name(self) -> str:
+        return "cron_update"
+
+    def description(self) -> str:
+        return (
+            "Change an existing scheduled job (from cron_list) in place: its "
+            "name, prompt, schedule (5-field cron) or run_at (one-shot), "
+            "timezone, working directory or delivery, or pause / resume it "
+            "with paused=true / false. Only the fields you pass change; the "
+            "job keeps its id, run history and chat. Requires approval."
+        )
+
+    def input_schema(self) -> dict[str, object]:
+        create = CronCreateTool().input_schema()["properties"]
+        assert isinstance(create, dict)
+        props: dict[str, object] = {
+            "automation_id": {
+                "type": "string",
+                "description": "Id of the job to change (from cron_list).",
+            },
+        }
+        for key in ("name", "prompt", "schedule", "run_at", "timezone", "cwds", "delivery"):
+            props[key] = create[key]
+        props["paused"] = {
+            "type": "boolean",
+            "description": "true pauses the job; false resumes it.",
+        }
+        return {
+            "type": "object",
+            "properties": props,
+            "required": ["automation_id"],
+            "additionalProperties": False,
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.REQUIRES_APPROVAL]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, object], context: ToolContext
+    ) -> ToolResult:
+        manager = _get_manager(context)
+        automation_id = _require_string(input_data, "automation_id")
+        paused = input_data.get("paused")
+        if paused is not None and not isinstance(paused, bool):
+            raise ToolError("paused must be a boolean")
+        delivery = _optional_object(input_data, "delivery")
+        req = UpdateAutomationRequest(
+            name=_optional_string(input_data, "name"),
+            prompt=_optional_string(input_data, "prompt"),
+            schedule=_optional_string(input_data, "schedule"),
+            run_at=_optional_string(input_data, "run_at"),
+            timezone=_optional_string(input_data, "timezone"),
+            cwds=_confined_cwds(input_data, context),
+            status=(
+                None if paused is None
+                else AutomationStatus.PAUSED if paused else AutomationStatus.ACTIVE
+            ),
+            delivery=_resolve_delivery(delivery) if delivery is not None else None,
+        )
+        if all(getattr(req, f) is None for f in req.__slots__):
+            raise ToolError("Nothing to change: pass at least one field to update")
+        try:
+            record = manager.update_automation(automation_id, req)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            success=True,
+            content=_format_summary_line(record),
+            metadata={"automation": _automation_to_payload(record)},
+        )
 
 
 class CronListTool(ToolSpec):
@@ -480,7 +578,7 @@ class CronListTool(ToolSpec):
                 content="\n".join(lines),
                 metadata={
                     "automation": _automation_to_payload(record),
-                    "runs": [r.to_dict() for r in runs],
+                    "runs": [r.to_public_dict() for r in runs],
                 },
             )
         limit = _optional_int(input_data, "limit") or 50
@@ -559,7 +657,7 @@ class CronDeleteTool(ToolSpec):
 #       <id>.json                              ← one AutomationRecord
 #       runs/<automation_id>/<run_id>.json     ← one AutomationRunRecord per fire
 #
-# The scheduler tick (see ``automation_scheduler.run_scheduler_loop``)
+# The scheduler tick (see ``run_scheduler_loop`` at the end of this module)
 # calls :meth:`AutomationManager.scheduler_tick` and
 # :meth:`AutomationManager.reconcile_run_statuses` on a fixed cadence.
 #
@@ -575,7 +673,16 @@ class CronDeleteTool(ToolSpec):
 if TYPE_CHECKING:
     from deepseek_tui.tools.task import TaskManager
 
+# One export list for the whole module (it used to be three, each
+# overwriting the last, so only the scheduler names were exported).
 __all__ = [
+    "AUTOMATION_MANAGER_KEY",
+    "AutomationSchedulerConfig",
+    "CronCreateTool",
+    "CronDeleteTool",
+    "CronListTool",
+    "CronUpdateTool",
+    "run_scheduler_loop",
     "CURRENT_AUTOMATION_SCHEMA_VERSION",
     "CURRENT_RUN_SCHEMA_VERSION",
     "MISFIRE_GRACE_SECS",
@@ -643,6 +750,11 @@ class AutomationRunStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
+    # The slot came while this job's previous run was still going.
+    SKIPPED = "skipped"
+
+
+SKIPPED_OVERLAP_REASON = "Skipped: the previous run of this job was still in progress"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -651,11 +763,11 @@ class AutomationRunStatus(str, Enum):
 
 
 def default_timezone() -> str:
-    """The host's IANA timezone name (``Asia/Shanghai``), or ``UTC``.
+    """The host's IANA timezone name (``Asia/Shanghai``).
 
     There is no stdlib API for this, so probe ``$TZ`` then the
-    ``/etc/localtime`` symlink. Windows has neither and falls back to
-    UTC — set the timezone explicitly there.
+    ``/etc/localtime`` symlink. Windows has neither and falls back to the
+    host's current UTC offset.
     """
     env = os.environ.get("TZ", "").strip()
     if env:
@@ -672,7 +784,22 @@ def default_timezone() -> str:
             return name
     except Exception:  # noqa: BLE001
         pass
-    return "UTC"
+    return _fixed_offset_zone()
+
+
+def _fixed_offset_zone() -> str:
+    """The host's current UTC offset as an IANA ``Etc/GMT±N`` zone.
+
+    Windows has no zone name to probe. Its offset is still right for "09:00
+    every day" (it only misses DST changes), where falling back to UTC would
+    fire hours off. ``Etc`` names invert the sign: UTC+8 is ``Etc/GMT-8``.
+    """
+    offset = datetime.now().astimezone().utcoffset()
+    seconds = int(offset.total_seconds()) if offset is not None else 0
+    if seconds == 0 or seconds % 3600:
+        return "UTC"
+    hours = seconds // 3600
+    return f"Etc/GMT{-hours:+d}"
 
 
 class AutomationSchedule:
@@ -846,6 +973,10 @@ class AutomationRunRecord:
     delivery_attempts: int = 0
     # Why delivery gave up; a done-but-failed send must not read as sent.
     delivery_error: str | None = None
+    # Additive journal: old records retain delivery_done semantics.
+    delivery_state: str = "pending"
+    # Frozen message and destination for retries; old records have no snapshot.
+    delivery_snapshot: dict[str, Any] | None = None
     conversation_thread_id: str | None = None
     conversation_written: bool = False
     # Per-run delivery config (HTTP-trigger runs carry their request's
@@ -854,6 +985,8 @@ class AutomationRunRecord:
     schema_version: int = CURRENT_RUN_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
+        from deepseek_tui.automation.delivery import sanitized_delivery_snapshot
+
         return {
             "schema_version": self.schema_version,
             "id": self.id,
@@ -870,10 +1003,25 @@ class AutomationRunRecord:
             "delivery_done": self.delivery_done,
             "delivery_attempts": self.delivery_attempts,
             "delivery_error": self.delivery_error,
+            "delivery_state": self.delivery_state,
+            "delivery_snapshot": sanitized_delivery_snapshot(self.delivery_snapshot),
             "conversation_thread_id": self.conversation_thread_id,
             "conversation_written": self.conversation_written,
             "delivery": self.delivery,
         }
+
+    def to_public_dict(self) -> dict[str, Any]:
+        from deepseek_tui.automation.delivery import public_delivery_config
+
+        result = self.to_dict()
+        result["delivery"] = public_delivery_config(self.delivery)
+        # Old failed sends could include webhook URLs in exception messages.
+        import re
+
+        for key in ("error", "delivery_error"):
+            if isinstance(result[key], str):
+                result[key] = re.sub(r"([?&]key=)[^\s&'\"]+", r"\1[redacted]", result[key])
+        return result
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> AutomationRunRecord:
@@ -899,6 +1047,8 @@ class AutomationRunRecord:
             delivery_done=bool(raw.get("delivery_done", False)),
             delivery_attempts=int(raw.get("delivery_attempts", 0)),
             delivery_error=_opt_str_value(raw.get("delivery_error")),
+            delivery_state=str(raw.get("delivery_state") or "pending"),
+            delivery_snapshot=raw.get("delivery_snapshot") or None,
             conversation_thread_id=_opt_str_value(raw.get("conversation_thread_id")),
             conversation_written=bool(raw.get("conversation_written", False)),
             delivery=raw.get("delivery") or None,
@@ -1026,6 +1176,9 @@ class AutomationManager:
         self._automations_dir.mkdir(parents=True, exist_ok=True)
         self._runs_dir.mkdir(parents=True, exist_ok=True)
         self._flatten_legacy_defs()
+        from deepseek_tui.automation.credential_migration import migrate_run_credentials
+
+        migrate_run_credentials(root)
         # Optional RuntimeThreadManager, injected by the server layer after
         # construction so ``delivery.mode=notify`` can append a thread notice.
         # Kept as an opaque ``Any`` so the tools layer never imports server
@@ -1037,6 +1190,7 @@ class AutomationManager:
         # (reconcile, discussion), ``_tick_lock`` serializes firing.
         self._scheduler_lock = asyncio.Lock()
         self._tick_lock = asyncio.Lock()
+        self._run_locks: WeakValueDictionary[tuple[str, str], asyncio.Lock] = WeakValueDictionary()
 
     @classmethod
     def open(cls, root: Path) -> AutomationManager:
@@ -1105,7 +1259,13 @@ class AutomationManager:
         status = req.status or AutomationStatus.ACTIVE
         if cron_expr is None:
             schedule = None
-            ZoneInfo(tz_name)  # validate even without a cron expression
+            try:
+                ZoneInfo(tz_name)  # validate even without a cron expression
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(
+                    f"Unknown timezone '{tz_name}'. Use an IANA name such as "
+                    "'Asia/Shanghai'."
+                ) from exc
         else:
             schedule = AutomationSchedule.parse(cron_expr, tz_name)
             cron_expr = schedule.expr
@@ -1286,7 +1446,46 @@ class AutomationManager:
 
     def save_run(self, run: AutomationRunRecord) -> None:
         self._runs_dir_for(run.automation_id).mkdir(parents=True, exist_ok=True)
-        write_json_atomic(self._run_path(run.automation_id, run.id), run.to_dict())
+        from deepseek_tui.automation.credential_migration import protect_run_record
+
+        payload = run.to_dict()
+        payload["delivery_snapshot"] = run.delivery_snapshot
+        write_json_atomic(self._run_path(run.automation_id, run.id), protect_run_record(payload))
+
+    def pending_delivery_confirmations(self) -> list[dict[str, Any]]:
+        """Include HTTP triggers and older runs outside the history page limit."""
+        return [
+            {**run.to_public_dict(), "automation_name": automation.name}
+            for automation in self._reconcile_targets()
+            for run in self.list_runs(automation.id)
+            if run.delivery_state == "uncertain"
+        ]
+
+    def _run_lock(self, automation_id: str, run_id: str) -> asyncio.Lock:
+        key = (automation_id, run_id)
+        lock = self._run_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._run_locks[key] = lock
+        return lock
+
+    async def resolve_delivery(self, automation_id: str, run_id: str, *, action: str) -> AutomationRunRecord:
+        """A human resolves an uncertain send; never rerun the model task."""
+        if action not in {"received", "retry"}:
+            raise ValueError("delivery action must be received or retry")
+        async with self._run_lock(automation_id, run_id):
+            run = next((r for r in self.list_runs(automation_id) if r.id == run_id), None)
+            if run is None:
+                raise KeyError(f"Run not found: {run_id}")
+            if run.delivery_state not in {"uncertain", "sending"}:
+                raise ValueError("Delivery is not awaiting confirmation; refresh the run")
+            run.delivery_state = "sent" if action == "received" else "pending"
+            run.delivery_done = action == "received"
+            run.delivery_error = None
+            if action == "retry":
+                run.delivery_attempts = 0
+            self.save_run(run)
+            return run
 
     def prune_runs(self, automation_id: str) -> None:
         """Keep the newest :data:`MAX_RUNS_PER_AUTOMATION` runs.
@@ -1294,9 +1493,12 @@ class AutomationManager:
         Reconcile walks every run each tick, so history must stay bounded.
         In-flight runs and pending result writes or deliveries are never dropped.
         """
-        from deepseek_tui.automation.delivery import DeliveryConfig
+        from deepseek_tui.automation.delivery import DeliveryConfig, DeliveryNotSent
 
         for run in self.list_runs(automation_id)[MAX_RUNS_PER_AUTOMATION:]:
+            # The old send remains unresolved even if today's channel is disabled.
+            if run.delivery_state in {"sending", "uncertain"}:
+                continue
             if run.status in (AutomationRunStatus.QUEUED, AutomationRunStatus.RUNNING):
                 continue
             if run.conversation_thread_id and not run.conversation_written:
@@ -1310,7 +1512,7 @@ class AutomationManager:
                 try:
                     if DeliveryConfig.from_mapping(delivery).is_active():
                         continue
-                except ValueError:
+                except (ValueError, DeliveryNotSent):
                     # Preserve pending work until its delivery config is repaired.
                     continue
             self._run_path(automation_id, run.id).unlink(missing_ok=True)
@@ -1340,8 +1542,11 @@ class AutomationManager:
                 )
                 return
             provider, model = thread.provider, thread.model
+        from deepseek_tui.automation.permissions import browser_grant
+
         await enqueue_automation_task(
             automation, run, task_manager, provider=provider, model=model,
+            browser_grant=browser_grant(self._root, automation.id),
         )
 
     async def run_now(
@@ -1459,7 +1664,29 @@ class AutomationManager:
         # we already wrote a run for it.
         prior = next((run for run in self.list_runs(automation.id)
                       if run.scheduled_for == automation.next_run_at), None)
-        if prior is None or (prior.status is AutomationRunStatus.QUEUED and prior.task_id is None):
+        if (
+            prior is None
+            and automation.schedule is not None
+            and await self._previous_run_active(automation, task_manager)
+        ):
+            # Overlap policy: skip. Cron tasks run one at a time, so stacking
+            # slots behind a slow run would delay every other job, and the
+            # backlog would mostly repeat the same check. One-shots never
+            # overlap themselves and always run.
+            logger.info(
+                "automation_overlap_skipped id=%s slot=%s", automation.id, automation.next_run_at
+            )
+            self.save_run(AutomationRunRecord(
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"{automation.id}:{automation.next_run_at}").hex,
+                automation_id=automation.id,
+                scheduled_for=automation.next_run_at,
+                status=AutomationRunStatus.SKIPPED,
+                created_at=now.isoformat(),
+                ended_at=now.isoformat(),
+                error=SKIPPED_OVERLAP_REASON,
+            ))
+            self.prune_runs(automation.id)
+        elif prior is None or (prior.status is AutomationRunStatus.QUEUED and prior.task_id is None):
             run = prior or AutomationRunRecord(
                 id=uuid.uuid5(uuid.NAMESPACE_URL, f"{automation.id}:{automation.next_run_at}").hex,
                 automation_id=automation.id,
@@ -1493,6 +1720,32 @@ class AutomationManager:
             current.status = AutomationStatus.COMPLETED
         self.save_automation(current)
 
+    async def _previous_run_active(
+        self, automation: AutomationRecord, task_manager: TaskManager
+    ) -> bool:
+        """Whether an earlier run of this job is still queued or running.
+
+        Asks the task itself: a run record's status lags reconcile by a tick.
+        """
+        from deepseek_tui.tools.task import TaskManager as _TaskManager
+        from deepseek_tui.tools.task import TaskStatus
+
+        for run in self.list_runs(automation.id):
+            if run.scheduled_for == automation.next_run_at or run.task_id is None:
+                continue
+            if run.status not in (AutomationRunStatus.QUEUED, AutomationRunStatus.RUNNING):
+                continue
+            if isinstance(task_manager, _TaskManager):
+                task = task_manager.live_task(run.task_id)
+            else:
+                try:
+                    task = await task_manager.get_task(run.task_id)
+                except Exception:  # noqa: BLE001
+                    task = None
+            if task is not None and task.status in (TaskStatus.QUEUED, TaskStatus.RUNNING):
+                return True
+        return False
+
     def _reconcile_targets(self) -> list[AutomationRecord]:
         """User automations, plus the HTTP-trigger shadow when trigger runs exist."""
         targets = self.list_automations()
@@ -1506,35 +1759,87 @@ class AutomationManager:
             await self._reconcile_run_statuses(task_manager)
 
     async def _reconcile_run_statuses(self, task_manager: TaskManager) -> None:
-        for automation in self._reconcile_targets():
-            for run in self.list_runs(automation.id):
-                # One failing run (record deleted mid-pass, broken delivery
-                # config) must not stall reconciliation of every other run.
+        targets = self._reconcile_targets()
+
+        async def reconcile(automation: AutomationRecord, run_id: str, *, deliver: bool) -> AutomationRunRecord | None:
+            # Re-read under the per-run lock: human confirmation may have
+            # changed the journal while another channel was awaiting HTTP.
+            async with self._run_lock(automation.id, run_id):
                 try:
-                    await self._reconcile_run(automation, run, task_manager)
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "automation_reconcile_failed automation=%s run=%s",
-                        automation.id,
-                        run.id,
-                        exc_info=True,
-                    )
+                    raw = await asyncio.to_thread(
+                        self._run_path(automation.id, run_id).read_text, encoding="utf-8")
+                    run = AutomationRunRecord.from_dict(json.loads(raw))
+                    if deliver:
+                        from deepseek_tui.automation.pipeline import try_deliver_completed_run
+
+                        if await try_deliver_completed_run(automation, run, task_manager,
+                                thread_manager=self.thread_manager, save_run=self.save_run):
+                            self.save_run(run)
+                    else:
+                        await self._reconcile_run(automation, run, task_manager, deliver=False)
+                    return run
+                except FileNotFoundError:
+                    return  # Deleted/pruned records must not be recreated.
+                except Exception:
+                    logger.warning("automation_reconcile_failed automation=%s run=%s",
+                                   automation.id, run_id, exc_info=True)
+
+        # One off-loop scan, then re-read only mutable records under their locks.
+        pending: list[tuple[AutomationRecord, list[str]]] = []
+        for automation in targets:
+            delivery_ids: list[str] = []
+            for run in await asyncio.to_thread(self.list_runs, automation.id):
+                if (run.status is AutomationRunStatus.COMPLETED and run.delivery_done
+                        and (not run.conversation_thread_id or run.conversation_written)):
+                    continue
+                updated = await reconcile(automation, run.id, deliver=False)
+                if (updated is not None and not updated.delivery_done
+                        and updated.delivery_state != "uncertain"
+                        and updated.status in (AutomationRunStatus.COMPLETED, AutomationRunStatus.FAILED)):
+                    delivery_ids.append(updated.id)
+            pending.append((automation, delivery_ids))
+
+        work = iter(pending)
+
+        async def worker() -> None:
+            for automation, run_ids in work:
+                for run_id in run_ids:
+                    await reconcile(automation, run_id, deliver=True)
+
+        await asyncio.gather(*(worker() for _ in range(4)))
 
     async def _reconcile_run(
         self,
         automation: AutomationRecord,
         run: AutomationRunRecord,
         task_manager: TaskManager,
+        *,
+        deliver: bool = True,
     ) -> None:
         from deepseek_tui.automation.pipeline import try_write_run_result
         from deepseek_tui.tools.task import TaskStatus
 
         task = None
-        if run.task_id is not None and run.status is not AutomationRunStatus.COMPLETED:
+        if run.task_id is not None and run.status in (
+            AutomationRunStatus.QUEUED, AutomationRunStatus.RUNNING,
+        ):
             try:
                 task = await task_manager.get_task(run.task_id)
             except Exception:  # noqa: BLE001
                 pass
+        elif run.task_id is not None and run.status is not AutomationRunStatus.COMPLETED:
+            # A failed or cancelled run only needs to notice a resume, and a
+            # resumed task is always in memory. Reading every finished task
+            # from disk each tick was the bulk of reconcile's cost.
+            from deepseek_tui.tools.task import TaskManager as _TaskManager
+
+            if isinstance(task_manager, _TaskManager):
+                task = task_manager.live_task(run.task_id)
+            else:
+                try:
+                    task = await task_manager.get_task(run.task_id)
+                except Exception:  # noqa: BLE001
+                    pass
         # Resume can settle between ticks, even into the same failed
         # state. A new end timestamp distinguishes that new attempt.
         resumed = (
@@ -1558,7 +1863,7 @@ class AutomationManager:
                 self.save_run(run)
             # An unchanged terminal run may still need a delivery retry.
             if (
-                not run.delivery_done
+                deliver and not run.delivery_done
                 and run.status in (
                     AutomationRunStatus.COMPLETED,
                     AutomationRunStatus.FAILED,
@@ -1571,19 +1876,30 @@ class AutomationManager:
                 if await try_deliver_completed_run(
                     automation, run, task_manager,
                     thread_manager=self.thread_manager,
+                    save_run=self.save_run,
                 ):
                     self.save_run(run)
             return
         if task is None:
             return
         if resumed:
+            if run.delivery_state in {"sending", "uncertain"}:
+                # Keep the old send's identity independent from the new result.
+                archive_id = uuid.uuid5(uuid.NAMESPACE_URL,
+                    f"{run.automation_id}/{run.id}/{run.ended_at}/{run.delivery_attempts}").hex
+                if not self._run_path(run.automation_id, archive_id).exists():
+                    self.save_run(replace(run, id=archive_id, task_id=None,
+                        delivery_state="uncertain", conversation_thread_id=None,
+                        conversation_written=True))
             run.started_at = None
             run.ended_at = None
             run.error = None
             run.delivery_done = False
+            run.conversation_written = False
+            run.delivery_state = "pending"
+            run.delivery_snapshot = None
             run.delivery_attempts = 0
             run.delivery_error = None
-            run.conversation_written = False
 
         run.thread_id = getattr(task, "thread_id", None)
         run.turn_id = getattr(task, "turn_id", None)
@@ -1652,7 +1968,7 @@ class AutomationManager:
                     latest.last_run_at = run.ended_at or _utc_now_iso()
                     latest.updated_at = _utc_now_iso()
                     self.save_automation(latest)
-            if run.status in (
+            if deliver and run.status in (
                 AutomationRunStatus.COMPLETED,
                 AutomationRunStatus.FAILED,
             ):
@@ -1663,6 +1979,7 @@ class AutomationManager:
                 if await try_deliver_completed_run(
                     automation, run, task_manager,
                     thread_manager=self.thread_manager,
+                    save_run=self.save_run,
                 ):
                     self.save_run(run)
 
@@ -1674,23 +1991,12 @@ class AutomationManager:
 # transient error never kills the scheduler — the next tick gets a fresh
 # chance.
 #
-# Q1 decision (Engine-level): one scheduler task per ``Engine`` instance,
-# started in ``Engine.create`` and cancelled in ``Engine.shutdown``.
+# One scheduler task per tool runtime: started in ``create_tool_runtime``
+# and stopped by its cleanup stack.
 #
 # Q2 decision: tick interval defaults to 15 s, with a 5-second floor for
 # sanity. Tests can pass ``tick_interval_secs=1`` for fast iteration.
 #
-
-if TYPE_CHECKING:
-    from deepseek_tui.tools.task import TaskManager
-
-__all__ = [
-    "AutomationSchedulerConfig",
-    "run_scheduler_loop",
-]
-
-logger = logging.getLogger(__name__)
-
 
 @dataclass(slots=True)
 class AutomationSchedulerConfig:

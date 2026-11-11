@@ -497,7 +497,12 @@ async def feishu_send_text(
     text: str,
     receive_id_type: str | None = None,
 ) -> None:
-    app_id, app_secret, domain = _load_feishu_app_credentials()
+    from deepseek_tui.automation.delivery import DeliveryNotSent
+
+    try:
+        app_id, app_secret, domain = _load_feishu_app_credentials()
+    except ValueError as exc:
+        raise DeliveryNotSent(str(exc)) from exc
     rid_type = receive_id_type or feishu_receive_id_type(receive_id)
     base = _feishu_api_base(domain)
     body_text = text if len(text) <= 4000 else text[:3997] + "..."
@@ -507,7 +512,10 @@ async def feishu_send_text(
         "content": json.dumps({"text": body_text}, ensure_ascii=False),
     }
     async with httpx.AsyncClient() as client:
-        token = await _feishu_tenant_token(client, base, app_id, app_secret)
+        try:
+            token = await _feishu_tenant_token(client, base, app_id, app_secret)
+        except Exception as exc:
+            raise DeliveryNotSent(str(exc)) from exc
         resp = await client.post(
             f"{base}/open-apis/im/v1/messages",
             params={"receive_id_type": rid_type},
@@ -517,8 +525,8 @@ async def feishu_send_text(
         )
         resp.raise_for_status()
         data = resp.json()
-        if int(data.get("code", -1)) != 0:
-            raise RuntimeError(f"Feishu send error: {data.get('msg', data)}")
+        if int(data["code"]) != 0:
+            raise DeliveryNotSent(f"Feishu send error: {data.get('msg', data)}")
     logger.info(
         "[automation][delivery][feishu] sent receive_id=%s len=%d",
         receive_id,
@@ -534,12 +542,14 @@ def _smtp_send_sync(
     subject: str,
     body: str,
 ) -> None:
+    from deepseek_tui.automation.delivery import DeliveryNotSent
+
     host = str(section.get("smtp_host", "")).strip()
     user = str(section.get("username", "")).strip()
     password = _resolve_password(section, account)
     from_addr = str(section.get("from_addr") or user).strip()
     if not host or not user or not password or not from_addr:
-        raise ValueError(
+        raise DeliveryNotSent(
             "SMTP incomplete: set smtp_host, username, from_addr, and password "
             f"in {email_config_path()}"
         )
@@ -553,15 +563,24 @@ def _smtp_send_sync(
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    if use_ssl:
-        client: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=20)
-    else:
-        client = smtplib.SMTP(host, port, timeout=20)
     try:
-        if starttls and not use_ssl:
-            client.starttls()
-        client.login(user, password)
-        client.sendmail(from_addr, [to_addr], msg.as_string())
+        if use_ssl:
+            client: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=20)
+        else:
+            client = smtplib.SMTP(host, port, timeout=20)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise DeliveryNotSent(str(exc)) from exc
+    try:
+        try:
+            if starttls and not use_ssl:
+                client.starttls()
+            client.login(user, password)
+        except Exception as exc:
+            raise DeliveryNotSent(str(exc)) from exc
+        try:
+            client.sendmail(from_addr, [to_addr], msg.as_string())
+        except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError) as exc:
+            raise DeliveryNotSent(str(exc)) from exc
     finally:
         try:
             client.quit()
@@ -612,8 +631,11 @@ def _parse_wecom_webhook_key(raw: str) -> str | None:
     if text.startswith("http"):
         from urllib.parse import parse_qs, urlparse
 
-        parsed = urlparse(text)
-        if "qyapi.weixin.qq.com" not in parsed.hostname or not parsed.path.endswith("/webhook/send"):
+        try:
+            parsed = urlparse(text)
+        except ValueError:
+            return None
+        if parsed.hostname != "qyapi.weixin.qq.com" or not parsed.path.endswith("/webhook/send"):
             return None
         key = (parse_qs(parsed.query).get("key") or [""])[0].strip()
         if re.fullmatch(
@@ -661,7 +683,12 @@ def _resolve_wecom_webhook_key(explicit: str | None = None) -> str:
 
 async def wecom_webhook_send_text(*, text: str, webhook_key: str | None = None) -> None:
     """Send plain text to a WeCom group via robot webhook."""
-    key = _resolve_wecom_webhook_key(webhook_key)
+    from deepseek_tui.automation.delivery import DeliveryNotSent
+
+    try:
+        key = _resolve_wecom_webhook_key(webhook_key)
+    except ValueError as exc:
+        raise DeliveryNotSent(str(exc)) from exc
     body_text = text if len(text) <= 4096 else text[:4093] + "..."
     payload = {"msgtype": "text", "text": {"content": body_text}}
     url = f"{WECOM_WEBHOOK_BASE}?key={key}"
@@ -669,6 +696,6 @@ async def wecom_webhook_send_text(*, text: str, webhook_key: str | None = None) 
         resp = await client.post(url, json=payload, timeout=30.0)
         resp.raise_for_status()
         data = resp.json()
-        if int(data.get("errcode", -1)) != 0:
-            raise RuntimeError(f"WeCom webhook error: {data.get('errmsg', data)}")
+        if int(data["errcode"]) != 0:
+            raise DeliveryNotSent(f"WeCom webhook error: {data.get('errmsg', data)}")
     logger.info("[automation][delivery][wecom] sent len=%d", len(body_text))

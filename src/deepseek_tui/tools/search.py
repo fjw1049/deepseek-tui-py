@@ -55,6 +55,10 @@ _MAX_SEARCH_FILE_BYTES = 1024 * 1024
 _GLOB_CHARS = frozenset("*?[")
 
 
+class SearchBudgetExceeded(ToolError):
+    """A bounded traversal stopped before all candidates were examined."""
+
+
 class GrepFilesTool(ToolSpec):
     def name(self) -> str:
         return "grep_files"
@@ -183,6 +187,8 @@ class GrepFilesTool(ToolSpec):
             logger.warning("grep_files_invalid_regex pattern=%r error=%s", pattern, exc)
             raise ToolError(f"invalid regex pattern: {exc}") from exc
         denied = [0]
+        incomplete: list[str] = []
+        skipped_default_dirs = [0]
         try:
             (
                 rows, file_counts, total, skipped_large, skipped_ignored, context_limited
@@ -194,7 +200,9 @@ class GrepFilesTool(ToolSpec):
                 after=context_after if output_mode == "content" else 0,
                 head_limit=head_limit,
                 glob=glob_pattern,
-                authorize=_path_authorizer(context, denied),
+                authorize=_path_authorizer(context, denied), skipped_default_dirs=skipped_default_dirs,
+                workspace=context.working_directory,
+                incomplete=incomplete,
             )
         except (ValueError, re.error) as exc:
             raise ToolError(f"invalid glob: {exc}") from exc
@@ -249,12 +257,17 @@ class GrepFilesTool(ToolSpec):
                 content_lines.append("… (context limited by head_limit)")
             truncated = total > shown_matches or context_limited
             shown_count = shown_matches
+        if incomplete:
+            content_lines.append("Search incomplete: " + incomplete[0])
+            truncated = True
         if denied[0]:
             content_lines.append(f"… (skipped {denied[0]} unauthorized path(s))")
         if skipped_large:
             content_lines.append(
                 f"… (skipped {skipped_large} file(s) over {_MAX_SEARCH_FILE_BYTES} bytes)"
             )
+        if skipped_default_dirs[0]:
+            content_lines.append(f"Skipped {skipped_default_dirs[0]} default-filtered directories (build/dependencies/cache/VCS); specify a directory path to search inside it.")
         note = _gitignore_skip_note(skipped_ignored)
         if note is not None:
             content_lines.append(note)
@@ -264,12 +277,14 @@ class GrepFilesTool(ToolSpec):
             metadata={
                 "path": str(root),
                 "output_mode": output_mode,
+                "incomplete": bool(incomplete),
                 "count": total,
                 "shown": shown_count,
                 "truncated": truncated,
                 "skipped_large": skipped_large,
                 "skipped_unauthorized": denied[0],
                 "skipped_ignored": skipped_ignored,
+                "skipped_default_dirs": skipped_default_dirs[0],
             },
         )
 
@@ -286,7 +301,8 @@ class FileSearchTool(ToolSpec):
             "(* ? [) is a file-name substring: 'config' matches config.py. "
             "A pattern with glob characters matches the relative path: "
             "'*.ts' or 'src/**/*.py'. Use '' to list files. max_depth=1 "
-            "lists only the given directory (shallow ls). Prefer this over "
+            "lists only the given directory (shallow ls); subdirectories the "
+            "depth limit stops at are listed with a trailing '/'. Prefer this over "
             "find/ls -R via exec_shell. Not for file CONTENTS — use "
             "grep_files."
         )
@@ -336,10 +352,13 @@ class FileSearchTool(ToolSpec):
         if max_depth == 0:
             raise ToolError("max_depth must be >= 1")
         denied = [0]
+        incomplete: list[str] = []
+        skipped_default_dirs = [0]
         try:
             matches, skipped_ignored = await asyncio.to_thread(
                 _file_search, root, pattern, max_depth,
-                authorize=_path_authorizer(context, denied),
+                authorize=_path_authorizer(context, denied), skipped_default_dirs=skipped_default_dirs,
+                workspace=context.working_directory, incomplete=incomplete,
             )
         except (ValueError, re.error) as exc:
             raise ToolError(f"invalid glob: {exc}") from exc
@@ -356,6 +375,10 @@ class FileSearchTool(ToolSpec):
                 f"… (showing {len(shown)} of at least {len(matches)} files; "
                 "narrow the path or use a more specific pattern)"
             )
+        if incomplete:
+            lines.append("Search incomplete: " + "; ".join(incomplete))
+        if skipped_default_dirs[0]:
+            lines.append(f"Skipped {skipped_default_dirs[0]} default-filtered directories (build/dependencies/cache/VCS); specify a directory path to search inside it.")
         note = _gitignore_skip_note(skipped_ignored)
         if note is not None:
             lines.append(note)
@@ -365,9 +388,12 @@ class FileSearchTool(ToolSpec):
             metadata={
                 "path": str(root),
                 "count": len(matches),
-                "count_is_exact": len(matches) <= _MAX_FILE_RESULTS,
+                "count_is_exact": not incomplete and len(matches) <= _MAX_FILE_RESULTS,
+                "incomplete": bool(incomplete),
+                "truncated": bool(incomplete) or len(matches) > len(shown),
                 "skipped_unauthorized": denied[0],
                 "skipped_ignored": skipped_ignored,
+                "skipped_default_dirs": skipped_default_dirs[0],
             },
         )
 
@@ -447,8 +473,22 @@ def _iter_files(
     skipped_large: list[int] | None = None,
     skipped_ignored: list[int] | None = None,
     authorize: Callable[[Path], bool] | None = None,
+    cut_dirs: list[Path] | None = None,
+    skipped_default_dirs: list[int] | None = None,
+    workspace: Path | None = None,
 ) -> Iterable[Path]:
-    ignore = GitIgnoreMatcher(root if root.is_dir() else root.parent)
+    relative = root
+    if workspace is not None:
+        try:
+            relative = root.relative_to(workspace.resolve())
+        except ValueError:
+            pass
+    explicit_generated = any(
+        part in _IGNORED_DIRS - {".git"} or part.endswith(".egg-info")
+        for part in relative.parts
+    )
+    ignore = GitIgnoreMatcher(root if root.is_dir() else root.parent,
+                              include_ancestors=not explicit_generated)
     deadline = time.monotonic() + 5.0
     visited = 0
     if root.is_file():
@@ -474,14 +514,17 @@ def _iter_files(
     for dirpath, dirnames, filenames in os.walk(root):
         visited += len(dirnames) + len(filenames) + 1
         if visited > 100000 or time.monotonic() > deadline:
-            raise ToolError("Search traversal budget exceeded; narrow the path")
+            raise SearchBudgetExceeded("Search traversal budget exceeded; narrow the path")
         current = Path(dirpath)
         ignore.add_dir(current)
         depth = _walk_depth(dirpath, root)
         kept_dirs: list[str] = []
         ignored_dirs = 0
         for name in dirnames:
-            if name in _IGNORED_DIRS:
+            # Package metadata dirs are named ``<pkg>.egg-info``.
+            if name == ".git" or (not explicit_generated and (name in _IGNORED_DIRS or name.endswith(".egg-info"))):
+                if skipped_default_dirs is not None:
+                    skipped_default_dirs[0] += 1
                 continue
             if ignore.ignored(current / name, is_dir=True):
                 ignored_dirs += 1
@@ -491,6 +534,12 @@ def _iter_files(
             skipped_ignored[0] += ignored_dirs
         if max_depth is not None and depth + 1 >= max_depth:
             dirnames[:] = []
+            if cut_dirs is not None:
+                cut_dirs.extend(
+                    current / name
+                    for name in sorted(kept_dirs)
+                    if authorize is None or authorize(current / name)
+                )
         else:
             dirnames[:] = sorted(kept_dirs)
         for name in sorted(filenames):
@@ -525,6 +574,9 @@ def _grep_files(
     head_limit: int = _MAX_MATCHES,
     glob: str | None = None,
     authorize: Callable[[Path], bool] | None = None,
+    incomplete: list[str] | None = None,
+    skipped_default_dirs: list[int] | None = None,
+    workspace: Path | None = None,
 ) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int, int, int, bool]:
     """Return rows, counts, skips, and whether context was cut.
 
@@ -541,62 +593,67 @@ def _grep_files(
     context_limited = False
     deadline = time.monotonic() + 5.0
     bytes_read = 0
-    for path in _iter_files(
-        root,
-        glob,
-        skip_over_bytes=_MAX_SEARCH_FILE_BYTES,
-        skipped_large=skipped,
-        skipped_ignored=ignored,
-        authorize=authorize,
-    ):
-        try:
-            with path.open("rb") as stream:
-                raw = stream.read(_MAX_SEARCH_FILE_BYTES + 1)
-            bytes_read += len(raw)
-            if bytes_read > 64 * 1024 * 1024 or time.monotonic() > deadline:
-                raise ToolError("Search work budget exceeded; narrow the path")
-            if len(raw) > _MAX_SEARCH_FILE_BYTES:
-                skipped[0] += 1
-                continue
-            text = raw.decode("utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        lines = text.splitlines()
-        match_idx = []
-        for i, line in enumerate(lines):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ToolError("Search work budget exceeded; narrow the path")
-            if pattern.search(line, timeout=min(0.05, remaining)):
-                match_idx.append(i)
-        if not match_idx:
-            continue
-        file_counts[path] = len(match_idx)
-        total += len(match_idx)
-        match_lines = set(match_idx)  # 0-based; a real match never renders as context
-        last_emitted = 0  # 1-based line no. dedup for overlapping context
-        for i in match_idx:
-            if len(rows) >= head_limit:
-                break
-            # Reserve a row for the match even when -B asks for more context
-            # than the remaining output budget.
-            requested_lo = max(0, i - before)
-            lo = max(requested_lo, i - (head_limit - len(rows)) + 1)
-            if lo > requested_lo:
-                context_limited = True
-            hi = min(len(lines) - 1, i + after)
-            for j in range(lo, hi + 1):
-                if len(rows) >= head_limit:
-                    context_limited = True
-                    break
-                line_no = j + 1
-                if line_no <= last_emitted:
+    try:
+        for path in _iter_files(
+            root,
+            glob,
+            skip_over_bytes=_MAX_SEARCH_FILE_BYTES,
+            skipped_large=skipped,
+            skipped_ignored=ignored,
+            authorize=authorize, skipped_default_dirs=skipped_default_dirs, workspace=workspace,
+        ):
+            try:
+                with path.open("rb") as stream:
+                    raw = stream.read(_MAX_SEARCH_FILE_BYTES + 1)
+                bytes_read += len(raw)
+                if bytes_read > 64 * 1024 * 1024 or time.monotonic() > deadline:
+                    raise SearchBudgetExceeded("Search work budget exceeded; narrow the path")
+                if len(raw) > _MAX_SEARCH_FILE_BYTES:
+                    skipped[0] += 1
                     continue
-                last_emitted = line_no
-                line = lines[j]
-                if len(line) > _MAX_LINE_LEN:
-                    line = line[:_MAX_LINE_LEN] + "… (line truncated)"
-                rows.append((path, line_no, line, j not in match_lines))
+                text = raw.decode("utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            lines = text.splitlines()
+            match_idx = []
+            for i, line in enumerate(lines):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise SearchBudgetExceeded("Search work budget exceeded; narrow the path")
+                if pattern.search(line, timeout=min(0.05, remaining)):
+                    match_idx.append(i)
+            if not match_idx:
+                continue
+            file_counts[path] = len(match_idx)
+            total += len(match_idx)
+            match_lines = set(match_idx)  # 0-based; a real match never renders as context
+            last_emitted = 0  # 1-based line no. dedup for overlapping context
+            for i in match_idx:
+                if len(rows) >= head_limit:
+                    break
+                # Reserve a row for the match even when -B asks for more context
+                # than the remaining output budget.
+                requested_lo = max(0, i - before)
+                lo = max(requested_lo, i - (head_limit - len(rows)) + 1)
+                if lo > requested_lo:
+                    context_limited = True
+                hi = min(len(lines) - 1, i + after)
+                for j in range(lo, hi + 1):
+                    if len(rows) >= head_limit:
+                        context_limited = True
+                        break
+                    line_no = j + 1
+                    if line_no <= last_emitted:
+                        continue
+                    last_emitted = line_no
+                    line = lines[j]
+                    if len(line) > _MAX_LINE_LEN:
+                        line = line[:_MAX_LINE_LEN] + "… (line truncated)"
+                    rows.append((path, line_no, line, j not in match_lines))
+    except (SearchBudgetExceeded, TimeoutError) as exc:
+        if incomplete is None or (isinstance(exc, TimeoutError) and not file_counts):
+            raise
+        incomplete.append(str(exc) or "Regex search timed out; narrow the pattern or path")
     return rows, file_counts, total, skipped[0], ignored[0], context_limited
 
 
@@ -619,13 +676,29 @@ def _file_matches_pattern(path: Path, root: Path, pattern: str) -> bool:
 def _file_search(
     root: Path, pattern: str, max_depth: int | None,
     *, authorize: Callable[[Path], bool] | None = None,
+    incomplete: list[str] | None = None,
+    skipped_default_dirs: list[int] | None = None,
+    workspace: Path | None = None,
 ) -> tuple[list[str], int]:
     ignored = [0]
     matches = []
-    for path in _iter_files(root, max_depth=max_depth, skipped_ignored=ignored,
-                            authorize=authorize):
+    # Directories the depth limit stopped at: without them a shallow listing
+    # hides every subfolder, and plan mode has no shell to `ls` with.
+    cut_dirs: list[Path] = []
+    try:
+        for path in _iter_files(root, max_depth=max_depth, skipped_ignored=ignored,
+                                authorize=authorize, cut_dirs=cut_dirs, skipped_default_dirs=skipped_default_dirs, workspace=workspace):
+            if _file_matches_pattern(path, root, pattern):
+                matches.append(_display_rel(path, root))
+                if len(matches) > _MAX_FILE_RESULTS:
+                    break
+    except SearchBudgetExceeded as exc:
+        if incomplete is None:
+            raise
+        incomplete.append(str(exc))
+    for path in cut_dirs:
+        if len(matches) > _MAX_FILE_RESULTS:
+            break
         if _file_matches_pattern(path, root, pattern):
-            matches.append(_display_rel(path, root))
-            if len(matches) > _MAX_FILE_RESULTS:
-                break
+            matches.append(_display_rel(path, root) + "/")
     return matches, ignored[0]

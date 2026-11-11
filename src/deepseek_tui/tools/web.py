@@ -94,7 +94,9 @@ class FetchUrlTool(ToolSpec):
     def description(self) -> str:
         return (
             "Fetch a URL and return readable content. Prefer this over "
-            "hand-rolling curl/wget in exec_shell for any HTTP(S) read. "
+            "hand-rolling curl/wget in exec_shell for public HTTP(S) reads. "
+            "Private network URLs are blocked; use browser tools for an "
+            "authorized localhost preview. "
             "Uses the configured extraction provider for general pages (clean Markdown, low "
             "noise); raw HTTP for direct files (raw GitHub, .md/.txt). "
             "For a raw GitHub file that times out, retry via "
@@ -130,7 +132,7 @@ class FetchUrlTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         url = _require_string(input_data, "url")
         _require_http_url(url)
-        _check_network_policy(url, "fetch_url", context)
+        await _check_network_policy(url, "fetch_url", context)
         await asyncio.to_thread(_reject_private_fetch_url, url)
         max_chars = _bounded_int(input_data, "max_chars",
                                  default=_DEFAULT_FETCH_MAX_CHARS, maximum=2 * 1024 * 1024)
@@ -148,7 +150,7 @@ class FetchUrlTool(ToolSpec):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if _is_direct_resource_url(url):
-                    _check_network_policy(url, "fetch_url", context)
+                    await _check_network_policy(url, "fetch_url", context)
                     response = await _http_get(client, url, context=context)
                     status_code = response.status_code
                     content_type = response.headers.get("content-type", "")
@@ -158,6 +160,7 @@ class FetchUrlTool(ToolSpec):
                         raise ToolError(
                             f"HTTP {status_code} fetching {url}: {response.text[:200]}"
                         )
+                    _reject_binary_body(url, content_type, response.content)
                     content = response.text
                     backend = "direct"
                 else:
@@ -184,7 +187,7 @@ class FetchUrlTool(ToolSpec):
                             extract_error = str(exc)
 
                     if not content.strip():
-                        _check_network_policy(url, "fetch_url", context)
+                        await _check_network_policy(url, "fetch_url", context)
                         response = await _http_get(client, url, context=context)
                         status_code = response.status_code
                         content_type = response.headers.get("content-type", "")
@@ -195,6 +198,7 @@ class FetchUrlTool(ToolSpec):
                             if extract_error:
                                 detail += f" (extractor: {extract_error})"
                             raise ToolError(f"fetch_url failed for {url}: {detail}")
+                        _reject_binary_body(url, content_type, response.content)
                         content = response.text
                         backend = "httpx_fallback"
                         if "html" in content_type.lower():
@@ -370,7 +374,7 @@ class WebSearchTool(ToolSpec):
             for name in active:
                 try:
                     if name == "anysearch":
-                        _check_network_policy(
+                        await _check_network_policy(
                             "https://api.anysearch.com", "web_search", context
                         )
                         outcome = await _search_anysearch(
@@ -407,7 +411,7 @@ class WebSearchTool(ToolSpec):
                     elif name == "tavily":
                         if not self._tavily_api_key:
                             raise ToolError("tavily_api_key is missing")
-                        _check_network_policy(
+                        await _check_network_policy(
                             "https://api.tavily.com", "web_search", context
                         )
                         tavily_hits, tavily_answer = await _search_tavily(
@@ -538,7 +542,7 @@ async def _deepseek_request(
     if not api_key:
         raise ToolError("DeepSeek API key is missing")
     endpoint = f"https://api.deepseek.com/v1/tools/{operation}"
-    _check_network_policy(endpoint, "web_search" if operation == "search" else "fetch_url", context)
+    await _check_network_policy(endpoint, "web_search" if operation == "search" else "fetch_url", context)
     try:
         response = await _post_bounded(
             client, endpoint, json=payload,
@@ -643,7 +647,7 @@ def _merge_hits(hits: list[_SearchHit], max_results: int) -> list[_SearchHit]:
     return merged
 
 
-def _check_network_policy(url: str, tool_name: str, context: ToolContext) -> None:
+async def _check_network_policy(url: str, tool_name: str, context: ToolContext) -> None:
     """Enforce network policy if configured. Raises ToolError on DENY."""
     # getattr: tests (and embedders) may pass duck-typed contexts.
     policy = getattr(context, "network_policy", None)
@@ -655,12 +659,13 @@ def _check_network_policy(url: str, tool_name: str, context: ToolContext) -> Non
     if decision == Decision.DENY:
         raise ToolError(f"Network access denied for {url} by the active policy.")
     if decision == Decision.PROMPT:
-        # No interactive approval hook exists on this path yet, so an
-        # unlisted host must fail closed rather than silently bypass policy.
-        raise ToolError(
-            f"Network access to {url} requires approval, but this tool path "
-            "has no interactive network-approval handler."
-        )
+        approve = getattr(context, "network_approval", None) or context.metadata.get("network_approval")
+        if approve is None or not await approve(url, tool_name):
+            raise ToolError(f"Network access to {url} requires user approval and was not authorized.")
+        policy.approve(urlparse(url).hostname or "")
+        if policy.evaluate(url, tool_name) is not Decision.ALLOW:
+            raise ToolError(f"Network access denied for {url} by the active policy.")
+
 
 
 def _require_http_url(url: str) -> None:
@@ -744,6 +749,36 @@ def _is_direct_resource_url(url: str) -> bool:
     return False
 
 
+_BINARY_CONTENT_TYPES = frozenset({
+    "application/pdf", "application/zip", "application/gzip", "application/x-gzip",
+    "application/x-tar", "application/x-7z-compressed", "application/x-rar-compressed",
+})
+
+
+def _reject_binary_body(url: str, content_type: str, body: bytes) -> None:
+    """Refuse to decode a binary payload into the model's context as text.
+
+    A PDF or image decoded as UTF-8 is tens of KB of mojibake that costs
+    context and tells the model nothing; say what came back instead.
+    ``application/octet-stream`` alone is not enough: hosts serve plain text
+    files with it, so only a NUL byte convicts those.
+    """
+    ctype = content_type.split(";", 1)[0].strip().lower()
+    binary = (
+        ctype in _BINARY_CONTENT_TYPES
+        or (ctype.startswith(("image/", "audio/", "video/", "font/"))
+            and not ctype.endswith("+xml"))
+        or b"\x00" in body[:8192]
+    )
+    if binary:
+        raise ToolError(
+            f"fetch_url: {url} returned binary content ({ctype or 'unknown type'}, "
+            f"{len(body)} bytes) that cannot be shown as text. To use the file, "
+            "download it with exec_shell (e.g. curl -L -o <file> <url>) and open it "
+            "with a suitable tool."
+        )
+
+
 def _truncate_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
@@ -799,8 +834,8 @@ async def _anysearch_extract(
     api_key: str | None,
     context: ToolContext,
 ) -> str:
-    _check_network_policy(_ANYSEARCH_MCP_URL, "fetch_url", context)
-    _check_network_policy(url, "fetch_url", context)
+    await _check_network_policy(_ANYSEARCH_MCP_URL, "fetch_url", context)
+    await _check_network_policy(url, "fetch_url", context)
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -864,7 +899,7 @@ async def _http_get(
     try:
         for _ in range(_MAX_FETCH_REDIRECTS + 1):
             if context is not None:
-                _check_network_policy(current, "fetch_url", context)
+                await _check_network_policy(current, "fetch_url", context)
             await asyncio.to_thread(_reject_private_fetch_url, current)
             async with client.stream(
                 "GET", current, params=params, headers=merged, follow_redirects=False
@@ -895,5 +930,8 @@ async def _http_get(
                     extensions={**response.extensions, "body_truncated": truncated},
                 )
         raise ToolError(f"Too many redirects fetching {url}")
+    except httpx.TimeoutException:
+        # FetchUrlTool records host timeouts and advises against repeated retries.
+        raise
     except (httpx.HTTPError, OSError) as exc:
         raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc

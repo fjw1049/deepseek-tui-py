@@ -31,6 +31,7 @@ from deepseek_tui.engine.events import (
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
+    ToolResultEvent,
 )
 from deepseek_tui.engine.events import (
     FAKE_WRAPPER_NOTICE,
@@ -55,6 +56,15 @@ from deepseek_tui.protocol.responses import (
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+async def _close_discarded_tools(tool_calls: list[ToolCall], emit: Any) -> None:
+    for call in tool_calls:
+        await emit(ToolResultEvent(
+            tool_call_id=call.id, tool_name=call.name, success=False,
+            content="Not executed: this model response was discarded after a stream interruption.",
+            metadata={"not_executed": True, "reason": "stream_resampled"},
+        ))
 
 MAX_STREAM_RETRIES = 3
 # Shown once per model request so a silent reconnect is not mistaken for a hang.
@@ -548,6 +558,7 @@ class TurnLoop:
                                 MAX_MIDSTREAM_RESAMPLES,
                                 stream_event.message,
                             )
+                            await _close_discarded_tools(tool_calls, emit)
                             buffer = AssistantResponseBuffer()
                             tool_calls = []
                             break  # replay a clean stream
@@ -686,6 +697,7 @@ class TurnLoop:
                         midstream_resamples,
                         MAX_MIDSTREAM_RESAMPLES,
                     )
+                    await _close_discarded_tools(tool_calls, emit)
                     buffer = AssistantResponseBuffer()
                     tool_calls = []
                     continue

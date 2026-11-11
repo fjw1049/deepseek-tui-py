@@ -359,7 +359,7 @@ class EnterPlanModeTool(ToolSpec):
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
+        return [ToolCapability.MUTATES_STATE]
 
     async def execute(self, input_data: dict[str, object], context: Any) -> ToolResult:
         raise ToolError("enter_plan_mode must be handled by the engine")
@@ -386,7 +386,7 @@ class ExitPlanModeTool(ToolSpec):
         }
 
     def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
+        return [ToolCapability.MUTATES_STATE]
 
     async def execute(self, input_data: dict[str, object], context: Any) -> ToolResult:
         raise ToolError("exit_plan_mode must be handled by the engine")

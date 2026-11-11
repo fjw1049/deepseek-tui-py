@@ -1,8 +1,4 @@
-"""Prompt composition and tool profiles.
-
-Consolidates engine/prompts.py, tool_profiles.py, and prompts/ package.
-Engine-level system prompt builder.
-"""
+"""Engine system prompt composition, with legacy tool-profile re-exports."""
 
 from __future__ import annotations
 
@@ -27,15 +23,25 @@ class AppMode(enum.Enum):
     AGENT = "agent"
     YOLO = "yolo"
     PLAN = "plan"
+    ASK = "ask"
 
     def mode_prompt(self) -> str:
         if self is AppMode.AGENT:
             return AGENT_MODE()
         elif self is AppMode.YOLO:
             return YOLO_MODE()
+        elif self is AppMode.ASK:
+            return ASK_MODE()
         return PLAN_MODE()
 
     def approval_prompt(self) -> str:
+        if self is AppMode.ASK:
+            return (
+                "## Approval Policy: Read-only\n\n"
+                "Only inspection tools are available. Ask the user for access to "
+                "a protected read when necessary; never request permission to write, "
+                "run commands, or start background work in this mode."
+            )
         if self is AppMode.YOLO:
             return AUTO_APPROVAL()
         elif self is AppMode.PLAN:
@@ -570,11 +576,14 @@ CHECKLIST_GATE_REMINDER = (
 )
 
 
-# Injected as a user-role reminder in plan mode when the request reads like
-# "just give me a plan" — see should_force_update_plan_first.
+# A lexical match is only a hint, not evidence that investigation was waived.
+# The public detector name remains for compatibility.
 PLAN_GROUNDING_REMINDER = (
-    "[System] Before creating the plan, explore the repository structure and "
-    "relevant code first to ground your plan in the actual codebase."
+    "[System] Check the user's actual intent: if they explicitly want only a "
+    "generic outline, a brief plan may be enough. A request for a quick or short "
+    "plan does not itself waive necessary investigation. Inspect relevant evidence "
+    "when the plan depends on the existing project; quoted or negated phrases "
+    "are not instructions. Follow the normal plan-mode workflow."
 )
 
 
@@ -647,109 +656,12 @@ def load_handoff_reminder(workspace: Path) -> str | None:
     )
 
 
-# Tool visibility profiles — slim catalogs for automation composer and cron runs.
-
-
-AUTOMATION_COMPOSER_HEADING = "[Scheduled automation request]"
-CRON_PROMPT_PREFIX = "[cron:"
-
-TOOL_PROFILE_FULL = "full"
-TOOL_PROFILE_AUTOMATION_COMPOSER = "automation_composer"
-TOOL_PROFILE_CRON = "cron"
-
-# Composer: schedule creation only — no MCP, no shell.
-_AUTOMATION_COMPOSER_NATIVE = frozenset(
-    {
-        "cron_create",
-        "cron_list",
-        "cron_delete",
-    }
+# Compatibility exports for existing imports. Live policy lives separately.
+from deepseek_tui.engine.tool_profiles import (  # noqa: F401
+    AUTOMATION_COMPOSER_HEADING, CRON_PROMPT_PREFIX,
+    TOOL_PROFILE_FULL, TOOL_PROFILE_AUTOMATION_COMPOSER, TOOL_PROFILE_CRON,
+    detect_tool_profile_from_prompt, filter_tools_for_profile,
 )
-
-# Cron execution: read/search/fetch + shell + skills.
-# Installed MCP tools (mcp_*) are admitted separately in
-# filter_tools_for_profile — they are whatever the shared McpManager
-# already discovered. Write tools / request_user_input
-# stay out (detached auto_approve turn).
-_CRON_NATIVE = frozenset(
-    {
-        "web_search",
-        "fetch_url",
-        "read_file",
-        "grep_files",
-        "file_search",
-        "exec_shell",
-        "load_skill",
-    }
-)
-
-# Mirror engine.dispatch.is_mcp_tool without importing dispatch (avoids
-# prompts ↔ engine cycles). Covers installed server tools + resource helpers.
-_CRON_MCP_META = frozenset(
-    {
-        "list_mcp_resources",
-        "mcp_read_resource",
-        "read_mcp_resource",
-    }
-)
-
-
-def _is_cron_allowed_mcp_tool(name: str) -> bool:
-    if name in _CRON_MCP_META:
-        return True
-    return name.startswith("mcp_") or name.startswith("mcp__")
-
-
-def detect_tool_profile_from_prompt(prompt: str) -> str:
-    """Infer profile from wrapped user / cron prompt text."""
-    text = prompt.lstrip()
-    if text.startswith(AUTOMATION_COMPOSER_HEADING):
-        return TOOL_PROFILE_AUTOMATION_COMPOSER
-    if text.startswith(CRON_PROMPT_PREFIX):
-        return TOOL_PROFILE_CRON
-    return TOOL_PROFILE_FULL
-
-
-def _tool_name(entry: dict[str, Any]) -> str:
-    fn = entry.get("function", entry)
-    return str(fn.get("name", ""))
-
-
-def filter_tools_for_profile(
-    tools: list[dict[str, Any]], profile: str | None
-) -> list[dict[str, Any]]:
-    """Return a subset of API tool descriptors for the given profile."""
-    if not profile or profile == TOOL_PROFILE_FULL:
-        return tools
-
-    if profile == TOOL_PROFILE_AUTOMATION_COMPOSER:
-        allowed_native = _AUTOMATION_COMPOSER_NATIVE
-        out: list[dict[str, Any]] = []
-        for entry in tools:
-            name = _tool_name(entry)
-            if name in allowed_native:
-                out.append(_copy_tool_entry(entry))
-        return out
-
-    if profile == TOOL_PROFILE_CRON:
-        out = []
-        for entry in tools:
-            name = _tool_name(entry)
-            if name in _CRON_NATIVE or _is_cron_allowed_mcp_tool(name):
-                out.append(_copy_tool_entry(entry))
-        return out
-
-    return tools
-
-
-def _copy_tool_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    fn = entry.get("function", entry)
-    if not isinstance(fn, dict):
-        return dict(entry)
-    return {
-        "type": entry.get("type", "function"),
-        "function": dict(fn),
-    }
 
 
 # System prompt composition from layered template files.
@@ -790,6 +702,10 @@ def AGENT_MODE() -> str:  # noqa: N802
 
 def PLAN_MODE() -> str:  # noqa: N802
     return _get("modes/plan.md")
+
+
+def ASK_MODE() -> str:  # noqa: N802
+    return _get("modes/ask.md")
 
 
 def YOLO_MODE() -> str:  # noqa: N802
@@ -894,6 +810,7 @@ def load_prompt(name: str) -> str:
         "calm_personality": CALM_PERSONALITY,
         "agent_mode": AGENT_MODE,
         "plan_mode": PLAN_MODE,
+        "ask_mode": ASK_MODE,
         "yolo_mode": YOLO_MODE,
         "auto_approval": AUTO_APPROVAL,
         "suggest_approval": SUGGEST_APPROVAL,

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from deepseek_tui.automation.delivery import DeliveryNotSent
+
 from deepseek_tui.automation.inbox import (
     _format_email_block,
     _format_feishu_block,
@@ -110,14 +112,38 @@ def test_triage_skip_runs_by_default() -> None:
 
 
 def test_triage_keyword_blocks() -> None:
-    from deepseek_tui.automation.pipeline import TRIAGE_DEFER, apply_triage
+    from deepseek_tui.automation.pipeline import TRIAGE_DROP, apply_triage
 
     decision = apply_triage(
         policy="keyword",
         prompt="please spam me",
         metadata={"block_keywords": ["spam"]},
     )
-    assert decision.action is TRIAGE_DEFER
+    # Blocked is dropped, not "deferred": nothing is stored to run later.
+    assert decision.action == TRIAGE_DROP
+
+
+def test_triage_unknown_policy_is_an_error_not_a_pass() -> None:
+    from deepseek_tui.automation.pipeline import apply_triage
+
+    with pytest.raises(ValueError, match="Unknown triage policy"):
+        apply_triage(policy="keywrod", prompt="anything")
+
+
+@pytest.mark.asyncio
+async def test_dropped_trigger_reports_that_nothing_was_queued() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.automation.pipeline import fire_http_trigger
+
+    task_manager = MagicMock()
+    task_manager.add_task = AsyncMock()
+    outcome = await fire_http_trigger(
+        prompt="x", task_manager=task_manager, triage_policy="deny",
+    )
+    assert outcome["status"] == "dropped"
+    assert outcome["queued"] is False
+    task_manager.add_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -271,7 +297,7 @@ async def test_delivery_retries_when_not_best_effort() -> None:
     task_manager = _completed_task()
     with patch(
         "deepseek_tui.automation.pipeline._FeishuSink.deliver",
-        AsyncMock(side_effect=RuntimeError("feishu down")),
+        AsyncMock(side_effect=DeliveryNotSent("feishu down")),
     ):
         ok = await try_deliver_completed_run(automation, run, task_manager)
 
@@ -306,7 +332,7 @@ async def test_delivery_gives_up_after_max_attempts() -> None:
     task_manager = _completed_task()
     with patch(
         "deepseek_tui.automation.pipeline._FeishuSink.deliver",
-        AsyncMock(side_effect=RuntimeError("feishu down")),
+        AsyncMock(side_effect=DeliveryNotSent("feishu down")),
     ):
         ok = await try_deliver_completed_run(automation, run, task_manager)
 
@@ -340,7 +366,7 @@ async def test_exhausted_delivery_keeps_failed_run_execution_error() -> None:
     )
     with patch(
         "deepseek_tui.automation.pipeline._FeishuSink.deliver",
-        AsyncMock(side_effect=RuntimeError("feishu down")),
+        AsyncMock(side_effect=DeliveryNotSent("feishu down")),
     ):
         ok = await try_deliver_completed_run(automation, run, MagicMock())
 
@@ -369,7 +395,7 @@ async def test_best_effort_delivery_failure_is_not_reported_as_sent() -> None:
     )
     with patch(
         "deepseek_tui.automation.pipeline._FeishuSink.deliver",
-        AsyncMock(side_effect=RuntimeError("bot not in chat")),
+        AsyncMock(side_effect=DeliveryNotSent("bot not in chat")),
     ):
         ok = await try_deliver_completed_run(automation, run, _completed_task())
     assert ok is True
@@ -462,3 +488,120 @@ def test_imap_digest_is_read_only_and_covers_the_local_day(
     assert calls["fetch"] == "(BODY.PEEK[])"
     assert calls["search"] == '(SINCE "16-Oct-2026" BEFORE "19-Oct-2026")'
     assert [m.subject for m in messages] == ["hi"]
+
+
+@pytest.mark.asyncio
+async def test_trigger_poller_delivers_timed_out_task_as_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.automation import pipeline
+    from deepseek_tui.tools.task import TaskStatus
+
+    task = MagicMock(
+        status=TaskStatus.TIMED_OUT,
+        error="Task timed out after 7200s",
+        result_summary=None,
+    )
+    task_manager = MagicMock()
+    task_manager.get_task = AsyncMock(return_value=task)
+    sink = MagicMock()
+    sink.deliver = AsyncMock()
+    monkeypatch.setattr(pipeline, "_sink_for_mode", lambda mode, **_: sink)
+
+    await pipeline.deliver_when_task_completes(
+        task_id="task-1",
+        task_manager=task_manager,
+        delivery={"mode": "notify"},
+        label="trigger",
+        label_id="t1",
+        poll_s=0.01,
+        timeout_s=1.0,
+    )
+
+    sink.deliver.assert_awaited_once()
+
+
+def test_cron_prefix_survives_a_bracket_in_the_name() -> None:
+    from deepseek_tui.automation.delivery import sanitize_delivery_text
+
+    prefix = cron_prompt_prefix("job1", "日报 [v2]")
+    assert sanitize_delivery_text(prefix + "正文") == "正文"
+
+
+@pytest.mark.asyncio
+async def test_delivery_rules_only_when_a_run_is_delivered(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _no_digest(_digest):  # noqa: ANN001
+        return ""
+
+    monkeypatch.setattr("deepseek_tui.automation.pipeline.build_digest_block", _no_digest)
+    silent = await build_final_prompt(_sample_automation(delivery=None))
+    sent = await build_final_prompt(_sample_automation(delivery={"mode": "feishu", "to": "oc_x"}))
+
+    for text in (silent, sent):
+        assert "[Unattended run]" in text and "Do not ask questions" in text
+        # The real tool list is in the request; the prompt no longer restates it.
+        assert "Available tools:" not in text
+    assert "sends that final message" not in silent
+    assert "sends that final message" in sent
+
+
+def test_strip_unattended_preamble_restores_the_instruction() -> None:
+    from deepseek_tui.automation.delivery import (
+        _LEGACY_CRON_PLAYBOOK,
+        strip_unattended_preamble,
+        unattended_preamble,
+    )
+
+    assert strip_unattended_preamble(unattended_preamble(delivery_active=True) + "整理桌面") == "整理桌面"
+    assert strip_unattended_preamble(_LEGACY_CRON_PLAYBOOK + "\n\n整理桌面").strip() == "整理桌面"
+
+
+@pytest.mark.asyncio
+async def test_trigger_runs_get_the_unattended_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.automation.pipeline import fire_http_trigger
+    from deepseek_tui.tools.task import TaskKind
+
+    task_manager = MagicMock()
+    task_manager.add_task = AsyncMock(return_value=MagicMock(id="t1"))
+    await fire_http_trigger(prompt="summarize inbox", task_manager=task_manager)
+    request = task_manager.add_task.await_args.args[0]
+    assert request.kind is TaskKind.TRIGGER
+    assert "[Unattended run]" in request.prompt
+    assert request.prompt.endswith("summarize inbox")
+
+
+@pytest.mark.asyncio
+async def test_unsettled_inbound_turn_is_not_sent_as_an_answer() -> None:
+    from types import SimpleNamespace
+
+    from deepseek_tui.automation.pipeline import wait_thread_turn_text
+    from deepseek_tui.utils.user_text import user_text
+    from deepseek_tui.server.threads import RuntimeTurnStatus
+
+    store = SimpleNamespace(
+        load_turn=lambda _id: SimpleNamespace(status=RuntimeTurnStatus.IN_PROGRESS, error=None),
+        list_items_for_turn=lambda _id: [SimpleNamespace(kind=None, detail="我先看看")],
+    )
+    text = await wait_thread_turn_text(
+        SimpleNamespace(store=store), thread_id="th", turn_id="tu", timeout_s=0.05, poll_s=0.01
+    )
+    assert text == user_text("turn_still_running")
+
+
+def test_user_facing_copy_follows_the_session_language() -> None:
+    from deepseek_tui.automation.delivery import classify_task_error_for_user
+
+    assert classify_task_error_for_user("Task timed out after 900s", "en") == (
+        "The task timed out. Narrow its scope or try again later."
+    )
+    assert classify_task_error_for_user("Task timed out after 900s", "zh") == (
+        "任务执行超时。请缩小任务范围或稍后重试。"
+    )
+    # Every message exists in both languages.
+    from deepseek_tui.utils.user_text import _TEXT
+
+    assert _TEXT["zh"].keys() == _TEXT["en"].keys()

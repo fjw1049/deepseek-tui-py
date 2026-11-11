@@ -28,6 +28,10 @@ class MissingApiKeyError(ValueError):
     error_code = "missing_api_key"
 
 
+def _openai_client_class(base_url: str) -> type[DeepSeekClient]:
+    return OpenAIResponsesClient if is_openai_host(base_url) else DeepSeekClient
+
+
 @dataclass(frozen=True, slots=True)
 class EndpointTestResult:
     """Result of a connectivity test against an endpoint."""
@@ -94,7 +98,7 @@ def build_llm_client(config: Config) -> LLMClient:
         thinking = _infer_thinking_supported(base_url, model)
 
         # OpenAI's reasoning models take tools with reasoning only on /v1/responses.
-        client_class = OpenAIResponsesClient if is_openai_host(base_url) else DeepSeekClient
+        client_class = _openai_client_class(base_url)
         client = client_class(
             api_key=api_key,
             base_url=base_url,
@@ -148,38 +152,31 @@ async def test_endpoint(
     """
     import httpx
 
-    url = base_url.rstrip("/")
+    from deepseek_tui.protocol.messages import Message, MessageRequest
+
+    request = MessageRequest(
+        model=model, messages=[Message.user("Reply OK.")], max_tokens=32,
+        reasoning_effort="off", stream=False,
+    )
     if protocol == "anthropic":
-        if url.endswith("/v1/messages"):
-            pass
-        elif url.endswith("/v1"):
-            url = f"{url}/messages"
-        else:
-            url = f"{url}/v1/messages"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 5,
-            "stream": False,
-        }
+        anthropic_client = AnthropicCompatClient(api_key=api_key, base_url=base_url)
+        url = anthropic_client._messages_url()
+        payload = anthropic_client._build_payload(request)
+        response_field = "content"
         headers = {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
     else:
-        import re
-
-        if re.search(r"/v\d+$", url):
-            url = f"{url}/chat/completions"
-        else:
-            url = f"{url}/v1/chat/completions"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 5,
-            "stream": False,
-        }
+        client_class = _openai_client_class(base_url)
+        chat_client = client_class(
+            api_key=api_key, base_url=base_url,
+            thinking_supported=_infer_thinking_supported(base_url, model),
+        )
+        url = chat_client._request_url()
+        payload = chat_client._build_payload(request)
+        response_field = "output" if isinstance(chat_client, OpenAIResponsesClient) else "choices"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -195,17 +192,25 @@ async def test_endpoint(
             resp = await client.post(url, json=payload, headers=headers)
             from deepseek_tui.client.token_compat import adapt_completion_tokens
 
-            if protocol == "openai" and adapt_completion_tokens(resp.status_code, resp.text, payload):
+            if response_field == "choices" and adapt_completion_tokens(
+                resp.status_code, resp.text, payload
+            ):
                 resp = await client.post(url, json=payload, headers=headers)
         latency = int((time.monotonic() - start) * 1000)
 
         if resp.status_code == 200:
             body = resp.json()
-            choices = (
-                body.get("content", [])
-                if protocol == "anthropic"
-                else body.get("choices", [])
-            )
+            if (
+                not isinstance(body, dict)
+                or not isinstance(body.get(response_field), list)
+                or body.get("error")
+                or body.get("status") in {"failed", "cancelled"}
+            ):
+                return EndpointTestResult(
+                    success=False, latency_ms=latency, model=model,
+                    message="响应格式无效或模型请求失败",
+                )
+            choices = body[response_field]
             resp_model = body.get("model", model)
             if choices:
                 return EndpointTestResult(

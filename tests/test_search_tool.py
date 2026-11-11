@@ -398,7 +398,8 @@ async def test_file_search_glob_and_shallow_depth(tmp_path: Path):
         ToolContext(working_directory=tmp_path),
     )
     lines = [line for line in shallow.content.splitlines() if not line.startswith("…")]
-    assert lines == ["root.py"]
+    # The subfolder the depth limit stopped at is listed, not descended.
+    assert lines == ["root.py", "src/"]
 
 
 async def test_file_search_returns_workspace_relative_paths(tmp_path: Path):

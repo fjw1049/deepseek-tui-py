@@ -6,9 +6,9 @@ is written at the request boundary instead, so reminders, pruned bodies and
 compaction snapshots are captured as sent, with their origin.
 
 Each line replaces the tail of the history: ``state[:keep] + messages``. A round
-that only appended stores only the new messages. ``commit`` closes a turn, and
-a turn with requests but no commit (cancelled, failed) replays to its last
-request, which is its last completed tool round.
+that only appended stores only the new messages. ``commit`` closes a successful
+turn; ``interrupted`` saves repaired tool/result pairs after failure or cancellation.
+An older log without either final record replays to its last request.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from deepseek_tui.protocol.messages import Message
 
 logger = logging.getLogger(__name__)
 
-RecordKind = Literal["sync", "request", "commit"]
+RecordKind = Literal["sync", "request", "commit", "interrupted"]
 
 
 def _digest(dumped: dict[str, Any]) -> str:

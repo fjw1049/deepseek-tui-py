@@ -757,7 +757,13 @@ class AppRuntime:
             record = await self._tool_runtime.task_manager.get_task(task_id)
         except KeyError as exc:
             return {"ok": False, "error": f"task not found: {exc}"}
-        return {"ok": True, "task": _task_record_to_dict(record)}
+        from deepseek_tui.tools.task.file_checkpoints import restore_marker
+
+        payload = _task_record_to_dict(record)
+        payload["file_restore_started"] = restore_marker(
+            self._tool_runtime.task_manager.data_dir(), record.id
+        ).exists()
+        return {"ok": True, "task": payload}
 
     async def cancel_task(self, task_id: str) -> dict[str, Any]:
         """Cancel a task by id."""
@@ -832,6 +838,17 @@ class AppRuntime:
             return {"ok": False, "error": str(exc), "code": "conflict"}
         return {"ok": True, "task": _task_record_to_dict(record)}
 
+    async def restore_task_files(self, task_id: str, *, preview: bool = True) -> dict[str, Any]:
+        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
+            return {"ok": False, "error": "task manager not configured"}
+        try:
+            result = await self._tool_runtime.task_manager.restore_files(task_id, preview=preview)
+        except KeyError as exc:
+            return {"ok": False, "error": f"task not found: {exc}"}
+        except (OSError, RuntimeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc), "code": "conflict"}
+        return {"ok": True, **result}
+
     def _automation_manager(self) -> Any:
         if self._tool_runtime is None or self._tool_runtime.automation_manager is None:
             return None
@@ -846,6 +863,25 @@ class AppRuntime:
             "ok": True,
             "automations": [_automation_record_to_dict(r) for r in records],
         }
+
+    async def automation_permissions(
+        self, automation_id: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        from deepseek_tui.automation.permissions import browser_grant, set_browser_permission
+
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            manager.get_automation(automation_id)
+            root = manager.automations_dir
+            if body is not None:
+                if set(body) != {"allow_browser"}:
+                    raise ValueError("Only allow_browser may be set here")
+                set_browser_permission(root, automation_id, body["allow_browser"])
+            return {"ok": True, "allow_browser": browser_grant(root, automation_id) is not None}
+        except (KeyError, OSError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
 
     async def create_automation(self, body: dict[str, Any]) -> dict[str, Any]:
         from deepseek_tui.tools.automation import (
@@ -972,7 +1008,7 @@ class AppRuntime:
         if self._tool_runtime is None or self._tool_runtime.task_manager is None:
             return {"ok": False, "error": "task manager not configured"}
         # Concurrent clicks must reuse one conversation.
-        async with manager._scheduler_lock:
+        async with manager._run_lock(automation_id, run_id):
             try:
                 automation = manager.get_automation(automation_id)
                 run = next(r for r in manager.list_runs(automation_id) if r.id == run_id)
@@ -1076,6 +1112,24 @@ class AppRuntime:
             "ok": True,
             "runs": [_automation_run_to_dict(r) for r in runs],
         }
+
+    async def resolve_automation_delivery(
+        self, automation_id: str, run_id: str, action: str
+    ) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        try:
+            run = await manager.resolve_delivery(automation_id, run_id, action=action)
+        except (KeyError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "run": _automation_run_to_dict(run)}
+
+    async def pending_automation_deliveries(self) -> dict[str, Any]:
+        manager = self._automation_manager()
+        if manager is None:
+            return {"ok": False, "error": "automation manager not configured"}
+        return {"ok": True, "runs": manager.pending_delivery_confirmations()}
 
     async def list_mcp_servers(self) -> dict[str, Any]:
         """List configured MCP servers."""
@@ -1249,7 +1303,7 @@ def _automation_record_to_dict(record: Any) -> dict[str, Any]:
 
 
 def _automation_run_to_dict(run: Any) -> dict[str, Any]:
-    return run.to_dict()
+    return run.to_public_dict()
 
 
 def _thread_to_dict(rec: ThreadRecord) -> dict[str, Any]:

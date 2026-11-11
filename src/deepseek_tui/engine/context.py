@@ -339,9 +339,28 @@ def estimate_tokens(text: str) -> int:
     if not text:
         return 0
     enc = _tiktoken_encoder()
-    if enc is not None:
+    if enc is None:
+        return _estimate_tokens_char_split(text)
+    if len(text) < _TOKEN_CACHE_MIN_CHARS:
         return len(enc.encode(text))
-    return _estimate_tokens_char_split(text)
+    # Every round re-estimates the whole history several times (L0 check,
+    # compaction check, request estimate, turn-loop budget), and the same
+    # message text is re-encoded each time. Hashing is far cheaper than BPE.
+    key = (id(enc), hash(text), len(text))
+    cached = _TOKEN_CACHE.get(key)
+    if cached is not None:
+        return cached
+    count = len(enc.encode(text))
+    if len(_TOKEN_CACHE) >= _TOKEN_CACHE_MAX_ENTRIES:
+        _TOKEN_CACHE.clear()
+    _TOKEN_CACHE[key] = count
+    return count
+
+
+_TOKEN_CACHE_MIN_CHARS = 512
+_TOKEN_CACHE_MAX_ENTRIES = 8192
+# (encoder identity, text hash, text length) -> token count. Keys hold no text.
+_TOKEN_CACHE: dict[tuple[int, int, int], int] = {}
 
 
 def estimate_input_tokens_conservative(

@@ -26,6 +26,7 @@ _AGENT_TOOLS = [
     "fetch_url",
     "file_search",
     "grep_files",
+    "list_mcp_resource_templates",
     "list_mcp_resources",
     "load_skill",
     "note",
@@ -48,8 +49,10 @@ _PLAN_TOOLS = [
     "fetch_url",
     "file_search",
     "grep_files",
+    "list_mcp_resource_templates",
     "list_mcp_resources",
     "load_skill",
+    "note",
     "read_file",
     "read_mcp_resource",
     "request_user_input",
@@ -78,10 +81,10 @@ def test_plan_mode_has_no_side_effect_tools() -> None:
         "exec_shell",
         "task_create",
         "task_stop",
-        "note",
     }
     names = set(build_default_registry(Config(), mode="plan").names())
     assert not (side_effect & names)
+    assert build_default_registry(Config(), mode="plan").get("note").is_read_only()
 
 
 def test_plan_mode_agent_tool_hides_resume() -> None:
@@ -95,13 +98,13 @@ def test_plan_mode_agent_tool_hides_resume() -> None:
     assert "resume" in agent_schema["properties"]
 
 
-def test_plan_mode_excludes_automations_even_when_enabled() -> None:
+def test_plan_mode_allows_only_automation_inspection_when_enabled() -> None:
     """features.automations must not leak side-effect tools into plan mode."""
     cfg = Config()
     cfg.features.automations = True
     plan_names = set(build_default_registry(cfg, mode="plan").names())
     assert not any(n.startswith("automation_") for n in plan_names)
-    assert not any(n.startswith("cron_") for n in plan_names)
+    assert {n for n in plan_names if n.startswith("cron_")} == {"cron_list"}
     agent_names = set(build_default_registry(cfg, mode="agent").names())
     assert {"cron_create", "cron_list", "cron_delete"} <= agent_names
 

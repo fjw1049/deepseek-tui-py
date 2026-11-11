@@ -49,6 +49,7 @@ from deepseek_tui.engine.events import (
     GoalUpdatedEvent,
     ModeChangedEvent,
     ToolResultEvent,
+    ToolContextEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
@@ -889,6 +890,16 @@ class RuntimeThreadManager:
         thread = self.store.load_thread(thread_id)
         now = datetime.now(timezone.utc)
         turn_id = thread.latest_turn_id
+        if item_id is not None:
+            try:
+                existing = self.store.load_item(item_id)
+                existing_turn = self.store.load_turn(existing.turn_id)
+            except FileNotFoundError:
+                pass
+            else:
+                if existing_turn.thread_id != thread_id:
+                    raise ValueError("Notice item belongs to a different thread")
+                turn_id = existing.turn_id
         if turn_id is None:
             turn_id = f"turn_{uuid.uuid4().hex[:8]}"
             turn = TurnRecord(
@@ -3973,7 +3984,7 @@ class RuntimeThreadManager:
                     client, self._config_for_provider(provider, model), model
                 )
                 state.provider = provider
-            state.engine.mode = effective_mode
+            state.engine.configure_interaction_mode(effective_mode, reason="start_turn")
             if effective_mode == "plan":
                 state.engine.tool_context.metadata["approved_plan"] = False
             state.engine.tool_context.metadata["turn_latency_turn_id"] = turn_id
@@ -4085,6 +4096,7 @@ class RuntimeThreadManager:
                     internal_kind=req.internal_kind,
                     expected_goal_id=req.expected_goal_id,
                     reasoning_effort=req.reasoning_effort,
+                    tool_profile=req.tool_profile,
                 )
             )
         except BaseException as exc:
@@ -4191,7 +4203,7 @@ class RuntimeThreadManager:
             if parsed.kind == "status":
                 pass
             elif parsed.kind == "create":
-                engine.mode = _engine_mode_for_goal(engine.mode)
+                engine.configure_interaction_mode(_engine_mode_for_goal(engine.mode), reason="goal")
                 created = engine.goal_service.create(
                     parsed.objective,
                     replace=parsed.replace,
@@ -4230,7 +4242,7 @@ class RuntimeThreadManager:
                 engine.goal_service.pause(actor=GoalActor.USER)
                 await self._interrupt_active_turn(thread_id)
             elif parsed.kind in {"resume", "reopen"}:
-                engine.mode = _engine_mode_for_goal(engine.mode)
+                engine.configure_interaction_mode(_engine_mode_for_goal(engine.mode), reason="goal")
                 if parsed.kind == "reopen":
                     _snapshot, decision = engine.goal_service.reopen(mode=engine.mode)
                 else:
@@ -4281,7 +4293,7 @@ class RuntimeThreadManager:
             elif parsed.kind == "next-add":
                 current = engine.goal_service.snapshot()
                 if current is None or current.status.value == "complete":
-                    engine.mode = _engine_mode_for_goal(engine.mode)
+                    engine.configure_interaction_mode(_engine_mode_for_goal(engine.mode), reason="goal")
                     created = engine.goal_service.create(
                         parsed.objective, actor=GoalActor.USER, mode=engine.mode
                     )
@@ -4758,7 +4770,7 @@ class RuntimeThreadManager:
                 self._sync_trust_mode(
                     state.engine, self._trust_mode_for_thread(thread, state)
                 )
-                state.engine.mode = (thread.mode or "agent").strip() or "agent"
+                state.engine.configure_interaction_mode(thread.mode, reason="thread_load")
                 state.engine.tool_context.metadata["approved_plan"] = bool(
                     thread.approved_plan
                 )
@@ -6007,7 +6019,8 @@ class RuntimeThreadManager:
         round_preface_item_id: str | None = None
         current_reasoning_item_id: str | None = None
         current_reasoning_text = ""
-        tool_items: dict[str, str] = {}  # tool_call_id -> item_id
+        tool_items: dict[str, str] = {}
+        tool_context_items: dict[str, str] = {}  # tool_call_id -> item_id
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
         seen_subagent_ids: set[str] = set()  # agents touched this turn (for reconcile)
         pending_turn_diffs: list[dict[str, Any]] = []
@@ -6023,7 +6036,7 @@ class RuntimeThreadManager:
             has_contents = (
                 "_before_content" in mut
                 and "_after_content" in mut
-                and (before is None or isinstance(before, str))
+                and (before is None or isinstance(before, (str, bytes)))
                 and (after is None or isinstance(after, str))
             )
             public_mut = {
@@ -6057,7 +6070,7 @@ class RuntimeThreadManager:
                         mutation_ledger.commit(
                             m,
                             emit=False,
-                            before_content=before,
+                            before_content=before if isinstance(before, str) else None,
                             after_content=after,
                         )
                         if has_contents
@@ -6167,6 +6180,8 @@ class RuntimeThreadManager:
                 turn_id, path, old
             )
         )
+        if _engine.tool_context.subagent_manager is not None:
+            _engine.tool_context.subagent_manager.pre_write_capture = _engine.tool_context.pre_write_capture
         if checkpoint_ready is not None and not checkpoint_ready.done():
             checkpoint_ready.set_result(None)
         turn_status = RuntimeTurnStatus.COMPLETED
@@ -6513,6 +6528,7 @@ class RuntimeThreadManager:
                 tool_call_started_ms[tc.id] = now_ms()
                 item_id = f"item_{uuid.uuid4().hex[:8]}"
                 tool_items[tc.id] = item_id
+                tool_context_items[tc.id] = item_id
                 tool_call_args[tc.id] = tc.arguments
                 kind = tool_kind_for_name(tc.name)
                 now = datetime.now(timezone.utc)
@@ -6547,6 +6563,13 @@ class RuntimeThreadManager:
                         },
                     },
                 )
+
+            elif isinstance(event, ToolContextEvent):
+                item_id = tool_context_items.get(event.tool_call_id)
+                if item_id is not None:
+                    item = self.store.load_item(item_id)
+                    item.metadata = {**(item.metadata or {}), "model_context": event.message.model_dump(mode="json")}
+                    self.store.save_item(item)
 
             elif isinstance(event, ToolResultEvent):
                 note_tool_result_timing(event.tool_call_id)
@@ -7209,6 +7232,7 @@ class RuntimeThreadManager:
                     _mgr = _state.engine.tool_context.subagent_manager
                     if _mgr is not None:
                         _mgr.on_file_mutation = None
+                        _mgr.pre_write_capture = None
 
         watchdog.cancel()
         try:

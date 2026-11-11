@@ -12,9 +12,11 @@ from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
 from deepseek_tui.tools.automation import (
     AUTOMATION_MANAGER_KEY,
     AutomationManager,
+    AutomationStatus,
     CronCreateTool,
     CronDeleteTool,
     CronListTool,
+    CronUpdateTool,
 )
 from deepseek_tui.tools.registry import ToolContext, ToolError, ToolRegistry
 from deepseek_tui.tools.task.manager import TaskManager
@@ -146,7 +148,8 @@ async def test_cron_list_lists_and_reads_detail(tmp_path: Path) -> None:
 
     listed = await CronListTool().execute({}, ctx)
     assert listed.metadata["count"] == 1
-    assert automation_id[:8] in listed.content
+    # The listing is the only place a later turn can learn the id.
+    assert automation_id in listed.content
 
     detail = await CronListTool().execute({"automation_id": automation_id}, ctx)
     assert detail.metadata["automation"]["id"] == automation_id
@@ -201,3 +204,97 @@ async def test_legacy_automation_create_executes_via_forwarding(
     detail = await registry.execute(name, args, ctx)
     assert detail.success is True
     assert detail.metadata["automation"]["id"] == created.content
+
+
+def test_resolve_delivery_rejects_missing_recipient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deepseek_tui.tools.automation import _resolve_delivery
+
+    monkeypatch.setattr(
+        "deepseek_tui.automation.inbox.default_mail_to_from_config",
+        lambda: None,
+    )
+    with pytest.raises(ToolError, match="no configured recipient"):
+        _resolve_delivery({"mode": "email"})
+
+
+@pytest.mark.asyncio
+async def test_cron_update_changes_a_job_in_place(tmp_path: Path) -> None:
+    ctx = _context(tmp_path)
+    created = await CronCreateTool().execute(dict(_CREATE_INPUT), ctx)
+    job_id = created.content
+
+    updated = await CronUpdateTool().execute(
+        {"automation_id": job_id, "schedule": "30 8 * * *", "prompt": "new work"}, ctx
+    )
+    record = _manager(ctx).get_automation(job_id)
+    assert updated.success is True
+    assert record.schedule == "30 8 * * *"
+    assert record.prompt == "new work"
+    assert record.name == "hourly"  # untouched fields stay
+
+    await CronUpdateTool().execute({"automation_id": job_id, "paused": True}, ctx)
+    assert _manager(ctx).get_automation(job_id).status is AutomationStatus.PAUSED
+    await CronUpdateTool().execute({"automation_id": job_id, "paused": False}, ctx)
+    assert _manager(ctx).get_automation(job_id).status is AutomationStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_cron_update_rejects_empty_and_unknown(tmp_path: Path) -> None:
+    ctx = _context(tmp_path)
+    created = await CronCreateTool().execute(dict(_CREATE_INPUT), ctx)
+    with pytest.raises(ToolError, match="Nothing to change"):
+        await CronUpdateTool().execute({"automation_id": created.content}, ctx)
+    with pytest.raises(ToolError, match="not found"):
+        await CronUpdateTool().execute({"automation_id": "nope", "paused": True}, ctx)
+
+
+@pytest.mark.asyncio
+async def test_cron_jobs_cannot_run_outside_the_workspace(tmp_path: Path) -> None:
+    (tmp_path / "project").mkdir()
+    ctx = _context(tmp_path / "project")
+    with pytest.raises(ToolError, match="inside the current session workspace"):
+        await CronCreateTool().execute({**_CREATE_INPUT, "cwds": [str(tmp_path)]}, ctx)
+    created = await CronCreateTool().execute({**_CREATE_INPUT, "cwds": ["sub"]}, ctx)
+    record = _manager(ctx).get_automation(created.content)
+    assert record.cwds == [str((tmp_path / "project" / "sub").resolve())]
+    with pytest.raises(ToolError, match="inside the current session workspace"):
+        await CronUpdateTool().execute(
+            {"automation_id": created.content, "cwds": ["/"]}, ctx
+        )
+
+
+def test_cron_update_is_registered_beside_the_other_cron_tools() -> None:
+    from deepseek_tui.config.models import Config, FeatureConfig
+    from deepseek_tui.tools.registry import build_default_registry, build_subagent_registry
+
+    cfg = Config(features=FeatureConfig(automations=True, tasks=True, mcp=False))
+    assert build_default_registry(cfg).contains("cron_update")
+    assert not build_default_registry(cfg, mode="plan").contains("cron_update")
+    # A sub-agent context has no AutomationManager, so it gets no cron tools.
+    assert not build_subagent_registry(cfg).contains("cron_update")
+    assert not build_subagent_registry(cfg).contains("cron_create")
+
+
+def test_module_exports_the_cron_tools() -> None:
+    import deepseek_tui.tools.automation as automation
+
+    for name in ("CronCreateTool", "CronUpdateTool", "AutomationManager", "run_scheduler_loop"):
+        assert name in automation.__all__
+
+
+def test_default_timezone_without_a_zone_name_uses_the_host_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import deepseek_tui.tools.automation as automation
+
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.setattr(automation, "Path", lambda *_: Path("/nonexistent/localtime"))
+    name = automation.default_timezone()
+    host = datetime.now().astimezone().utcoffset()
+    if host is not None and host.total_seconds() % 3600 == 0:
+        assert datetime.now(ZoneInfo(name)).utcoffset() == host

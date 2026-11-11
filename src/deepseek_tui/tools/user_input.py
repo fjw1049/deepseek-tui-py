@@ -50,6 +50,16 @@ def unattended_assistance(context: ToolContext, input_data: dict[str, Any]) -> T
     )
 
 
+def unattended_tool_denial(context: ToolContext, tool_name: str, reason: str) -> ToolResult:
+    """Keep a denied capability in the durable task's assistance outcome."""
+    request = {"kind": "decision", "tool": tool_name, "reason": reason}
+    facts = context.metadata.get("turn_facts")
+    if facts is not None and request not in facts.assistance_requests:
+        facts.assistance_requests.append(request)
+    return ToolResult(success=False, content=f"Human assistance required: {reason}",
+                      metadata={"needs_assistance": request})
+
+
 class UserInputQuestion:
     """Validated question structure."""
 

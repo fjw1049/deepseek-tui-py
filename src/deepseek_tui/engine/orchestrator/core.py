@@ -29,9 +29,6 @@ from deepseek_tui.engine.cycle import (
     CycleConfig,
     SessionActivityCoordinator,
 )
-from deepseek_tui.engine.dispatch import (
-    should_force_update_plan_first,
-)
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
     EngineEvent,
@@ -79,6 +76,7 @@ from deepseek_tui.engine.prompts import (
     build_system_prompt,
 )
 from deepseek_tui.engine.tools import (
+    ASK_MODE_TOOL_ALLOWLIST,
     PLAN_MODE_TOOL_ALLOWLIST,
     build_model_tool_catalog,
 )
@@ -242,6 +240,8 @@ def _format_process_done(payload: dict[str, Any]) -> str:
         f"process_id: {process_id}",
         f"command: {command}",
         f"exit_code: {returncode}",
+        f"expected_exit_codes: {payload.get('expected_exit_codes', [0])}",
+        f"success: {payload.get('success', returncode == 0)}",
     ]
     if output:
         lines.extend(["", output])
@@ -306,6 +306,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         self.tool_registry.set_context(self.tool_context)
         self.exec_policy = exec_policy or ExecPolicyEngine()
         self.approval_handler = approval_handler or AutoApprovalHandler()
+        self._default_approval_handler = self.approval_handler
         self.max_tool_round_trips = max_tool_round_trips
         self.mode: str = "agent"
         # Reply language from config.ui.locale (Workbench settings). Default zh.
@@ -487,9 +488,15 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         self._ui_progress = UiProgress()
         self._mcp_tools_cache: list[dict[str, Any]] | None = None
         self.tool_profile: str | None = None
+        # Set by the task executor so every turn of a run, resumes included,
+        # gets the same tool profile; None means detect from the prompt.
+        self.pinned_tool_profile: str | None = None
         # Issue #756: parent turn resumes when direct children complete.
         self._subagent_completions: asyncio.Queue[SubAgentCompletion] = asyncio.Queue(maxsize=64)
         self._consumed_subagent_completions: set[str] = set()
+        # Foreground children a handoff stopped waiting for; their late
+        # results are delivered like a background child's.
+        self._handoff_timed_out_agents: set[str] = set()
         self._process_completions: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
         self._consumed_process_completions: set[str] = set()
         self.tool_context.on_shell_process_done = self._enqueue_shell_process_completion
@@ -1119,26 +1126,49 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
         from deepseek_tui.server.metrics import get_turn_latency, now_ms
-        from deepseek_tui.engine.prompts import (
+        from deepseek_tui.engine.tool_profiles import (
             TOOL_PROFILE_FULL,
             filter_tools_for_profile,
         )
 
+        if self.tool_context.metadata.get("cron_restricted"):
+            from deepseek_tui.automation.permissions import browser_authorized
+            from functools import partial
+
+            filter_tools_for_profile = partial(
+                filter_tools_for_profile,
+                trusted_mcp_tools=tuple(getattr(self._app_config, "mcp_read_only_tools", ())),
+                allow_browser=browser_authorized(self.tool_context),
+            )
         turn_id = self.tool_context.metadata.get("turn_latency_turn_id")
         trace = get_turn_latency(str(turn_id)) if turn_id else None
         build_start = now_ms() if trace is not None else None
 
         native_tools = self.tool_registry.to_api_tools()
         mcp = self.mcp_manager
+        if mcp is None or (hasattr(mcp, "server_names") and not mcp.server_names):
+            helpers = {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
+            native_tools = [t for t in native_tools if (t.get("function") or t).get("name") not in helpers]
         profile = self.tool_profile or TOOL_PROFILE_FULL
         mode = (self.mode or "agent").strip() or "agent"
-        if mode == "plan":
+        mode_allowlist = (PLAN_MODE_TOOL_ALLOWLIST if mode == "plan" else
+                          ASK_MODE_TOOL_ALLOWLIST if mode == "ask" else None)
+        if mode_allowlist is not None:
             # Shared agent registries still expose write tools; filter the
             # model-visible surface to the plan allowlist.
             native_tools = [
                 t
                 for t in native_tools
-                if (t.get("function") or t).get("name") in PLAN_MODE_TOOL_ALLOWLIST
+                if (t.get("function") or t).get("name") in mode_allowlist
+            ]
+            # A shared agent registry keeps its append implementation; expose
+            # only the read contract for this session without mutating others.
+            from deepseek_tui.tools.knowledge import NoteTool
+
+            native_tools = [
+                self.tool_registry._serialise_tool(NoteTool(read_only=True))
+                if (t.get("function") or t).get("name") == "note" else t
+                for t in native_tools
             ]
         if mcp is None:
             result = filter_tools_for_profile(list(native_tools), profile)
@@ -1195,13 +1225,24 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
 
             result = [t for t in result if _passes_focus(t)]
 
-        if mode == "plan":
+        if mode_allowlist is not None:
             result = [
                 t
                 for t in result
-                if (t.get("function") or t).get("name") in PLAN_MODE_TOOL_ALLOWLIST
+                if (t.get("function") or t).get("name") in mode_allowlist
+                or self._is_trusted_readonly_mcp((t.get("function") or t).get("name", ""))
             ]
 
+        trusted = getattr(getattr(self, "_app_config", None), "mcp_read_only_tools", [])
+        if trusted and mcp is not None and hasattr(mcp, "grouped_discovered_tools"):
+            known = {tool["model_name"] for group in mcp.grouped_discovered_tools().values() for tool in group}
+            can_validate = getattr(mcp, "can_validate_tool_name", lambda name: False)
+            missing = tuple(sorted(name for name in set(trusted) - known if can_validate(name)))
+            if missing and missing != getattr(self, "_unmatched_mcp_trust", ()):
+                warning = "Trusted MCP names not discovered; verify exact model names: " + ", ".join(missing)
+                logger.warning(warning)
+                await self.handle.emit(StatusEvent(message=warning))
+            self._unmatched_mcp_trust = missing
         if trace is not None and build_start is not None:
             trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
         return result
@@ -2151,24 +2192,24 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                         else f"@{focus_mcp_ahead}"
                     ),
                 )
-        from deepseek_tui.engine.prompts import (
-            TOOL_PROFILE_FULL,
-            detect_tool_profile_from_prompt,
-        )
+        from deepseek_tui.engine.tool_profiles import TOOL_PROFILE_FULL
 
-        self.tool_profile = (
-            None
-            if internal_turn
-            else detect_tool_profile_from_prompt(processed.model_text or op.content or "")
-        )
+        # Routing is caller metadata, never inferred from user text or file content.
+        # Legacy persisted tasks retain their kind/profile migration at load time.
+        self.tool_profile = self.pinned_tool_profile or op.tool_profile
         if self.tool_profile == TOOL_PROFILE_FULL:
             self.tool_profile = None
+        self.tool_context.metadata["cron_restricted"] = self.tool_profile == "cron"
+        sub_mgr = self.tool_context.subagent_manager
+        if sub_mgr is not None and getattr(sub_mgr, "loop_runtime", None) is not None:
+            sub_mgr.loop_runtime.cron_restricted = self.tool_profile == "cron"
         # Reset per-host timeout escalation so a prior turn's transient
         # network blip doesn't carry over (network_escalation counters are
         # meant to be turn-scoped, not session-scoped).
         from deepseek_tui.utils.network_escalation import reset_host_timeouts
 
         reset_host_timeouts(self.tool_context)
+        self.tool_context.metadata.pop("task_output_poll", None)
 
         # Skill 聚焦模式：若用户以 `/<skill-name>` 指定了一个已发现的 skill，
         # 本 turn 只列该 skill、只放最小工具集。未命中则 focus_skill 为 None，
@@ -2294,17 +2335,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         self.handle.set_response_id(response_id)
         start = time.monotonic()
 
-        # Plan mode: detect quick-plan requests that skip codebase exploration
-        # and inject a grounding hint
-        if not internal_turn and should_force_update_plan_first(
-            self.mode, processed.display_text or ""
-        ):
-            from deepseek_tui.engine import reminders
-            from deepseek_tui.engine.prompts import PLAN_GROUNDING_REMINDER
-
-            working_messages.append(
-                reminders.reminder_message(reminders.PLAN_NUDGE, PLAN_GROUNDING_REMINDER)
-            )
         from deepseek_tui.tools.plan_mode import sync_approved_plan_reminder
 
         sync_approved_plan_reminder(
@@ -2315,6 +2345,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         )
 
         self._active_context_messages = working_messages
+        self._completed_tool_messages: dict[str, Message] = {}
+        turn_committed = False
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
@@ -2384,37 +2416,41 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 self.tool_registry.contains("browser_use")
                 and self.tool_context.metadata.get("browser_service") is not None
             )
-            sys_prompt = build_system_prompt(
-                op.system_prompt,
-                mode=_resolve_app_mode(self.mode),
-                # Skill focus narrows the tool whitelist, not the catalog.
-                # Rewriting ## Skills for a single turn costs two full prefix
-                # cache misses (this turn, then the turn that reverts), and
-                # the model does not need it: the user's `/<skill>` prefix is
-                # never stripped from the message text, so the cue survives.
-                # Plugin mount stays narrowed — it is session-level state, so
-                # its prefix is stable across turns.
-                skills_context=self._render_skills_context(
-                    only=self._active_plugin_skills()
-                    if focus_mcp is None and self._active_plugin is not None
-                    else None
-                ),
-                plugin_context=(
-                    self._render_plugin_context()
-                    if focus_mcp is None and self._active_plugin is not None
-                    else None
-                ),
-                plugin_components_context=self._render_plugin_components_context(),
-                plugin_rules_context=self._render_plugin_rules_context(),
-                workspace=self.tool_context.working_directory,
-                locale_tag=self.reply_locale,
-                automations_guidelines=self.tool_registry.contains("cron_create"),
-                browser_guidelines=browser_available,
-                surfaces=(
-                    frozenset({"browser"} if browser_available else ()) | self._cua_surfaces()
-                ),
-                auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
-            )
+            def compose_system_prompt() -> str:
+                return build_system_prompt(
+                    op.system_prompt,
+                    mode=_resolve_app_mode(self.mode),
+                    # Skill focus narrows the tool whitelist, not the catalog.
+                    # Rewriting ## Skills for a single turn costs two full prefix
+                    # cache misses (this turn, then the turn that reverts), and
+                    # the model does not need it: the user's `/<skill>` prefix is
+                    # never stripped from the message text, so the cue survives.
+                    # Plugin mount stays narrowed — it is session-level state, so
+                    # its prefix is stable across turns.
+                    skills_context=self._render_skills_context(
+                        only=self._active_plugin_skills()
+                        if focus_mcp is None and self._active_plugin is not None
+                        else None
+                    ),
+                    plugin_context=(
+                        self._render_plugin_context()
+                        if focus_mcp is None and self._active_plugin is not None
+                        else None
+                    ),
+                    plugin_components_context=self._render_plugin_components_context(),
+                    plugin_rules_context=self._render_plugin_rules_context(),
+                    workspace=self.tool_context.working_directory,
+                    locale_tag=self.reply_locale,
+                    automations_guidelines=self.tool_registry.contains("cron_create"),
+                    browser_guidelines=browser_available,
+                    surfaces=(
+                        frozenset({"browser"} if browser_available else ()) | self._cua_surfaces()
+                    ),
+                    auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
+                )
+
+            self._turn_prompt_builder = compose_system_prompt
+            sys_prompt = compose_system_prompt()
             # Compaction bridges live in session_messages (leading user
             # message), not in the system prompt — mutating system every
             # compact would destroy the stable KV prefix cache.
@@ -2472,11 +2508,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             from deepseek_tui.engine.turn import TurnOutcomeStatus
 
             turn_ok = result.outcome == TurnOutcomeStatus.SUCCESS
-            # Only persist the turn's messages on success. Failed turns
-            # (stream timeout, content overflow, ...) can leave a partial
-            # assistant message in working_messages; persisting it would
-            # corrupt the context for every later turn. Matches the
-            # cancelled path above, which also discards working state.
+            # Success commits verbatim; finally repairs interrupted protocol pairs.
             if turn_ok:
                 persisted_messages = [
                     message for message in working_messages if message is not goal_reminder_message
@@ -2489,6 +2521,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 else:
                     self.session_messages = persisted_messages
                 self.record_transcript("commit", self.session_messages)
+                turn_committed = True
             if not result.cancelled:
                 from deepseek_tui.state.session import clear_checkpoint
 
@@ -2567,6 +2600,21 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 self._user_turn_index += 1
         finally:
             await self._finish_cua_turn()
+            if not turn_committed:
+                from deepseek_tui.engine.history import interrupted_turn_messages
+
+                persisted = interrupted_turn_messages(
+                    [m for m in working_messages if m is not goal_reminder_message],
+                    self._completed_tool_messages,
+                )
+                self.session_messages = (
+                    [*self.session_messages, *persisted[prior_count + 1:]]
+                    if op.hidden else persisted
+                )
+                self.record_transcript("interrupted", self.session_messages)
+                await self._auto_persist_session()
+            self._completed_tool_messages = {}
+            self._turn_prompt_builder = None
             self._active_context_messages = None
             if goal_deadline_task is not None:
                 goal_deadline_task.cancel()
@@ -2609,7 +2657,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 completion.agent_id,
             )
             return
-        if self._completion_agent_is_background(completion.agent_id):
+        timed_out = completion.agent_id in self._handoff_timed_out_agents
+        self._handoff_timed_out_agents.discard(completion.agent_id)
+        if timed_out or self._completion_agent_is_background(completion.agent_id):
             self._schedule_idle_subagent_completion_delivery()
 
     def _schedule_idle_subagent_completion_delivery(self) -> None:
@@ -2688,6 +2738,30 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             except KeyError:
                 continue
         return build_handoff_ledger(snaps)
+
+    def _inject_detached_subagent_completions(self, messages: list[Message]) -> None:
+        """Give the running turn results of children it is not blocked on.
+
+        Background children (and ones a handoff gave up on) used to be read
+        only when the turn ended, so a turn could finish its work without the
+        result it was meant to use. Foreground results stay on the handoff path.
+        """
+        items = self._drain_subagent_completions()
+        if not items:
+            return
+        from deepseek_tui.engine import reminders
+
+        for item in items:
+            detached = (
+                item.agent_id in self._handoff_timed_out_agents
+                or self._completion_agent_is_background(item.agent_id)
+            )
+            if not detached:
+                self._subagent_completions.put_nowait(item)
+                continue
+            self._consumed_subagent_completions.add(item.agent_id)
+            self._handoff_timed_out_agents.discard(item.agent_id)
+            messages.append(reminders.reminder_message(reminders.SUBAGENT_DONE, item.payload))
 
     def _drain_subagent_completions(self) -> list[SubAgentCompletion]:
         out: list[SubAgentCompletion] = []
@@ -2828,6 +2902,13 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             # arriving under the original name — normalization happens after
             # this marking sees the call.)
             action = arguments.get("action") if isinstance(arguments, dict) else None
+            if action == "send_input":
+                # Input to a finished child resumes it, so its next completion
+                # is new and must not be dropped as already delivered.
+                target = arguments.get("agent_id") or arguments.get("id")
+                if isinstance(target, str):
+                    self._consumed_subagent_completions.discard(target)
+                return
             if action not in ("result", "cancel", "wait"):
                 return
         elif tool_name in ("task_output", "task_stop"):
@@ -2840,31 +2921,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         else:
             return
 
-        def terminal_agent_id(raw: object) -> str | None:
-            if not isinstance(raw, dict):
-                return None
-            agent_id = raw.get("agent_id")
-            status = raw.get("status")
-            if not isinstance(agent_id, str) or not isinstance(status, dict):
-                return None
-            kind = status.get("kind")
-            if kind in {"completed", "failed", "cancelled", "interrupted"}:
-                return agent_id
-            return None
+        from deepseek_tui.tools.subagent.completion import terminal_agent_ids
 
-        agents = metadata.get("agents")
-        consumed: set[str] = set()
-        if isinstance(agents, list):
-            for raw in agents:
-                agent_id = terminal_agent_id(raw)
-                if agent_id is not None:
-                    consumed.add(agent_id)
-        else:
-            agent_id = terminal_agent_id(metadata)
-            if agent_id is not None:
-                consumed.add(agent_id)
-
-        self._consumed_subagent_completions.update(consumed)
+        self._consumed_subagent_completions.update(terminal_agent_ids(metadata))
 
     def _open_checklist_summary(self) -> str:
         """Short summary of open checklist items, or "" when none are open.
@@ -2995,8 +3054,17 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         if mgr is None:
             return False
 
+        def waiting_on() -> list[str]:
+            # Children a timed-out handoff gave up on are delivered later, so a
+            # second handoff in the same turn must not wait for them again.
+            return [
+                aid for aid in mgr.running_foreground_ids()
+                if aid not in self._handoff_timed_out_agents
+            ]
+
         completions = self._drain_subagent_completions()
-        running = mgr.running_foreground_count()
+        running = len(waiting_on())
+        gave_up: list[str] = []
         if running > 0:
             await self.handle.emit(
                 StatusEvent(message=f"Waiting on {running} sub-agent(s) to complete...")
@@ -3024,18 +3092,32 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 except asyncio.TimeoutError:
                     pass
                 completions.extend(self._drain_subagent_completions())
-                running = mgr.running_foreground_count()
+                running = len(waiting_on())
             if timed_out:
                 completions.extend(self._drain_subagent_completions())
+                # The turn stops waiting here. Without this, a child that
+                # finishes later is only seen at the end of the next user turn.
+                gave_up = waiting_on()
+                self._handoff_timed_out_agents.update(gave_up)
         else:
             completions.extend(self._drain_subagent_completions())
 
-        if not completions:
-            return False
-
-        count = len(completions)
         from deepseek_tui.engine import reminders
 
+        if gave_up:
+            # Otherwise the turn ends silently and its last words may still be
+            # "waiting for the sub-agents".
+            messages.append(reminders.reminder_message(
+                reminders.SUBAGENT_HANDOFF,
+                f"Stopped waiting for {len(gave_up)} sub-agent(s) still running "
+                f"({', '.join(gave_up)}). Their results arrive automatically in a "
+                "later turn; do not wait or poll for them now. Tell the user what "
+                "is done and that these are still running.",
+            ))
+        if not completions:
+            return bool(gave_up)
+
+        count = len(completions)
         ledger = await self._subagent_handoff_ledger(completions)
         if ledger:
             messages.append(reminders.reminder_message(reminders.SUBAGENT_HANDOFF, ledger))
@@ -3213,6 +3295,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         # Per turn, never from the polled context estimate: it may start the runtime.
         await self._prepare_cua()
         tools = await self._get_tools_with_mcp()
+        base_system_prompt = system_prompt
         system_prompt += self._cua_prompt()
         if self.tool_context.metadata.get("unattended"):
             system_prompt += UNATTENDED_PROMPT
@@ -3222,11 +3305,12 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         # Execute calls against the exact catalog attached to their request;
         # background MCP discovery must not change eligibility after sampling.
         self._active_api_tools = tools
+        # Mode the catalog was built for; a mid-turn enter/exit_plan_mode
+        # changes which tools are visible and executable.
+        catalog_mode = (self.mode or "agent").strip() or "agent"
         self.turn_counter += 1
         self._tool_dedup.reset_turn()
         self._ui_progress.reset()
-        step_error_count = 0
-        consecutive_tool_error_steps = 0
         # Cycle boundary check (opt-in). When the active input grows past
         # ``cycle_config.threshold_for(model)``, archive the cycle to disk
         # and continue with a trimmed message list. Best-effort — failures
@@ -3349,6 +3433,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                         image.model_dump()
                     )
                 self.working_set.observe_references(processed.references)
+
+            if round_idx > 0:
+                self._inject_detached_subagent_completions(messages)
 
             # L0: prune old tool bodies at ≥50% (deterministic, no LLM).
             self._fold_browser_observations(messages)
@@ -3691,11 +3778,37 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 if any(getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error"))
             )
             messages.extend(tool_results)
+            # exit_plan_mode accepted (or enter_plan_mode approved) inside this
+            # batch: the next request must offer the new mode's tools, otherwise
+            # "implement the plan now" meets a plan-only catalog and every write
+            # is rejected as not in the catalog until the user sends another turn.
+            current_mode = (self.mode or "agent").strip() or "agent"
+            if current_mode != catalog_mode:
+                self.tool_context.metadata["session_auto_approve"] = bool(
+                    await self.approval_handler.auto_approve_enabled()
+                )
+                await self._prepare_cua()
+                builder = getattr(self, "_turn_prompt_builder", None)
+                system_prompt = (builder() if builder else base_system_prompt) + self._cua_prompt()
+                if self.tool_context.metadata.get("unattended"):
+                    system_prompt += UNATTENDED_PROMPT
+                tools = await self._get_tools_with_mcp()
+                self._active_api_tools = tools
+                catalog_mode = current_mode
+                logger.info("tool_catalog_refreshed mode=%s tools=%d", current_mode, len(tools))
             cua_session = getattr(self, "_cua_session", None)
             if cua_session is not None and cua_session.large_texts:
                 from deepseek_tui.cua.tools import collapse_repeated_texts
 
                 collapse_repeated_texts(messages, len(tool_results), cua_session.large_texts)
+            from deepseek_tui.engine.events import ToolContextEvent
+            from deepseek_tui.protocol.messages import ToolResultBlock
+
+            for tool_message in messages[-len(tool_results):] if tool_results else []:
+                for block in tool_message.content:
+                    if isinstance(block, ToolResultBlock):
+                        await self.handle.emit(ToolContextEvent(block.tool_use_id, tool_message))
+
 
             if self.handle.pause.paused or model_generation != self.handle.pause.generation:
                 round_idx -= 1
@@ -3723,13 +3836,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     assistant_message=answer,
                     usage=result.usage, tool_calls=[], **closing_facts(),
                 )
-
-            # Capacity error escalation
-            if tool_errors > 0:
-                step_error_count += tool_errors
-                consecutive_tool_error_steps += 1
-            else:
-                consecutive_tool_error_steps = 0
 
             if self._accept_held_stop_after_tools(
                 held=held_stop_result is not None,

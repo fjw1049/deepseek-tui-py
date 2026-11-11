@@ -35,7 +35,7 @@ def test_composer_profile_filters_tools() -> None:
     assert names == {"cron_create"}
 
 
-def test_cron_profile_keeps_native_tools_and_installed_mcp() -> None:
+def test_cron_profile_keeps_native_tools_and_explicitly_trusted_mcp() -> None:
     catalog = [
         {"type": "function", "function": {"name": "web_search", "parameters": {}}},
         {"type": "function", "function": {"name": "fetch_url", "parameters": {}}},
@@ -52,7 +52,7 @@ def test_cron_profile_keeps_native_tools_and_installed_mcp() -> None:
         {"type": "function", "function": {"name": "mcp_bing_cn_search", "parameters": {}}},
         {"type": "function", "function": {"name": "mcp_yahoo_quote", "parameters": {}}},
     ]
-    out = filter_tools_for_profile(catalog, TOOL_PROFILE_CRON)
+    out = filter_tools_for_profile(catalog, TOOL_PROFILE_CRON, trusted_mcp_tools=("mcp_bing_cn_search", "mcp_yahoo_quote"))
     names = {t["function"]["name"] for t in out}
     assert names == {
         "web_search",
@@ -60,6 +60,9 @@ def test_cron_profile_keeps_native_tools_and_installed_mcp() -> None:
         "read_file",
         "grep_files",
         "file_search",
+        # Workspace writes are explicit; unattended shell requires OS isolation.
+        "write_file",
+        "edit_file",
         "exec_shell",
         "load_skill",
         "list_mcp_resources",

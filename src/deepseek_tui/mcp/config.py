@@ -53,6 +53,12 @@ class McpServerConfig:
     # Optional catalog bucket id, e.g. ``media`` / ``sports``.
     catalog: str | None = None
 
+    max_concurrency: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 64:
+            raise ValueError("MCP max_concurrency must be an integer from 1 to 64")
+
     @property
     def is_on_focus(self) -> bool:
         return self.load_policy == LOAD_POLICY_ON_FOCUS
@@ -195,6 +201,7 @@ def _server_from_raw(
         lazy=bool(raw["lazy"]) if "lazy" in raw else None,
         load_policy=_parse_load_policy(raw.get("load_policy")),
         catalog=_optional_string(raw.get("catalog")),
+        max_concurrency=raw.get("max_concurrency", 1),
     )
 
 

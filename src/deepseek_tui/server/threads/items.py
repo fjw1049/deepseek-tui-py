@@ -83,10 +83,12 @@ def reconstruct_messages_from_turn(
         Role,
         TextBlock,
         ToolUseBlock,
+        ToolResultBlock,
     )
     from deepseek_tui.tools.durable_transcript import dicts_to_messages
 
     messages: list[Message] = []
+    thread_model: str | None = None
     for item in _ordered_turn_items(store, turn):
         text = (item.detail or item.summary or "").strip()
         if item.kind == TurnItemKind.CONTEXT_COMPACTION:
@@ -188,6 +190,22 @@ def reconstruct_messages_from_turn(
                     ]
                 )
             )
+            saved_context = meta.get("model_context")
+            if isinstance(saved_context, dict):
+                try:
+                    recorded = messages_from_dicts([saved_context])[0]
+                except ValueError:
+                    recorded = None
+                if (recorded is not None and recorded.role is Role.TOOL and recorded.content
+                        and all(isinstance(block, ToolResultBlock) and block.tool_use_id == tool_use_id
+                                for block in recorded.content)):
+                    messages.append(recorded)
+                    continue
+            if thread_model is None:
+                try:
+                    thread_model = store.load_thread(turn.thread_id).model or "deepseek-chat"
+                except FileNotFoundError:
+                    thread_model = "deepseek-chat"  # Legacy orphaned turn exports.
             # Items persist the raw tool detail for the UI timeline. Live turns
             # run compact_tool_result_for_context before inserting into the
             # model transcript; soft-resume / cold /context must do the same
@@ -196,7 +214,10 @@ def reconstruct_messages_from_turn(
             messages.append(
                 Message.tool_result(
                     tool_use_id,
-                    _compact_persisted_tool_detail(tool_name, text),
+                    _compact_persisted_tool_detail(
+                        tool_name, text, model=thread_model,
+                        tool_id=tool_use_id,
+                    ),
                     is_error=item.status == TurnItemLifecycleStatus.FAILED,
                     images=[ImageBlock.model_validate(i) for i in meta.get("images", [])],
                 )
@@ -230,20 +251,18 @@ def automation_result_items(store: RuntimeThreadStore, thread_id: str) -> list[T
     ]
 
 
-def _compact_persisted_tool_detail(tool_name: str, text: str) -> str:
-    """Apply the same tool-result compaction the live engine uses."""
+def _compact_persisted_tool_detail(
+    tool_name: str, text: str, *, model: str = "deepseek-chat", tool_id: str | None = None,
+) -> str:
+    """Legacy items use the thread model and keep a pointer to any omitted text."""
     from deepseek_tui.engine.context import compact_tool_result_for_context
     from deepseek_tui.tools.registry import ToolResult
+    from deepseek_tui.tools.runtime import point_compacted_output_to_disk
 
-    return compact_tool_result_for_context(
-        # Force the small-window tool-result caps (12k hard / 2k noisy soft).
-        # Do NOT pass a DeepSeek V4 alias here — those resolve to a 1M window
-        # and raise the hard cap to 40k, which still lets a fat read_file /
-        # web_search blob dominate soft-resume context.
-        "gpt-4",
-        tool_name,
-        ToolResult(success=True, content=text),
-    )
+    compacted = compact_tool_result_for_context(model, tool_name, ToolResult(success=True, content=text))
+    if tool_id:
+        return point_compacted_output_to_disk(tool_id, tool_name, text, compacted)
+    return compacted
 
 
 def _turn_has_compaction_snapshot(

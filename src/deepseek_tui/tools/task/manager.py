@@ -17,8 +17,8 @@ from deepseek_tui.utils import utc_now_iso as _utc_now_iso
 from deepseek_tui.utils import write_json_atomic
 
 from deepseek_tui.tools.task.models import (
-    CRON_PROMPT_MARKER,
     CURRENT_TASK_SCHEMA_VERSION,
+    RUN_POLICIES,
     MAX_WORKERS,
     TIMELINE_SUMMARY_LIMIT,
     _MAX_TERMINAL_IN_MEMORY,
@@ -54,10 +54,9 @@ logger = logging.getLogger(__name__)
 async def _stub_executor(
     task: ExecutionTask, cancel: asyncio.Event
 ) -> TaskExecutionResult:
-    """Placeholder executor: sleeps briefly, returns synthetic result.
+    """Placeholder executor for tests: sleeps briefly, returns a synthetic result.
 
-    Integration debt: Stage 3.1.simplified: real TaskExecutor not wired.
-    Use ``real_task_executor`` from ``engine.executors`` for production.
+    Production uses ``engine.dispatch.real_task_executor``.
     """
     try:
         await asyncio.wait_for(cancel.wait(), timeout=0.05)
@@ -75,6 +74,14 @@ def get_real_task_executor() -> ExecutorFunc:
     from deepseek_tui.engine.dispatch import real_task_executor
 
     return real_task_executor
+
+
+def _is_inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 class TaskManager:
@@ -102,6 +109,7 @@ class TaskManager:
         self._worker_tasks: list[asyncio.Task[None]] = []
         self._store_lock: TaskStoreLock | None = None
         self._persisted: dict[str, dict[str, Any]] = {}
+        self._catalog_cache: dict[str, tuple[int, TaskRecord]] = {}
         self.storage_error: str | None = None
         # Injected by the HTTP runtime so detached tasks can surface plan /
         # tool approvals on the origin thread (see server/app.py).
@@ -235,6 +243,8 @@ class TaskManager:
             auto_approve=req.auto_approve if req.auto_approve is not None else False,
             status=TaskStatus.QUEUED,
             created_at=now,
+            kind=req.kind,
+            browser_grant=copy.deepcopy(req.browser_grant),
             thread_id=req.thread_id,
             timeline=[
                 TaskTimelineEntry(
@@ -266,6 +276,7 @@ class TaskManager:
         since: str | None = None,
         active_only: bool = False,
         task_ids: list[str] | None = None,
+        workspace: Path | None = None,
     ) -> list[TaskSummary]:
         """List durable tasks (newest first).
 
@@ -277,18 +288,34 @@ class TaskManager:
         with last week's pytest-failed tasks).
         """
         async with self._lock:
-            items = [record.summary() for record in self._catalog().values()]
+            # The store owner keeps every queued/running task in memory.
+            # Sidebar polling must not scan years of completed history.
+            records = list(
+                self._tasks.values() if active_only and self._worker_tasks
+                else self._catalog(task_ids=task_ids).values()
+            )
+        if workspace is not None:
+            records = [r for r in records if _is_inside(Path(r.workspace), workspace)]
         if active_only:
-            items = [s for s in items if s.status in (TaskStatus.QUEUED, TaskStatus.RUNNING)]
+            records = [r for r in records if r.status in (TaskStatus.QUEUED, TaskStatus.RUNNING)]
         if task_ids is not None:
             selected_ids = set(task_ids)
-            items = [s for s in items if s.id in selected_ids]
+            records = [r for r in records if r.id in selected_ids]
+        items = [record.summary() for record in records]
         if since is not None:
             items = [s for s in items if s.created_at >= since]
         items.sort(key=lambda s: s.created_at, reverse=True)
         if limit is not None:
             items = items[:limit]
         return items
+
+    def live_task(self, task_id: str) -> TaskRecord | None:
+        """The in-memory record, without touching disk.
+
+        A queued, running or just-resumed task is always in memory, so this is
+        enough to notice that a finished task started again.
+        """
+        return self._tasks.get(task_id)
 
     async def get_task(self, id_or_prefix: str) -> TaskRecord:
         async with self._lock:
@@ -310,17 +337,45 @@ class TaskManager:
                     return task
             return self._tasks[task_id]
 
-    def _catalog(self) -> dict[str, TaskRecord]:
-        """Disk is the history index; live records override persisted versions."""
+    def _catalog(self, *, task_ids: list[str] | None = None) -> dict[str, TaskRecord]:
+        """Disk is the history index; live records override persisted versions.
+
+        The tasks directory is shared across projects and only grows, so a
+        file is parsed again only when it changed. Callers read these records;
+        they never mutate them.
+        """
         records: dict[str, TaskRecord] = {}
-        for path in self._tasks_dir.glob("*.json"):
+        cache: dict[str, tuple[int, TaskRecord]] = (
+            {} if task_ids is None else dict(self._catalog_cache)
+        )
+        selected = None if task_ids is None else {
+            tid for tid in task_ids if tid and not any(c in tid for c in "/\\\0:")
+        }
+        paths = self._tasks_dir.glob("*.json") if selected is None else (
+            self._tasks_dir / f"{tid}.json" for tid in selected
+        )
+        for path in paths:
+            cache.pop(path.stem, None)
             try:
-                task = _task_record_from_dict(json.loads(path.read_text(encoding="utf-8")))
+                mtime = path.stat().st_mtime_ns
+                cached = self._catalog_cache.get(path.stem)
+                if cached is not None and cached[0] == mtime:
+                    task = cached[1]
+                else:
+                    task = _task_record_from_dict(
+                        json.loads(path.read_text(encoding="utf-8"))
+                    )
                 if task.id == path.stem:
                     records[task.id] = task
+                    cache[path.stem] = (mtime, task)
+            except FileNotFoundError:
+                continue
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 logger.warning("Skipping invalid task record: %s", path)
-        records.update(self._tasks)
+        self._catalog_cache = cache
+        records.update(self._tasks if selected is None else {
+            tid: self._tasks[tid] for tid in selected if tid in self._tasks
+        })
         return records
 
     def _reload_task_from_disk(self, id_or_prefix: str) -> TaskRecord | None:
@@ -372,6 +427,10 @@ class TaskManager:
                     raise KeyError(f"Task not found: {id_or_prefix}") from None
                 task_id = task.id
             task = self._tasks[task_id]
+            from .file_checkpoints import restore_marker
+
+            if restore_marker(self._cfg.data_dir, task_id).exists():
+                raise RuntimeError("Task files have entered restoration; start a new task instead of resuming stale history")
             if task.status is TaskStatus.RUNNING or task.status is TaskStatus.QUEUED:
                 raise RuntimeError(
                     f"Task {task_id} is already {task.status.value}"
@@ -411,6 +470,48 @@ class TaskManager:
             result = task
         self._notify.set()
         return result
+
+    async def restore_files(self, task_id: str, *, preview: bool = True) -> dict[str, Any]:
+        """User-only undo; serialize with resume and queue transitions."""
+        from dataclasses import asdict
+        from .file_checkpoints import checkpoint_store, restore_marker
+
+        self._ensure_store_owner()
+        record = await self.get_task(task_id)
+        async with self._lock:
+            record = self._tasks.get(record.id) or self._reload_task_from_disk(record.id)
+            if record is None:
+                raise KeyError(task_id)
+            if not record.status.is_terminal() or record.id in self._running_done:
+                raise RuntimeError("Stop the task and wait for it to finish before restoring files")
+            workspace = Path(record.workspace).resolve()
+            if any(
+                not other.status.is_terminal() and (
+                    _is_inside(workspace, Path(other.workspace))
+                    or _is_inside(Path(other.workspace), workspace)
+                )
+                for other in self._tasks.values()
+            ):
+                raise RuntimeError("Other tasks in this workspace must finish before restoring files")
+            store = checkpoint_store(self._cfg.data_dir, record.id)
+            checkpoints = store.list_for_thread(record.id)
+            if len(checkpoints) != len(list((self._cfg.data_dir / "file-checkpoints" / record.id).glob("*.json"))):
+                raise RuntimeError("A file checkpoint is unreadable; restoration was not started")
+            ids = [item.turn_id for item in reversed(checkpoints)]
+            paths, report = await store.preview_report(ids, workspace)
+            marker = restore_marker(self._cfg.data_dir, record.id)
+            if not preview and paths:
+                # Write ahead: after a crash/cancellation the old transcript must
+                # never re-run against partially or fully restored files.
+                write_json_atomic(marker, {"task_id": record.id, "started_at": _utc_now_iso()})
+                report = await store.restore(ids, workspace)
+                paths, _ = await store.preview_report(ids, workspace)
+            return {
+                "task_id": record.id, "workspace": str(workspace),
+                "paths": paths, "report": asdict(report),
+                "resume_blocked": marker.exists(),
+                "scope": "workspace_file_tools_only",
+            }
 
     async def cancel_task(self, id_or_prefix: str) -> TaskRecord:
         self._ensure_store_owner()
@@ -690,12 +791,13 @@ class TaskManager:
                     counts.timed_out += 1
             return counts
 
-    def _count_running_cron_tasks_locked(self) -> int:
-        return sum(
-            1
-            for task in self._tasks.values()
-            if task.status is TaskStatus.RUNNING
-            and task.prompt.lstrip().startswith(CRON_PROMPT_MARKER)
+    def _serial_kind_busy_locked(self, task: TaskRecord) -> bool:
+        """A serial kind (cron) runs one task at a time."""
+        if not RUN_POLICIES[task.kind].serial:
+            return False
+        return any(
+            other.status is TaskStatus.RUNNING and other.kind is task.kind
+            for other in self._tasks.values()
         )
 
     async def _worker_loop(self) -> None:
@@ -744,12 +846,10 @@ class TaskManager:
                 if task is None or task.status is not TaskStatus.QUEUED:
                     self._persist_queue_locked()
                     continue
-                if (
-                    task.prompt.lstrip().startswith(CRON_PROMPT_MARKER)
-                    and self._count_running_cron_tasks_locked() >= 1
-                ):
+                if self._serial_kind_busy_locked(task):
+                    # Not persisted: idle workers re-check every 0.5s, and
+                    # queue.json is only an ordering hint.
                     self._queue.append(task_id)
-                    self._persist_queue_locked()
                     continue
                 now = _utc_now_iso()
                 task.status = TaskStatus.RUNNING
@@ -773,8 +873,10 @@ class TaskManager:
                     auto_approve=task.auto_approve,
                     thread_id=task.thread_id,
                     task_manager=self,
+                    browser_grant=copy.deepcopy(task.browser_grant),
                     provider=task.provider,
                     config=self._execution_configs.get(task.id, self._cfg.config),
+                    kind=task.kind,
                 )
                 cancel = asyncio.Event()
                 self._running_cancel[task_id] = cancel

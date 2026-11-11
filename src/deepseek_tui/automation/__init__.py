@@ -1,7 +1,7 @@
 """Automation trigger pipeline (cron → task → optional delivery).
 
 Kept small on purpose: types + pipeline only. Scheduler persistence stays
-in ``tools.automation_manager``.
+in ``tools.automation``.
 """
 
 from deepseek_tui.automation.inbox import append_feishu_inbound, feishu_send_text

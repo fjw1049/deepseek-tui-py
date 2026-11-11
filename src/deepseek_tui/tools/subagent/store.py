@@ -49,6 +49,7 @@ def agent_record(agent: SubAgent) -> dict[str, Any]:
         "workspace": str(agent.workspace),
         "session_boot_id": agent.session_boot_id,
         "spawn_depth": agent.spawn_depth,
+        "parent_id": agent.parent_id,
     }
 
 
@@ -84,6 +85,7 @@ def restore_agent(raw: dict[str, Any], workspace: Path, default_model: str) -> S
         system_prompt=raw.get("system_prompt"),
         output_schema=raw.get("output_schema"),
         background=bool(raw.get("background", False)),
+        parent_id=raw.get("parent_id"),
     )
     agent.id = agent_id
     agent.status = SubAgentStatus.from_dict(raw["status"])

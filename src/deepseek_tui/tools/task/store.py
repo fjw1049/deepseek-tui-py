@@ -56,11 +56,13 @@ from deepseek_tui.tools.task.models import (
     TaskChecklistState,
     TaskGateRecord,
     TaskGithubEvent,
+    TaskKind,
     TaskRecord,
     TaskStatus,
     TaskTimelineEntry,
     TaskToolCallSummary,
     TaskToolStatus,
+    task_kind_from_legacy_prompt,
 )
 
 
@@ -108,6 +110,7 @@ def _resolve_task_id(tasks: dict[str, TaskRecord], id_or_prefix: str) -> str:
 def _task_record_to_dict(task: TaskRecord) -> dict[str, Any]:
     data = asdict(task)
     data["status"] = task.status.value
+    data["kind"] = task.kind.value
     for call in data.get("tool_calls", []):
         if isinstance(call.get("status"), TaskToolStatus):
             call["status"] = call["status"].value
@@ -155,6 +158,7 @@ def _task_record_from_dict(data: dict[str, Any]) -> TaskRecord:
         prompt=data["prompt"],
         model=data["model"],
         provider=data.get("provider"),
+        browser_grant=data.get("browser_grant") if isinstance(data.get("browser_grant"), dict) else None,
         workspace=data["workspace"],
         mode=data["mode"],
         allow_shell=data["allow_shell"],
@@ -162,6 +166,11 @@ def _task_record_from_dict(data: dict[str, Any]) -> TaskRecord:
         auto_approve=data.get("auto_approve", False),
         status=status,
         created_at=data["created_at"],
+        kind=(
+            TaskKind(data["kind"])
+            if data.get("kind")
+            else task_kind_from_legacy_prompt(data["prompt"])
+        ),
         started_at=data.get("started_at"),
         ended_at=data.get("ended_at"),
         duration_ms=data.get("duration_ms"),

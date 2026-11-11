@@ -244,3 +244,88 @@ async def test_rewind_stops_foreground_and_discards_old_completions(engine_ctx):
     assert engine._drain_subagent_completions() == []
     assert await engine._handle_subagent_turn_handoff([]) is False
     await mgr.cancel(background.agent_id)
+
+
+@pytest.mark.asyncio
+async def test_handoff_timeout_still_delivers_late_foreground_result(engine_ctx):
+    engine, handle = engine_ctx
+    mgr = engine.tool_context.subagent_manager
+    release = asyncio.Event()
+
+    async def executor(agent, cancel):  # noqa: ANN001
+        await release.wait()
+        return _GOOD
+
+    mgr._executor = executor  # noqa: SLF001
+    mgr.handoff_timeout_secs = 0.05
+    snap = await mgr.spawn(SpawnRequest(
+        prompt="slow", agent_type=SubAgentType.EXPLORE,
+        assignment=SubAgentAssignment(objective="slow"),
+    ))
+    # The turn gives up waiting and the model is told why.
+    messages: list = []
+    assert await engine._handle_subagent_turn_handoff(messages) is True
+    assert snap.agent_id in str(messages[-1].content)
+    assert "do not wait or poll" in str(messages[-1].content)
+    # The next round's handoff does not wait for the same child again.
+    started = time.monotonic()
+    assert await engine._handle_subagent_turn_handoff([]) is False
+    assert time.monotonic() - started < 0.04
+
+    ops: list[SendMessageOp] = []
+
+    async def _capture(op):  # noqa: ANN001
+        ops.append(op)
+
+    handle.send_op = _capture  # type: ignore[method-assign]
+    release.set()
+    await mgr.wait([snap.agent_id], mode="all", timeout_ms=5_000)
+    await engine._idle_subagent_delivery_task
+
+    assert len(ops) == 1
+    assert ops[0].internal_kind == SUBAGENT_BACKGROUND_DONE_KIND
+    assert snap.agent_id in ops[0].content
+
+
+@pytest.mark.asyncio
+async def test_send_input_makes_a_delivered_child_reportable_again(engine_ctx):
+    engine, _handle = engine_ctx
+    engine._consumed_subagent_completions.add("agent_x")
+
+    engine._mark_subagent_tool_result_consumed(
+        "agent",
+        {"agent_id": "agent_x", "interrupt": False},
+        {"action": "send_input", "agent_id": "agent_x", "input": "one more thing"},
+    )
+
+    assert "agent_x" not in engine._consumed_subagent_completions
+
+
+@pytest.mark.asyncio
+async def test_background_result_reaches_the_turn_at_the_next_round(engine_ctx):
+    engine, handle = engine_ctx
+    mgr = engine.tool_context.subagent_manager
+    handle._mark_turn_active("t1")  # a turn is running; idle delivery stands by
+
+    async def executor(agent, cancel):  # noqa: ANN001
+        return _GOOD
+
+    mgr._executor = executor  # noqa: SLF001
+    bg = await mgr.spawn(SpawnRequest(
+        prompt="bg", agent_type=SubAgentType.EXPLORE,
+        assignment=SubAgentAssignment(objective="bg"), background=True,
+    ))
+    fg = await mgr.spawn(SpawnRequest(
+        prompt="fg", agent_type=SubAgentType.EXPLORE,
+        assignment=SubAgentAssignment(objective="fg"),
+    ))
+    await mgr.wait([bg.agent_id, fg.agent_id], mode="all", timeout_ms=5_000)
+    await _wait_for_n_completions(engine, 2)
+
+    messages: list = []
+    engine._inject_detached_subagent_completions(messages)  # noqa: SLF001
+
+    assert len(messages) == 1
+    assert bg.agent_id in str(messages[0].content)
+    # The foreground result stays queued for the end-of-turn handoff.
+    assert [c.agent_id for c in engine._drain_subagent_completions()] == [fg.agent_id]

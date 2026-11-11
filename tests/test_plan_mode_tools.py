@@ -26,12 +26,15 @@ from deepseek_tui.tools.registry import build_default_registry
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("arguments", [{"action": "spawn"}, {"resume": "agent_123"}])
-async def test_plan_mode_rejects_agent_work_with_shared_registry(arguments) -> None:
+async def test_plan_mode_rejects_agent_work_with_shared_registry(arguments, tmp_path) -> None:
     from deepseek_tui.engine.orchestrator.tooling import ToolExecutionMixin
     from deepseek_tui.protocol.responses import ToolCall
     from deepseek_tui.tools.registry import ToolError
 
+    from deepseek_tui.tools.registry import ToolContext
+
     gate = ToolExecutionMixin()
+    gate.tool_context = ToolContext(working_directory=tmp_path)
     gate.mode = "plan"
     gate._take_pre_tool_snapshot = lambda *args: None
     with pytest.raises(ToolError, match="unavailable in plan mode"):

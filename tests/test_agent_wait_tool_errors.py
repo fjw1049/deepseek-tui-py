@@ -161,3 +161,26 @@ async def test_goal_tracks_unfinished_subagent_and_process_work(
     assert results[0].content[0].is_error is not tool_success
     # Background work still running keeps a goal from reading as stalled.
     assert engine.goal_service._turn_pending_work is (not finished)
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_from_subagent_never_waits_on_itself() -> None:
+    manager = MagicMock()
+    manager.list_filtered.return_value = [
+        _snapshot("agent_self", running=True),
+        _snapshot("agent_child", running=True),
+    ]
+    manager.wait = AsyncMock(return_value=[_snapshot("agent_child", running=False)])
+    ctx = ToolContext(
+        working_directory="/tmp",
+        subagent_manager=manager,
+        metadata={"subagent_id": "agent_self"},
+    )
+
+    await AgentTool().execute({"action": "wait", "wait_mode": "all"}, ctx)
+
+    manager.wait.assert_awaited_once_with(
+        ["agent_child"], mode="all", timeout_ms=180000
+    )
+    with pytest.raises(ToolError, match="cannot wait on itself"):
+        await AgentTool().execute({"action": "wait", "agent_id": "agent_self"}, ctx)

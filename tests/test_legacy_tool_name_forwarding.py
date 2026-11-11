@@ -185,18 +185,24 @@ def test_automation_delete_forwards_to_cron_delete() -> None:
     assert args == {"automation_id": "a1"}
 
 
-def test_retired_automation_mutations_are_not_forwarded() -> None:
-    """update/pause/resume/run have no cron_* equivalent — the unknown-tool
-    error steers the model onto cron_create/cron_delete instead."""
-    for legacy in (
-        "automation_update",
-        "automation_pause",
-        "automation_resume",
-        "automation_run",
-    ):
-        name, args = normalize_legacy_tool_call(legacy, {"automation_id": "a1"})
-        assert name == legacy
-        assert args == {"automation_id": "a1"}
+def test_automation_mutations_forward_to_cron_update() -> None:
+    assert normalize_legacy_tool_call(
+        "automation_update", {"automation_id": "a1", "prompt": "p"}
+    ) == ("cron_update", {"automation_id": "a1", "prompt": "p"})
+    assert normalize_legacy_tool_call("automation_pause", {"automation_id": "a1"}) == (
+        "cron_update", {"automation_id": "a1", "paused": True},
+    )
+    assert normalize_legacy_tool_call("automation_resume", {"id": "a1"}) == (
+        "cron_update", {"automation_id": "a1", "paused": False},
+    )
+
+
+def test_automation_run_is_not_forwarded() -> None:
+    """run has no cron_* equivalent — the unknown-tool error steers the model
+    onto cron_create(run_now=true) instead."""
+    name, args = normalize_legacy_tool_call("automation_run", {"automation_id": "a1"})
+    assert name == "automation_run"
+    assert args == {"automation_id": "a1"}
 
 
 class _StubManager:

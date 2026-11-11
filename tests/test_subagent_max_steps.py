@@ -183,3 +183,50 @@ async def test_a_reporting_slot_stays_a_quiet_success(tmp_path: Path) -> None:
 
     assert classify_handoff(snapshot) is HandoffOutcome.COMPLETED
     assert build_handoff_ledger([snapshot]) is None
+
+
+class _RecordingClient(_ScriptedClient):
+    def __init__(self, scripts: list[list[StreamEvent]]) -> None:
+        super().__init__(scripts)
+        self.requests: list[MessageRequest] = []
+
+    async def stream_chat_completion(
+        self, request: MessageRequest
+    ) -> AsyncIterator[StreamEvent]:
+        self.requests.append(request)
+        async for event in super().stream_chat_completion(request):
+            yield event
+
+
+@pytest.mark.asyncio
+async def test_last_budget_round_is_a_report_round(tmp_path: Path) -> None:
+    """The final round gets no tools and a report nudge, so the child hands
+    over a report instead of a "next I will read X" line."""
+    client = _RecordingClient([_NEVER_FINISHES, _NEVER_FINISHES, _REPORTS])
+    mailbox = Mailbox()
+    manager = SubAgentManager(
+        workspace=tmp_path, mailbox=mailbox,
+        executor=get_real_subagent_executor(), default_model="deepseek-chat",
+    )
+    manager.attach_loop_runtime(SubAgentRuntime(
+        manager=manager, client=client, model="deepseek-chat", config=Config(),
+        workspace=tmp_path, mailbox=mailbox, auto_approve=True,
+    ))
+    try:
+        spawned = await manager.spawn(SpawnRequest(
+            prompt="调研测试目录", agent_type=SubAgentType.EXPLORE,
+            assignment=SubAgentAssignment(objective="budget"),
+        ))
+        await manager.wait([spawned.agent_id], mode="all", timeout_ms=10_000)
+        snapshot = await manager.get_result(spawned.agent_id)
+    finally:
+        await manager.shutdown()
+
+    assert len(client.requests) == _MAX_STEPS
+    assert client.requests[0].tools
+    assert not client.requests[-1].tools
+    last_user_text = str(client.requests[-1].messages[-1].content)
+    assert "Write your final report now" in last_user_text
+    assert "共 115 个测试文件" in (snapshot.result or "")
+    # The report exists, but the budget decided when it was written.
+    assert snapshot.max_steps_reached is True

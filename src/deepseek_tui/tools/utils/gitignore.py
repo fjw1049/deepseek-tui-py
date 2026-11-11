@@ -28,11 +28,11 @@ class _Rule:
 class GitIgnoreMatcher:
     """Match paths against gitignore rules collected for a walk root."""
 
-    def __init__(self, walk_root: Path) -> None:
+    def __init__(self, walk_root: Path, *, include_ancestors: bool = True) -> None:
         self.walk_root = walk_root.resolve()
         self._rules: list[_Rule] = []
         self._loaded_files: set[Path] = set()
-        for base in _gitignore_bases(self.walk_root):
+        for base in (_gitignore_bases(self.walk_root) if include_ancestors else [self.walk_root]):
             self.add_dir(base)
 
     def add_dir(self, directory: Path) -> None:

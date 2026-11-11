@@ -233,6 +233,7 @@ def test_session_reset_clears_plan_approval_and_read_stamps(monkeypatch):
     metadata = {"approved_plan": True, "plan_text": "old", "plan_steps": ["old"]}
     engine = SimpleNamespace(
         tool_context=SimpleNamespace(metadata=metadata, file_reads={"old": (1, 1)}),
+        configure_interaction_mode=Mock(),
         tool_snapshots={"old": "snapshot"},
         set_active_plugin=Mock(),
     )
@@ -252,6 +253,7 @@ async def test_restore_plan_approval_belongs_to_original_thread(tmp_path, monkey
     app = QuietTUI(handle=EngineHandle())
     app._engine = SimpleNamespace(
         tool_context=SimpleNamespace(working_directory=tmp_path, metadata={}),
+        configure_interaction_mode=Mock(),
         goal_service=Mock(),
     )
     thread = SimpleNamespace(

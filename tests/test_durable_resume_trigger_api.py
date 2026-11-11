@@ -157,6 +157,7 @@ async def test_resume_subagent_via_thread_manager(
         ctx.subagent_manager = sub_mgr
         return SimpleNamespace(
             _consumed_subagent_completions=consumed,
+            configure_interaction_mode=lambda *args, **kwargs: None,
             tool_context=ctx,
             run=AsyncMock(),
             session_messages=[],
@@ -216,6 +217,7 @@ async def test_resume_subagent_unknown_agent(
         ctx.subagent_manager = sub_mgr
         return SimpleNamespace(
             tool_context=ctx,
+            configure_interaction_mode=lambda *args, **kwargs: None,
             run=AsyncMock(),
             session_messages=[],
             sync_session=lambda *a, **k: None,

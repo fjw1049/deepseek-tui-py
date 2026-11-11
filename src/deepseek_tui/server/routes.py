@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 from fastapi import Query
@@ -548,6 +548,15 @@ async def update_automation(request: Request, automation_id: str) -> dict[str, A
     return automation
 
 
+@automations_router.get("/{automation_id}/permissions")
+@automations_router.put("/{automation_id}/permissions")
+async def automation_permissions(request: Request, automation_id: str) -> dict[str, Any]:
+    body = await request.json() if request.method == "PUT" else None
+    if request.method == "PUT" and not isinstance(body, dict):
+        raise api_error(400, "JSON object required")
+    return _unwrap_or_raise(await runtime_from_request(request).automation_permissions(automation_id, body))
+
+
 @automations_router.delete("/{automation_id}")
 async def delete_automation(request: Request, automation_id: str) -> dict[str, Any]:
     runtime = runtime_from_request(request)
@@ -608,6 +617,28 @@ async def open_automation_discussion(
     runtime = runtime_from_request(request)
     payload = _unwrap_or_raise(await runtime.open_automation_discussion(automation_id, run_id))
     return {"thread_id": payload["thread_id"]}
+
+
+class ResolveDeliveryBody(BaseModel):
+    action: Literal["received", "retry"]
+
+
+@automations_router.get("/deliveries/pending")
+async def pending_automation_deliveries(request: Request) -> list[dict[str, Any]]:
+    runtime = runtime_from_request(request)
+    payload = _unwrap_or_raise(await runtime.pending_automation_deliveries())
+    return payload.get("runs", [])
+
+
+@automations_router.post("/{automation_id}/runs/{run_id}/delivery")
+async def resolve_automation_delivery(
+    request: Request, automation_id: str, run_id: str, body: ResolveDeliveryBody
+) -> dict[str, Any]:
+    runtime = runtime_from_request(request)
+    payload = _unwrap_or_raise(
+        await runtime.resolve_automation_delivery(automation_id, run_id, body.action)
+    )
+    return payload["run"]
 
 
 # POST /v1/elevations/{id} — resolve a pending sandbox elevation (L3).
@@ -1643,6 +1674,16 @@ async def resume_task(
     if not isinstance(task, dict):
         raise api_error(404, f"task not found: {task_id}", error="task_not_found")
     return task
+
+
+@router_tasks.get("/tasks/{task_id}/files")
+@router_tasks.post("/tasks/{task_id}/files/restore")
+async def task_file_restore(request: Request, task_id: str) -> dict[str, Any]:
+    runtime = runtime_from_request(request)
+    result = await runtime.restore_task_files(task_id, preview=request.method == "GET")
+    if result.get("code") == "conflict":
+        raise api_error(409, str(result["error"]), error="task_conflict")
+    return unwrap_runtime_result(result)
 
 
 # /v1/threads CRUD + summary + fork + resume.

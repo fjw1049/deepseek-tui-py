@@ -53,5 +53,7 @@ async def test_meter_uses_live_messages_and_releases_them(tmp_path, monkeypatch,
     else:
         await engine._handle_send_message_inner(SendMessageOp(content="hello"), "test-turn")
     assert engine._active_context_messages is None
-    assert engine.session_messages == []
+    assert len(engine.session_messages) == 2
+    assert "hello" in engine.session_messages[0].text_content()
+    assert "large tool result" in engine.session_messages[1].text_content()
     assert engine.context_breakdown()["total"] > 0
