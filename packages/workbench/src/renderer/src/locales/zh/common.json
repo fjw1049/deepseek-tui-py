@@ -2189,6 +2189,7 @@
   "toolKindCommand": "命令",
   "toolKindTool": "工具",
   "taskResume": {
+    "label": "续跑",
     "review": "旧任务的权限超出当前会话。恢复后会保留原任务身份、目录和以下权限：",
     "confirm": "是否按这些原有权限恢复？已执行的操作不会撤销。",
     "workspace": "工作目录",

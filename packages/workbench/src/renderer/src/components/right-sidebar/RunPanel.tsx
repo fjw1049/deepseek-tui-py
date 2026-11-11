@@ -159,7 +159,7 @@ function RunDetail({ target, blocks, options, onSelect }: {
         {status && status !== 'completed' && status !== 'ok' ? <span className="ds-run-status" data-status={status} role="status" title={duration || undefined}>
           <RunStateIcon status={status} />{t(runStatusKey(status))}
         </span> : null}
-        {canResume ? <button type="button" disabled={resuming} onClick={() => void resume()} className="ds-run-resume">{t(resuming ? 'taskResuming' : 'taskResume')}</button> : null}
+        {canResume ? <button type="button" disabled={resuming} onClick={() => void resume()} className="ds-run-resume">{t(resuming ? 'taskResuming' : 'taskResume.label')}</button> : null}
       </header>
       <div className="ds-run-detail">
         <div className="ds-run-layout" data-context-open={contextOpen} onKeyDown={(event) => {

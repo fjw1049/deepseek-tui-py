@@ -1258,6 +1258,7 @@
   "contextRailTaskStatusCanceled": "Stopped",
   "contextRailTaskStatusTimedOut": "Timed out",
   "taskResume": {
+    "label": "Resume",
     "review": "This task exceeds the current session permissions. Resuming preserves its identity, directory, and the permissions below:",
     "confirm": "Resume with these original permissions? Completed actions will not be undone.",
     "workspace": "Working directory",
