@@ -1,0 +1,71 @@
+{
+  "platform": "macOS arm64",
+  "python": {
+    "passed": 4380,
+    "skipped": 175,
+    "deselected": 36,
+    "warnings": 0,
+    "log": "/tmp/complete-python-full.log"
+  },
+  "frontend": {
+    "files": 322,
+    "passed": 2097,
+    "log": "/tmp/complete-frontend-accepted.log"
+  },
+  "automation_browser": {
+    "real_browser": true,
+    "page_action_verified": true,
+    "child_session_isolated": true,
+    "revocation_blocks_action": true,
+    "external_messages": 0,
+    "model_requests": 0
+  },
+  "packaged_backend": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "outside_checkout": true,
+    "real_http": true,
+    "real_file_tool": true,
+    "model_received_tool_result": true,
+    "automation_permissions_http": true,
+    "history_survives_restart": true,
+    "local_model_requests": 2,
+    "paid_model_requests": 0,
+    "turn_status": "completed"
+  },
+  "renderer_dependencies": {
+    "editorWorks": true,
+    "workerValidated": true,
+    "sanitized": "<img><a>unsafe</a><b>safe</b>",
+    "svg": true,
+    "math": true,
+    "chinese": true
+  },
+  "packaged_gui": {
+    "passed": true,
+    "log": "/tmp/packaged-gui-final-acceptance.log"
+  },
+  "runtime_manifest": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "python": "python/bin/python3.12",
+    "version": "3.12.13 (main, Apr  7 2026, 21:09:58) [Clang 22.1.1 ]",
+    "source_sha256": "67bfb53f8b0e13680c33261f741b9a4fb2196c387b9e62838d78e44c7dd2599f",
+    "requirements_sha256": "e6732fe11f23ba34127634f8eaf6ccc600647457b362266584a5cb1260acad03",
+    "lock_sha256": "55a6212a2abad08c9433f4e074f69ed1d1e9ec95b45d67be243d86966e84fe6b",
+    "wheel_sha256": "4d560c5fd03f6ddf22f9f5a5ecd0d0035012788b59e878589ad0847c2ad5b6a1"
+  },
+  "user_run_inventory": {
+    "read_only": true,
+    "records": 118,
+    "plaintext_migration_candidates": 0,
+    "records_modified": 0
+  },
+  "limitations": [
+    "No Windows/Linux/macOS x64 host",
+    "No production signing/notarization/DMG install",
+    "Electron and build-chain major security upgrade remains under review",
+    "extract-zip upstream advisory remains; skill import rejects links",
+    "Old aliases retained pending 30-day coverage"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "description": "Synthetic temporary task history; wall-clock milliseconds, not production P95",
+  "before": {
+    "records": 1001,
+    "results": {
+      "all": {
+        "first_ms": 27.608,
+        "warm_median_ms": 5.516
+      },
+      "active": {
+        "first_ms": 5.352,
+        "warm_median_ms": 5.308
+      },
+      "ten_ids": {
+        "first_ms": 5.466,
+        "warm_median_ms": 5.369
+      }
+    }
+  },
+  "after": {
+    "records": 1001,
+    "results": {
+      "all": {
+        "first_ms": 30.333,
+        "warm_median_ms": 6.475
+      },
+      "active": {
+        "first_ms": 0.036,
+        "warm_median_ms": 0.028
+      },
+      "ten_ids": {
+        "first_ms": 0.115,
+        "warm_median_ms": 0.083
+      }
+    }
+  }
+}

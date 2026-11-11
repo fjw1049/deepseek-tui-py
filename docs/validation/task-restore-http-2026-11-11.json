@@ -1,0 +1,12 @@
+{
+  "transport": "real loopback HTTP via uvicorn; production task routes, isolated test app",
+  "preview_status": 200,
+  "restore_status": 200,
+  "repeat_status": 200,
+  "resume_status": 409,
+  "gbk_bytes_restored": true,
+  "no_write_on_preview": true,
+  "record": "task_825c8d85",
+  "external_messages": 0,
+  "paid_model_requests": 0
+}

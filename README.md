@@ -34,6 +34,11 @@
 
 **环境**：Python 3.10+（推荐 3.12）、Node.js 20、DeepSeek API Key。
 
+Python 核心运行时的最低声明版本为 3.10；内置浏览器依赖仅在 Python 3.11+
+安装，使用浏览器建议直接选择 3.12。桌面 CUA 的平台入口目前接受
+Apple Silicon macOS 和 X11 Linux；Windows 不支持该入口。
+应用级观察等能力还依赖具体平台；核心运行时可安装不代表全部桌面功能可用。
+
 ```bash
 git clone https://github.com/fjw1049/deepseek-tui-py.git
 cd deepseek-tui-py
@@ -137,6 +142,24 @@ plugins = true
 也可用 `DEEPSEEK_API_KEY`。完整项见 [`config.example.toml`](config.example.toml)。  
 MCP 默认：`~/.deepseek/mcp.json`；CLI：`deepseek-tui mcp list|add|enable|focus|…`。
 
+ask/plan 默认不开放外部 MCP 工具。可在用户 `config.toml` 顶层显式指定已经核对过的只读工具完整名称（精确匹配，不支持通配符）：
+
+```toml
+mcp_read_only_tools = ["mcp_my_docs_search", "mcp_my_docs_read"]
+```
+
+名单属于用户授权，不从服务的 `readOnlyHint` 或插件声明自动生成，项目目录中的配置也不能覆盖此名单。启用前需确认工具实际只读；修改配置后重启 Runtime。名单用于 ask/plan 的只读接入，不替代 agent/yolo 的审批策略，也不保证工具可并行。工具列表接口的 `model_name` 是可复制的完整名称；对应服务成功完成工具发现后，仍不存在的名单项才会提示核对；延迟发现、发现失败或尚未验证的缓存不会被当成拼写错误。
+
+工具范围由轮次 API 的 `tool_profile` 字段指定（`full`、`cron`、`automation_composer`），普通聊天文本不会切换工具范围。旧任务的前缀仍可用于历史数据迁移。
+
+`task_output(block=true, timeout_ms=...)` 支持有界等待任务、子代理和进程；取消等待或超时不取消独立任务。正在执行的 durable task 不能阻塞等待另一个未完成的 durable task，避免占住执行 worker；主会话仍可阻塞等待。
+
+自动化投递结果不明时暂停自动重发，在自动化中心查看原消息并确认收到或明确重投。发送前保存正文和目标身份；明确拒收后重试会采用修正后的投递配置，保留原正文。结果不明时保留原目标：企业微信快照只保存目标指纹，当前凭据已变更时需恢复原目标后才能重投，避免误发到新接收方。恢复同一失败任务时，旧的待确认发送单独保留，新结果独立投递。
+
+`note(action="read")` 显式读取最近的笔记（最多 64 KiB），`note(content="...")` 保持原追加语义；ask/plan 只允许读取。笔记路径遵循用户 `notes_path` / `DEEPSEEK_NOTES_PATH`，不会自动注入每个项目。按名加载 skill 后，其目录仅获得读取权限，敏感文件和越界符号链接仍受限制。
+
+可选的 `NetworkPolicyDecider` 尚未接入应用配置，标准运行时保持 `network_policy=None`。已有网络审批桥供显式注入策略的集成使用；本轮只修复该路径的超时计数共享，没有默认启用网络审批。
+
 ---
 
 ## 终端模式（可选）
@@ -157,6 +180,11 @@ uv run deepseek-tui serve --http --host 127.0.0.1 --port 7878 \
 ---
 
 ## 开发与测试
+
+Python 依赖以 `pyproject.toml` 和 `uv.lock` 为准。兼容 pip 的 `requirements.lock`
+由 `make requirements-lock` 导出（含 dev 依赖、平台条件和包哈希），
+`make check-lock` 检查漂移；不要用本机 `pip freeze` 覆盖它。
+使用 pip 锁文件安装后，以 `uv pip install --no-deps -e .` 安装当前项目，避免重新解析版本。
 
 ```bash
 uv sync --extra dev
