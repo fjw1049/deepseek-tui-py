@@ -2791,3 +2791,40 @@ async def test_typed_line_break_does_not_submit_the_form(chrome):
     result = await act(service, observation, 'type', ref=field['ref'], text='line1\nline2')
     assert result['success'], result
     assert await evaluate(client, "f.dataset.submitted || 'no'") == 'no'
+
+
+async def test_double_click_right_click_and_screenshot_point_hover_and_drag(chrome):
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML=`"
+        "<button id=b style='position:absolute;left:100px;top:100px;width:120px;height:40px'>Item</button>"
+        "<div id=h style='position:absolute;left:300px;top:100px;width:100px;height:40px;background:#ccd'></div>"
+        "<div id=k style='position:absolute;left:100px;top:300px;width:40px;height:40px;background:#345'></div>`;"
+        "window.log=[];b.ondblclick=()=>log.push('double');"
+        "b.oncontextmenu=e=>{e.preventDefault();log.push('menu')};"
+        "h.onmousemove=()=>log.push('hover');k.onmousedown=()=>window.held=true;"
+        "document.onmouseup=e=>{if(window.held)log.push('drop '+e.clientX+','+e.clientY);window.held=false};true")
+    observation = await read(service)
+    result = await act(service, observation, "click", ref=ref(observation, "Item"), clicks=2)
+    assert result["success"], result
+    observation = await read(service)
+    result = await act(service, observation, "click", ref=ref(observation, "Item"), button="right")
+    assert result["success"], result
+    capture = await service.action("t", BrowserAction(action="screenshot"))
+    result = await act(service, capture["observation"], "hover", x=350, y=120)
+    assert result["success"], result
+    capture = await service.action("t", BrowserAction(action="screenshot"))
+    result = await act(service, capture["observation"], "drag", x=120, y=320, to_x=400, to_y=320)
+    assert result["success"], result
+    log = await evaluate(client, "window.log")
+    assert log[:2] == ["double", "menu"] and "hover" in log and log[-1] == "drop 400,320"
+
+
+async def test_coordinate_drag_needs_a_current_screenshot_and_an_on_screen_destination(chrome):
+    service, _ = chrome
+    observation = await read(service)
+    result = await act(service, observation, "drag", x=10, y=10, to_x=50, to_y=50)
+    assert result["receipt"]["reason"] == "screenshot_required"
+    capture = await service.action("t", BrowserAction(action="screenshot"))
+    result = await act(service, capture["observation"], "drag", x=10, y=10, to_x=1300, to_y=50)
+    assert result["receipt"]["reason"] == "pointer_outside_viewport"

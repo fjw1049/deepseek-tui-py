@@ -14,6 +14,7 @@ INTERACTION_ACTIONS = {"click", "drag", "fill", "type", "select", "set_checked",
 _ACTION_WORDS = {
     "zh": {
         "open": "打开", "new_tab": "在新标签页打开", "click": "点击", "drag": "拖动", "fill": "填写", "type": "输入",
+        "right_click": "右键点击", "double_click": "双击", "triple_click": "三连击",
         "select": "选择", "set_checked": "勾选", "press": "按键", "upload": "上传文件到",
         "hover": "悬停", "scroll": "滚动", "handle_dialog": "回应对话框", "recover": "重启浏览器",
         "close_session": "结束浏览器", "close_tab": "关闭标签页", "record_start": "开始录制",
@@ -21,6 +22,7 @@ _ACTION_WORDS = {
     },
     "en": {
         "open": "Open", "new_tab": "Open in a new tab", "click": "Click", "drag": "Drag", "fill": "Fill in",
+        "right_click": "Right-click", "double_click": "Double-click", "triple_click": "Triple-click",
         "type": "Type into", "select": "Select in", "set_checked": "Check", "press": "Press",
         "upload": "Upload files to", "hover": "Hover over", "scroll": "Scroll",
         "handle_dialog": "Answer the dialog", "recover": "Restart the browser",
@@ -155,6 +157,11 @@ def preview(run: Any, arguments: dict[str, Any], locale: str | None = "zh") -> d
     origin = action_site(run, arguments)
     host = (urlsplit(origin).hostname or "file") if origin else None
     word = _ACTION_WORDS[lang].get(action, action)
+    if action == "click":
+        # The card names the gesture the user is approving.
+        gesture = ("right_click" if arguments.get("button") == "right"
+                   else {2: "double_click", 3: "triple_click"}.get(arguments.get("clicks"), "click"))
+        word = _ACTION_WORDS[lang][gesture]
     target = ""
     element = None
     observation = (run.latest_observation or {}) if run is not None else {}

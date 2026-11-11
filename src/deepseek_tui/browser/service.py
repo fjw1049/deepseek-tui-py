@@ -224,6 +224,10 @@ class BrowserAction(BaseModel):
     key: str = Field(default="Enter", max_length=50)
     x: int | None = Field(default=None, ge=0, lt=2400)
     y: int | None = Field(default=None, ge=0, lt=1600)
+    to_x: int | None = Field(default=None, ge=0, lt=2400)
+    to_y: int | None = Field(default=None, ge=0, lt=1600)
+    button: Literal["left", "right"] = "left"
+    clicks: int = Field(default=1, ge=1, le=3)
     direction: Literal["up", "down", "left", "right"] = "down"
     amount: int = Field(default=300, ge=1, le=1200)
     timeout_ms: int = Field(default=0, ge=0, le=10000)
@@ -285,10 +289,17 @@ class BrowserAction(BaseModel):
             self.ref or self.selector or (self.x is not None and self.y is not None)
         ):
             raise ValueError("click requires ref, selector, or x and y")
-        if self.action == "drag" and not (self.ref and self.to_ref):
-            raise ValueError("drag requires ref and to_ref from the same observation")
+        if (self.button != "left" or self.clicks != 1) and self.action != "click":
+            raise ValueError("button and clicks apply to click")
+        # Either both ends are observed elements or both are screenshot points.
+        if self.action == "drag" and bool(self.ref and self.to_ref) == (
+                None not in (self.x, self.y, self.to_x, self.to_y)):
+            raise ValueError("drag requires ref and to_ref from the same observation, "
+                             "or x, y, to_x and to_y from the current screenshot")
         if self.to_ref and self.action != "drag":
             raise ValueError("to_ref applies to drag")
+        if (self.to_x is not None or self.to_y is not None) and self.action != "drag":
+            raise ValueError("to_x and to_y apply to drag")
         if self.action in {"fill", "select"} and not (self.ref or self.selector):
             raise ValueError("fill requires ref or selector")
         if self.action == "set_checked" and (
@@ -299,8 +310,10 @@ class BrowserAction(BaseModel):
             raise ValueError("check_text requires non-empty text")
         if self.action in {"switch_tab", "close_tab"} and not self.tab_id.strip():
             raise ValueError("switch_tab requires tab_id from tabs")
-        if self.action == "hover" and not self.ref:
-            raise ValueError("hover requires ref from observe")
+        if self.action == "hover" and not (
+            self.ref or (self.x is not None and self.y is not None)
+        ):
+            raise ValueError("hover requires ref from observe, or x and y from the current screenshot")
         # A bare wait is a plain pause (models use it so); a condition still needs its subject.
         if (self.action == "wait" and self.condition
                 and not (self.text.strip() or self.selector or self.url_contains)):
@@ -1777,6 +1790,11 @@ class BrowserService:
                         return await self._reject_action(run, action, "pointer_outside_viewport")
                     if not await self._point_unchanged(run, action.x, action.y):
                         return await self._reject_action(run, action, "screenshot_pixels_changed")
+                    if action.to_x is not None:
+                        if action.to_x >= run.width or action.to_y >= run.height:
+                            return await self._reject_action(run, action, "pointer_outside_viewport")
+                        if not await self._point_unchanged(run, action.to_x, action.to_y):
+                            return await self._reject_action(run, action, "screenshot_pixels_changed")
                 if resolved.get("frame_id"):
                     action = action.model_copy(
                         update={
@@ -2561,7 +2579,8 @@ class BrowserService:
             run.last_dispatch_id = action._action_id
             if action.ref or action.selector:
                 return await run.session.click(ref=action.ref, selector=action.selector)
-            return await run.session.click(ref=None, selector=None, x=action.x, y=action.y)
+            if action.button == "left" and action.clicks == 1:
+                return await run.session.click(ref=None, selector=None, x=action.x, y=action.y)
         from deepseek_tui.tools.registry import ToolResult
 
         if action.frame_id:
@@ -2575,33 +2594,40 @@ class BrowserService:
         client = run.observation_context if action.frame_id else run.session._internal.client
         try:
             run.last_dispatch_id = action._action_id
-            await client.send("Input.dispatchMouseEvent", {
-                "type": "mousePressed", "x": action.x, "y": action.y, "button": "left", "clickCount": 1})
-            await client.send("Input.dispatchMouseEvent", {
-                "type": "mouseReleased", "x": action.x, "y": action.y, "button": "left", "clickCount": 1})
+            # A double click is two presses whose clickCount rises; the page then fires dblclick.
+            for count in range(1, action.clicks + 1):
+                for kind in ("mousePressed", "mouseReleased"):
+                    await client.send("Input.dispatchMouseEvent", {
+                        "type": kind, "x": action.x, "y": action.y,
+                        "button": action.button, "clickCount": count})
         except BaseException:
             try:
                 await asyncio.shield(asyncio.wait_for(client.send("Input.dispatchMouseEvent", {
-                    "type": "mouseReleased", "x": -1, "y": -1, "button": "left", "clickCount": 0}), 1))
+                    "type": "mouseReleased", "x": -1, "y": -1, "button": action.button,
+                    "clickCount": 0}), 1))
             except Exception:
                 pass
             raise
         return ToolResult(True, "Clicked observed target")
 
     async def _drag(self, run: BrowserRun, action: BrowserAction):
-        """Press on the observed source, move in steps, release over the observed destination."""
+        """Press on the source, move in steps, release over the destination: both observed
+        elements, or both points of the current screenshot."""
         from deepseek_tui.tools.registry import ToolResult
 
         if action.frame_id:
             raise ValueError("drag supports targets observed in the page, not a scoped frame")
         await run.session._internal.client.send("Page.bringToFront")
         source = await self._dispatch_guard(run, action)
-        # Resolved after the source scrolled into view, without scrolling it away again.
-        destination = await target(run, action.model_copy(update={"ref": action.to_ref}), scroll=False)
-        if destination.get("error"):
-            raise ValueError("Drag destination unavailable: " + destination["error"])
+        if action.to_ref:
+            # Resolved after the source scrolled into view, without scrolling it away again.
+            destination = await target(run, action.model_copy(update={"ref": action.to_ref}), scroll=False)
+            if destination.get("error"):
+                raise ValueError("Drag destination unavailable: " + destination["error"])
+            (x0, y0), (x1, y1) = (source["x"], source["y"]), (destination["x"], destination["y"])
+        else:
+            (x0, y0), (x1, y1) = (action.x, action.y), (action.to_x, action.to_y)
         client = run.session._internal.client
-        (x0, y0), (x1, y1) = (source["x"], source["y"]), (destination["x"], destination["y"])
         run.last_dispatch_id = action._action_id
         try:
             await client.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x0, "y": y0})
@@ -2616,7 +2642,8 @@ class BrowserService:
         finally:
             await asyncio.shield(asyncio.wait_for(client.send("Input.dispatchMouseEvent", {
                 "type": "mouseReleased", "x": x1, "y": y1, "button": "left", "clickCount": 1}), 1))
-        return ToolResult(True, "Dragged observed source onto observed destination")
+        return ToolResult(True, "Dragged observed source onto observed destination"
+                          if action.to_ref else "Dragged between the screenshot points")
 
     async def _form_submission_page(self, run: BrowserRun) -> bool:
         """CDP reload silently re-posts form results; Chrome's resubmit prompt is absent."""

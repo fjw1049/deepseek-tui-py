@@ -131,6 +131,61 @@ def test_drag_needs_source_and_destination_refs():
         BrowserAction(action="click", ref="e1", to_ref="e2", observation_id="o")
 
 
+@pytest.mark.parametrize("arguments", [
+    {"action": "hover", "x": 10, "y": 20},
+    {"action": "drag", "x": 10, "y": 20, "to_x": 30, "to_y": 40},
+    {"action": "click", "ref": "e1", "button": "right"},
+    {"action": "click", "x": 1, "y": 2, "clicks": 2},
+])
+def test_pointer_gestures_accept_refs_or_screenshot_points(arguments):
+    BrowserAction(**arguments)
+
+
+@pytest.mark.parametrize("arguments", [
+    {"action": "hover", "x": 10},
+    {"action": "drag", "x": 10, "y": 20, "to_x": 30},
+    {"action": "drag", "ref": "e1", "to_x": 30, "to_y": 40},  # One kind of grounding per drag.
+    {"action": "drag", "ref": "e1", "to_ref": "e2", "x": 1, "y": 2, "to_x": 3, "to_y": 4},
+    {"action": "click", "ref": "e1", "to_x": 1, "to_y": 1},
+    {"action": "fill", "ref": "e1", "text": "a", "clicks": 2},
+    {"action": "hover", "ref": "e1", "button": "right"},
+    {"action": "click", "ref": "e1", "clicks": 4},
+    {"action": "click", "ref": "e1", "button": "middle"},
+])
+def test_pointer_gestures_reject_partial_or_misplaced_arguments(arguments):
+    with pytest.raises(ValueError):
+        BrowserAction(**arguments)
+
+
+async def test_double_and_right_clicks_send_their_own_mouse_events(tmp_path):
+    client = SimpleNamespace(send=AsyncMock())
+    session = SimpleNamespace(click=AsyncMock(), _internal=SimpleNamespace(client=client))
+    run = SimpleNamespace(session=session, target_binding_id=None, last_dispatch_id=None)
+    service = BrowserService(tmp_path)
+
+    def mouse_events():
+        return [(c.args[1]["type"], c.args[1]["button"], c.args[1]["clickCount"])
+                for c in client.send.await_args_list if c.args[0] == "Input.dispatchMouseEvent"]
+
+    await service._click(run, BrowserAction(action="click", x=5, y=6, clicks=2))
+    assert mouse_events() == [("mousePressed", "left", 1), ("mouseReleased", "left", 1),
+                              ("mousePressed", "left", 2), ("mouseReleased", "left", 2)]
+    client.send.reset_mock()
+    await service._click(run, BrowserAction(action="click", x=5, y=6, button="right"))
+    assert mouse_events() == [("mousePressed", "right", 1), ("mouseReleased", "right", 1)]
+    session.click.assert_not_awaited()
+    await service._click(run, BrowserAction(action="click", x=5, y=6))
+    session.click.assert_awaited_once_with(ref=None, selector=None, x=5, y=6)
+
+
+def test_approval_card_names_the_click_gesture():
+    from deepseek_tui.browser.permissions import preview
+
+    assert preview(None, {"action": "click", "button": "right"}, "en")["title"].startswith("Right-click")
+    assert preview(None, {"action": "click", "clicks": 2}, "zh")["title"].endswith("双击")
+    assert preview(None, {"action": "click"}, "en")["title"].startswith("Click")
+
+
 PAGE = """<!doctype html><meta charset=utf-8><title>Widgets</title>
 <style>.hide input{opacity:0;position:absolute;width:1px;height:1px}
 .card{cursor:pointer;padding:6px}.task{cursor:grab;padding:8px;border:1px solid}
