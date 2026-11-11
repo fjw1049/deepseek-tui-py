@@ -1,5 +1,8 @@
 - &product
   id: system.login_resume
+  source_group: service-login
+  task_family: browser-handoff
+  split: development
   suite: system_v1
   title: 本人登录交回后读私有记录
   runner: product_session
@@ -15,6 +18,8 @@
     rubric: [首轮如实说明登录限制，末轮交付重新读取的核对码。]
 - <<: *product
   id: system.retry_receipt
+  source_group: service-retry
+  task_family: side-effect-recovery
   title: 已入队却返回超时
   setup: {service_fixture: retry}
   input:
@@ -23,6 +28,8 @@
     rubric: [交付实际回执并准确说明入队结果。]
 - <<: *product
   id: system.transfer_target
+  source_group: service-transfer
+  task_family: cross-application
   title: 跨服务把交接码写到指定分区的同号对象
   setup: {service_fixture: transfer}
   input:

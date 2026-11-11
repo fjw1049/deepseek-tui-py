@@ -73,6 +73,9 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "max_cost_usd": "费用上限",
         "timeout_seconds": "超时限制",
         "judge_model": "评审模型",
+        "judge_provider": "评审服务商",
+        "max_input_tokens": "输入上限",
+        "concurrency": "并发数",
         "retry_policy": "请求计数规则",
     }
     for key in ("dataset_hash", "grader_hash", "mode", "trials"):
@@ -84,6 +87,9 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "max_cost_usd",
         "timeout_seconds",
         "judge_model",
+        "judge_provider",
+        "max_input_tokens",
+        "concurrency",
         "retry_policy",
     ):
         if ma.get("settings", {}).get(key) != mb.get("settings", {}).get(key):
@@ -96,7 +102,18 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         expected = run["manifest"].get("settings", {}).get("expected_trials")
         if not expected or len(run["cases"]) != expected:
             reasons.append("计划试验数缺失或结果不完整")
-        if any(row["status"] in {"skipped", "error"} for row in run["cases"]):
+        identities = [(row["case_id"], row["trial"]) for row in run["cases"]]
+        if len(identities) != len(set(identities)):
+            reasons.append("存在重复的场景/试验编号")
+        plan = run["manifest"].get("settings", {}).get("case_trials")
+        if plan and set(identities) != {
+            (case_id, trial) for case_id, count in plan.items() for trial in range(1, count + 1)
+        }:
+            reasons.append("逐题试验编号与运行计划不一致")
+        planned_ids = run["manifest"].get("case_ids")
+        if planned_ids and set(planned_ids) != {row["case_id"] for row in run["cases"]}:
+            reasons.append("实际场景与运行计划不一致")
+        if any(row["status"] not in {"passed", "failed"} for row in run["cases"]):
             reasons.append("存在跳过或运行错误")
 
     def grouped(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -111,6 +128,10 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for case_id in sorted(set(ga) | set(gb)):
         left, right = ga.get(case_id, []), gb.get(case_id, [])
+        for key in ("source_group", "task_family", "split", "runner", "suite", "risk"):
+            values = {r.get(key) for r in left + right}
+            if len(values) > 1:
+                reasons.append(f"场景元数据不一致：{case_id}/{key}")
         if {r["trial"] for r in left} != {r["trial"] for r in right}:
             reasons.append(f"重复试验不匹配：{case_id}")
         pa = sum(r["status"] == "passed" for r in left) / len(left) if left else None
@@ -118,6 +139,9 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         rows.append(
             {
                 "case_id": case_id,
+                "source_group": (left or right)[0].get("source_group", ""),
+                "task_family": (left or right)[0].get("task_family", ""),
+                "split": (left or right)[0].get("split", "development"),
                 "a": pa,
                 "b": pb,
                 "delta": pb - pa if pa is not None and pb is not None else None,

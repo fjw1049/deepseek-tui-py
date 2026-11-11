@@ -27,6 +27,9 @@ class EvalCase(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
     expect: dict[str, Any] = Field(default_factory=dict)
     source_file: str = ""
+    source_group: str = ""
+    task_family: str = ""
+    split: Literal["development", "regression", "holdout"] = "development"
 
     @field_validator("id", "suite", "runner", "grader")
     @classmethod
@@ -77,6 +80,9 @@ class TrialResult(BaseModel):
     suite: str
     risk: str
     source_file: str = ""
+    source_group: str = ""
+    task_family: str = ""
+    split: Literal["development", "regression", "holdout"] = "development"
     tags: list[str] = Field(default_factory=list)
     related_paths: list[str] = Field(default_factory=list)
     trial: int

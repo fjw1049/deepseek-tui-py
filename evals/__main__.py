@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
+import signal
 import sys
 from pathlib import Path
+from typing import Any
 
 from evals.compare import compare_files
 from evals.runner import RunOptions, load_cases, run_evaluations, validate_cases
@@ -52,6 +55,17 @@ def _parser() -> argparse.ArgumentParser:
     runs = commands.add_parser("compare-runs", help="compare two finished runs case by case")
     runs.add_argument("a", type=Path)
     runs.add_argument("b", type=Path)
+
+    campaign = commands.add_parser("campaign", help="run a frozen-source A/A + A/B experiment")
+    campaign.add_argument("spec", type=Path, help="JSON hypothesis, cases, budgets and policy")
+    campaign.add_argument("--output", type=Path, required=True)
+
+    decision = commands.add_parser("decide", help="apply a frozen policy to paired run artifacts")
+    decision.add_argument("baseline", type=Path)
+    decision.add_argument("candidate", type=Path)
+    decision.add_argument("--repeat", type=Path)
+    decision.add_argument("--policy", type=Path, required=True)
+    decision.add_argument("--output", type=Path, required=True)
 
     soak = commands.add_parser("soak-baseline", help="metrics from an archived thread store")
     soak.add_argument("store", type=Path)
@@ -112,6 +126,43 @@ def main(argv: list[str] | None = None) -> int:
 
         print(format_comparison(load_run(args.a), load_run(args.b)))
         return 0
+
+    if args.command in {"campaign", "decide"}:
+        from evals.decision import DecisionPolicy, decide
+        from evals.experiments import load_run
+        from evals.report import write_json
+
+        try:
+            if args.command == "campaign":
+                from evals.campaign import CampaignSpec, run_campaign
+
+                spec = CampaignSpec.model_validate_json(args.spec.read_text())
+
+                async def execute() -> dict[str, Any]:
+                    task = asyncio.create_task(run_campaign(spec, args.output))
+                    loop = asyncio.get_running_loop()
+                    loop.add_signal_handler(signal.SIGTERM, task.cancel)
+                    try:
+                        return await task
+                    finally:
+                        loop.remove_signal_handler(signal.SIGTERM)
+
+                result = asyncio.run(execute())
+            else:
+                policy = DecisionPolicy.model_validate_json(args.policy.read_text())
+                result = decide(load_run(args.baseline), load_run(args.candidate), policy,
+                                load_run(args.repeat) if args.repeat else None)
+                if args.output.exists():
+                    raise ValueError("decision output already exists; preserve the previous record")
+                write_json(args.output, result)
+        except (ValueError, OSError) as exc:
+            print(f"ERROR {exc}")
+            return 2
+        print(json.dumps({"decision": result["decision"], "reasons": result["reasons"],
+                          "output": str(args.output)}, ensure_ascii=False))
+        return {"review_candidate": 0, "keep_baseline": 1, "insufficient_evidence": 2}[
+            result["decision"]
+        ]
 
     if args.command == "soak-baseline":
         from evals.regrade import soak_baseline

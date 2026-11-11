@@ -75,10 +75,17 @@ def load_cases(root: Path = DEFAULT_SUITES_ROOT) -> list[EvalCase]:
 def validate_cases(cases: list[EvalCase], repo_root: Path = REPO_ROOT) -> list[str]:
     errors: list[str] = []
     seen: set[str] = set()
+    groups: dict[str, str] = {}
     for case in cases:
         if case.id in seen:
             errors.append(f"duplicate case id: {case.id}")
         seen.add(case.id)
+        if case.source_group:
+            previous = groups.setdefault(case.source_group, case.split)
+            if previous != case.split:
+                errors.append(f"{case.id}: source group {case.source_group!r} crosses splits")
+        if case.split == "holdout" and not case.source_group:
+            errors.append(f"{case.id}: holdout needs an explicit source_group")
         if case.runner not in HARNESSES:
             errors.append(f"{case.id}: unknown runner {case.runner!r}")
         if case.grader not in GRADERS:
@@ -121,6 +128,8 @@ def _hash_json(value: Any) -> str:
 
 
 def _git_bytes(*args: str) -> bytes:
+    if (REPO_ROOT / ".eval-snapshot.json").exists():
+        return b""  # Never discover the enclosing working tree from an archived run.
     try:
         result = subprocess.run(
             ["git", *args],
@@ -141,6 +150,10 @@ def _git_value(*args: str) -> str:
 
 def _dirty_state_hash() -> str:
     """Hash changes to what runs under evaluation; Workbench UI code is not exercised."""
+    if (REPO_ROOT / ".eval-snapshot.json").exists():
+        from evals.snapshots import tree_hash
+
+        return tree_hash(REPO_ROOT)
     digest = hashlib.sha256()
     digest.update(_git_bytes("diff", "--binary", "HEAD", "--", *_EVALUATED_PATHS))
     untracked = _git_bytes(
@@ -160,6 +173,8 @@ def _dirty_state_hash() -> str:
 
 
 def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunManifest:
+    snapshot_path = REPO_ROOT / ".eval-snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.is_file() else None
     prompt = build_system_prompt(
         mode=AppMode.AGENT,
         workspace=REPO_ROOT,
@@ -175,7 +190,7 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
     return RunManifest(
         run_id=run_id,
         started_at=datetime.now(timezone.utc).isoformat(),
-        git_commit=_git_value("rev-parse", "HEAD"),
+        git_commit=snapshot["git_commit"] if snapshot else _git_value("rev-parse", "HEAD"),
         dirty_diff_hash=_dirty_state_hash(),
         dataset_hash=dataset_hash(cases),
         prompt_hash=hashlib.sha256(prompt.encode()).hexdigest(),
@@ -189,16 +204,20 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
         case_ids=[case.id for case in cases],
         grader_hash=grader_hash(),
         settings={
+            "source_snapshot": snapshot,
             "label": options.label,
             "prompt_suffix": options.prompt_suffix,
             "max_live_requests": options.max_live_requests,
             "max_output_tokens": options.max_output_tokens,
             "max_cost_usd": options.max_cost_usd,
             "timeout_seconds": options.timeout_seconds,
+            "max_input_tokens": options.max_input_tokens,
+            "concurrency": options.concurrency,
             "judge_provider": options.judge_provider or options.provider,
             "judge_model": options.judge_model or options.model,
             "retry_policy": "metered-attempts-v1",
             "expected_trials": sum(options.trials if c.live else 1 for c in cases),
+            "case_trials": {c.id: options.trials if c.live else 1 for c in cases},
         },
     )
 
@@ -276,6 +295,9 @@ async def run_evaluations(
             source_file=case.source_file,
             tags=case.tags,
             related_paths=case.related_paths,
+            source_group=case.source_group,
+            task_family=case.task_family,
+            split=case.split,
             trial=trial,
             **fields,
         )

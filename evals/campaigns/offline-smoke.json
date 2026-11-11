@@ -1,0 +1,13 @@
+{
+  "hypothesis": "验证冻结版本、A/A 与 A/B 编排及证据落盘；离线通过不构成 Agent 泛化收益。",
+  "baseline_revision": "HEAD",
+  "candidate_revision": "working-tree",
+  "case_ids": [
+    "tooling.reject_unknown_mcp_tool",
+    "tooling.reject_tool_absent_from_request_catalog"
+  ],
+  "mode": "offline",
+  "repetitions": 2,
+  "worker_timeout_seconds": 60,
+  "campaign_timeout_seconds": 300
+}

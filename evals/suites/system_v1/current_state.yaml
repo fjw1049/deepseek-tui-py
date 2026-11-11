@@ -1,5 +1,8 @@
 # Development pair. The code changes between turns only in the second condition.
 - id: system.current_state_proposal_only
+  source_group: automation-current-state
+  task_family: current-state
+  split: development
   suite: system_v1
   title: 追问现状，上一轮只有建议
   runner: product_session
@@ -24,6 +27,9 @@
     rubric:
     - 仅就最后一轮判现状。必须解释只在成功时写、同 run 覆盖、未记时间。上一轮的追加方案不能充当已实现证据，标签和解释必须一致。
 - id: system.current_state_changed
+  source_group: automation-current-state
+  task_family: current-state
+  split: development
   suite: system_v1
   title: 追问现状，用户已实际更新代码
   runner: product_session

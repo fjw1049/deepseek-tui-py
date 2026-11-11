@@ -1,0 +1,159 @@
+"""Conservative version decisions from paired evidence, never from an overall score."""
+
+from __future__ import annotations
+
+import random
+from collections import defaultdict
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from evals.experiments import compare_runs
+
+
+class DecisionPolicy(BaseModel):
+    """Pilot thresholds; freeze these before executing, calibrate them using A/A."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    min_source_groups: int = Field(default=8, ge=2)
+    min_trials: int = Field(default=3, ge=2)
+    min_gain: float = Field(default=0.05, ge=0, le=1)
+    max_family_regression: float = Field(default=0, ge=0, le=1)
+    max_aa_disagreement: float = Field(default=0.15, ge=0, le=1)
+    require_holdout: bool = True
+
+
+def _group_scores(rows: list[dict[str, Any]]) -> dict[str, float]:
+    groups: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        groups[row["source_group"]].append(row["delta"])
+    return {key: sum(values) / len(values) for key, values in groups.items()}
+
+
+def _estimate(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {"groups": 0, "delta": None, "interval": None}
+    interval = None
+    if len(values) >= 2:
+        rng = random.Random(20261112)
+        samples = sorted(
+            sum(rng.choices(values, k=len(values))) / len(values) for _ in range(2000)
+        )
+        interval = [samples[49], samples[1949]]
+    return {"groups": len(values), "delta": sum(values) / len(values), "interval": interval}
+
+
+def decide(
+    baseline: dict[str, Any], candidate: dict[str, Any], policy: DecisionPolicy,
+    repeat: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    comparison = compare_runs(baseline, candidate)
+    reasons = list(comparison["reasons"])
+    failures: list[str] = []
+    ma, mb = baseline["manifest"], candidate["manifest"]
+    for key in ("provider", "model", "python_version", "package_versions"):
+        if ma.get(key) != mb.get(key):
+            reasons.append(f"架构实验必须固定 {key}")
+    if ma.get("mode") == "live" and (not ma.get("provider") or not ma.get("model")):
+        reasons.append("实际模型与服务商未明确记录")
+    for run in (baseline, candidate):
+        if run["manifest"].get("settings", {}).get("regrade"):
+            reasons.append("重评记录需核对有效评分器和题集，不能直接用于自动放行")
+    invalid = bool(reasons)
+    sa = ma.get("settings", {}).get("source_snapshot") or {}
+    sb = mb.get("settings", {}).get("source_snapshot") or {}
+    if sa.get("product_hash") and sa.get("product_hash") == sb.get("product_hash"):
+        reasons.append("两侧产品源码相同；这次只能作为同版本重复，不能声称架构收益")
+
+    aa = compare_runs(baseline, repeat) if repeat is not None else None
+    if aa is None:
+        reasons.append("缺少同版本 A/A 重复实验")
+    elif not aa["comparable"]:
+        reasons.extend(f"A/A：{reason}" for reason in aa["reasons"])
+    else:
+        assert repeat is not None
+        mr = repeat["manifest"]
+        for key in ("git_commit", "dirty_diff_hash", "provider", "model", "prompt_hash",
+                    "tool_catalog_hash", "python_version", "package_versions"):
+            if ma.get(key) != mr.get(key):
+                reasons.append(f"A/A 并非同版本/同条件：{key}")
+        if (ma.get("settings", {}).get("prompt_suffix")
+                != mr.get("settings", {}).get("prompt_suffix")):
+            reasons.append("A/A 提示词补充不同")
+        aa_disagreement = sum(abs(r["delta"]) for r in aa["rows"]) / len(aa["rows"])
+        if aa_disagreement > policy.max_aa_disagreement:
+            reasons.append(f"A/A 逐题波动 {aa_disagreement:.3f} 超过预设上限")
+
+    task_ids = {r["case_id"] for r in candidate["cases"]
+                if r.get("runner") in {"product_session", "workspace_task"}}
+    task_rows = [r for r in comparison["rows"] if r["case_id"] in task_ids]
+    if not task_rows:
+        reasons.append("没有可重置的端到端任务；离线/单步/裁判题不能证明任务可靠性")
+    if any(not r["source_group"] or not r["task_family"] for r in task_rows):
+        reasons.append("端到端任务缺少独立来源分组或任务类别")
+    usable = [r for r in task_rows if r["source_group"] and r["task_family"]
+              and r["delta"] is not None]
+    splits: dict[str, set[str]] = defaultdict(set)
+    for row in usable:
+        splits[row["source_group"]].add(row["split"])
+    if any(len(value) > 1 for value in splits.values()):
+        reasons.append("同源任务跨开发/回归/封存分区")
+    for run in (baseline, candidate, *([repeat] if repeat is not None else [])):
+        for case_id in task_ids:
+            trials = [r["trial"] for r in run["cases"] if r["case_id"] == case_id]
+            if len(set(trials)) < policy.min_trials:
+                reasons.append("端到端任务的独立重复次数不足")
+                break
+
+    families = {}
+    for family in sorted({r["task_family"] for r in usable}):
+        estimate = _estimate(list(_group_scores(
+            [r for r in usable if r["task_family"] == family]
+        ).values()))
+        families[family] = estimate
+        if estimate["delta"] < -policy.max_family_regression:
+            failures.append(f"任务类别 {family} 退化 {estimate['delta']:.3f}")
+    if len(families) < 2:
+        reasons.append("不足两个任务类别，不能判断跨任务收益")
+    for row in candidate["cases"]:
+        if row.get("risk") == "critical" and row["status"] == "failed":
+            failures.append(f"关键保护题失败：{row['case_id']}")
+        checks = (row.get("observation") or {}).get("data", {}).get("checks", [])
+        if any(check.get("critical") and check.get("passed") is False for check in checks):
+            failures.append(f"关键事实检查失败：{row['case_id']}")
+    for row in usable:
+        if row["split"] == "regression" and row["delta"] < 0:
+            failures.append(f"受保护回归任务退化：{row['case_id']}")
+    overclaims = []
+    for run in (baseline, candidate):
+        values = [(row.get("grade") or {}).get("metrics", {}).get("task.overclaim_rate")
+                  for row in run["cases"] if row["case_id"] in task_ids]
+        overclaims.append(values)
+    if any(value is not None for values in overclaims for value in values):
+        if any(value is None for values in overclaims for value in values):
+            reasons.append("虚报完成指标覆盖不完整")
+        elif sum(overclaims[1]) > sum(overclaims[0]):
+            failures.append("候选虚报完成次数增加")
+
+    evidence = [r for r in usable if r["split"] == "holdout"] if policy.require_holdout else usable
+    if len({r["task_family"] for r in evidence}) < 2:
+        reasons.append("用于判断收益的来源未覆盖两个任务类别")
+    gain = _estimate(list(_group_scores(evidence).values()))
+    if gain["groups"] < policy.min_source_groups:
+        reasons.append(f"独立来源不足：{gain['groups']} / {policy.min_source_groups}"
+                       + ("（要求封存任务）" if policy.require_holdout else ""))
+    if gain["interval"] is None or gain["interval"][0] <= policy.min_gain:
+        reasons.append("来源分组区间的下界尚未超过预设最小收益")
+    # Incomparable or corrupted records cannot even support a regression decision.
+    status = "insufficient_evidence" if invalid else (
+        "keep_baseline" if failures else "insufficient_evidence" if reasons else "review_candidate"
+    )
+    return {
+        "decision": status,
+        "label": {"keep_baseline": "保留基线", "insufficient_evidence": "证据不足",
+                  "review_candidate": "可进入候选评审"}[status],
+        "reasons": sorted(set(reasons + failures)), "policy": policy.model_dump(),
+        "gain": gain, "families": families, "comparison": comparison, "aa": aa,
+        "note": "区间按独立来源聚类重采样；不证明未知任务普遍有效。封存标签不证明环境隔离。"
+                "通过仅进入人工候选评审，不自动合并或发布。",
+    }

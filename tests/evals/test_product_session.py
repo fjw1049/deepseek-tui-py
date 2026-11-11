@@ -126,6 +126,52 @@ def context_for(tmp_path: Path) -> HarnessContext:
     )
 
 
+async def test_frozen_campaign_drives_real_product_with_local_scripted_model(
+    tmp_path: Path, model_server: ThreadingHTTPServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+
+    import evals.campaign as campaign
+    from evals.snapshots import tree_hash
+
+    case = make_case().model_copy(update={"source_group": "scripted-fixture",
+                                          "task_family": "file-delivery"})
+    monkeypatch.setattr(campaign, "load_cases", lambda: [case])
+    freeze = campaign.freeze_source
+
+    def with_fixture(root: Path, revision: str, destination: Path) -> dict[str, str]:
+        metadata = freeze(root, revision, destination)
+        fixture = destination / "evals/suites/campaign_fixture/live.yaml"
+        fixture.parent.mkdir()
+        fixture.write_text(yaml.safe_dump(case.model_dump(exclude={"source_file"})))
+        metadata["source_hash"] = tree_hash(destination)
+        (destination / ".eval-snapshot.json").write_text(json.dumps(metadata))
+        return metadata
+
+    monkeypatch.setattr(campaign, "freeze_source", with_fixture)
+    spec = campaign.CampaignSpec(
+        hypothesis="real product, local scripted model", baseline_revision="working-tree",
+        case_ids=[case.id], mode="live", provider="fake", model="fake-model", repetitions=1,
+        timeout_seconds=60, worker_timeout_seconds=120, campaign_timeout_seconds=360,
+    )
+    output = tmp_path / "campaign"
+    result = await campaign.run_campaign(spec, output)
+    state = json.loads((output / "campaign.json").read_text())
+    assert state["status"] == "completed", result
+    assert len(state["completed"]) == 3
+    assert result["comparison"]["comparable"] and result["aa"]["comparable"]
+    for arm in ("baseline", "repeat", "candidate"):
+        row = json.loads((output / arm / "cases.jsonl").read_text())
+        assert row["status"] == "passed", row
+        checks = row["observation"]["data"]["checks"]
+        assert all(check["passed"] for check in checks)
+        session = (output / row["artifact_run"] / "sessions"
+                   / row["observation"]["data"]["session_dir"])
+        assert (session / "workspace/result.txt").read_text() == "done"
+        assert (session / "workspace/keep.py").read_text() == "print(1)\n"
+    assert result["decision"] == "insufficient_evidence"
+
+
 async def test_a_task_runs_through_the_product_and_comes_back_graded(
     tmp_path: Path, model_server: ThreadingHTTPServer
 ) -> None:

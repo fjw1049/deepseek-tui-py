@@ -63,3 +63,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## 5. Evaluation budget
+
+- 用户的个人模型账户资金有限。优先使用离线检查和本机脚本化模型验证。
+- 个人账户只做少量、有明确边界的冒烟测试，不自动启动全量、长跑或多轮付费批测。
+- 大批量真实模型评测留到公司环境，由用户发起；批跑模板必须明确填写公司 provider/model，不能默认使用个人账户。

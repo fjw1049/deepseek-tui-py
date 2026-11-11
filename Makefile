@@ -29,7 +29,7 @@ eval-validate:
 	PYTHONPATH=src:. $(PYTHON) -m evals validate
 
 eval-typecheck:
-	MYPYPATH=src $(PYTHON) -m mypy evals --ignore-missing-imports --follow-imports=silent
+	MYPYPATH=src $(PYTHON) -m mypy evals --exclude 'evals/artifacts/' --ignore-missing-imports --follow-imports=silent
 
 eval-serve:
 	bash scripts/dev-eval.sh
