@@ -41,7 +41,8 @@ STALL_STREAK = 8
 _UNCHANGED = (
     "\n\n<system-reminder>\n"
     "This observation matches the previous one of this kind: it shows "
-    "nothing new.\n"
+    "nothing new. Looking again adds no evidence: if it already shows the requested "
+    "result, finish and answer; if not, act differently.\n"
     "</system-reminder>"
 )
 
@@ -49,7 +50,8 @@ _STUCK = (
     "\n\n<system-reminder>\n"
     "The last {streak} observations repeated earlier content on this interface. "
     "This may indicate stalled progress, but does not prove an action failed. "
-    "Do not act on what you cannot see. Choose one and state it before acting: "
+    "If the state already shows the requested result, the task is done: answer now. "
+    "Otherwise do not act on what you cannot see; choose one and state it before acting: "
     "(1) a way to observe or reach the target you have not tried yet; "
     "(2) request_user_input for the step that needs the person; "
     "(3) report a terminal limitation if no authorized route remains. "
