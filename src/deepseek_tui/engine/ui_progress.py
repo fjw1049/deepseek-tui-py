@@ -175,7 +175,7 @@ class UiProgress:
             return ("Not executed: use cua_observe to check the expected result "
                     "before more CUA code.")
         streak = self._streak.get(_surface_key(tool_name), 0)
-        if tool_name in {"cua_js", "cua_js_reset"} and streak >= STALL_STREAK:
+        if tool_name in {"cua_act", "cua_js", "cua_js_reset"} and streak >= STALL_STREAK:
             return "Not executed: " + _CUA_PAUSED
         return _BLOCKED.format(streak=streak) if streak >= STALL_STREAK else None
 

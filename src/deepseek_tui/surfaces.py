@@ -24,7 +24,7 @@ class Surface:
     aux_tools: frozenset[str] = frozenset()
 
 
-CUA_TOOLS = frozenset({"cua_js", "cua_js_reset", "cua_observe"})
+CUA_TOOLS = frozenset({"cua_act", "cua_js", "cua_js_reset", "cua_observe"})
 
 SURFACES: tuple[Surface, ...] = (
     Surface(
@@ -52,7 +52,7 @@ SURFACES: tuple[Surface, ...] = (
         "task because no API exists",
         CUA_TOOLS,
         guide="computer_use.md",
-        context_keys=("title", "code"),
+        context_keys=("title", "code", "app", "actions"),
     ),
 )
 

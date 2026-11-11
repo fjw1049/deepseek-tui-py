@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 import time
@@ -10,6 +11,7 @@ import unicodedata
 from dataclasses import replace
 from typing import Any
 
+from deepseek_tui.cua import app_scope
 from deepseek_tui.cua.ax_text import is_listing, shorten
 from deepseek_tui.cua.session import CuaSession, StaleTarget
 from deepseek_tui.surfaces import CUA_TOOLS  # noqa: F401 - re-exported for CUA wiring
@@ -389,6 +391,9 @@ def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:
 
 
 class CuaTool(ToolSpec):
+    # The one app host-written code touches in the current call (set by CuaActTool).
+    scope: str | None = None
+
     def __init__(
         self,
         session: CuaSession,
@@ -491,8 +496,9 @@ class CuaTool(ToolSpec):
         from deepseek_tui.mcp.execute import mcp_response_to_tool_result
 
         turn, call_id = _call_ids(context)
+        scope = {"scope": self.scope} if self.scope else {}
         payload = await self.session.run(
-            lambda: self.session.call(self.descriptor["name"], input_data, turn, call_id),
+            lambda: self.session.call(self.descriptor["name"], input_data, turn, call_id, **scope),
             self.cancel_events,
         )
         for item in payload.get("content") or []:
@@ -706,6 +712,196 @@ class CuaObserveTool(CuaTool):
                 return
 
 
+_BUTTONS = ("left", "right", "middle")
+_DIRECTIONS = ("up", "down", "left", "right")
+MAX_ACTIONS = 20
+
+
+def _number(value: Any) -> bool:
+    return type(value) in (int, float)
+
+
+def _element(action: dict[str, Any], kind: str) -> int:
+    element = action.get("element")
+    if type(element) is not int or element < 0:
+        raise ToolError(f"{kind} needs element: an index from the app's latest state.")
+    return element
+
+
+def _place(action: dict[str, Any], kind: str) -> str:
+    """An element index, or a point when the action gives x and y instead."""
+    if action.get("element") is None and _number(action.get("x")) and _number(action.get("y")):
+        return json.dumps([action["x"], action["y"]])
+    if action.get("element") is None:
+        raise ToolError(f"{kind} needs element (an index from the latest state) or x and y.")
+    return str(_element(action, kind))
+
+
+def _string(action: dict[str, Any], kind: str, field: str, *, empty: bool = False) -> str:
+    value = action.get(field)
+    if not isinstance(value, str) or not (value or empty):
+        raise ToolError(f"{kind} needs {field}.")
+    return json.dumps(value)
+
+
+def action_js(action: Any, mac: bool) -> str:
+    """One typed step as the runtime's documented call on the bound app."""
+    kind = action.get("type") if isinstance(action, dict) else None
+    if kind == "click":
+        options: dict[str, Any] = {}
+        if action.get("button") not in (None, "left"):
+            if action["button"] not in _BUTTONS:
+                raise ToolError("click button is left, right or middle.")
+            options["mouseButton"] = action["button"]
+        if action.get("count") not in (None, 1):
+            if type(action["count"]) is not int or not 1 <= action["count"] <= 3:
+                raise ToolError("click count is 1, 2 or 3.")
+            options["clickCount"] = action["count"]
+        extra = ", " + json.dumps(options) if options else ""
+        return f"await app.click({_place(action, kind)}{extra});"
+    if kind == "type":
+        return f"await app.typeText({_string(action, kind, 'text')});"
+    if kind == "paste":
+        return f"await app.paste({_string(action, kind, 'text')});"
+    if kind == "key":
+        return f"await app.pressKey({_string(action, kind, 'key')});"
+    if kind == "scroll":
+        if action.get("direction") not in _DIRECTIONS:
+            raise ToolError("scroll needs direction: up, down, left or right.")
+        pages = action.get("pages")
+        if pages is not None and (not mac or not _number(pages) or pages <= 0):
+            raise ToolError("scroll pages is a positive number, on macOS only.")
+        return (f"await app.scroll({_place(action, kind)}, {json.dumps(action['direction'])}"
+                f"{'' if pages is None else ', ' + json.dumps(pages)});")
+    if kind == "drag":
+        if not all(_number(action.get(k)) for k in ("x", "y", "to_x", "to_y")):
+            raise ToolError("drag needs x, y, to_x and to_y.")
+        return (f"await app.drag({json.dumps([action['x'], action['y']])}, "
+                f"{json.dumps([action['to_x'], action['to_y']])});")
+    if kind == "secondary_action":
+        return (f"await app.performSecondaryAction({_element(action, kind)}, "
+                f"{_string(action, kind, 'name')});")
+    if mac and kind == "set_value":
+        return (f"await app.setValue({_element(action, kind)}, "
+                f"{_string(action, kind, 'text', empty=True)});")
+    if mac and kind == "select_text":
+        return f"await app.selectText({_element(action, kind)}, {_string(action, kind, 'text')});"
+    raise ToolError(f"Unknown action type {kind!r}. Use one of: {', '.join(action_types(mac))}.")
+
+
+def action_types(mac: bool) -> list[str]:
+    # The runtime offers setValue and selectText on macOS only.
+    return (["click", "type", "key", "paste", "scroll", "drag", "secondary_action"]
+            + (["set_value", "select_text"] if mac else []))
+
+
+def actions_code(entry: str, key: str, steps: list[str], screenshot: bool) -> str:
+    """Host-written code: bind the app once per REPL, run the steps, read the state."""
+    slot = f"globalThis.__deepseekActs[{json.dumps(key)}]"
+    return "\n".join([
+        "{",
+        "globalThis.__deepseekActs ??= {};",
+        "let step = 0;",
+        "let app;",
+        "try {",
+        f"app = {slot} ??= await {entry};",
+        *(f"step = {number}; {step}" for number, step in enumerate(steps, 1)),
+        "} catch (error) {",
+        'if (step && typeof error?.message === "string") error.message += '
+        f'"\\n[Action " + step + " of {len(steps)} failed; the actions after it did not run.]";',
+        "throw error;",
+        "}",
+        # A closed app or window must not stay cached.
+        f"try {{ await app.{'getAXStateAndScreenshot' if screenshot else 'getAXState'}(); }} "
+        f"catch (error) {{ delete {slot}; throw error; }}",
+        "}",
+    ])
+
+
+class CuaActTool(CuaTool):
+    """The runtime's documented app actions as typed steps, so no code has to be written."""
+
+    def __init__(self, session: CuaSession, cancel_events=None):
+        super().__init__(session, {"name": "js"}, cancel_events)
+
+    def name(self) -> str:
+        return "cua_act"
+
+    def description(self) -> str:
+        mac = sys.platform == "darwin"
+        return (
+            "Operate one native app with typed steps instead of code. The host runs the steps "
+            "in order through the same CUA runtime and returns the app's accessibility state "
+            "afterwards (a diff when little changed); existing access permissions apply. "
+            + ("Supply app (name/bundle id; an app that is not running is launched in the "
+               "background)" if mac else "Supply window_id (from the runtime inventory)")
+            + " and actions. An element is an index from the latest state shown for that app "
+            "(the previous cua_act result or cua_observe); use x and y only for a target the "
+            "state does not list. key takes xdotool-style names such as \"Return\", \"Tab\" "
+            "and \"super+c\"" + (" (super is Command)" if mac else "") + ". When a step fails, "
+            "the steps after it do not run. Set screenshot to get an image with the state. "
+            "Browser tabs, and logic these steps cannot express, go through cua_js."
+        )
+
+    def input_schema(self) -> dict[str, Any]:
+        mac = sys.platform == "darwin"
+        native = ({"app": {"type": "string", "minLength": 1}} if mac
+                  else {"window_id": {"type": "integer", "minimum": 0}})
+        number = {"type": "number"}
+        step = {
+            "type": {"type": "string", "enum": action_types(mac)},
+            "element": {"type": "integer", "minimum": 0,
+                        "description": "Index from the latest state. click and scroll take "
+                                       "this or x and y."},
+            "x": number, "y": number,
+            "to_x": {**number, "description": "drag: where the drag ends."}, "to_y": number,
+            "text": {"type": "string",
+                     "description": "type, paste" + (", set_value, select_text" if mac else "")},
+            "key": {"type": "string", "description": "key: the key or chord to press."},
+            "direction": {"type": "string", "enum": list(_DIRECTIONS)},
+            "button": {"type": "string", "enum": list(_BUTTONS)},
+            "count": {"type": "integer", "minimum": 1, "maximum": 3,
+                      "description": "click: 2 for a double click."},
+            "name": {"type": "string",
+                     "description": "secondary_action: an action the element lists."},
+        }
+        if mac:
+            step["pages"] = {**number, "description": "scroll: how many pages."}
+        return {"type": "object", "properties": {
+            **native,
+            "actions": {"type": "array", "minItems": 1, "maxItems": MAX_ACTIONS, "items": {
+                "type": "object", "properties": step, "required": ["type"],
+                "additionalProperties": False}},
+            "screenshot": {"type": "boolean"},
+            "title": {"type": "string", "description": "The step, in the user's words."},
+        }, "required": [*native, "actions"], "additionalProperties": False}
+
+    async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+        mac = sys.platform == "darwin"
+        actions = input_data.get("actions")
+        if not isinstance(actions, list) or not 1 <= len(actions) <= MAX_ACTIONS:
+            raise ToolError(f"Supply actions: 1 to {MAX_ACTIONS} steps.")
+        steps = [action_js(action, mac) for action in actions]
+        if mac:
+            name = input_data.get("app")
+            if not isinstance(name, str) or not name.strip():
+                raise ToolError("Supply app: the app's name or bundle id.")
+            # The installed app's own id scopes the desktop hold to that app; an unknown
+            # name is left to the runtime and holds the whole desktop.
+            self.scope = await asyncio.to_thread(app_scope.native_app, name)
+            key = self.scope or name
+            entry = f"cua.getApp({json.dumps(key)})"
+        else:
+            window = input_data.get("window_id")
+            if type(window) is not int or window < 0:
+                raise ToolError("Supply window_id from the runtime inventory.")
+            key, entry = f"window:{window}", f"cua.getApp({{windowId: {window}}})"
+        call = {"code": actions_code(entry, key, steps, input_data.get("screenshot") is True)}
+        if isinstance(input_data.get("title"), str) and input_data["title"].strip():
+            call["title"] = input_data["title"]
+        return await super().execute(call, context)
+
+
 def register_tools(
     registry: Any, session: CuaSession, cancel_events: list[asyncio.Event] | None = None
 ) -> None:
@@ -720,6 +916,7 @@ def register_tools(
             ):
                 continue
         registry.register(CuaTool(session, descriptor, cancel_events))
-    existing = registry.get("cua_observe") if registry.contains("cua_observe") else None
-    if not isinstance(existing, CuaObserveTool) or existing.session is not session:
-        registry.register(CuaObserveTool(session, cancel_events))
+    for name, host_tool in (("cua_observe", CuaObserveTool), ("cua_act", CuaActTool)):
+        existing = registry.get(name) if registry.contains(name) else None
+        if not isinstance(existing, host_tool) or existing.session is not session:
+            registry.register(host_tool(session, cancel_events))

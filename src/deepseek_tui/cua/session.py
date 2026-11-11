@@ -546,8 +546,10 @@ class CuaSession:
             pass  # Runtime logs can contain desktop data; never echo them into the chat.
 
     async def call(
-        self, name: str, arguments: dict[str, Any], turn_id: str, call_id: str
+        self, name: str, arguments: dict[str, Any], turn_id: str, call_id: str,
+        *, scope: str | None = None,
     ) -> dict[str, Any]:
+        """Run one public tool. ``scope`` names the one app host-written code touches."""
         if name not in {"js", "js_reset", "observe"} or not turn_id or not call_id:
             raise ToolError("CUA requires a public tool and real host turn/call identities")
         async with self.lock:
@@ -577,6 +579,8 @@ class CuaSession:
                         arguments = {**arguments, "app": app}
                 elif summary or name == "js_reset":
                     app = self.lease.app
+                elif name == "js" and scope:
+                    app = scope
                 elif name == "js":
                     app, binding = await asyncio.to_thread(
                         js_scope, arguments.get("code") or "", self._app_bindings)

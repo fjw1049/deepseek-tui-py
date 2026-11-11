@@ -285,7 +285,7 @@ async def _execute_subagent_tool(
     if progress is not None and is_task_call(tool_name, tool_input) and (
             blocked := progress.blocked_content(tool_name)):
         return f"Error: {blocked}"
-    if tool_name in {"cua_js", "cua_js_reset", "cua_observe"}:
+    if tool_name in {"cua_act", "cua_js", "cua_js_reset", "cua_observe"}:
         context.metadata["cua_call_id"] = tool_call_id
     try:
         session = context.metadata.get("cua_session")

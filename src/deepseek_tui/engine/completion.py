@@ -19,10 +19,10 @@ COMPLETION_NOTE_KEY = "completion_note"
 _FILE_TOOLS = frozenset({"write_file", "edit_file"})
 _BROWSER_TOOLS = frozenset({"browser_use", "browser_skill"})
 # A failed read or search is usually exploration, not unfinished work.
-_ACTING_TOOLS = _FILE_TOOLS | _BROWSER_TOOLS | {"exec_shell", "cua_js"}
+_ACTING_TOOLS = _FILE_TOOLS | _BROWSER_TOOLS | {"exec_shell", "cua_act", "cua_js"}
 _TARGET_KEYS = ("path", "file_path", "command", "title", "url")
 # UI refs are scoped to observations; action names alone are not target identities.
-_UI_TOOLS = _BROWSER_TOOLS | {"cua_js"}
+_UI_TOOLS = _BROWSER_TOOLS | {"cua_act", "cua_js"}
 # Nothing runs these, so editing one after the last run leaves nothing unchecked.
 _NOT_RUNNABLE = frozenset({".md", ".txt", ".rst", ".csv", ".docx", ".xlsx", ".pptx", ".pdf"})
 _SHOWN = 5

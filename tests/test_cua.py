@@ -12,7 +12,7 @@ from deepseek_tui.config.models import Config, CuaConfig
 from deepseek_tui.cua import session as cua_session
 from deepseek_tui.cua.approval import approval_question, approval_response, auto_allow_response
 from deepseek_tui.cua.session import CuaSession, DesktopLease
-from deepseek_tui.cua.tools import CuaObserveTool, CuaTool
+from deepseek_tui.cua.tools import CuaActTool, CuaObserveTool, CuaTool
 from deepseek_tui.tools.registry import ToolContext, ToolError, ToolResult
 
 VISION = {"model": "deepseek::deepseek-v4-flash-vision-exp"}
@@ -1695,3 +1695,66 @@ async def test_returning_to_a_released_app_shows_its_state_instead_of_an_error(
         assert (await tool.execute(click, context)).success
     finally:
         await session.close()
+
+
+async def test_typed_actions_run_as_documented_calls_scoped_to_their_app(
+    session, tmp_path, monkeypatch
+):
+    from deepseek_tui.cua import app_scope, tools
+
+    monkeypatch.setattr(app_scope, "native_app", {"备忘录": "com.apple.Notes"}.get)
+    for module in (cua_session, tools):
+        monkeypatch.setattr(module, "sys", SimpleNamespace(platform="darwin"))
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        await session.connect()
+        act = CuaActTool(session)
+        result = await act.execute({"app": "备忘录", "title": "写一行", "actions": [
+            {"type": "click", "element": 3},
+            {"type": "type", "text": "你好"},
+            {"type": "click", "x": 10, "y": 20, "button": "right", "count": 2},
+            {"type": "key", "key": "Return"},
+        ]}, context)
+        assert result.success
+        sent = _calls(tmp_path)[-1]["args"]
+        assert sent["title"] == "写一行"
+        lines = sent["code"].splitlines()
+        assert 'await cua.getApp("com.apple.Notes");' in lines[5]
+        assert lines[6:10] == [
+            "step = 1; await app.click(3);",
+            'step = 2; await app.typeText("\\u4f60\\u597d");',
+            'step = 3; await app.click([10, 20], {"mouseButton": "right", "clickCount": 2});',
+            'step = 4; await app.pressKey("Return");',
+        ]
+        assert "await app.getAXState();" in lines[-2]
+        # The hold covers that app only, and typed steps never make the REPL exclusive.
+        assert session.lease.app == "com.apple.Notes" and not session._unrestricted_repl
+        sent_calls = len(_calls(tmp_path))
+        for bad in ({"type": "click"}, {"type": "set_value", "element": 1}, {"type": "wave"},
+                    {"type": "scroll", "element": 1}, {"type": "drag", "x": 1, "y": 2}):
+            with pytest.raises(ToolError):
+                await act.execute({"app": "备忘录", "actions": [bad]}, context)
+        with pytest.raises(ToolError, match="actions"):
+            await act.execute({"app": "备忘录", "actions": []}, context)
+        assert len(_calls(tmp_path)) == sent_calls
+    finally:
+        await session.close()
+
+
+def test_typed_actions_offer_only_what_this_platform_runs(session, monkeypatch):
+    from deepseek_tui.cua import tools
+
+    act = CuaActTool(session)
+    monkeypatch.setattr(tools, "sys", SimpleNamespace(platform="linux"))
+    schema = act.input_schema()
+    step = schema["properties"]["actions"]["items"]["properties"]
+    assert schema["required"] == ["window_id", "actions"] and "app" not in schema["properties"]
+    assert "set_value" not in step["type"]["enum"] and "pages" not in step
+    with pytest.raises(ToolError, match="Unknown action type"):
+        tools.action_js({"type": "select_text", "element": 1, "text": "a"}, mac=False)
+    monkeypatch.setattr(tools, "sys", SimpleNamespace(platform="darwin"))
+    schema = act.input_schema()
+    assert schema["required"] == ["app", "actions"]
+    assert "select_text" in schema["properties"]["actions"]["items"]["properties"]["type"]["enum"]
+    assert tools.action_js({"type": "set_value", "element": 1, "text": ""}, mac=True) == (
+        'await app.setValue(1, "");')

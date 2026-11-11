@@ -48,7 +48,7 @@ type State = {
 }
 
 export const CUA_TOOL = 'cua_js'
-const CUA_PREVIEW_TOOLS = new Set([CUA_TOOL, 'cua_observe'])
+const CUA_PREVIEW_TOOLS = new Set([CUA_TOOL, 'cua_act', 'cua_observe'])
 
 export function phaseOnCallStart(
   phase: CuaPreviewPhase | undefined,

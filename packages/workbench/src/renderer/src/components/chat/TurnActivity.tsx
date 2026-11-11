@@ -9,6 +9,7 @@ export type TurnActivityKind = 'Waiting' | 'Thinking' | 'Responding' | 'Browser'
 const SURFACE_ACTIVITY: ReadonlyArray<[string, TurnActivityKind]> = [
   ['browser_use', 'Browser'],
   // The agent is driving the user's real mouse and keyboard: say so plainly.
+  ['cua_act', 'Desktop'],
   ['cua_js', 'Desktop'],
   ['cua_observe', 'Desktop']
 ]
@@ -45,7 +46,8 @@ export function resolveTurnActivity({ active, blocks, stream, awaitingBrowserUse
 export function resolveTurnActivityStep(blocks: ChatBlock[]): string | null {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
-    if (block.kind !== 'tool' || block.meta?.tool_name !== 'cua_js') continue
+    const tool = block.kind === 'tool' ? block.meta?.tool_name : undefined
+    if (block.kind !== 'tool' || (tool !== 'cua_js' && tool !== 'cua_act')) continue
     const input = block.meta.tool_input
     const title = input && typeof input === 'object' ? (input as { title?: unknown }).title : undefined
     return typeof title === 'string' && title.trim() ? title.trim() : null
