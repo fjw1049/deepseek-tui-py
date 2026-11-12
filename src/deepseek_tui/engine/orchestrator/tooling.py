@@ -488,6 +488,15 @@ class ToolExecutionMixin:
             tool_call.name,
             tool_call.arguments if isinstance(tool_call.arguments, dict) else None,
         )
+        memory_session = getattr(self, "memory_session", None)
+        if memory_session is not None:
+            native = (
+                self.tool_registry.get(tool_call.name)
+                if self.tool_registry.contains(tool_call.name) else None
+            )
+            args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+            if native is None or not native.is_read_only_for_input(args):
+                memory_session.invalidate()
         if emit_result:
             await self._publish_tool_result(tool_call, result)
         if result.success:

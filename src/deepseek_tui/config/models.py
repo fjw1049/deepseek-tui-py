@@ -177,6 +177,18 @@ class SnapshotConfig(BaseModel):
     max_age_days: int = 7
 
 
+class MemoryConfig(BaseModel):
+    """Local recall and deterministic candidate capture; no extra model calls."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    auto_recall: bool = True
+    capture_candidates: bool = False
+    idle_seconds: float = Field(default=60, ge=0, le=3600)
+    max_recall_chars: int = Field(default=4000, ge=512, le=6000)
+    max_candidates_per_pass: int = Field(default=5, ge=1, le=20)
+
+
 class ContextConfig(BaseModel):
     """Layered context policy — window ratios and absolute input caps."""
 
@@ -367,6 +379,7 @@ class Config(BaseModel):
     features: FeatureConfig = Field(default_factory=FeatureConfig)
     snapshots: SnapshotConfig = Field(default_factory=SnapshotConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     subagents: SubagentConfig = Field(default_factory=SubagentConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     lsp: LspSettings = Field(default_factory=LspSettings)

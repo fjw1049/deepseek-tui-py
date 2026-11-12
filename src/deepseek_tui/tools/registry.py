@@ -762,6 +762,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         WriteFileTool,
     )
     from deepseek_tui.tools.knowledge import NoteTool, PlanUpdateTool, SkillLoadTool, SkillSearchTool
+    from deepseek_tui.tools.memory import MemoryReadTool, MemoryWriteTool
     from deepseek_tui.tools.mcp import (
         ListMcpResourcesTool,
         ListMcpResourceTemplatesTool,
@@ -874,6 +875,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
 
     # Knowledge / memory tools expose only note reads in ask/plan mode.
     registry.register(NoteTool(read_only=mode in {"ask", "plan"}))
+    if cfg.memory.enabled:
+        registry.register(MemoryReadTool())
+        if mode not in {"ask", "plan"}:
+            registry.register(MemoryWriteTool())
     registry.register(PlanUpdateTool())
     registry.register(SkillLoadTool())
     registry.register(SkillSearchTool())

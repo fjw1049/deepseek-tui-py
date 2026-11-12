@@ -29,6 +29,8 @@ _AGENT_TOOLS = [
     "list_mcp_resource_templates",
     "list_mcp_resources",
     "load_skill",
+    "memory_read",
+    "memory_write",
     "note",
     "read_file",
     "read_mcp_resource",
@@ -52,6 +54,7 @@ _PLAN_TOOLS = [
     "list_mcp_resource_templates",
     "list_mcp_resources",
     "load_skill",
+    "memory_read",
     "note",
     "read_file",
     "read_mcp_resource",
@@ -81,6 +84,7 @@ def test_plan_mode_has_no_side_effect_tools() -> None:
         "exec_shell",
         "task_create",
         "task_stop",
+        "memory_write",
     }
     names = set(build_default_registry(Config(), mode="plan").names())
     assert not (side_effect & names)

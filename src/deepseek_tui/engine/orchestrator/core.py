@@ -681,6 +681,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         self.session_messages.clear()
         self.session_messages.extend(messages)
         self.record_transcript("sync", self.session_messages)
+        if getattr(self, "memory_session", None) is not None:
+            self.memory_session.schedule_capture(self.transcript)
         self.last_real_input_tokens = 0
         self.last_real_input_estimate = 0
         if model:
@@ -698,7 +700,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             turn_id=None if kind == "sync"
             else self.tool_context.metadata.get("turn_latency_turn_id"),
             round_idx=round_idx,
-            transient=[i for i, m in enumerate(messages) if m is self._transient_reminder],
+            transient=[i for i, m in enumerate(messages)
+                       if m is self._transient_reminder or m.origin is MessageOrigin.MEMORY_RECALL],
         )
 
     def _record_intervention(self, item: interventions.Intervention) -> None:
@@ -1149,6 +1152,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         build_start = now_ms() if trace is not None else None
 
         native_tools = self.tool_registry.to_api_tools()
+        memory_session = getattr(self, "memory_session", None)
+        if memory_session is not None and not memory_session.config.enabled:
+            native_tools = [t for t in native_tools
+                            if (t.get("function") or t).get("name") not in
+                            {"memory_read", "memory_write"}]
         mcp = self.mcp_manager
         if mcp is None or (hasattr(mcp, "server_names") and not mcp.server_names):
             helpers = {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
@@ -1521,6 +1529,17 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             engine.tool_context.metadata["session_started_at"] = time.time()
             engine.mode = mode
             engine._app_config = cfg
+            from deepseek_tui.engine.memory import MemorySession
+
+            engine.memory_session = MemorySession(
+                engine.tool_context.working_directory, cfg.memory,
+                on_candidates=lambda count: engine.handle.try_emit(StatusEvent(message=(
+                    f"发现 {count} 条项目记忆候选；可要求查看并确认，尚未自动生效。"
+                    if engine.reply_locale == "zh" else
+                    f"Found {count} project memory candidates. Ask to review; none applied yet."
+                ))),
+            )
+            engine.tool_context.metadata["memory_config"] = cfg.memory
             engine.tool_context.metadata["task_config"] = cfg
             from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
 
@@ -1567,6 +1586,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
     async def shutdown_session(self) -> None:
         """Release all owned resources, even when one release fails."""
         async with AsyncExitStack() as cleanup:
+            if getattr(self, "memory_session", None) is not None:
+                cleanup.push_async_callback(self.memory_session.close)
             cleanup.push_async_callback(self._close_cua)
             if self.handle.hooks is not None:
                 cleanup.push_async_callback(self.handle.hooks.close)
@@ -2317,6 +2338,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         }
 
         prior_count = len(self.session_messages)
+        if getattr(self, "memory_session", None) is not None:
+            await self.memory_session.close()
         working_messages = [*self.session_messages, user_message]
         # The handoff reminder is volatile — inject as a user reminder before
         # the real query, never into the system prompt (KV cache).
@@ -2535,7 +2558,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             # Success commits verbatim; finally repairs interrupted protocol pairs.
             if turn_ok:
                 persisted_messages = [
-                    message for message in working_messages if message is not goal_reminder_message
+                    message for message in working_messages
+                    if message is not goal_reminder_message
+                    and message.origin is not MessageOrigin.MEMORY_RECALL
                 ]
                 if op.hidden:
                     self.session_messages = [
@@ -2546,6 +2571,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     self.session_messages = persisted_messages
                 self.record_transcript("commit", self.session_messages)
                 turn_committed = True
+                if not op.hidden and getattr(self, "memory_session", None) is not None:
+                    self.memory_session.schedule_capture(self.transcript)
             if not result.cancelled:
                 from deepseek_tui.state.session import clear_checkpoint
 
@@ -2628,7 +2655,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 from deepseek_tui.engine.history import interrupted_turn_messages
 
                 persisted = interrupted_turn_messages(
-                    [m for m in working_messages if m is not goal_reminder_message],
+                    [
+                        m for m in working_messages
+                        if m is not goal_reminder_message
+                        and m.origin is not MessageOrigin.MEMORY_RECALL
+                    ],
                     self._completed_tool_messages,
                 )
                 self.session_messages = (
@@ -3315,7 +3346,10 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             self.last_real_input_tokens = 0
             self.last_real_input_estimate = 0
         self._context_measurement_model = model
+        if getattr(self, "memory_session", None) is not None:
+            self.memory_session.invalidate()
         from deepseek_tui.engine.completion import TurnFacts
+        from deepseek_tui.engine.context_pressure import find_last_real_user_query
 
         # Per turn, never from the polled context estimate: it may start the runtime.
         await self._prepare_cua()
@@ -3469,6 +3503,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             if round_idx > 0:
                 self._inject_detached_subagent_completions(messages)
 
+            messages[:] = [m for m in messages if m.origin is not MessageOrigin.MEMORY_RECALL]
             # L0: prune old tool bodies at ≥50% (deterministic, no LLM).
             self._fold_browser_observations(messages)
             self._maybe_l0_prune_tool_results(
@@ -3547,6 +3582,25 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
             self._flush_pending_lsp_diagnostics(messages)
+            memory_session = getattr(self, "memory_session", None)
+            if memory_session is not None and not self.tool_context.metadata.get("cron_restricted"):
+                from deepseek_tui.engine.context_pressure import measure_context_pressure
+
+                pressure = measure_context_pressure(
+                    model,
+                    messages, system_prompt=system_prompt, tools=tools,
+                    real_input_tokens=self.last_real_input_tokens,
+                    real_input_estimate=self.last_real_input_estimate,
+                    model_config=getattr(self, "_app_config", None),
+                )
+                remaining = (
+                    min(self.compaction_config.max_input_tokens, pressure.window)
+                    - pressure.tokens - (max_tokens or 4096)
+                )
+                await memory_session.recall(
+                    messages, find_last_real_user_query(messages) or "",
+                    token_budget=max(0, remaining),
+                )
             request.messages = list(messages)
             from deepseek_tui.engine.context_pressure import estimate_request_tokens
 

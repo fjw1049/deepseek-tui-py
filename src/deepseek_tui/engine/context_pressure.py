@@ -211,6 +211,7 @@ def is_compaction_bridge_message(message: Message) -> bool:
 
 SYNTHETIC_ORIGINS = frozenset(
     {
+        MessageOrigin.MEMORY_RECALL,
         MessageOrigin.TASK_STATE,
         MessageOrigin.SYSTEM_REMINDER,
         MessageOrigin.COMPACTION_BRIDGE,

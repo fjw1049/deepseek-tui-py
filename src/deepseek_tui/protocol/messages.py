@@ -39,6 +39,7 @@ class MessageOrigin(str, Enum):
     REQUEST_LEDGER = "request_ledger"
     # Hidden goal-driver continuation. Not a fresh human request.
     GOAL_CONTINUATION = "goal_continuation"
+    MEMORY_RECALL = "memory_recall"
 
 
 class TextBlock(BaseModel):

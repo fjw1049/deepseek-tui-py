@@ -90,6 +90,16 @@ llm_max_concurrent = 2
 # sub-agents before timing out the handoff.
 handoff_timeout_secs = 600
 
+# Memory settings belong in USER config, not a project overlay.
+# No extra model calls: capture uses local rules and produces reviewable candidates.
+[memory]
+enabled = true
+auto_recall = true
+capture_candidates = false
+idle_seconds = 60
+max_recall_chars = 4000
+max_candidates_per_pass = 5
+
 # Observability sinks + lifecycle hooks (all optional; defaults shown).
 [hooks]
 enabled = true

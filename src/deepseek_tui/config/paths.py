@@ -78,6 +78,11 @@ def user_notes_path() -> Path:
     return user_deepseek_dir() / "notes.txt"
 
 
+def user_memories_dir() -> Path:
+    """Project-scoped explicit memories, independent of conversation retention."""
+    return user_deepseek_dir() / "memories"
+
+
 def user_audit_log_path() -> Path:
     """``~/.deepseek/audit.log`` — cross-project approval audit log."""
     return user_deepseek_dir() / "audit.log"

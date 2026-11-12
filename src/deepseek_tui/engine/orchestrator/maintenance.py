@@ -197,6 +197,9 @@ class SessionMaintenanceMixin:
         the system prompt.
         """
         from deepseek_tui.engine.usage_ledger import usage_source
+        from deepseek_tui.protocol.messages import MessageOrigin
+
+        messages = [m for m in messages if m.origin is not MessageOrigin.MEMORY_RECALL]
 
         paths = self.working_set.top_paths(MAX_WORKING_SET_PATHS)
 

@@ -25,7 +25,8 @@ REQUEST_USER_INPUT_NAME = "request_user_input"
 ASK_MODE_TOOL_ALLOWLIST = frozenset({
     "read_file", "grep_files", "file_search", "web_search", "fetch_url",
     "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "load_skill", "search_skills",
-    "task_list", "task_output", "cron_list", "GetGoal", "note", REQUEST_USER_INPUT_NAME,
+    "task_list", "task_output", "cron_list", "GetGoal", "note", "memory_read",
+    REQUEST_USER_INPUT_NAME,
 })
 
 # Tools visible/executable while interaction mode is plan. Used to filter a
@@ -43,6 +44,7 @@ PLAN_MODE_TOOL_ALLOWLIST = frozenset(
         "load_skill",
         "search_skills",
         "note",
+        "memory_read",
         "read_file",
         "read_mcp_resource",
         REQUEST_USER_INPUT_NAME,
