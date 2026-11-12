@@ -345,3 +345,43 @@ class TestCatalogWithoutMcp:
         engine = self._engine(tmp_path, mcp_manager=mgr)
         names = self._names(await engine._get_tools_with_mcp())
         assert {"note", "read_file"} <= names
+
+
+@pytest.mark.parametrize("mode", ["ask", "plan", "agent", "yolo"])
+async def test_trusted_readonly_mcp_skips_approval_in_every_mode(tmp_path, mode):
+    from deepseek_tui.config import Config
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
+    from deepseek_tui.protocol.responses import ToolCall
+    from deepseek_tui.tools.approval import ApprovalDecision, ExecPolicyEngine
+    from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+    from deepseek_tui.tools.registry import ToolContext
+
+    manager = McpManager([McpServerConfig(name="srv", command="echo")])
+    manager.call_tool = AsyncMock(return_value={"content": [{"type": "text", "text": "read"}]})
+    handler = AsyncMock()
+    handler.request_approval.return_value = ApprovalDecision.DENIED
+    engine = Engine(
+        handle=EngineHandle(),
+        client=AsyncMock(),
+        tool_context=ToolContext(tmp_path, metadata={MCP_MANAGER_KEY: manager}),
+        exec_policy=ExecPolicyEngine(approval_policy="on-request"),
+        approval_handler=handler,
+    )
+    engine.mode = mode
+    engine._app_config = Config(mcp_read_only_tools=["mcp_srv_read"])
+    call = ToolCall(id="read", name="mcp_srv_read", arguments={})
+    catalog = [
+        {"type": "function", "function": {"name": call.name, "parameters": {"type": "object"}}}
+    ]
+    result = await engine._execute_single_tool(call, catalog, "test")
+    assert result.success
+    handler.request_approval.assert_not_awaited()
+    engine._app_config.mcp_read_only_tools = []
+    if mode in {"ask", "plan"}:
+        with pytest.raises(ToolError, match="mode"):
+            await engine._execute_single_tool(call, catalog, "test")
+    else:
+        assert await engine._execute_single_tool(call, catalog, "test") is None
+        handler.request_approval.assert_awaited_once()
+    assert manager.call_tool.await_count == 1

@@ -232,7 +232,8 @@ class ToolExecutionMixin:
                                 input=tc.arguments if isinstance(tc.arguments, dict) else {},
                                 read_only=mcp_tool_is_read_only(tc.name) or self._is_trusted_readonly_mcp(tc.name),
                                 supports_parallel=mcp_tool_is_parallel_safe(tc.name) or self._is_trusted_readonly_mcp(tc.name),
-                                approval_required=not (self.mode in {"ask", "plan"} and self._is_trusted_readonly_mcp(tc.name)) and plan_requires_mcp_approval(
+                                approval_required=not self._is_trusted_readonly_mcp(tc.name)
+                                and plan_requires_mcp_approval(
                                     tc.name,
                                     policy,
                                 ),
@@ -908,7 +909,7 @@ class ToolExecutionMixin:
             # read-resource 已被上面 normalize 改写为注册表工具名，会落到下方注册表分支。
             if self.mcp_manager is None:
                 raise ToolError(f"MCP tool '{tool_name}' called but no MCP manager configured")
-            approval_request = None if trusted_read and (mode in {"ask", "plan"} or cron_restricted) else approval_request_for_mcp(
+            approval_request = None if trusted_read else approval_request_for_mcp(
                 tool_name,
                 self.exec_policy.approval_policy,
                 self._mcp_declared_capabilities(tool_name),
