@@ -23,6 +23,8 @@ def _parser() -> argparse.ArgumentParser:
 
     validate = commands.add_parser("validate", help="validate all case files")
     validate.add_argument("--suite", action="append", default=[])
+    coverage = commands.add_parser("coverage", help="audit task origins and holdout coverage")
+    coverage.add_argument("--suite", action="append", default=[])
 
     run = commands.add_parser("run", help="run evaluation suites")
     run.add_argument("--suite", action="append", default=[])
@@ -32,6 +34,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--trials", type=int, default=1)
     run.add_argument("--max-cases", type=int)
     run.add_argument("--max-live-requests", type=int, default=20)
+    run.add_argument("--max-product-requests", type=int, default=20)
     run.add_argument("--max-output-tokens", type=int, default=2048)
     run.add_argument("--max-cost-usd", type=float)
     run.add_argument("--timeout", type=float, default=120.0)
@@ -58,7 +61,8 @@ def _parser() -> argparse.ArgumentParser:
 
     campaign = commands.add_parser("campaign", help="run a frozen-source A/A + A/B experiment")
     campaign.add_argument("spec", type=Path, help="JSON hypothesis, cases, budgets and policy")
-    campaign.add_argument("--output", type=Path, required=True)
+    campaign.add_argument("--output", type=Path)
+    campaign.add_argument("--check", action="store_true", help="show plan without running")
 
     decision = commands.add_parser("decide", help="apply a frozen policy to paired run artifacts")
     decision.add_argument("baseline", type=Path)
@@ -91,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
 
         uvicorn.run(create_app(), host="127.0.0.1", port=args.port, access_log=False)
         return 0
-    if args.command == "validate":
+    if args.command in {"validate", "coverage"}:
         cases = load_cases()
         if args.suite:
             cases = [case for case in cases if case.suite in args.suite]
@@ -103,7 +107,12 @@ def main(argv: list[str] | None = None) -> int:
             for error in errors:
                 print(f"ERROR {error}")
             return 1
-        print(f"validated {len(cases)} eval cases")
+        if args.command == "coverage":
+            from evals.coverage import corpus_coverage
+
+            print(json.dumps(corpus_coverage(cases), ensure_ascii=False, indent=2))
+        else:
+            print(f"validated {len(cases)} eval cases")
         return 0
 
     if args.command == "scorecard":
@@ -134,9 +143,22 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             if args.command == "campaign":
-                from evals.campaign import CampaignSpec, run_campaign
+                from evals.campaign import CampaignSpec, run_campaign, selected_cases
 
                 spec = CampaignSpec.model_validate_json(args.spec.read_text())
+                if args.check:
+                    from evals.coverage import corpus_coverage
+
+                    cases = selected_cases(spec)
+                    print(json.dumps({"trials": len(cases) * spec.repetitions * 3,
+                                      "coverage": corpus_coverage(cases),
+                                      "policy": spec.policy.model_dump(),
+                                      "note": "仅检查计划，未调用模型；"
+                                              "试验数不是模型请求数或费用上限。"},
+                                     ensure_ascii=False, indent=2))
+                    return 0
+                if args.output is None:
+                    raise ValueError("campaign execution requires --output")
 
                 async def execute() -> dict[str, Any]:
                     task = asyncio.create_task(run_campaign(spec, args.output))
@@ -180,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"passed={summary.passed} failed={summary.failed} errors={summary.errors} "
               f"artifacts={output}")
-        return 0
+        return 1 if summary.errors else 0
 
     if (
         args.trials < 1
@@ -200,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         trials=args.trials,
         max_cases=args.max_cases,
         max_live_requests=args.max_live_requests,
+        max_product_requests=args.max_product_requests,
         max_output_tokens=args.max_output_tokens,
         max_cost_usd=args.max_cost_usd,
         timeout_seconds=args.timeout,

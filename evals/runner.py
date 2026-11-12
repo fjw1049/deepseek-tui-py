@@ -45,6 +45,7 @@ class RunOptions:
     trials: int = 1
     max_cases: int | None = None
     max_live_requests: int = 20
+    max_product_requests: int = 20
     max_output_tokens: int = 2048
     max_cost_usd: float | None = None
     timeout_seconds: float = 120.0
@@ -100,6 +101,9 @@ def validate_cases(cases: list[EvalCase], repo_root: Path = REPO_ROOT) -> list[s
             for check in case.expect.get("checks", []):
                 if check.get("type") not in CHECK_TYPES or not check.get("name"):
                     errors.append(f"{case.id}: invalid check {check!r}")
+                for flag in ("critical", "release_blocker"):
+                    if flag in check and not isinstance(check[flag], bool):
+                        errors.append(f"{case.id}: check {flag} must be boolean")
         for related in case.related_paths:
             if not (repo_root / related).exists():
                 errors.append(f"{case.id}: related path does not exist: {related}")
@@ -208,6 +212,7 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
             "label": options.label,
             "prompt_suffix": options.prompt_suffix,
             "max_live_requests": options.max_live_requests,
+            "max_product_requests": options.max_product_requests,
             "max_output_tokens": options.max_output_tokens,
             "max_cost_usd": options.max_cost_usd,
             "timeout_seconds": options.timeout_seconds,
@@ -215,7 +220,7 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
             "concurrency": options.concurrency,
             "judge_provider": options.judge_provider or options.provider,
             "judge_model": options.judge_model or options.model,
-            "retry_policy": "shared-metered-attempts-v2",
+            "retry_policy": "product-and-review-metered-v3",
             "expected_trials": sum(options.trials if c.live else 1 for c in cases),
             "case_trials": {c.id: options.trials if c.live else 1 for c in cases},
         },
@@ -233,6 +238,8 @@ async def run_evaluations(
         raise ValueError("trials must be positive")
     if options.max_cases is not None and options.max_cases < 1:
         raise ValueError("max_cases must be positive")
+    if options.max_product_requests < 1:
+        raise ValueError("max_product_requests must be positive")
     if options.max_live_requests < 0:
         raise ValueError("max_live_requests cannot be negative")
     if options.max_output_tokens < 1 or options.timeout_seconds <= 0:
@@ -259,6 +266,10 @@ async def run_evaluations(
     if not selected:
         requested = ", ".join(options.suites) if options.suites else options.mode
         raise ValueError(f"no eval cases selected for {requested}")
+    if options.prompt_suffix and any(
+        case.runner not in {"live_decision", "workspace_task"} for case in selected
+    ):
+        raise ValueError("prompt_suffix is supported only by live_decision and workspace_task")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     commit = _git_value("rev-parse", "--short", "HEAD") or "unknown"
@@ -274,6 +285,7 @@ async def run_evaluations(
         model=options.model,
         max_output_tokens=options.max_output_tokens,
         remaining_live_requests=options.max_live_requests,
+        max_product_requests=options.max_product_requests,
         max_cost_usd=options.max_cost_usd,
         prompt_suffix=options.prompt_suffix,
         judge_provider=options.judge_provider,
@@ -401,10 +413,17 @@ async def run_evaluations(
                             "known_cost_usd": cost,
                         }
                     )
+                    usage = result.observation.usage
                     if case.runner == "product_session":
-                        result.observation.usage["unmetered_product_trials"] = 1
-                    elif requests > 0 and priced == requests:
-                        result.observation.usage["cost_usd"] = cost
+                        usage["review_requests"] = requests
+                        usage["requests"] += usage.get("product_requests", 0)
+                        usage["metered_requests"] += usage.get("product_metered_requests", 0)
+                        usage["priced_requests"] += usage.get("product_priced_requests", 0)
+                        if not usage.get("product_metered_trials"):
+                            usage["unmetered_product_trials"] = 1
+                    if (usage["requests"] > 0 and usage["priced_requests"] == usage["requests"]
+                            and not usage.get("unmetered_product_trials")):
+                        usage["cost_usd"] = cost
                     write_json(
                         output / "traces" / f"{case.id}-trial-{trial}.json", trial_context.trace
                     )

@@ -1,5 +1,8 @@
 - &base
   id: personal.intent_audit
+  source_group: codex-91ab6cba
+  task_family: data-analysis
+  split: development
   suite: personal_sessions
   runner: product_session
   grader: rubric
@@ -28,6 +31,9 @@
     rubric: [Q8 产品应为乙而预测甲、意图正确；Q3 两项正确；Q4 产品正确且无预期意图，不能把预测当标注。不按行号拼表。]
 - <<: *base
   id: personal.desktop_plan
+  source_group: claude-45131d98
+  task_family: planning
+  split: development
   tags: [development, claude, personal-session, tool-selection]
   title: 自研原生 GUI 与浏览器怎样协作测试
   description: Claude 45131d98，JSONL 7、102；重建工具能力清单及测试流程。
@@ -46,6 +52,9 @@
     rubric: [说清原生窗口及系统选择器用 desktop，网页用 browser；把同一次导出的文件或标题贯穿核验，接管回来重新观察；没有虚报已实测。]
 - <<: *base
   id: personal.call_without_variables
+  source_group: codex-6d5c0a44
+  task_family: explanation
+  split: development
   title: 没有下发变量仍调用远端的原因
   tags: [development, codex, personal-session, debugging]
   description: Codex 6d5c0a44，JSONL 11；把真实调用链改为无网络的最小实现。
@@ -69,6 +78,9 @@
     rubric: [指出 fetch 在判断前无条件执行，两次均调用 fetch、只有第二次 send；不能凭两条记录断言有重试或定时循环。]
 - <<: *base
   id: personal.press_feedback
+  source_group: codex-1f3d0ee6
+  task_family: interface
+  split: development
   title: 列表每个条目的灰色按压反馈
   tags: [development, codex, personal-session, interaction]
   description: Codex 1f3d0ee6，JSONL 8；重建列表页，只取交互需求，原会话后续 Git 发布另测。
@@ -87,6 +99,9 @@
     rubric: [检查 CSS 是否作用于两个仓库的按下状态且松开恢复，单纯 hover 不合格；不能影响 aside 的链接或整块容器。]
 - <<: *base
   id: personal.model_alias
+  source_group: claude-804573d3
+  task_family: explanation
+  split: development
   title: 两个模型名是否都能用于当前服务
   tags: [development, claude, personal-session, deployment]
   description: Claude 804573d3，JSONL 27；替换模型名和部署资料，验证能否区分权重路径与 API 名称。
@@ -106,6 +121,9 @@
     rubric: [仅 sales-blue 被列出且请求成功；orchid-27b 是磁盘名称，此次以它调用返回 404。不能泛化为该权重不支持推理。]
 - <<: *base
   id: personal.eval_portfolio
+  source_group: codex-48d6b4c0
+  task_family: data-analysis
+  split: development
   title: 从重复的简单题重组成有跨度的评测数据
   tags: [development, codex, personal-session, eval-design]
   description: Codex 48d6b4c0，JSONL 17；以脱敏候选任务池代替外部下载，限定为整理阶段。

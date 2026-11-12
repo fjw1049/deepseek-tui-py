@@ -25,7 +25,7 @@ const targetLabels = {offline:'代码规则检查', decision:'模型决策测试
 const help = {
   offline:'检查固定的代码规则，不调用模型、不产生费用。可以发现规则被改坏，但不能说明真实任务成功率提高了。',
   decision:'调用真实模型，检查一次响应和工具选择。工具不执行。',
-  task:'让 Agent 实际读写临时测试文件，检查最终文件是否符合要求。目前只覆盖文件工具，尚未覆盖完整编程任务。',
+  task:'包含受控文件任务和真实产品任务；按各题要求检查产物与最终状态。产品试验有独立请求上限。',
   cache:'重复发送具有相同前缀的请求，检查服务商返回的缓存读数。这项结果不能说明任务做得更好；每次重复测试至少需要 3 个请求。',
 };
 
@@ -133,16 +133,21 @@ function renderLibrary() {
 
 function selectedTarget() { return document.querySelector('input[name=target]:checked').value; }
 function selectedCases() { return [...document.querySelectorAll('#case-selection input:checked')].map(el => el.value); }
+function canAppendPrompt() {
+  const ids = selectedCases();
+  return ids.length > 0 && ids.every(id => ['workspace_task','live_decision'].includes(state.cases.find(c => c.id === id)?.runner));
+}
 function updateEstimate() {
   const count = selectedCases().length, t = selectedTarget();
   const trials = t === 'offline' ? 1 : Number($('trials').value);
+  $('prompt-field').hidden = !canAppendPrompt();
   $('selected-count').textContent = `已选 ${count} 道`;
   $('run-estimate').textContent = state.step === 1 ? '先选目标，下一步设置' : `${count} 道题 · 每题 ${trials || 1} 次${t === 'offline' ? ' · 免费' : ' · 调用模型'}`;
   $('model-summary').textContent = [$('provider').value, $('model').value].filter(Boolean).join(' / ') || '本地默认模型';
 }
 function selectTarget(ids) {
   const t = selectedTarget();
-  $('live-fields').hidden = t === 'offline'; $('prompt-field').hidden = !['decision','task'].includes(t);
+  $('live-fields').hidden = t === 'offline'; $('prompt-field').hidden = !canAppendPrompt();
   $('target-help').textContent = help[t]; $('chosen-target').textContent = targetLabels[t];
   $('case-selection').innerHTML = state.cases.filter(c => target(c) === t).map(c => `<label class="selection-row"><input type="checkbox" value="${escapeHTML(c.id)}" ${!ids || ids.includes(c.id) ? 'checked' : ''}><span><strong>${escapeHTML(title(c))}</strong><small>${escapeHTML(caseGuide(c))}</small></span></label>`).join('');
   updateEstimate();
@@ -166,7 +171,7 @@ function setStep(step) {
 function renderReview() {
   const t = selectedTarget(), count = selectedCases().length, trials = t === 'offline' ? 1 : Number($('trials').value);
   const suffix = $('prompt-suffix').value.trim();
-  $('run-review').innerHTML = `<div class="review-intro"><span class="badge">${t === 'offline' ? '免费 · 不调用模型' : '真实模型 · 将产生 API 费用'}</span><h3>${escapeHTML($('label').value.trim() || '未命名测试（将自动命名）')}</h3><p>运行结束后，你会看到每道题是否通过，以及对应的检查证据。</p></div><dl class="review-list"><div><dt>测试目标</dt><dd>${targetLabels[t]}</dd></div><div><dt>执行次数</dt><dd>${count} 道题 × 每题 ${trials} 次，共 ${count*trials} 次</dd></div><div><dt>使用的代码</dt><dd>运行时本地的当前代码</dd></div>${t !== 'offline' ? `<div><dt>使用的模型</dt><dd>${escapeHTML($('model-summary').textContent)}</dd></div><div><dt>运行限制</dt><dd>最多 ${escapeHTML($('requests').value)} 个请求；每题最多 ${escapeHTML($('timeout').value)} 秒；每次输出最多 ${escapeHTML($('tokens').value)} Token</dd></div><div><dt>费用限制</dt><dd>${$('cost').value ? `已知费用上限 $${escapeHTML($('cost').value)}（最后一笔可能超出）` : '未设置金额上限；由请求数和输出量限制运行'}</dd></div>` : ''}</dl>${['task','decision'].includes(t) ? `<div class="review-prompt"><strong>本次提示词补充</strong><p>${suffix ? escapeHTML(suffix) : '未添加，使用当前提示词。'}</p></div>` : ''}<div class="info-strip">${t === 'offline' ? '本次只检查代码规则。全部通过，也不等于模型完成任务的能力提高了。' : '这次只运行这里列出的测试题。判断改动是否有效，还需要与修改前的测试结果对比。'}</div>${t !== 'offline' ? '<p class="field-note">一次文件任务可能调用模型多次。价格未知时不会显示为零，也无法按金额提前停止。</p>' : ''}`;
+  $('run-review').innerHTML = `<div class="review-intro"><span class="badge">${t === 'offline' ? '免费 · 不调用模型' : '真实模型 · 将产生 API 费用'}</span><h3>${escapeHTML($('label').value.trim() || '未命名测试（将自动命名）')}</h3><p>运行结束后，你会看到每道题是否通过，以及对应的检查证据。</p></div><dl class="review-list"><div><dt>测试目标</dt><dd>${targetLabels[t]}</dd></div><div><dt>执行次数</dt><dd>${count} 道题 × 每题 ${trials} 次，共 ${count*trials} 次</dd></div><div><dt>使用的代码</dt><dd>运行时本地的当前代码</dd></div>${t !== 'offline' ? `<div><dt>使用的模型</dt><dd>${escapeHTML($('model-summary').textContent)}</dd></div><div><dt>运行限制</dt><dd>评审/探针最多 ${escapeHTML($('requests').value)} 个请求；每次产品试验最多 ${escapeHTML($('product-requests').value)} 个请求（含预检）；每轮最多 ${escapeHTML($('timeout').value)} 秒；每次输出最多 ${escapeHTML($('tokens').value)} Token</dd></div><div><dt>费用限制</dt><dd>${$('cost').value ? `已知费用上限 $${escapeHTML($('cost').value)}（进行中的产品试验及并发请求可能超出）` : '未设置金额上限；由请求数和输出量限制运行'}</dd></div>` : ''}</dl>${canAppendPrompt() ? `<div class="review-prompt"><strong>本次提示词补充</strong><p>${suffix ? escapeHTML(suffix) : '未添加，使用当前提示词。'}</p></div>` : ''}<div class="info-strip">${t === 'offline' ? '本次只检查代码规则。全部通过，也不等于模型完成任务的能力提高了。' : '这次只运行这里列出的测试题。判断改动是否有效，还需要与修改前的测试结果对比。'}</div>${t !== 'offline' ? '<p class="field-note">一次文件任务可能调用模型多次。价格未知时不会显示为零，也无法按金额提前停止。</p>' : ''}`;
 }
 function openNew(previous, targetName, ids) {
   if (!state.cases.length) { toast('测试题还未加载，请稍后重试。'); return; }
@@ -179,6 +184,7 @@ function openNew(previous, targetName, ids) {
     const m = previous.manifest, s = m.settings || {};
     $('label').value = `${previous.label.replace(/ · 修改前$/, '')} · 修改后`;
     $('prompt-suffix').value = s.prompt_suffix || '';
+    $('product-requests').value = s.max_product_requests || 20;
     $('trials').value = m.trials || 1; $('requests').value = s.max_live_requests || 60;
     $('tokens').value = s.max_output_tokens || 2048; $('timeout').value = s.timeout_seconds || 120;
     $('cost').value = s.max_cost_usd ?? '';
@@ -205,7 +211,7 @@ function costLabel(r) {
   const metrics = r.summary?.metrics || {};
   const requests = metrics['usage.requests']?.sum;
   const priced = metrics['usage.priced_requests']?.sum;
-  if (metrics['usage.unmetered_product_trials']?.sum) return '费用不完整（产品请求未计价）';
+  if (metrics['usage.unmetered_product_trials']?.sum) return '费用不完整（缺产品计量记录）';
   if (!requests) return r.manifest.mode === 'offline' ? '不调用模型' : '未知';
   if (requests !== priced) return '费用不完整';
   return `$${(metrics['usage.known_cost_usd']?.sum || 0).toFixed(4)}`;
@@ -307,7 +313,7 @@ $('run-form').addEventListener('submit', async event => {
   $('form-error').hidden = true;
   const t = selectedTarget(), ids = selectedCases();
   if (!ids.length) { $('form-error').textContent = '至少选择一个场景'; $('form-error').hidden = false; return; }
-  const payload = {label:$('label').value.trim() || `${targetLabels[t]} · ${new Date().toLocaleString('zh-CN')}`, mode:t === 'offline' ? 'offline' : 'live', case_ids:ids, trials:t === 'offline' ? 1 : Number($('trials').value), max_live_requests:t === 'offline' ? 60 : Number($('requests').value), max_output_tokens:t === 'offline' ? 2048 : Number($('tokens').value), timeout_seconds:t === 'offline' ? 120 : Number($('timeout').value), max_cost_usd:$('cost').value && t !== 'offline' ? Number($('cost').value) : null, provider:t !== 'offline' ? $('provider').value.trim() || null : null, model:t !== 'offline' ? $('model').value.trim() || null : null, prompt_suffix:['task','decision'].includes(t) ? $('prompt-suffix').value : ''};
+  const payload = {label:$('label').value.trim() || `${targetLabels[t]} · ${new Date().toLocaleString('zh-CN')}`, mode:t === 'offline' ? 'offline' : 'live', case_ids:ids, trials:t === 'offline' ? 1 : Number($('trials').value), max_live_requests:t === 'offline' ? 60 : Number($('requests').value), max_product_requests:Number($('product-requests').value), max_output_tokens:t === 'offline' ? 2048 : Number($('tokens').value), timeout_seconds:t === 'offline' ? 120 : Number($('timeout').value), max_cost_usd:$('cost').value && t !== 'offline' ? Number($('cost').value) : null, provider:t !== 'offline' ? $('provider').value.trim() || null : null, model:t !== 'offline' ? $('model').value.trim() || null : null, prompt_suffix:canAppendPrompt() ? $('prompt-suffix').value : ''};
   $('submit-run').disabled = true;
   try { const result = await api('/api/runs',{method:'POST',body:JSON.stringify(payload)}); if (state.compareBase) state.compareParents[result.id] = state.compareBase; $('run-dialog').close(); view('runs'); await refresh(); await openDetail(result.id); }
   catch (error) { $('form-error').textContent = error.message; $('form-error').hidden = false; }

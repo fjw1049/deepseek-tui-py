@@ -28,18 +28,13 @@ from deepseek_tui.config.paths import user_config_path, user_deepseek_dir
 from evals.harness.budget import BudgetExceeded
 from evals.harness.service_fixture import service_fixture, terminal_checks
 from evals.judge import judge_session
-from evals.rubric import run_checks
+from evals.rubric import run_checks, task_boundary
 from evals.schema import EvalCase, EvalObservation
 from evals.session_metrics import load_sessions, run_record, session_metrics, turn_answers
 
 if TYPE_CHECKING:
     from evals.harness import HarnessContext
 
-BOUNDARY = (
-    "本任务的输入资料和产物均在当前工作目录。只修改当前目录及其子目录，不要修改用户已有资料，"
-    "不要安装软件、提交 Git、对外发布、发消息、付款或创建长期定时任务。"
-    "网页可读取公开资料。若缺少权限或能力如实说明，不要伪造成功。\n"
-)
 # What a user's setup contributes to reaching the model, and nothing that shapes
 # its behaviour: no AGENTS.md, skills, plugins, hooks, MCP servers or memories.
 _LINKED_FROM_USER_HOME = ("settings.json", "network.json", "secrets")
@@ -68,6 +63,8 @@ class ProductRun:
     @asynccontextmanager
     async def trial(self, context: HarnessContext):
         server = ProductServer(context.provider, context.model, context.artifacts_dir)
+        server.max_requests = context.max_product_requests
+        server.max_output_tokens = context.max_output_tokens
         try:
             await server.start()
             async with self.lock:
@@ -83,6 +80,19 @@ class ProductRun:
             yield server
         finally:
             await asyncio.shield(server.close())
+            if server.meter is not None:
+                meter = server.meter
+                for key in ("requests", "metered_requests", "priced_requests"):
+                    name = "product_" + key
+                    context.usage[name] = context.usage.get(name, 0) + meter[key]
+                context.usage["product_metered_trials"] = (
+                    context.usage.get("product_metered_trials", 0) + 1
+                )
+                for key, value in meter["usage"].items():
+                    context.usage[key] = context.usage.get(key, 0) + value
+                context.cost_usd += meter["known_cost_usd"]
+                context.budget.cost_usd += meter["known_cost_usd"]
+                context.trace.append({"type": "product_usage", **meter})
 
     def record(self, status: str) -> None:
         if status == "failed":
@@ -104,6 +114,9 @@ class ProductServer:
         self.home = self.root / "home"
         self.process: asyncio.subprocess.Process | None = None
         self.client: httpx.AsyncClient | None = None
+        self.max_requests = 20
+        self.max_output_tokens = 2048
+        self.meter: dict[str, Any] | None = None
 
     def process_prefix(self) -> list[str]:
         if sys.platform != "darwin":
@@ -149,6 +162,8 @@ class ProductServer:
             port = probe.getsockname()[1]
         token = secrets.token_urlsafe(24)
         arguments = ["--port", str(port), "--token", token, "--workspace", str(self.root)]
+        arguments += ["--max-product-requests", str(self.max_requests),
+                      "--max-output-tokens", str(self.max_output_tokens)]
         if self.provider:
             arguments += ["--provider", self.provider]
         if self.model:
@@ -195,6 +210,9 @@ class ProductServer:
         if self.process is not None and self.process.returncode is None:
             self.process.terminate()
             await self.process.wait()
+        meter = self.root / "product-usage.json"
+        if meter.is_file():
+            self.meter = json.loads(meter.read_text())
         shutil.rmtree(self.root, ignore_errors=True)
 
     async def request(self, method: str, path: str, **kwargs: Any) -> Any:
@@ -310,7 +328,7 @@ class ProductServer:
 
 def seed_workspace(case: EvalCase, workspace: Path) -> None:
     workspace.mkdir(parents=True)
-    (workspace / "AGENTS.md").write_text(BOUNDARY, encoding="utf-8")
+    (workspace / "AGENTS.md").write_text(task_boundary(case), encoding="utf-8")
     _write_files(workspace, case.setup.get("files", {}))
 
 
@@ -357,7 +375,7 @@ async def grade_session(
                     for item in session.items
                 )
                 checks.append(dict(name="浏览器回包含该轮页面内容", passed=bool(verified),
-                                   critical=True, detail=turn["turn_id"]))
+                                   critical=True, release_blocker=False, detail=turn["turn_id"]))
     record = run_record(session) if session else ""
     judge = saved_judge or await judge_session(case, answers, workspace, context, record)
     return EvalObservation(
@@ -425,7 +443,4 @@ async def run_product_session(case: EvalCase, context: HarnessContext) -> EvalOb
     observation.data["trial_isolation"] = (
         "macos-trial-pool-policy" if sys.platform == "darwin" else "separate-process-only"
     )
-    session = observation.data["session"]
-    for key in ("input_tokens", "output_tokens"):
-        context.usage[key] = context.usage.get(key, 0) + session.get(key, 0)
     return observation

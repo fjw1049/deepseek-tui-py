@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -28,12 +28,14 @@ class LiveBudget:
 
 
 class BudgetedClient(LLMClient):
-    def __init__(self, inner: LLMClient, context: HarnessContext) -> None:
+    def __init__(self, inner: LLMClient, context: HarnessContext,
+                 on_update: Callable[[], None] | None = None) -> None:
         # The engine may retry; every attempt passes this wrapper. Do not hide
         # extra provider requests inside a second retry loop.
         super().__init__(retry_config=RetryConfig(max_transparent_retries=0, max_error_retries=0))
         self.inner = inner
         self.context = context
+        self.on_update = on_update
 
     def cache_fingerprint_units(self, request: MessageRequest) -> list[tuple[str, object]]:
         return self.inner.cache_fingerprint_units(request)
@@ -49,6 +51,8 @@ class BudgetedClient(LLMClient):
             raise BudgetExceeded("已记录费用达到预算")
         ctx.remaining_live_requests -= 1
         ctx.requests += 1
+        if self.on_update:
+            self.on_update()
         request = request.model_copy(
             update={
                 "max_tokens": min(
@@ -91,3 +95,5 @@ class BudgetedClient(LLMClient):
                 yield event
         finally:
             ctx.trace.append({"type": "request_finished", "usage_reported": metered})
+            if self.on_update:
+                self.on_update()

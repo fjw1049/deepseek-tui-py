@@ -23,7 +23,8 @@ async def regrade(
     """Same sessions, current checks and reviewer: a rubric fix needs no new agent runs."""
     cases = {case.id: case for case in load_cases()}
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
-    output = run / f"regrade-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    output = run / f"regrade-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S-%f')}"
+    output.mkdir(parents=True, exist_ok=False)
     context = HarnessContext(
         workspace=str(REPO_ROOT),
         provider=manifest.get("provider"),
@@ -39,23 +40,46 @@ async def regrade(
         observation = original.observation
         if observation is None or "session_dir" not in observation.data:
             continue
-        case = cases[original.case_id]
-        session_dir = run / "sessions" / observation.data["session_dir"]
-        turns = json.loads((session_dir / "turns.json").read_text(encoding="utf-8"))
-        saved = observation.data.get("judge") if reuse_judge else None
-        fresh = await grade_session(case, session_dir, turns, context, saved_judge=saved)
-        if "trial_isolation" in observation.data:
-            fresh.data["trial_isolation"] = observation.data["trial_isolation"]
-        fresh.usage = {**observation.usage, "unmetered_product_trials": 1}
-        fresh.usage.pop("cost_usd", None)
-        verdict = grade(case, fresh)
-        result = original.model_copy(
-            update={
+        before = context.fork()
+        try:
+            case = cases[original.case_id]
+            session_dir = run / "sessions" / observation.data["session_dir"]
+            turns = json.loads((session_dir / "turns.json").read_text(encoding="utf-8"))
+            saved = observation.data.get("judge") if reuse_judge else None
+            if reuse_judge and not saved:
+                raise ValueError("reuse-judge requested but saved judge evidence is missing")
+            fresh = await grade_session(case, session_dir, turns, context, saved_judge=saved)
+            if "trial_isolation" in observation.data:
+                fresh.data["trial_isolation"] = observation.data["trial_isolation"]
+            verdict = grade(case, fresh)
+            result = original.model_copy(update={
                 "status": "passed" if verdict.passed else "failed",
-                "grade": verdict,
-                "observation": fresh,
-            }
-        )
+                "grade": verdict, "observation": fresh, "error": None,
+            })
+        except Exception as exc:
+            result = original.model_copy(deep=True, update={
+                "status": "error", "grade": None,
+                "error": f"regrade: {type(exc).__name__}: {exc}",
+            })
+        assert result.observation is not None
+        usage = dict(observation.usage)
+        extra_requests = context.requests - before.requests
+        extra_priced = context.priced_requests - before.priced_requests
+        extra_cost = context.cost_usd - before.cost_usd
+        for key, value in context.usage.items():
+            usage[key] = usage.get(key, 0) + value - before.usage.get(key, 0)
+        for key, value in {
+            "requests": extra_requests, "review_requests": extra_requests,
+            "metered_requests": context.metered_requests - before.metered_requests,
+            "priced_requests": extra_priced, "known_cost_usd": extra_cost,
+        }.items():
+            usage[key] = usage.get(key, 0) + value
+        if "cost_usd" in usage and extra_requests == extra_priced:
+            usage["cost_usd"] += extra_cost
+        else:
+            usage.pop("cost_usd", None)
+        usage["regrade_requests"] = extra_requests
+        result.observation.usage = usage
         results.append(result)
         append_result(output / "cases.jsonl", result)
     summary = summarize(manifest["run_id"], results)

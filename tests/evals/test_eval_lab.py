@@ -378,3 +378,13 @@ async def test_product_cost_is_incomplete_even_with_a_priced_judge(tmp_path, mon
     assert "cost_usd" not in usage
     assert usage["known_cost_usd"] == 0.001
     assert summary.metrics["usage.unmetered_product_trials"]["sum"] == 1
+
+
+async def test_product_prompt_suffix_is_rejected_before_starting_a_model(tmp_path):
+    case = EvalCase(id="product", suite="test", runner="product_session", grader="rubric",
+                    live=True, input={"turns": ["做事"]}, expect={"rubric": ["完成"]})
+    output = tmp_path / "run"
+    with pytest.raises(ValueError, match="prompt_suffix"):
+        await run_evaluations(RunOptions(mode="live", prompt_suffix="ignored", output_dir=output),
+                              cases=[case])
+    assert not output.exists()

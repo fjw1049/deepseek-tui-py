@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 
+from deepseek_tui.client.base import LLMClient
 from deepseek_tui.config.loader import ConfigLoader
+from deepseek_tui.config.models import Config
 from deepseek_tui.integrations import skills
 from deepseek_tui.server import AppServerOptions, run_http
 
@@ -25,6 +28,31 @@ def hide_user_skills() -> None:
         setattr(skills, name, lambda *_args: None)
 
 
+def install_meter(path: Path, max_requests: int, max_output_tokens: int) -> None:
+    """Meter clients in this disposable process, including preflight and retries."""
+    from deepseek_tui.client import factory
+    from evals.harness import HarnessContext
+    from evals.harness.budget import BudgetedClient
+
+    context = HarnessContext(workspace=str(path.parent), remaining_live_requests=max_requests,
+                             max_output_tokens=max_output_tokens)
+    original = factory.build_llm_client
+
+    def save() -> None:
+        snapshot = {"requests": context.requests, "metered_requests": context.metered_requests,
+                    "priced_requests": context.priced_requests, "known_cost_usd": context.cost_usd,
+                    "usage": context.usage}
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(snapshot), encoding="utf-8")
+        temporary.replace(path)
+
+    def build(config: Config) -> LLMClient:
+        return BudgetedClient(original(config), context, on_update=save)
+
+    factory.build_llm_client = build
+    save()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
@@ -32,6 +60,8 @@ def main() -> None:
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--provider")
     parser.add_argument("--model")
+    parser.add_argument("--max-product-requests", type=int, default=20)
+    parser.add_argument("--max-output-tokens", type=int, default=2048)
     args = parser.parse_args()
     config = ConfigLoader().load(
         provider=args.provider,
@@ -42,6 +72,8 @@ def main() -> None:
     # An eval has nobody to answer: a question must not wait out the turn timeout.
     config.unattended = True
     hide_user_skills()
+    install_meter(args.workspace / "product-usage.json", args.max_product_requests,
+                  args.max_output_tokens)
     from evals.compression_experiment import configure_compression
 
     configure_compression()

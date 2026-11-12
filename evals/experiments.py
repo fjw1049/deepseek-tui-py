@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,36 @@ METRICS = (
     "session.input_tokens",
     "session.output_tokens",
 )
+
+
+def resource_summary(run: dict[str, Any]) -> dict[str, Any]:
+    """Include failed attempts; missing or partial billing is never a zero cost."""
+    rows = [r for r in run["cases"] if r.get("runner") in {"product_session", "workspace_task"}]
+    durations, costs, known_costs = [], [], []
+    for row in rows:
+        duration = row.get("duration_ms")
+        if isinstance(duration, (int, float)) and math.isfinite(duration) and duration >= 0:
+            durations.append(duration)
+        usage = (row.get("observation") or {}).get("usage", {})
+        cost = usage.get("cost_usd")
+        known = usage.get("known_cost_usd", cost)
+        if (isinstance(known, (int, float)) and math.isfinite(known) and known >= 0
+                and (known > 0 or cost is not None or usage.get("priced_requests", 0) > 0)):
+            known_costs.append(known)
+        if (isinstance(cost, (int, float)) and math.isfinite(cost) and cost >= 0
+                and not usage.get("unmetered_product_trials")):
+            costs.append(cost)
+    complete = bool(rows) and len(costs) == len(rows)
+    successes = sum(r["status"] == "passed" for r in rows)
+    return {
+        "trials": len(rows), "successes": successes,
+        "mean_trial_duration_ms": sum(durations) / len(rows)
+        if rows and len(durations) == len(rows) else None,
+        "cost_coverage": len(costs) / len(rows) if rows else None,
+        "known_cost_usd": sum(known_costs) if known_costs else None,
+        "total_cost_usd": sum(costs) if complete else None,
+        "cost_per_success_usd": sum(costs) / successes if complete and successes else None,
+    }
 
 
 def load_run(path: Path) -> dict[str, Any]:
@@ -69,6 +100,7 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "mode": "评测模式",
         "trials": "重复次数",
         "max_live_requests": "请求上限",
+        "max_product_requests": "产品试验请求上限",
         "max_output_tokens": "输出上限",
         "max_cost_usd": "费用上限",
         "timeout_seconds": "超时限制",
@@ -83,6 +115,7 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             reasons.append(f"{field_labels[key]}不同或未记录")
     for key in (
         "max_live_requests",
+        "max_product_requests",
         "max_output_tokens",
         "max_cost_usd",
         "timeout_seconds",

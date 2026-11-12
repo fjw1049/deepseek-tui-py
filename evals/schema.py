@@ -30,6 +30,9 @@ class EvalCase(BaseModel):
     source_group: str = ""
     task_family: str = ""
     split: Literal["development", "regression", "holdout"] = "development"
+    allowed_actions: list[Literal["install_dependencies", "git_commit"]] = Field(
+        default_factory=list
+    )
 
     @field_validator("id", "suite", "runner", "grader")
     @classmethod

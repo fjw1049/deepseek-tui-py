@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from evals.coverage import corpus_coverage
 from evals.decision import DecisionPolicy, decide
 from evals.experiments import load_run
 from evals.report import summarize, write_json
@@ -40,6 +41,7 @@ class CampaignSpec(BaseModel):
     judge_model: str | None = None
     repetitions: int = Field(default=3, ge=1, le=20)
     max_live_requests: int = Field(default=20, ge=1)
+    max_product_requests: int = Field(default=20, ge=1)
     max_output_tokens: int = Field(default=2048, ge=1)
     max_input_tokens: int | None = Field(default=None, gt=0)
     timeout_seconds: float = Field(default=120, gt=0)
@@ -68,6 +70,17 @@ def schedule(spec: CampaignSpec) -> list[dict[str, Any]]:
             rng.shuffle(arms)
             plan.extend({"arm": arm, "case_id": case_id, "trial": trial} for arm in arms)
     return plan
+
+
+def selected_cases(spec: CampaignSpec) -> list[EvalCase]:
+    corpus = load_cases()
+    errors = validate_cases(corpus)
+    if errors:
+        raise ValueError("invalid corpus: " + "; ".join(errors))
+    cases = [c for c in corpus if c.id in spec.case_ids]
+    if len(cases) != len(spec.case_ids) or any(c.live != (spec.mode == "live") for c in cases):
+        raise ValueError("select existing cases of one mode; offline and live must run separately")
+    return cases
 
 
 def configuration_hash() -> str:
@@ -143,11 +156,33 @@ def _collect(
 def _write_report(output: Path, result: dict[str, Any]) -> None:
     write_json(output / "decision.json", result)
     lines = [f"# {result['label']}", "", *[f"- {r}" for r in result["reasons"]]]
+    if result.get("coverage"):
+        coverage = result["coverage"]
+        lines += ["", f"任务 {coverage['end_to_end_tasks']}；"
+                  f"声明来源 {coverage['declared_sources']}；"
+                  f"封存来源 {coverage['holdout_sources']}；"
+                  f"缺少来源/类别的任务 {len(coverage['missing_metadata'])}。", coverage["note"]]
     if result.get("families"):
         lines += ["", "| 任务类别 | 独立来源 | 候选减基线 |", "|---|---:|---:|"]
         lines += [f"| {k} | {v['groups']} | {v['delta']:+.3f} |"
                   for k, v in result["families"].items()]
     comparison = result.get("comparison", {})
+    if result.get("resources"):
+        lines += ["", "## 代价与覆盖", "",
+                  "含失败尝试。完整试验耗时包含启动和评审，不等于用户等待时间；未知费用不填零。",
+                  "未配置代价上限时仅展示，不作为候选门槛。", "",
+                  "| 指标 | 基线 | 候选 |", "|---|---:|---:|"]
+        for key, label in (("mean_trial_duration_ms", "平均完整试验耗时 ms"),
+                           ("cost_coverage", "完整计费覆盖率"),
+                           ("known_cost_usd", "已知费用 USD"),
+                           ("cost_per_success_usd", "每个完成任务成本 USD")):
+            values = [result["resources"][arm][key] for arm in ("baseline", "candidate")]
+            lines.append(f"| {label} | " + " | ".join(
+                "未知/不适用" if v is None else f"{v:.4f}" for v in values) + " |")
+    if result.get("efficiency"):
+        efficiency = result["efficiency"]
+        lines += ["", f"效率目标：{efficiency['metric']}；按来源等权的完成任务代价降幅 "
+                  f"{efficiency['delta']}；探索性区间 {efficiency['interval']}。"]
     lines += ["", "## 逐题变化", "", "| 场景 | 基线 | 候选 |", "|---|---:|---:|"]
     for row in comparison.get("rows", []):
         lines.append(f"| {row['case_id']} | {row['a']} | {row['b']} |")
@@ -159,17 +194,12 @@ def _write_report(output: Path, result: dict[str, Any]) -> None:
 async def run_campaign(spec: CampaignSpec, output: Path, root: Path = REPO_ROOT) -> dict[str, Any]:
     if any(k.startswith("EVAL_COMPRESSION_") for k in os.environ):
         raise ValueError("remove external compression overrides; compare frozen product sources")
-    corpus = load_cases()
-    errors = validate_cases(corpus)
-    if errors:
-        raise ValueError("invalid corpus: " + "; ".join(errors))
-    cases = [c for c in corpus if c.id in spec.case_ids]
-    if len(cases) != len(spec.case_ids) or any(c.live != (spec.mode == "live") for c in cases):
-        raise ValueError("select existing cases of one mode; offline and live must run separately")
+    cases = selected_cases(spec)
     output = await asyncio.to_thread(output.resolve)
     output.mkdir(parents=True, exist_ok=False)
     state: dict[str, Any] = {"spec": spec.model_dump(), "status": "preparing",
-                             "schedule": schedule(spec), "completed": [], "snapshots": {}}
+                             "schedule": schedule(spec), "completed": [], "snapshots": {},
+                             "coverage": corpus_coverage(cases)}
     write_json(output / "campaign.json", state)
     result: dict[str, Any] = {"decision": "insufficient_evidence", "label": "证据不足",
                               "reasons": [], "policy": spec.policy.model_dump()}
@@ -214,6 +244,7 @@ async def run_campaign(spec: CampaignSpec, output: Path, root: Path = REPO_ROOT)
                 provider=spec.provider, model=spec.model,
                 judge_provider=spec.judge_provider, judge_model=spec.judge_model,
                 max_live_requests=spec.max_live_requests, max_output_tokens=spec.max_output_tokens,
+                max_product_requests=spec.max_product_requests,
                 max_input_tokens=spec.max_input_tokens, timeout_seconds=spec.timeout_seconds,
             )
             request = output / "requests" / f"{name}.json"
@@ -262,6 +293,7 @@ async def run_campaign(spec: CampaignSpec, output: Path, root: Path = REPO_ROOT)
         ) else "error"
         result["reasons"] = [f"{type(exc).__name__}: {exc}"]
     finally:
+        result["coverage"] = state["coverage"]
         write_json(output / "campaign.json", state)
         _write_report(output, result)
     return result

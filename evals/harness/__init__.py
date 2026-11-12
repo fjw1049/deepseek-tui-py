@@ -31,6 +31,7 @@ class HarnessContext:
         model: str | None = None,
         max_output_tokens: int = 2048,
         remaining_live_requests: int = 0,
+        max_product_requests: int = 20,
         max_cost_usd: float | None = None,
         prompt_suffix: str = "",
         judge_provider: str | None = None,
@@ -43,6 +44,7 @@ class HarnessContext:
         self.provider = provider
         self.model = model
         self.max_output_tokens = max_output_tokens
+        self.max_product_requests = max_product_requests
         self.budget = LiveBudget(remaining_live_requests)
         self.max_cost_usd = max_cost_usd
         self.prompt_suffix = prompt_suffix

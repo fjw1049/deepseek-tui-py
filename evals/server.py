@@ -38,6 +38,7 @@ class StartRequest(BaseModel):
     model: str | None = Field(default=None, max_length=150)
     trials: int = Field(default=1, ge=1, le=20)
     max_live_requests: int = Field(default=20, ge=1, le=1000)
+    max_product_requests: int = Field(default=20, ge=1, le=1000)
     max_output_tokens: int = Field(default=2048, ge=16, le=16384)
     max_cost_usd: float | None = Field(default=None, gt=0, le=1000)
     timeout_seconds: float = Field(default=120, ge=5, le=1800)
@@ -121,7 +122,8 @@ class Experiments:
         if spec.mode == "live" and any(not c.live for c in selected):
             raise HTTPException(400, "请分开运行离线机制与真实模型场景")
         if spec.prompt_suffix and (
-            spec.mode == "offline" or any(c.runner == "live_cache" for c in selected)
+            spec.mode == "offline"
+            or any(c.runner not in {"live_decision", "workspace_task"} for c in selected)
         ):
             raise HTTPException(400, "提示词补充仅适用于真实决策或文件任务，不适用于离线/缓存探针")
         if spec.mode == "live":

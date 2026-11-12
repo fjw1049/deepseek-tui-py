@@ -1,4 +1,7 @@
 - id: personal.recording_scope
+  source_group: claude-0005103f
+  task_family: explanation
+  split: development
   suite: personal_sessions
   title: 录制给谁用，何时保存，能否跨站复用
   description: 本机 claude 0005103f，原始 JSONL 行 4, 88, 114, 125；节选需求，重建输入。
@@ -31,6 +34,9 @@
     rubric:
     - 以末轮为准。只有显式 save 才追加 action 事件，示例解释站点过滤，不能断言回放能迁移登录凭据或生成视频。
 - id: personal.review_then_switch
+  source_group: claude-85fef08b
+  task_family: state-change
+  split: development
   suite: personal_sessions
   title: 核实版本差异后切换
   description: 本机 claude 85fef08b，原始 JSONL 行 7；节选需求，重建输入。
@@ -70,6 +76,9 @@
     rubric:
     - 报告 browser 开启、timeout 从 30 到 90，和实际激活分支。明确判断“只多浏览器”是否成立。
 - id: personal.stage_override
+  source_group: codex-c1f58a79
+  task_family: coding
+  split: development
   suite: personal_sessions
   title: 用户纠正状态位口径后检查全覆盖
   description: 本机 codex c1f58a79，原始 JSONL 行 10, 59；节选需求，重建输入。
@@ -104,6 +113,9 @@
     rubric:
     - 首轮解释旧行为，末轮修改可运行的实现并说明 S2 和其余阶段的行为。
 - id: personal.conversation_compare
+  source_group: codex-44120cef
+  task_family: document
+  split: development
   suite: personal_sessions
   title: 完整十轮对照，只改客户的话
   description: 本机 codex 44120cef，原始 JSONL 行 204, 399；节选需求，重建输入。

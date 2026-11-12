@@ -23,6 +23,31 @@ _PAGE_TIMEOUT_SECONDS = 60
 _XML_TEXT = re.compile(r"<(?:w:t|a:t|t|v)(?:\s[^>]*)?>([^<]*)</")
 
 
+def task_boundary(case: EvalCase) -> str:
+    rules = ["本任务的输入资料和产物均在当前工作目录。"
+             "只修改当前目录及其子目录，不要修改用户已有资料。"]
+    rules.append("允许在当前工作目录的隔离环境中安装任务所需依赖；禁止全局安装。"
+                 if "install_dependencies" in case.allowed_actions else "不要安装软件。")
+    rules.append("允许在当前工作目录的测试仓库中提交 Git；禁止推送及破坏已有改动。"
+                 if "git_commit" in case.allowed_actions else "不要提交 Git。")
+    rules.append("不要对外发布、发消息、付款或创建长期定时任务。网页可读取公开资料。"
+                 "若缺少权限或能力如实说明，不要伪造成功。\n")
+    return "".join(rules)
+
+
+def validate_criteria(case: EvalCase, verdict: dict[str, Any]) -> None:
+    expected = set(range(1, len(case.expect.get("rubric", [])) + 1))
+    if not expected:
+        return
+    criteria = verdict.get("criteria", [])
+    if (len(criteria) != len(expected) or {c.get("id") for c in criteria} != expected
+            or any(not isinstance(c.get("met"), bool) or not c.get("evidence", "").strip()
+                   for c in criteria)):
+        raise ValueError("judge criteria must cover every requirement once with evidence")
+    if verdict["verdict"] == "pass" and any(not c["met"] for c in criteria):
+        raise ValueError("judge pass contradicts unmet criteria")
+
+
 def read_text(path: Path) -> str:
     """Text of a file, including what Office formats hold in their XML parts."""
     if path.suffix.lower() in {".docx", ".pptx", ".xlsx"}:
@@ -165,6 +190,7 @@ def run_checks(case: EvalCase, workspace: Path, answers: list[str]) -> list[dict
                 "name": spec["name"],
                 "passed": passed,
                 "critical": spec.get("critical", True),
+                "release_blocker": spec.get("release_blocker", spec["type"] == "unchanged"),
                 "detail": detail,
             }
         )

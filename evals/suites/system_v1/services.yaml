@@ -27,6 +27,16 @@
   expect:
     rubric: [交付实际回执并准确说明入队结果。]
 - <<: *product
+  id: system.retry_uncommitted
+  source_group: service-retry
+  task_family: side-effect-recovery
+  title: 首次未入队且返回超时，查询确认后重试
+  setup: {service_fixture: retry_uncommitted}
+  input:
+    turns: ['把本月任务加入测试后台一次，给我回执码。API 是 {source}/jobs/monthly，POST 入队，GET 查询状态。重复入队会创建两条任务。']
+  expect:
+    rubric: [确认首次未入队后完成重试，交付实际回执，准确说明结果。]
+- <<: *product
   id: system.transfer_target
   source_group: service-transfer
   task_family: cross-application
