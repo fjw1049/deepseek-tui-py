@@ -1766,6 +1766,43 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             await self.handle.emit(StatusEvent(message=mount_note))
         return raw
 
+    def _compose_system_prompt(self, override: str | None = None, *, focused: bool = False) -> str:
+        browser_available = (
+            self.tool_registry.contains("browser_use")
+            and self.tool_context.metadata.get("browser_service") is not None
+        )
+        return build_system_prompt(
+            override,
+            mode=_resolve_app_mode(self.mode),
+            # Skill focus narrows the tool whitelist, not the catalog.
+            # Rewriting ## Skills for a single turn costs two full prefix
+            # cache misses (this turn, then the turn that reverts), and
+            # the model does not need it: the user's `/<skill>` prefix is
+            # never stripped from the message text, so the cue survives.
+            # Plugin mount stays narrowed — it is session-level state, so
+            # its prefix is stable across turns.
+            skills_context=self._render_skills_context(
+                only=self._active_plugin_skills()
+                if not focused and self._active_plugin is not None
+                else None
+            ),
+            plugin_context=(
+                self._render_plugin_context()
+                if not focused and self._active_plugin is not None
+                else None
+            ),
+            plugin_components_context=self._render_plugin_components_context(),
+            plugin_rules_context=self._render_plugin_rules_context(),
+            workspace=self.tool_context.working_directory,
+            locale_tag=self.reply_locale,
+            automations_guidelines=self.tool_registry.contains("cron_create"),
+            browser_guidelines=browser_available,
+            surfaces=(
+                frozenset({"browser"} if browser_available else ()) | self._cua_surfaces()
+            ),
+            auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
+        )
+
     def context_breakdown(self, model: str | None = None) -> dict[str, int]:
         """Estimate token occupancy by category for the next request.
 
@@ -2416,42 +2453,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 checkpoint_messages,
                 model=op.model or self.default_model,
             )
-            browser_available = (
-                self.tool_registry.contains("browser_use")
-                and self.tool_context.metadata.get("browser_service") is not None
-            )
             def compose_system_prompt() -> str:
-                return build_system_prompt(
-                    op.system_prompt,
-                    mode=_resolve_app_mode(self.mode),
-                    # Skill focus narrows the tool whitelist, not the catalog.
-                    # Rewriting ## Skills for a single turn costs two full prefix
-                    # cache misses (this turn, then the turn that reverts), and
-                    # the model does not need it: the user's `/<skill>` prefix is
-                    # never stripped from the message text, so the cue survives.
-                    # Plugin mount stays narrowed — it is session-level state, so
-                    # its prefix is stable across turns.
-                    skills_context=self._render_skills_context(
-                        only=self._active_plugin_skills()
-                        if focus_mcp is None and self._active_plugin is not None
-                        else None
-                    ),
-                    plugin_context=(
-                        self._render_plugin_context()
-                        if focus_mcp is None and self._active_plugin is not None
-                        else None
-                    ),
-                    plugin_components_context=self._render_plugin_components_context(),
-                    plugin_rules_context=self._render_plugin_rules_context(),
-                    workspace=self.tool_context.working_directory,
-                    locale_tag=self.reply_locale,
-                    automations_guidelines=self.tool_registry.contains("cron_create"),
-                    browser_guidelines=browser_available,
-                    surfaces=(
-                        frozenset({"browser"} if browser_available else ()) | self._cua_surfaces()
-                    ),
-                    auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
-                )
+                return self._compose_system_prompt(op.system_prompt, focused=focus_mcp is not None)
 
             self._turn_prompt_builder = compose_system_prompt
             sys_prompt = compose_system_prompt()
@@ -3529,9 +3532,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             request.messages = list(messages)
             from deepseek_tui.engine.context_pressure import estimate_request_tokens
 
-            request_input_estimate = estimate_request_tokens(
-                messages, system_prompt=system_prompt, tools=tools
-            )
             logger.info(
                 "llm_invoke_start round=%d msg_count=%d tools_count=%d model=%s",
                 round_idx,
@@ -3579,6 +3579,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 round_idx -= 1
                 result = TurnResult(assistant_message=None)
                 continue
+            # Recovery mutates the request snapshot; commit it only after takeover checks.
+            messages[:] = request.messages
+            request_input_estimate = estimate_request_tokens(
+                messages, system_prompt=system_prompt, tools=tools
+            )
             # Refresh the real pressure signal *within* the turn, not just at
             # turn end: every round's StreamDone carries the provider's
             # input_tokens and messages only grow between rounds, so this is

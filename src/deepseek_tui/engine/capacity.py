@@ -123,6 +123,7 @@ class CompactionResult:
     success: bool = False
     failure_reason: str | None = None
     model_calls: int = 0
+    budget_exceeded: bool = False
 
 
 def _summary_input_limits_for_model(model: str, model_config: object | None = None) -> SummaryInputLimits:
@@ -347,6 +348,10 @@ class SummaryTruncatedError(ValueError):
     """The output budget was exhausted; identical retries cannot help."""
 
 
+class SummaryToolCallError(ValueError):
+    """A summary must be text; repeating the same tool request cannot help."""
+
+
 class CompactionBudgetError(ValueError):
     """A deterministic capacity failure; retrying the same request cannot help."""
 
@@ -517,9 +522,12 @@ async def compact_messages_safe(
                 result,
                 messages=messages, failure_reason=str(exc), retries_used=attempt + 1
             )
-        except CompactionBudgetError as exc:
-            logger.warning("compact_budget_rejected: %s", exc)
-            return replace(result, messages=messages, failure_reason=str(exc), retries_used=attempt)
+        except (CompactionBudgetError, SummaryToolCallError) as exc:
+            logger.warning("compact_request_rejected: %s", exc)
+            return replace(
+                result, messages=messages, failure_reason=str(exc), retries_used=attempt,
+                budget_exceeded=isinstance(exc, CompactionBudgetError),
+            )
         except Exception as exc:
             logger.warning(
                 "compact_attempt_failed attempt=%d/%d error=%s",
@@ -597,15 +605,18 @@ async def _create_summary(
         stats.model_calls += 1
     response = client.stream_chat_completion(request)
 
+    from deepseek_tui.engine.context import is_context_length_error_message
     from deepseek_tui.protocol.responses import StreamDone, StreamError, StreamToolCallComplete
 
     summary = ""
     async with aclosing(response):
         async for event in response:
             if isinstance(event, StreamError):
+                if is_context_length_error_message(event.message):
+                    raise CompactionBudgetError(event.message)
                 raise ValueError(f"Compaction stream failed: {event.message}")
             if isinstance(event, StreamToolCallComplete):
-                raise ValueError("Compaction requested a tool instead of a text handoff")
+                raise SummaryToolCallError("Compaction requested a tool instead of a text handoff")
             if isinstance(event, StreamDone) and event.truncated:
                 raise SummaryTruncatedError("Compaction stream was truncated")
             if hasattr(event, "text"):

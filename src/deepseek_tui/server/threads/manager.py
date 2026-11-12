@@ -4606,7 +4606,7 @@ class RuntimeThreadManager:
             summary_text = "Nothing to compact — session is empty."
             engine.session_messages.clear()
         else:
-            result = await engine._run_compaction(list(engine.session_messages))
+            result = await engine._manual_compact(list(engine.session_messages))
             engine.session_messages[:] = result.messages
             engine.record_transcript("sync", engine.session_messages)
             if result.success:

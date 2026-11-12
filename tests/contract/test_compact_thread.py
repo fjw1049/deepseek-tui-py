@@ -48,7 +48,7 @@ async def test_compact_thread_emits_context_compaction_item(
             session_cache_miss_total=0,
             session_cost_usd=0.0,
             session_cost_cny=0.0,
-            _run_compaction=AsyncMock(
+            _manual_compact=AsyncMock(
                 return_value=SimpleNamespace(
                     messages=[Message.user("summary"), Message.assistant("ok")],
                     success=True,
@@ -85,4 +85,42 @@ async def test_compact_thread_emits_context_compaction_item(
         state.engine_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await state.engine_task
+        manager._active.pop(thread.id, None)
+
+
+async def test_http_compact_recovers_oversized_history_with_real_engine(
+    client, runtime_app, monkeypatch
+):
+    from tests.engine.test_append_summary import single_user_history
+    from tests.engine.test_browser_primary_loop import ScriptedClient
+    from tests.engine.test_compression_recovery import SUMMARY
+
+    manager = runtime_app.state.thread_manager
+    model = ScriptedClient([SUMMARY])
+    monkeypatch.setattr(manager, "_get_llm_client", lambda *_: model)
+    monkeypatch.setattr("deepseek_tui.config.providers.context_window_for_model", lambda _: 50000)
+    thread = await manager.create_thread(CreateThreadRequest(workspace=str(manager.workspace)))
+    await manager._ensure_engine_loaded(thread)
+    state = manager._active[thread.id]
+    engine = state.engine
+    engine.compaction_config.keep_recent_tokens = 0
+    engine.session_messages = single_user_history()
+    for message in engine.session_messages[2:-4:2]:
+        message.content[0].content = "old result " * 50000
+    try:
+        response = await client.post(f"/v1/threads/{thread.id}/compact", json={})
+        assert response.status_code == 200, response.text
+        detail = await manager.get_thread_detail(thread.id)
+        compact = next(i for i in detail.items if i.kind == TurnItemKind.CONTEXT_COMPACTION)
+        assert "Context compacted" in compact.detail
+        assert compact.metadata["session_messages"] == [
+            m.model_dump(mode="json") for m in engine.session_messages
+        ]
+        assert len(model.requests) == 1 and model.requests[0].system_prompt
+        assert model.requests[0].tools
+    finally:
+        state.engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await state.engine_task
+        await engine.shutdown_session()
         manager._active.pop(thread.id, None)

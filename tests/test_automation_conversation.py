@@ -479,7 +479,7 @@ async def test_follow_up_model_request_contains_result_after_warmup_or_restart(s
 
             with patch.object(
                 manager._active[thread.id].engine,
-                "_run_compaction",
+                "_manual_compact",
                 new=AsyncMock(side_effect=compact),
             ):
                 await manager.compact_thread(thread.id, CompactThreadRequest())

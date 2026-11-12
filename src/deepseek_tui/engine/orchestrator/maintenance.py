@@ -15,6 +15,7 @@ from deepseek_tui.engine import interventions
 from deepseek_tui.engine.capacity import (
     L0_HARD_CLEAR_MIN_RECLAIM,
     MAX_WORKING_SET_PATHS,
+    CompactionBudgetError,
     CompactionResult,
     ToolPruneConfig,
     _estimate_tokens_for_message,
@@ -23,6 +24,7 @@ from deepseek_tui.engine.capacity import (
     fold_superseded_observations,
     prune_old_tool_results,
     should_l0_prune,
+    validate_summary_request_budget,
 )
 from deepseek_tui.engine.cycle import (
     StructuredState,
@@ -228,6 +230,52 @@ class SessionMaintenanceMixin:
                 working_directory=self.tool_context.working_directory,
                 metadata=self.tool_context.metadata,
             )
+        return result
+
+    async def _manual_compact(self, messages: list[Message]) -> CompactionResult:
+        from deepseek_tui.config.providers import max_output_tokens_for_model
+        from deepseek_tui.engine.prompts import UNATTENDED_PROMPT
+
+        tools = await self._get_tools_with_mcp()
+        prompt = self._compose_system_prompt() + self._cua_prompt()
+        if self.tool_context.metadata.get("unattended"):
+            prompt += UNATTENDED_PROMPT
+        request = MessageRequest(
+            model=self.default_model, messages=messages, system_prompt=prompt, tools=tools,
+            tool_choice={"type": "auto"} if tools else None,
+            max_tokens=max_output_tokens_for_model(self.default_model),
+            temperature=self.default_temperature, top_p=self.default_top_p,
+            reasoning_effort=self.default_reasoning_effort,
+            extra_body=dict(self.default_extra_body),
+        )
+        kwargs = dict(model=request.model, system_prompt=prompt, tools=tools,
+                      output_reserve=request.max_tokens or 0, request_template=request)
+        result = await self._run_compaction(messages, **kwargs)
+        if not result.success and result.budget_exceeded:
+            reduced = clear_old_tool_results(messages)
+            if (sum(map(_estimate_tokens_for_message, reduced))
+                    < sum(map(_estimate_tokens_for_message, messages))):
+                prior_calls = result.model_calls
+                result = await self._run_compaction(reduced, **kwargs)
+                result.model_calls += prior_calls
+                if not result.success:
+                    # Clearing old bodies can make the entire history small enough to retain.
+                    if result.failure_reason in {
+                        "All messages are retained by recent-history or pin rules",
+                        "Too few unpinned messages to summarize safely",
+                    }:
+                        try:
+                            validate_summary_request_budget(
+                                request.model_copy(update={"messages": reduced}),
+                                getattr(self, "_app_config", None),
+                            )
+                        except CompactionBudgetError:
+                            pass
+                        else:
+                            return CompactionResult(
+                                messages=reduced, success=True, model_calls=result.model_calls
+                            )
+                    result.messages = messages
         return result
 
     async def _emergency_compact(

@@ -1516,13 +1516,17 @@ async def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
     session_id = engine._cycle_session_id
     if not before:
         return CommandResult(output="Nothing to compact — session is empty.")
-    result = await engine._run_compaction(before)
+    result = await engine._manual_compact(before)
     if (app._engine is not engine or engine._cycle_session_id != session_id
             or engine.session_messages != before or app._session_busy_reason()):
         return CommandResult(error="Session changed during compaction; result discarded.")
     if not result.success:
-        return CommandResult(error="Compaction failed; messages unchanged.")
+        return CommandResult(error=(
+            f"Compaction failed; messages unchanged. {result.failure_reason or ''}".strip()
+        ))
     engine.session_messages[:] = result.messages
+    engine.record_transcript("sync", engine.session_messages)
+    await engine._auto_persist_session()
     return CommandResult(
         output=f"Context compacted: {len(before)} → {len(result.messages)} messages."
     )

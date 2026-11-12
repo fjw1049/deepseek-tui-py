@@ -274,3 +274,203 @@ async def test_engine_sends_compacted_history_and_matching_request_controls(tmp_
         assert events[0].failure_reason is None
     finally:
         await engine.shutdown_session()
+
+
+async def test_overflow_history_is_committed_and_used_by_next_turn(tmp_path):
+    from deepseek_tui.engine.context_pressure import estimate_request_tokens
+    from deepseek_tui.engine.handle import SendMessageOp
+    from deepseek_tui.protocol.responses import Usage
+    from tests.engine.test_browser_primary_loop import ScriptedClient
+
+    class OverflowClient(ScriptedClient):
+        async def stream_chat_completion(self, request):
+            if not self.requests:
+                self.requests.append(request.model_copy(deep=True))
+                yield StreamError(message="maximum context length exceeded", retryable=False)
+                return
+            async for event in super().stream_chat_completion(request):
+                if isinstance(event, StreamDone):
+                    yield StreamDone(usage=Usage(input_tokens=100))
+                else:
+                    yield event
+
+    client = OverflowClient(["done", "next done"])
+    engine = await Engine.create(
+        handle=EngineHandle(),
+        client=client,
+        working_directory=tmp_path,
+        config=Config(
+            cycle_enabled=False,
+            features=FeatureConfig(tasks=False, subagents=False, mcp=False, automations=False),
+        ),
+        start_mcp=False,
+    )
+    from deepseek_tui.engine.transcript import Transcript, read_transcript
+
+    engine.transcript = Transcript(tmp_path / "history.jsonl")
+    engine.session_messages = [Message.user("original history " * 200)]
+    engine.turn_loop._compact_request_fn = AsyncMock(
+        return_value=[Message.user("recovered constraint")]
+    )
+    try:
+        await engine._handle_send_message(SendMessageOp(content="continue"))
+        assert engine.session_messages[0].text_content() == "recovered constraint"
+        request = client.requests[-1]
+        assert engine.last_real_input_estimate == estimate_request_tokens(
+            request.messages, system_prompt=request.system_prompt, tools=request.tools
+        )
+        restored = read_transcript(tmp_path / "history.jsonl").messages()
+        assert restored == engine.session_messages
+        engine.sync_session(restored)
+        await engine._handle_send_message(SendMessageOp(content="next turn"))
+        assert client.requests[-1].messages[0].text_content() == "recovered constraint"
+        assert engine.turn_loop._compact_request_fn.await_count == 1
+        assert all("original history" not in m.text_content() for m in engine.session_messages)
+    finally:
+        await engine.shutdown_session()
+
+
+@pytest.mark.parametrize("entry", ["engine", "tui"])
+@pytest.mark.parametrize("keep_recent", [0, 20000])
+async def test_manual_compaction_recovers_over_budget_history(
+    tmp_path, monkeypatch, entry, keep_recent
+):
+    from deepseek_tui.tui.commands import cmd_compact
+    from tests.engine.test_browser_primary_loop import ScriptedClient
+
+    monkeypatch.setattr("deepseek_tui.config.providers.context_window_for_model", lambda _: 50000)
+    client = ScriptedClient([SUMMARY])
+    engine = await Engine.create(
+        handle=EngineHandle(),
+        client=client,
+        working_directory=tmp_path,
+        config=Config(
+            cycle_enabled=False,
+            features=FeatureConfig(tasks=False, subagents=False, mcp=False, automations=False),
+        ),
+        start_mcp=False,
+    )
+    engine.compaction_config.keep_recent_tokens = keep_recent
+    engine.session_messages = single_user_history()
+    # Large old tool results; recent complete exchanges remain intact.
+    for m in engine.session_messages[2:-4:2]:
+        m.content[0].content = "large tool result " * 30000
+    try:
+        if entry == "engine":
+            result = await engine._manual_compact(list(engine.session_messages))
+            assert result.success, result.failure_reason
+        else:
+            result = await cmd_compact(
+                "", SimpleNamespace(_engine=engine, _session_busy_reason=lambda: None)
+            )
+            assert not result.error, result.error
+        if keep_recent:
+            assert not client.requests  # Deterministic relief alone fits; retain the whole result.
+            return
+        assert len(client.requests) == 1
+        assert (
+            client.requests[0].system_prompt
+            == engine._compose_system_prompt() + engine._cua_prompt()
+        )
+        assert client.requests[0].tools == await engine._get_tools_with_mcp()
+        assert (
+            "Keep config.toml" in client.requests[0].messages[0].text_content()
+            or "keep config.toml" in client.requests[0].messages[0].text_content()
+        )
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_summary_tool_call_does_not_retry_full_history():
+    from deepseek_tui.protocol.responses import ToolCall
+    from tests.engine.test_browser_primary_loop import ScriptedClient
+
+    client = ScriptedClient([ToolCall(id="bad", name="read_file", arguments={})])
+    result = await capacity.compact_messages_safe(
+        client,
+        single_user_history(),
+        capacity.CompactionConfig(keep_recent_tokens=0),
+    )
+    assert not result.success and "requested a tool" in result.failure_reason
+    assert result.model_calls == len(client.requests) == 1
+
+
+async def test_takeover_discards_recovery_from_interrupted_request(tmp_path):
+    from deepseek_tui.engine.turn import TurnResult
+    from tests.engine.test_browser_primary_loop import ScriptedClient
+
+    engine = await Engine.create(
+        handle=EngineHandle(),
+        client=ScriptedClient([]),
+        working_directory=tmp_path,
+        config=Config(
+            cycle_enabled=False,
+            features=FeatureConfig(tasks=False, subagents=False, mcp=False, automations=False),
+        ),
+        start_mcp=False,
+    )
+    seen = []
+
+    async def run(request, *args, **kwargs):
+        seen.append([m.text_content() for m in request.messages])
+        if len(seen) == 1:
+            request.messages[:] = [Message.user("discarded recovery")]
+            engine.handle.pause.pause()
+            engine.handle.pause.resume()
+        return TurnResult(assistant_message=Message.assistant("done"))
+
+    engine.turn_loop.run = run
+    history = [Message.user("keep original")]
+    try:
+        await engine._run_conversation(history, engine.default_model, "stable", None)
+        assert seen == [["keep original"], ["keep original"]]
+        assert history[0].text_content() == "keep original"
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_manual_compaction_preserves_unrecoverable_text_without_model_calls(
+    tmp_path, monkeypatch
+):
+    from deepseek_tui.tui.commands import cmd_compact
+    from tests.engine.test_browser_primary_loop import ScriptedClient
+
+    client = ScriptedClient([])
+    engine = await Engine.create(
+        handle=EngineHandle(),
+        client=client,
+        working_directory=tmp_path,
+        config=Config(
+            cycle_enabled=False,
+            features=FeatureConfig(tasks=False, subagents=False, mcp=False, automations=False),
+        ),
+        start_mcp=False,
+    )
+    monkeypatch.setattr("deepseek_tui.config.providers.context_window_for_model", lambda _: 50000)
+    engine.session_messages = [Message.user("keep this " * 50000) for _ in range(12)]
+    original = [m.model_dump() for m in engine.session_messages]
+    try:
+        result = await cmd_compact(
+            "", SimpleNamespace(_engine=engine, _session_busy_reason=lambda: None)
+        )
+        assert "exceeds estimated" in result.error
+        assert not client.requests
+        assert [m.model_dump() for m in engine.session_messages] == original
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_provider_summary_overflow_is_not_retried_identically():
+    calls = []
+
+    async def stream(request):
+        calls.append(request)
+        yield StreamError(message="maximum context length exceeded", retryable=False)
+
+    result = await capacity.compact_messages_safe(
+        SimpleNamespace(stream_chat_completion=stream),
+        single_user_history(),
+        capacity.CompactionConfig(keep_recent_tokens=0),
+    )
+    assert not result.success and result.budget_exceeded
+    assert result.model_calls == len(calls) == 1

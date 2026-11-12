@@ -107,7 +107,7 @@ async def test_compaction_does_not_overwrite_concurrent_change():
         return SimpleNamespace(success=True, messages=messages)
 
     engine = SimpleNamespace(
-        session_messages=[old], _run_compaction=compact, _cycle_session_id="session"
+        session_messages=[old], _manual_compact=compact, _cycle_session_id="session"
     )
     app = SimpleNamespace(_engine=engine, _session_busy_reason=lambda: None)
     task = asyncio.create_task(commands.dispatch_async("/compact", app))

@@ -129,9 +129,10 @@ def test_skill_focus_does_not_reach_the_system_prompt() -> None:
     from deepseek_tui.engine.orchestrator import core as core_mod
 
     src = inspect.getsource(core_mod.Engine._handle_send_message_inner)
+    prompt_src = inspect.getsource(core_mod.Engine._compose_system_prompt)
     call = re.search(
         r"skills_context=self\._render_skills_context\((.*?)\n\s*\),",
-        src,
+        prompt_src,
         re.DOTALL,
     )
     assert call is not None, "skills_context call not found"
