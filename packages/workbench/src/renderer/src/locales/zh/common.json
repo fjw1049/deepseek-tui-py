@@ -1447,7 +1447,6 @@
   "usageHeroActivity": "活跃热力图",
   "usageHeroHeatLess": "较少",
   "usageHeroHeatMore": "较多",
-  "usageHeroHeatHint": "点击查看用量",
   "usageHeroHeatNoUsage": "无用量",
   "clawEmptyHeroBadge": "Claw 智能体",
   "clawEmptyHeroTitle": "开始和 {{name}} 对话",

@@ -257,7 +257,6 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
             <HeatmapDayDetail
               cell={selectedCell}
               locale={i18n.language}
-              hint={t('usageHeroHeatHint')}
               noUsageLabel={t('usageHeroHeatNoUsage')}
               compact
               highlighted={Boolean(selectedCell?.day)}
@@ -271,7 +270,6 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
               <HeatmapDayDetail
                 cell={selectedCell}
                 locale={i18n.language}
-                hint={t('usageHeroHeatHint')}
                 noUsageLabel={t('usageHeroHeatNoUsage')}
                 highlighted={Boolean(selectedCell?.day)}
               />
@@ -292,24 +290,22 @@ export function UsageActivityHeatmap({ daily, asOfDay, fillHeight = false }: Pro
 function HeatmapDayDetail({
   cell,
   locale,
-  hint,
   noUsageLabel,
   compact = false,
   highlighted = false
 }: {
   cell: HeatmapGridCell | null
   locale: string
-  hint: string
   noUsageLabel: string
   compact?: boolean
   highlighted?: boolean
 }): ReactElement {
   const textClass = compact
-    ? 'min-w-0 flex-1 truncate text-left text-[11px] leading-5'
+    ? 'min-h-[20px] min-w-0 flex-1 truncate text-left text-[11px] leading-5'
     : 'min-h-[20px] flex-1 text-center text-[12px] leading-5'
 
   if (!cell?.day) {
-    return <p className={[textClass, 'text-ds-faint'].join(' ')}>{hint}</p>
+    return <p className={textClass} aria-hidden />
   }
 
   const tokens = cell.point?.totalTokens ?? 0

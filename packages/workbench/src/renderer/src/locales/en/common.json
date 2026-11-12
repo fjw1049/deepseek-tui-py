@@ -1465,7 +1465,6 @@
   "usageHeroActivity": "Activity",
   "usageHeroHeatLess": "Less",
   "usageHeroHeatMore": "More",
-  "usageHeroHeatHint": "Click to view usage",
   "usageHeroHeatNoUsage": "No usage",
   "clawEmptyHeroBadge": "Claw agent",
   "clawEmptyHeroTitle": "Start a conversation with {{name}}",
