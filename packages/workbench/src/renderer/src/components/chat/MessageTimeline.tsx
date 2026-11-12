@@ -1214,7 +1214,7 @@ function MessageTurn({
   const hasProcess = !isSystemOnlyTurn && (isProcessing || processBlocks.length > 0)
   const showWorkMeta =
     hasProcess || (!isSystemOnlyTurn && !isProcessing && typeof durationMs === 'number')
-  const turnChangeSummary = !scope && !isProcessing && turnFileChanges.length > 0 ? (
+  const turnChangeSummary = !scope && !isProcessing && assistantContentBlocks.length > 0 && turnFileChanges.length > 0 ? (
     <TurnChangeSummary
       changes={turnFileChanges}
       viewportRef={viewportRef}

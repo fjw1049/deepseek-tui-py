@@ -26,6 +26,62 @@ afterEach(() => {
   useChatStore.setState(initial, true)
 })
 
+it('shows accumulated changes only after the final reply, not at interrupted user-message boundaries', async () => {
+  const turnId = 'steered-turn'
+  const blocks: ChatBlock[] = [
+    { kind: 'user', id: 'request', text: '创建两个文件', turnId },
+    { kind: 'tool', id: 'edit-a', summary: 'edit_file', toolKind: 'file_change',
+      status: 'success', filePath: 'first.py' },
+    { kind: 'assistant', id: 'progress', text: '继续检查', agentSegment: 'mid_turn_preface' },
+    { kind: 'user', id: 'steer-one', text: '换个安装源', turnId },
+    { kind: 'tool', id: 'edit-b', summary: 'edit_file', toolKind: 'file_change',
+      status: 'success', filePath: 'second.py' },
+    { kind: 'user', id: 'steer-two', text: '简单测试即可', turnId }
+  ]
+  const render = async (rows: ChatBlock[]): Promise<void> => {
+    await act(async () => root.render(createElement(MessageTimeline, {
+      blocks: rows, liveReasoning: '', live: '', activeThreadId: 'summary-review',
+      runtimeConnection: 'ready', onRetryConnection: () => {},
+      onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+    })))
+  }
+  act(() => useChatStore.setState({
+    busy: true, activeThreadId: 'summary-review', workspaceRoot: '', currentTurnId: turnId,
+    turnDiffByTurnId: { [turnId]: {
+      turn_id: turnId, revision: 2, complete: false,
+      files: ['first.py', 'second.py'].map(path => ({ path, additions: 1, deletions: 0, unified_diff: '' })),
+      totals: { files: 2, additions: 2, deletions: 0 }
+    } }
+  }))
+  await render(blocks)
+  expect(container.querySelectorAll('.ds-turn-change-summary')).toHaveLength(0)
+
+  // Stopping clears busy but does not produce a final answer.
+  act(() => useChatStore.setState({ busy: false, currentTurnId: null, lastCompletedTurnId: turnId }))
+  await render(blocks)
+  expect(container.querySelectorAll('.ds-turn-change-summary')).toHaveLength(0)
+
+  const completed: ChatBlock[] = [...blocks,
+    { kind: 'assistant', id: 'final', text: '测试完成', agentSegment: 'final_answer' }
+  ]
+  act(() => useChatStore.setState({ busy: true, currentTurnId: turnId }))
+  await render(completed)
+  expect(container.querySelectorAll('.ds-turn-change-summary')).toHaveLength(0)
+
+  act(() => useChatStore.setState({ busy: false, currentTurnId: null }))
+  await render(completed)
+  const summaries = container.querySelectorAll('.ds-turn-change-summary')
+  expect(summaries).toHaveLength(1)
+  expect(summaries[0].textContent).toContain('first.py')
+  expect(summaries[0].textContent).toContain('second.py')
+
+  // Reopening the same persisted history keeps only the final receipt.
+  await act(async () => root.unmount())
+  root = createRoot(container)
+  await render(completed)
+  expect(container.querySelectorAll('.ds-turn-change-summary')).toHaveLength(1)
+})
+
 it('folds completed progress and tool errors while preserving their details', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   document.body.append(container)
