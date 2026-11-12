@@ -403,6 +403,8 @@ async def test_drag_failure_releases_offscreen_without_reporting_unstarted_press
 
     async def send(method, params=None):
         sent.append((method, params))
+        if method == "Runtime.evaluate":  # the viewport size, unchanged
+            return {"result": {"value": [800, 600]}}
         if method == "Input.dispatchMouseEvent" and params["type"] == "mouseMoved":
             moves = sum(p is not None and p.get("type") == "mouseMoved" for _, p in sent)
             if failure == "before_press":

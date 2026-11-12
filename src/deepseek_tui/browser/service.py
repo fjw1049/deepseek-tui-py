@@ -2636,11 +2636,16 @@ class BrowserService:
             (x0, y0), (x1, y1) = (action.x, action.y), (action.to_x, action.to_y)
         client = run.session._internal.client
         identity = await document_identity(client)
+        # A resized viewport moves what sits under both points. Scrolling is left alone:
+        # pages scroll themselves while an item is dragged to an edge.
+        size = await evaluate(client, "[innerWidth, innerHeight]")
 
         async def check_drag_document():
             if (run.transferring or run.generation != action.generation
                     or await document_identity(client) != identity):
                 raise ValueError("Browser document or control changed during drag")
+            if await evaluate(client, "[innerWidth, innerHeight]") != size:
+                raise ValueError("Browser viewport was resized during drag")
 
         pressed = False
         completed = False

@@ -45,7 +45,8 @@ class BrowserUseTool(ToolSpec):
             "elements. check_text tests for expected text, optionally scoped to a unique "
             "selector. console reads the page's console messages and uncaught errors; on "
             "localhost pages action results also list new console_errors. screenshot saves "
-            "evidence; coordinate actions (x/y) require its current observation_id.\n"
+            "evidence; coordinate actions (x/y) need the latest observation to be a viewport "
+            "screenshot.\n"
             "Navigation: open keeps the user's own page (from a tab the user was using it opens "
             "a new tab). new_tab opens an http(s) URL or a blank tab; tabs lists tabs; "
             "switch_tab and close_tab take a fresh tab ID from tabs; back/forward/reload "
@@ -141,7 +142,7 @@ class BrowserUseTool(ToolSpec):
             "to_x": "For a coordinate drag from x/y, the destination viewport x in CSS pixels.",
             "to_y": "For a coordinate drag from x/y, the destination viewport y in CSS pixels.",
             "button": "Mouse button for click, default left; right opens the page's context menu.",
-            "clicks": "Consecutive clicks for click, default 1; 2 double-clicks, 3 selects a line.",
+            "clicks": "Consecutive clicks for click, default 1; 2 double-clicks, 3 triple-clicks.",
             "observation_id": "Observation to act on. Omit to use the latest; after navigation observe first.",
             "selector": "CSS selector for a unique observed target, or a read/wait scope.",
             "text": (
@@ -151,7 +152,9 @@ class BrowserUseTool(ToolSpec):
             ),
             "checked": "Desired checkbox state for set_checked; prevents toggling on retries.",
             "key": "Keyboard key or chord for press, default Enter.",
-            "x": "Viewport x coordinate from a current screenshot, in CSS pixels; for click, hover, scroll and the start of a drag.",
+            "x": ("Viewport x coordinate from the latest viewport screenshot, in CSS pixels (the "
+                  "image provenance gives the mapping when the image is smaller); for click, "
+                  "hover, scroll and the start of a drag."),
             "y": "Viewport y coordinate from a current screenshot, in CSS pixels.",
             "direction": "Scroll direction, default down.",
             "amount": "Scroll distance in CSS pixels, default 300.",

@@ -78,17 +78,26 @@ _BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
 # On-screen layer-0 windows of at least 100x100, as the Workbench preview counts them, but only
 # substantially opaque ones: windows fading in or out (opening, closing, sheets) stay listed
 # at near-zero alpha for a moment and would be counted twice.
-_COUNT_WINDOWS = """ObjC.import('AppKit')
+_LIST_WINDOWS = """ObjC.import('AppKit')
 ObjC.import('CoreGraphics')
 function run(argv) {
-  const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(argv[0])
-  const pids = []
-  for (let i = 0; i < apps.count; i++) pids.push(apps.objectAtIndex(i).processIdentifier)
-  if (!pids.length) return '0'
+  const apps = $.NSWorkspace.sharedWorkspace.runningApplications
+  const ids = {}
+  for (let i = 0; i < apps.count; i++) {
+    const app = apps.objectAtIndex(i)
+    const id = ObjC.unwrap(app.bundleIdentifier)
+    if (id && (!argv.length || id === argv[0])) ids[app.processIdentifier] = id
+  }
   const all = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(17, 0))) || []
-  return String(all.filter(w => pids.includes(w.kCGWindowOwnerPID) && w.kCGWindowLayer === 0
-    && w.kCGWindowAlpha >= 0.5 && w.kCGWindowBounds.Width >= 100
-    && w.kCGWindowBounds.Height >= 100).length)
+  const result = {}
+  for (const w of all) {
+    const id = ids[w.kCGWindowOwnerPID], b = w.kCGWindowBounds
+    if (id && w.kCGWindowLayer === 0 && w.kCGWindowAlpha >= 0.5
+        && b.Width >= 100 && b.Height >= 100)
+      (result[id] ??= []).push([w.kCGWindowNumber, b.X, b.Y, b.Width, b.Height])
+  }
+  return JSON.stringify(argv.length ? (result[argv[0]] || []) : result)
+
 }"""
 
 
@@ -125,13 +134,15 @@ def on_screen_apps(limit: int = 5) -> list[str]:
     return [app for app in ids if app.lower() not in BLOCKED][:limit]
 
 
-def open_window_count(bundle_id: str) -> int | None:
-    """How many standard windows a running macOS app shows on screen; None when unknown."""
+def open_windows(bundle_id: str) -> list[tuple[int, int, int, int]] | None:
+    """A running macOS app's standard on-screen windows, front to back, as (x, y, width,
+    height) in points; None when unknown."""
     if sys.platform != "darwin" or not _BUNDLE_ID.fullmatch(bundle_id):
         return None
     try:
-        out = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", _COUNT_WINDOWS,
+        out = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", _LIST_WINDOWS,
                               bundle_id], capture_output=True, text=True, timeout=3)
-        return int(out.stdout.strip()) if out.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return ([tuple(int(v) for v in bounds[1:]) for bounds in json.loads(out.stdout)]
+                if out.returncode == 0 else None)
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
         return None

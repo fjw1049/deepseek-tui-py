@@ -23,9 +23,9 @@ def fresh_runtime_cache(tmp_path, monkeypatch):
     # Never contend with a real desktop session's lock.
     monkeypatch.setattr(cua_session, "LOCK_DIR", tmp_path)
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
-    # Never read the real desktop's windows; tests that need a count set one.
+    # Never read the real desktop's windows; tests that need windows set them.
     from deepseek_tui.cua import apps
-    monkeypatch.setattr(apps, "open_window_count", lambda app_id: None)
+    monkeypatch.setattr(apps, "open_windows", lambda app_id: None)
     cua_session.reset_runtime_cache()
     yield
     cua_session.reset_runtime_cache()
@@ -1482,7 +1482,8 @@ async def test_multi_window_note_repeats_only_when_the_count_changes(session, tm
     from deepseek_tui.cua import apps
 
     counts = iter([2, 2, 1, 2])
-    monkeypatch.setattr(apps, "open_window_count", lambda app_id: next(counts))
+    monkeypatch.setattr(apps, "open_windows",
+                        lambda app_id: [(0, 0, 400, 300)] * next(counts))
     await session.connect()
     tool = CuaTool(session, session.descriptors[0])
     context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
@@ -1494,6 +1495,14 @@ async def test_multi_window_note_repeats_only_when_the_count_changes(session, tm
         assert notes == [True, False, False, True]
     finally:
         await session.close()
+
+
+def test_stale_coordinates_are_named_and_known_not_sent():
+    from deepseek_tui.cua.tools import _PRE_DISPATCH, runtime_error
+
+    named = runtime_error(
+        "Coordinate guard: Window changed or no current screenshot; take a fresh screenshot")
+    assert named and named[0] == "stale_coordinates" and named[0] in _PRE_DISPATCH
 
 
 async def test_a_person_taking_over_ends_a_tool_calls_wait_for_the_desktop(tmp_path):

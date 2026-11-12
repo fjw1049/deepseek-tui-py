@@ -192,6 +192,32 @@ async def test_browser_image_caption_describes_actual_wire_resize_and_crop(monke
     assert len(request.messages[0].content) == 2 and block.source["observation_id"] == "obs"
 
 
+@pytest.mark.parametrize("size,max_side,scope,expected", [
+    ((2400, 900), 2048, "viewport", "x = image x × 1.172, y = image y × 1.172"),
+    ((1200, 760), 2048, "viewport", "its pixels are browser_use x/y"),
+    ((1200, 760), 2048, "crop", "Evidence only"),
+])
+async def test_browser_screenshots_state_how_their_pixels_map_to_coordinates(
+        monkeypatch, tmp_path, size, max_side, scope, expected):
+    from deepseek_tui.client.media import prepare_media_request
+    from deepseek_tui.config.models import Config, ProviderConfig
+    from deepseek_tui.media import import_image
+    from deepseek_tui.protocol.messages import Message, MessageRequest
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path))
+    data = io.BytesIO()
+    Image.new("RGB", size, "white").save(data, "JPEG")
+    block = import_image(data.getvalue()).model_copy(update={"source": {
+        "kind": "browser", "scope": scope,
+        "pixel_to_css": {"scale_x": 1, "scale_y": 1, "offset_x": 0, "offset_y": 0}}})
+    config = Config(providers={"deepseek": ProviderConfig(image_max_side=max_side)})
+    projected = await prepare_media_request(
+        MessageRequest(model="unknown-capability", messages=[Message.user("look", images=[block])]),
+        config, {})
+    source = json.loads(projected.messages[0].content[-1].text.split("\n", 1)[1])[0]
+    assert expected in source["coordinates"]
+
+
 async def test_tab_cache_avoids_repeated_enumeration_and_force_refreshes(tmp_path):
     service = BrowserService(tmp_path)
     session = SimpleNamespace(

@@ -464,6 +464,19 @@ console.log(JSON.stringify({ first, second, third, tabs: Boolean(globalThis.__de
     assert out["tabs"] is False
 
 
+def test_coordinate_guard_checks_each_input_and_capture():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node required")
+    script = Path(__file__).parent / "fixtures/cua/coordinate-guard.test.mjs"
+    subprocess.run([node, "--test", str(script)], check=True, capture_output=True, text=True,
+                   timeout=30)
+
+
 def test_preview_follows_reused_apps_and_cached_chained_locators():
     import json
     import shutil

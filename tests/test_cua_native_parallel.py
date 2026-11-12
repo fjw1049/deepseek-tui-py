@@ -26,11 +26,11 @@ async def test_three_native_apps_and_a_queued_second_player(tmp_path, monkeypatc
     for identifier in ("com.apple.calculator", "com.soda.music"):
         await asyncio.to_thread(subprocess.run, ["open", "-b", identifier], check=True)
     # open(1) can return before the native window exists.
-    from deepseek_tui.cua.apps import open_window_count
+    from deepseek_tui.cua.apps import open_windows
 
     for identifier in ("com.soda.music", "com.apple.calculator", "com.apple.TextEdit"):
         for attempt in range(30):
-            if await asyncio.to_thread(open_window_count, identifier):
+            if await asyncio.to_thread(open_windows, identifier):
                 break
             if attempt in (5, 15):
                 await asyncio.to_thread(subprocess.run, ["open", "-b", identifier], check=True)

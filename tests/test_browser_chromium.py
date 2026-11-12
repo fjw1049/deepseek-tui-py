@@ -2847,6 +2847,33 @@ async def test_coordinate_drag_needs_a_current_screenshot_and_an_on_screen_desti
     assert result["receipt"]["reason"] == "pointer_outside_viewport"
 
 
+async def test_viewport_resize_mid_drag_cancels_instead_of_dropping_on_the_old_point(
+        chrome, monkeypatch):
+    from deepseek_tui.browser.service import BrowserActionError
+
+    service, run = chrome
+    client = run.session._internal.client
+    await evaluate(client, "document.body.innerHTML='<canvas width=900 height=500></canvas>';"
+                   "window.ups=[];document.onmouseup=e=>ups.push([e.clientX,e.clientY]);true")
+    capture = await service.action("t", BrowserAction(action="screenshot"))
+    send = client.send
+
+    async def resize_after_press(method, params=None, **kwargs):
+        result = await send(method, params, **kwargs)
+        if method == "Input.dispatchMouseEvent" and (params or {}).get("type") == "mousePressed":
+            await send("Emulation.setDeviceMetricsOverride", {
+                "width": 800, "height": 600, "deviceScaleFactor": 1, "mobile": False})
+        return result
+
+    monkeypatch.setattr(client, "send", resize_after_press)
+    with pytest.raises(BrowserActionError) as failed:
+        await act(service, capture["observation"], "drag", x=120, y=120, to_x=600, to_y=320)
+    monkeypatch.setattr(client, "send", send)
+    # Released away from the page, never on the destination that no longer matches.
+    assert [600, 320] not in await evaluate(client, "window.ups")
+    assert failed.value.response["receipt"]["execution"] == "unknown"
+
+
 async def test_triple_click_emits_three_increasing_click_counts(chrome):
     service, run = chrome
     client = run.session._internal.client

@@ -124,6 +124,10 @@ _RUNTIME_ERRORS = (
      "window is hidden or minimized. Use getAXState(), or close the menu or show the window "
      "first."),
     # Shares -10005 with timeouts, so only its own text names it.
+    # Raised by the host's input wrapper (bridge.mjs) before anything is sent.
+    ("stale_coordinates", (), r"Coordinate guard:",
+     "Coordinates come only from the app's latest screenshot. Take a new screenshot and locate "
+     "the target again; element indices are unaffected."),
     ("no_window", (), r"noWindowsAvailable",
      "The app has no window the runtime can act on (closed, minimized, or on another "
      "Space); nothing was sent. Bring a window up first: reopen it from the app's menu bar "
@@ -377,7 +381,7 @@ def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) 
 
 # Rejected while validating the request, before any input is sent.
 _PRE_DISPATCH = frozenset({"stale_element", "text_not_found", "invalid_key", "unsupported_form",
-                           "unknown_app", "state_changed", "no_window"})
+                           "unknown_app", "state_changed", "no_window", "stale_coordinates"})
 
 
 def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:
@@ -608,14 +612,14 @@ class CuaTool(ToolSpec):
 
 
     async def _windows_note(self, app_id: str) -> str:
-        """macOS state covers one window; say so once each time an app's window count changes."""
-        from deepseek_tui.cua.apps import open_window_count
+        """Report multiple windows; screenshot identity is tracked by the input bridge."""
+        from deepseek_tui.cua.apps import open_windows
 
-        count = await asyncio.to_thread(open_window_count, app_id)
-        if count is None or self.session.window_counts.get(app_id) == count:
+        windows = await asyncio.to_thread(open_windows, app_id)
+        if windows is None or self.session.window_counts.get(app_id) == len(windows):
             return ""
-        self.session.window_counts[app_id] = count
-        return WINDOWS_NOTE.format(app=app_id, count=count) if count > 1 else ""
+        self.session.window_counts[app_id] = len(windows)
+        return WINDOWS_NOTE.format(app=app_id, count=len(windows)) if len(windows) > 1 else ""
 
 
 class CuaObserveTool(CuaTool):
@@ -850,8 +854,9 @@ class CuaActTool(CuaTool):
                "background)" if mac else "Supply window_id (from the runtime inventory)")
             + " and actions. An element is an index from the latest state shown for that app "
             "(the previous cua_act result or cua_observe); use x and y only for a target the "
-            "state does not list. key takes xdotool-style names such as \"Return\", \"Tab\" "
-            "and \"super+c\"" + (" (super is Command)" if mac else "") + ". When a step fails, "
+            "state does not list: they are pixels of that app's latest screenshot. key takes "
+            "xdotool-style names such as \"Return\", \"Tab\" and \"super+c\""
+            + (" (super is Command)" if mac else "") + ". When a step fails, "
             "the steps after it do not run. Set screenshot to get an image with the state. "
             "Browser tabs, and logic these steps cannot express, go through cua_js."
         )
@@ -866,8 +871,12 @@ class CuaActTool(CuaTool):
             "element": {"type": "integer", "minimum": 0,
                         "description": "Index from the latest state. click and scroll take "
                                        "this or x and y."},
-            "x": number, "y": number,
-            "to_x": {**number, "description": "drag: where the drag ends."}, "to_y": number,
+            "x": {**number, "description": "Pixels of this app's latest screenshot, from its "
+                                            "top-left corner."},
+            "y": number,
+            "to_x": {**number, "description": "drag: where the drag ends, in the same "
+                                               "screenshot's pixels."},
+            "to_y": number,
             "text": {"type": "string",
                      "description": "type, paste" + (", set_value, select_text" if mac else "")},
             "key": {"type": "string", "description": "key: the key or chord to press."},

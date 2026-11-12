@@ -74,9 +74,10 @@ moved: reaching an edge, or moving a panel other than the target, is not the
 requested scroll.
 
 Use observed refs/selectors for actions, and prefer them inside frames and on
-dynamic pages. Only an unchanged current viewport screenshot that you actually
-received and inspected is actionable for coordinates; cropped, full-page,
-compressed or older images are evidence and must be mapped or refreshed. Where a
+dynamic pages. Only the latest viewport screenshot that you actually received and
+inspected is actionable for coordinates; when it was shown smaller than the
+viewport, map its pixels with the image provenance. Cropped, full-page or older
+images are evidence only: take a new viewport screenshot. Where a
 ref exists use it; coordinates are for what observation cannot name (canvas, map,
 chart, slider track): `click` and `hover` take `x`/`y`, `drag` takes `x`/`y` to
 `to_x`/`to_y`. Each action returns a new observation, so take a fresh screenshot

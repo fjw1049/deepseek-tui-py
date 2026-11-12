@@ -414,8 +414,11 @@ class CuaSession:
             )
             self.reader = asyncio.create_task(self._read(), name="cua-reader")
             self.stderr = asyncio.create_task(self._drain_stderr(), name="cua-stderr")
+            from deepseek_tui.cua.apps import _LIST_WINDOWS
+
             result = await self._request(
                 "connect",
+                windowScript=_LIST_WINDOWS if sys.platform == "darwin" else None,
                 timeout=120,
                 command=command,
                 clientPath=str(client_path),

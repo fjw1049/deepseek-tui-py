@@ -1,6 +1,8 @@
 // Host-only bridge. stdout is framed JSON; model code only reaches client.call.
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
+import { createCoordinateGuard } from './coordinate-guard.mjs';
+let coordinateGuard;
 
 let client;
 let sequence = 0;
@@ -30,6 +32,25 @@ const RESOLVE_APP = `async name => {
 }`;
 const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
   const trace = globalThis.__deepseekTrace = [];
+  const shots = new Map();
+  const frame = async app => {
+    const fs = await import('node:fs/promises');
+    const started = Date.now(), deadline = started + 5000;
+    while (Date.now() < deadline) {
+      let snapshot;
+      try { snapshot = JSON.parse(await fs.readFile(globalThis.__deepseekCoordinatePath, 'utf8')); }
+      catch (error) { if (error.code !== 'ENOENT') throw Error('Coordinate guard: geometry unavailable'); }
+      // Wait for a system query STARTED after this input/capture check, never reuse a cached sample.
+      if (snapshot?.started > started) {
+        const value = snapshot.frames?.[app]?.[0];
+        if (!Array.isArray(value) || value.length !== 5 || !value.every(Number.isFinite))
+          throw Error('Coordinate guard: window geometry unavailable');
+        return JSON.stringify(value);
+      }
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw Error('Coordinate guard: window geometry check timed out');
+  };
   const api = globalThis.cua;
   const record = (entry, run) => {
     trace.push(entry);
@@ -73,9 +94,30 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
       const observe = ${JSON.stringify(OBSERVATIONS)}.includes(name);
       target[name] = function (...args) {
         globalThis.__deepseekTarget = target;
-        return record(observe ? { action: name, observe } : { action: name,
-          coordinate: ['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]) },
-        () => original.apply(this, args));
+        const coordinate = ['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]);
+        const app = target.__deepseekApp;
+        const capture = observe && name !== 'getAXState' && !globalThis.__deepseekPreview;
+        return record(observe ? { action: name, observe } : { action: name, coordinate }, async () => {
+          const guarded = app && globalThis.__deepseekCoordinatePath;
+          if (guarded && coordinate && shots.get(app) !== await frame(app)) {
+            shots.delete(app);
+            throw Error('Coordinate guard: window changed or no current screenshot; take a fresh screenshot');
+          }
+          let before;
+          if (guarded && capture) {
+            shots.delete(app);
+            before = await frame(app);
+          }
+          const value = await original.apply(this, args);
+          if (before) {
+            const pixels = Boolean(value?.byteLength || value?.screenshot?.byteLength ||
+              value?.screenshots?.some(region => region.bytes?.byteLength));
+            if (!pixels || before !== await frame(app))
+              throw Error('Coordinate guard: window changed during screenshot; take a fresh screenshot');
+            shots.set(app, before);
+          }
+          return value;
+        });
       };
     }
     // Wrap locator methods themselves so cached and chained locators remain traced.
@@ -96,6 +138,10 @@ const TRACE_INSTALL = `if (!globalThis.__deepseekTrace) {
         if (name === 'getApp') args[0] = await resolveApp(args[0]);
         return original.apply(this, args);
       });
+      // The app id the host knows this target by, for coordinates gone stale.
+      if (name === 'getApp' && target && typeof target === 'object' && typeof args[0] === 'string') {
+        Object.defineProperty(target, '__deepseekApp', { value: args[0], configurable: true });
+      }
       // Only a tab that exists can take Playwright input outside the wrappers.
       if (name !== 'getApp') globalThis.__deepseekTabs = true;
       return (globalThis.__deepseekTarget = wrap(target));
@@ -168,6 +214,7 @@ async function handle(request) {
         }),
       });
       await client.connect();
+      if (request.windowScript) coordinateGuard = await createCoordinateGuard(request.windowScript);
       return { instructions: client.instructions, tools: client.publicTools() };
     }
     case 'call':
@@ -177,7 +224,14 @@ async function handle(request) {
       calls.set(request.id, controller);
       try {
         const context = { ...request.context, signal: controller.signal };
+        coordinateGuard?.start();
         let result;
+        // Install before host observations too, so every screenshot has its own app identity.
+        const install = (request.type === 'observe' || request.name === 'js')
+          ? await client.call('js', { code: TRACE_INSTALL +
+              `\nglobalThis.__deepseekCoordinatePath = ${JSON.stringify(coordinateGuard?.path ?? null)};` },
+            { ...context, toolCallId: `${context.toolCallId}:trace` }) : null;
+        if (install?.isError) return install;
         if (request.type === 'observe') {
           // Only host-written observation code runs here. Never classify arbitrary JS as read-only.
           const { app, window_id: windowId, browser, tab_id } = request.arguments;
@@ -222,8 +276,6 @@ async function handle(request) {
             }
           }
         } else if (request.name === 'js') {
-          const install = await client.call('js', { code: TRACE_INSTALL },
-            { ...context, toolCallId: `${context.toolCallId}:trace` });
           result = await client.call(request.name, request.arguments, context);
           previewTarget = `(globalThis.__deepseekTarget ?? ${observedTarget})`;
           if (!controller.signal.aborted) {
@@ -237,12 +289,13 @@ async function handle(request) {
         } else {
           result = await client.call(request.name, request.arguments, context);
         }
+        if (request.type === 'observe' && install) result.content = [...printed(install), ...(result.content ?? [])];
         return { ...result, instructions: client.instructions, tools: client.publicTools() };
-      } finally { calls.delete(request.id); }
+      } finally { await coordinateGuard?.stop(); calls.delete(request.id); }
     }
     case 'preview': {
       if (!client) throw new Error('Not connected');
-      const code = `await ${previewTarget}?.getScreenshot();`;
+      const code = `globalThis.__deepseekPreview = true; try { await ${previewTarget}?.getScreenshot(); } finally { globalThis.__deepseekPreview = false; }`;
       const result = await client.call('js', { code }, request.context);
       return { image: (result.content ?? []).find(block => block.type === 'image') ?? null };
     }
@@ -254,6 +307,7 @@ async function handle(request) {
       return await client?.turnEnded(request.context) ?? {};
     case 'close':
       closing = true;
+      await coordinateGuard?.close();
       for (const controller of calls.values()) controller.abort();
       for (const finish of [...approvals.values()]) finish({ action: 'cancel' });
       await client?.close();
@@ -277,6 +331,7 @@ input.on('line', line => {
 });
 input.on('close', async () => {
   closing = true;
+  await coordinateGuard?.close();
   for (const controller of calls.values()) controller.abort();
   for (const finish of [...approvals.values()]) finish({ action: 'cancel' });
   await client?.close();
