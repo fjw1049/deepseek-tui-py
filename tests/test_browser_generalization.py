@@ -392,3 +392,47 @@ async def test_console_navigation_disables_capture_and_clears_old_messages(tmp_p
     # Explicit console requests can enable it again on the new document.
     await native.watch_console()
     assert client in native.console_clients
+
+
+@pytest.mark.parametrize("failure", ["before_press", "during_drag", "navigation", "cancel"])
+async def test_drag_failure_releases_offscreen_without_reporting_unstarted_press(
+    monkeypatch, failure
+):
+    sent = []
+    page_id = ["original"]
+
+    async def send(method, params=None):
+        sent.append((method, params))
+        if method == "Input.dispatchMouseEvent" and params["type"] == "mouseMoved":
+            moves = sum(p is not None and p.get("type") == "mouseMoved" for _, p in sent)
+            if failure == "before_press":
+                raise RuntimeError("lost before press")
+            if moves == 2:
+                if failure == "during_drag":
+                    raise RuntimeError("lost during drag")
+                if failure == "cancel":
+                    raise asyncio.CancelledError()
+                page_id[0] = "new page"
+
+    monkeypatch.setattr(
+        "deepseek_tui.browser.service.document_identity",
+        AsyncMock(side_effect=lambda _: page_id[0]),
+    )
+    run = SimpleNamespace(
+        session=SimpleNamespace(_internal=SimpleNamespace(client=SimpleNamespace(send=send))),
+        generation=0,
+        transferring=False,
+        last_dispatch_id=None,
+    )
+    service = SimpleNamespace(_dispatch_guard=AsyncMock(return_value={}))
+    action = BrowserAction(action="drag", x=10, y=20, to_x=30, to_y=40)
+    action._action_id = "drag"
+    with pytest.raises((RuntimeError, ValueError, asyncio.CancelledError)):
+        await BrowserService._drag(service, run, action)
+    releases = [p for _, p in sent if p and p.get("type") == "mouseReleased"]
+    if failure == "before_press":
+        assert not releases and run.last_dispatch_id is None
+    else:
+        assert len(releases) == 1
+        assert (releases[0]["x"], releases[0]["y"]) == (-1, -1)
+        assert run.last_dispatch_id == "drag"

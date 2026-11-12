@@ -2631,20 +2631,38 @@ class BrowserService:
         else:
             (x0, y0), (x1, y1) = (action.x, action.y), (action.to_x, action.to_y)
         client = run.session._internal.client
-        run.last_dispatch_id = action._action_id
+        identity = await document_identity(client)
+
+        async def check_drag_document():
+            if (run.transferring or run.generation != action.generation
+                    or await document_identity(client) != identity):
+                raise ValueError("Browser document or control changed during drag")
+
+        pressed = False
+        completed = False
         try:
             await client.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x0, "y": y0})
+            await self._dispatch_guard(run, action)
+            # A failed send may have reached the browser; release even when its reply is lost.
+            pressed = True
+            run.last_dispatch_id = action._action_id
             await client.send("Input.dispatchMouseEvent", {
                 "type": "mousePressed", "x": x0, "y": y0, "button": "left", "buttons": 1,
                 "clickCount": 1})
             for step in range(1, 11):
+                await check_drag_document()
                 await client.send("Input.dispatchMouseEvent", {
                     "type": "mouseMoved", "x": x0 + (x1 - x0) * step / 10,
                     "y": y0 + (y1 - y0) * step / 10, "button": "left", "buttons": 1})
                 await asyncio.sleep(0.02)
+            await check_drag_document()
+            completed = True
         finally:
-            await asyncio.shield(asyncio.wait_for(client.send("Input.dispatchMouseEvent", {
-                "type": "mouseReleased", "x": x1, "y": y1, "button": "left", "clickCount": 1}), 1))
+            if pressed:
+                await asyncio.shield(asyncio.wait_for(client.send("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "x": x1 if completed else -1,
+                    "y": y1 if completed else -1, "button": "left",
+                    "clickCount": 1 if completed else 0}), 1))
         return ToolResult(True, "Dragged observed source onto observed destination"
                           if action.to_ref else "Dragged between the screenshot points")
 
