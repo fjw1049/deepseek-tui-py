@@ -246,3 +246,20 @@ it.each(['unified', 'split'] as const)('windows large %s diffs and navigates to 
     expect(host.querySelectorAll('tbody tr').length).toBeLessThan(5)
   } finally { await act(async () => root.unmount()); host.remove() }
 })
+
+
+it.each(['unified', 'split'] as const)('excludes hidden metadata from virtual %s offsets', async diffStyle => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const patch = ['@@ -1,250 +1,250 @@', ...Array.from({ length: 250 }, (_, i) => ' line' + i), '@@ -251 +251 @@', '-old', '+new'].join('\n')
+  try {
+    await act(async () => root.render(createElement(DiffView, { patch, fullFilePatch: patch, showFullFile: true, diffStyle })))
+    expect(host.querySelector('[data-virtual-row]')?.getAttribute('data-virtual-row')).toBe('0')
+    expect(host.querySelector('.ds-diff-meta-sticky')).toBeNull()
+    const viewport = host.querySelector<HTMLElement>('.ds-change-inspector__code')!
+    const scrollTo = viewport.scrollTo = vi.fn()
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="diffNextChange"]')!.click())
+    expect(scrollTo.mock.calls[0][0].top).toBe(250 * 23)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})

@@ -382,13 +382,13 @@ export function DiffView({
   const newPairs = useMemo(() => new Map(splitRows.filter((row) => row.rightKind === 'add').map((row) => [row.rightNo, row.leftText])), [splitRows])
   const [unfoldedContext, setUnfoldedContext] = useState<Set<number>>(new Set())
   const displayRows = useMemo(
-    () => fullContext ? unifiedRows.map((row): UnifiedDisplayRow => ({ type: 'row', row }))
+    () => fullContext ? unifiedRows.filter(row => row.kind !== 'meta').map((row): UnifiedDisplayRow => ({ type: 'row', row }))
       : buildFoldedRows(unifiedRows, unfoldedContext),
     [unifiedRows, unfoldedContext, fullContext]
   )
   useEffect(() => { setUnfoldedContext(new Set()) }, [visiblePatch, diffStyle])
   const splitDisplayRows = useMemo(() => {
-    if (fullContext) return splitRows
+    if (fullContext) return splitRows.filter(row => row.kind !== 'meta')
     const result: Array<SplitRow | { kind: 'fold'; key: number; count: number }> = []
     for (let i = 0; i < splitRows.length;) {
       const row = splitRows[i]!
@@ -571,7 +571,6 @@ export function DiffView({
                   </td></tr>
                 )
                 if (row.kind === 'meta') {
-                  if (fullContext) return null
                   return (
                     <tr key={row.key} data-virtual-row={virtual.start + index} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined} className="text-[color:var(--ds-diff-hunk)]">
                       <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
@@ -643,7 +642,6 @@ export function DiffView({
                 }
                 const row = entry.row
                 if (row.kind === 'meta') {
-                  if (fullContext) return null
                   return (
                     <tr key={row.key} data-virtual-row={virtual.start + index} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined}>
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
