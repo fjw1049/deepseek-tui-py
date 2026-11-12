@@ -36,7 +36,7 @@ async def test_recovery_allows_observation_and_keeps_blocking_actions(session, t
 
 
 @pytest.mark.asyncio
-async def test_unknown_outcome_is_told_with_the_next_observation_and_settles(session, tmp_path):
+async def test_observation_keeps_unknown_outcome_across_actions_and_restart(session, tmp_path):
     await session.connect()
     await session.record_outcome("old-turn", "uncertain-click", "unknown",
                                  code=_code_fingerprint({"code": "click"}))
@@ -46,12 +46,12 @@ async def test_unknown_outcome_is_told_with_the_next_observation_and_settles(ses
     try:
         result = await registry.get("cua_observe").execute({"app": "dev.fixture"}, context)
         assert result.success and "unknown outcome" in result.content
-        # Told once beside the state to check it against: gone in memory and on disk.
-        assert session.unresolved is None
+        # Seeing the app is not proof that the earlier operation succeeded.
+        assert session.unresolved is not None
         other = await registry.get("cua_js").execute({"code": "read"}, context)
-        assert other.success and "unknown outcome" not in other.content
+        assert other.success and "unknown outcome" in other.content
         restored = CuaSession(session.config, tmp_path, "other", owner_id="session-a")
-        assert restored.unresolved is None
+        assert restored.unresolved is not None
     finally:
         await session.close()
 
@@ -74,7 +74,7 @@ async def test_code_after_an_unknown_outcome_gets_the_app_state_first(
         assert not held.success and "unknown outcome" in held.content
         assert "1 text Saved" in held.content
         assert "click" not in [c["args"]["code"] for c in _calls(tmp_path)]
-        assert session.unresolved is None
+        assert session.unresolved is not None
         assert (await tool.execute({"code": "click"}, context)).success
         # An app that cannot be observed still runs the code, told the old way.
         await tool.execute({"code": "surface:dev.unobservable"}, context)
@@ -672,8 +672,8 @@ async def test_waited_observation_preserves_unknown_outcome_warning(session, tmp
             "app": "dev.fixture", "expect": ["not present"], "wait_ms": 1,
         }, context)
         assert result.success and "unknown outcome" in result.content
-        assert "lost-submit" in result.content and session.unresolved is None
+        assert "lost-submit" in result.content and session.unresolved is not None
         again = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
-        assert "unknown outcome" not in again.content
+        assert "unknown outcome" in again.content
     finally:
         await session.close()

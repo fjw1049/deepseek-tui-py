@@ -424,9 +424,9 @@ class CuaTool(ToolSpec):
         js = self.descriptor["name"] == "js"
         if js and self.session.outside_change and (target := self.session.heal_target()):
             return await self._observe_instead(target, context, self.session.outside_change)
-        if (js and input_data.get("code") and self.session.unresolved
+        if (js and input_data.get("code") and self.session.needs_outcome_observation
                 and (target := self.session.heal_target())):
-            # The observation tells the model about the unknown outcome and settles it.
+            # Observe once before further work; the uncertain receipt remains pending.
             observed = await CuaObserveTool(self.session, self.cancel_events).execute(
                 target, context)
             if observed.success:

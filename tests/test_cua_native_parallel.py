@@ -98,7 +98,10 @@ async def test_three_native_apps_and_a_queued_second_player(tmp_path, monkeypatc
     sys.platform != "darwin" or os.getenv("RUN_CUA_NATIVE") != "1",
     reason="requires an authorized real Mac desktop with TextEdit",
 )
-async def test_typed_actions_edit_a_disposable_document_and_reobserve_after_release(tmp_path, monkeypatch):
+@pytest.mark.parametrize("unrestricted_first", [False, True])
+async def test_typed_actions_edit_a_disposable_document_and_reobserve_after_release(
+    tmp_path, monkeypatch, unrestricted_first
+):
     from deepseek_tui.cua.tools import CuaActTool, CuaObserveTool
     from deepseek_tui.tools.registry import ToolContext
 
@@ -122,6 +125,13 @@ async def test_typed_actions_edit_a_disposable_document_and_reobserve_after_rele
         observe = CuaObserveTool(session)
         before = await execute(observe, {"app": app, "expect": [document.name], "wait_ms": 5000})
         assert before.success and document.name in before.content, before.content
+        if unrestricted_first:
+            result = await session.call(
+                "js", {"code": 'nodeRepl.write("scope transition test");'},
+                "typed-live", uuid4().hex,
+            )
+            assert not result.get("isError") and session._unrestricted_repl
+            assert session.lease.app is None
         act = CuaActTool(session)
         written = await execute(act, {"app": app, "actions": [
             {"type": "key", "key": "super+a"},

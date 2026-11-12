@@ -1697,8 +1697,9 @@ async def test_returning_to_a_released_app_shows_its_state_instead_of_an_error(
         await session.close()
 
 
+@pytest.mark.parametrize("unrestricted", [False, True])
 async def test_typed_actions_run_as_documented_calls_scoped_to_their_app(
-    session, tmp_path, monkeypatch
+    session, tmp_path, monkeypatch, unrestricted
 ):
     from deepseek_tui.cua import app_scope, tools
 
@@ -1708,6 +1709,7 @@ async def test_typed_actions_run_as_documented_calls_scoped_to_their_app(
     context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
     try:
         await session.connect()
+        session._unrestricted_repl = unrestricted
         act = CuaActTool(session)
         result = await act.execute({"app": "备忘录", "title": "写一行", "actions": [
             {"type": "click", "element": 3},
@@ -1728,7 +1730,8 @@ async def test_typed_actions_run_as_documented_calls_scoped_to_their_app(
         ]
         assert "await app.getAXState();" in lines[-2]
         # The hold covers that app only, and typed steps never make the REPL exclusive.
-        assert session.lease.app == "com.apple.Notes" and not session._unrestricted_repl
+        assert session.lease.app == "com.apple.Notes"
+        assert session._unrestricted_repl == unrestricted
         sent_calls = len(_calls(tmp_path))
         for bad in ({"type": "click"}, {"type": "set_value", "element": 1}, {"type": "wave"},
                     {"type": "scroll", "element": 1}, {"type": "drag", "x": 1, "y": 2}):
@@ -1760,7 +1763,10 @@ def test_typed_actions_offer_only_what_this_platform_runs(session, monkeypatch):
         'await app.setValue(1, "");')
 
 
-async def test_typed_actions_observe_after_releasing_the_app(session, tmp_path, monkeypatch):
+@pytest.mark.parametrize("unrestricted", [False, True])
+async def test_typed_actions_observe_after_releasing_the_app(
+    session, tmp_path, monkeypatch, unrestricted
+):
     from deepseek_tui.cua import app_scope, tools
 
     monkeypatch.setattr(app_scope, "native_app", lambda name: name)
@@ -1771,6 +1777,7 @@ async def test_typed_actions_observe_after_releasing_the_app(session, tmp_path, 
     act = CuaActTool(session)
     request = {"app": "dev.fixture", "actions": [{"type": "click", "element": 3}]}
     try:
+        session._unrestricted_repl = unrestricted
         assert (await act.execute(request, context)).success
         await session.end_turn()
         held = await act.execute(request, context)

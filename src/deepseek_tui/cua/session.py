@@ -109,6 +109,7 @@ class CuaSession:
         self.control_revision = 0
         self.control_lock = asyncio.Lock()
         self._unresolved: list[dict[str, Any]] = []
+        self._observed_unknowns: set[str] = set()
         from deepseek_tui.config.paths import user_deepseek_dir
         self.receipt_path = user_deepseek_dir() / "state" / "cua" / (
             hashlib.sha256((owner_id or session_id).encode()).hexdigest() + ".json"
@@ -151,6 +152,10 @@ class CuaSession:
     @property
     def unresolved(self) -> dict[str, Any] | None:
         return self._unresolved[0] if self._unresolved else None
+
+    @property
+    def needs_outcome_observation(self) -> bool:
+        return any(r["call_id"] not in self._observed_unknowns for r in self._unresolved)
 
     def heal_target(self) -> dict[str, str] | None:
         """The app the host can observe on the model's behalf (macOS observes by app)."""
@@ -246,7 +251,6 @@ class CuaSession:
 
     async def record_outcome(
         self, turn_id: str, call_id: str, outcome: str, *, code: str | None = None,
-        settle: bool = False,
     ) -> None:
         receipt: dict[str, Any] = {"turn_id": turn_id, "call_id": call_id,
                                    "outcome": outcome, "recorded_at": time.time()}
@@ -256,13 +260,14 @@ class CuaSession:
         if outcome == "unknown":
             pending.append(receipt.copy())
         elif outcome != "reviewed":
-            pending = [] if settle else list(self._unresolved)
+            pending = list(self._unresolved)
         receipt["unresolved"] = pending
         if outcome == "unknown":
             self._unresolved = pending
         # fsync must not stall every conversation; the caller still awaits the write.
         await asyncio.to_thread(self._write_receipt, receipt)
         self._unresolved = pending
+        self._observed_unknowns.intersection_update(r["call_id"] for r in pending)
         self.control_revision += 1
 
     def _write_receipt(self, receipt: dict[str, Any]) -> None:
@@ -573,7 +578,7 @@ class CuaSession:
             app = None
             binding = None
             summary = name == "js" and set(arguments) == {"completion_summary"}
-            if sys.platform == "darwin" and not self._unrestricted_repl:
+            if sys.platform == "darwin":
                 if name == "observe" and isinstance(arguments.get("app"), str):
                     app = await asyncio.to_thread(native_app, arguments["app"])
                     if app:
@@ -582,7 +587,7 @@ class CuaSession:
                     app = self.lease.app
                 elif name == "js" and scope:
                     app = None if exclusive else scope
-                elif name == "js":
+                elif name == "js" and not self._unrestricted_repl:
                     app, binding = await asyncio.to_thread(
                         js_scope, arguments.get("code") or "", self._app_bindings)
                     if app and (binding or binding_only(arguments["code"])):
@@ -659,10 +664,8 @@ class CuaSession:
                 result["stats"] = {"lease_wait_ms": lease_wait_ms,
                                    "runtime_ms": round((time.monotonic() - started) * 1000)}
                 if name == "js":
-                    # Once this result tells the model about earlier unknown outcomes,
-                    # checking them is its job: they no longer wait on anyone.
-                    told = self._annotate(result)
-                    await self.record_outcome(turn_id, call_id, "returned", settle=told)
+                    self._annotate(result)
+                    await self.record_outcome(turn_id, call_id, "returned")
                 if name == "observe" and not result.get("isError"):
                     if self.observation_generation != observed_generation:
                         result["isError"] = True
@@ -678,14 +681,11 @@ class CuaSession:
                         self.outside_change = ""
                         self.reset_reason = ""
                         if self._unresolved and not arguments.get("poll"):
-                            # The state shown is what the model checks an unknown outcome
-                            # against, so telling it here settles it as a code result would.
+                            # Observation permits further work, but is not proof of the old effect.
                             result["unknown_outcome_note"] = self._unknown_note()
                             result.setdefault("content", []).append(
                                 {"type": "text", "text": result["unknown_outcome_note"]})
-                            last = self._unresolved[-1]
-                            await self.record_outcome(
-                                last["turn_id"], last["call_id"], "returned", settle=True)
+                            self._observed_unknowns.update(r["call_id"] for r in self._unresolved)
                 if binding:
                     self._app_bindings.pop(binding[0], None)
                     if not result.get("isError"):

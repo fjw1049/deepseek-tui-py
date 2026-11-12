@@ -116,13 +116,15 @@ async def test_crash_during_dispatched_call_restores_uncertainty(desktop, tmp_pa
     assert 'unknown outcome' in result['content'][0]['text']
 
 
-async def test_unknown_outcome_settles_once_the_model_is_told(desktop, tmp_path):
+async def test_unknown_outcome_requires_explicit_review(desktop, tmp_path):
     _, _, session = desktop
     await session.record_outcome('turn', 'submit', 'unknown')
     result = {}
     assert session._annotate(result)
     assert 'operation panel' not in result['content'][0]['text']
-    await session.record_outcome('turn2', 'next', 'returned', settle=True)
+    await session.record_outcome('turn2', 'next', 'returned')
+    assert session.unresolved is not None
+    await session.acknowledge('submit')
     assert session.unresolved is None
     # Settled for good: a restart does not bring it back, and later results stay quiet.
     reloaded = CuaSession(CuaConfig(), tmp_path, 'different-session', owner_id='thread')
