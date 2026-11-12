@@ -903,3 +903,22 @@ async def test_skipped_run_needs_no_result_write_or_delivery(tmp_path: Path) -> 
     tm.get_task.assert_not_awaited()
     thread_manager.append_automation_result.assert_not_awaited()
     thread_manager.append_automation_notice.assert_not_awaited()
+
+
+@pytest.mark.parametrize("cwds", [[], [""], ["   "]])
+def test_workspace_update_rejects_empty_without_changing_saved_task(tmp_path, cwds):
+    manager = AutomationManager(tmp_path / "automations")
+    record = manager.create_automation(
+        CreateAutomationRequest(
+            name="workspace",
+            prompt="inspect",
+            run_at="2027-01-01T00:00:00Z",
+            cwds=[str(tmp_path)],
+        )
+    )
+    with pytest.raises(ValueError, match="exactly one workspace"):
+        manager.update_automation(record.id, UpdateAutomationRequest(cwds=cwds))
+    assert manager.get_automation(record.id).cwds == [str(tmp_path)]
+    assert manager.update_automation(record.id, UpdateAutomationRequest(name="renamed")).cwds == [
+        str(tmp_path)
+    ]

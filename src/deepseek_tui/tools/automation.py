@@ -1334,7 +1334,7 @@ class AutomationManager:
 
         if req.delivery is not None:
             DeliveryConfig.from_mapping(req.delivery)
-        if req.cwds is not None and len(req.cwds) > 1:
+        if req.cwds is not None and (len(req.cwds) != 1 or not req.cwds[0].strip()):
             raise ValueError("Automations support exactly one workspace")
         existing = self.get_automation(automation_id)
 
@@ -1357,7 +1357,7 @@ class AutomationManager:
             existing.schedule = None
             existing.next_run_at = _normalize_run_at(req.run_at, existing.timezone)
         if req.cwds is not None:
-            existing.cwds = [str(Path(p).expanduser().resolve()) for p in (req.cwds or [str(Path.cwd())])]
+            existing.cwds = [str(Path(p).expanduser().resolve()) for p in req.cwds]
         if (
             req.status is None
             and existing.status is AutomationStatus.COMPLETED
