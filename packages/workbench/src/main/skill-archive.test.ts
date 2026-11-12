@@ -29,3 +29,36 @@ it('rejects a symlink overwrite without touching the external file', async () =>
     expect(await readFile(victim, 'utf8')).toBe('original')
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
+
+
+it('rejects an oversized declared deflated member before inflation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'skill-limit-'))
+  try {
+    const zip = join(directory, 'large.zip')
+    await writeFile(zip, Buffer.from('UEsDBBQAAAAIAPJbbF3Jl7hQBgAAAAAAEAIIAAAAU0tJTEwubWQrycyrBABQSwECFAMUAAAACADyW2xdyZe4UAYAAAAAABACCAAAAAAAAAAAAAAAgAEAAAAAU0tJTEwubWRQSwUGAAAAAAEAAQA2AAAALAAAAAAA', 'base64'))
+    await expect(extractSkillArchive(zip, join(directory, 'out'))).rejects.toThrow('extraction limits')
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('bounds entry count even for tiny files', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'skill-count-'))
+  try {
+    const source = Buffer.from(valid, 'base64')
+    const centralOffset = source.indexOf(Buffer.from('504b0102', 'hex'))
+    const endOffset = source.indexOf(Buffer.from('504b0506', 'hex'))
+    const local = source.subarray(0, centralOffset)
+    const central = source.subarray(centralOffset, endOffset)
+    const count = 10_001
+    const entries = Array.from({ length: count }, (_, i) => {
+      const copy = Buffer.from(central)
+      copy.writeUInt32LE(i * local.length, 42)
+      return copy
+    })
+    const end = Buffer.from(source.subarray(endOffset))
+    end.writeUInt16LE(count, 8); end.writeUInt16LE(count, 10)
+    end.writeUInt32LE(count * central.length, 12); end.writeUInt32LE(count * local.length, 16)
+    const zip = join(directory, 'many.zip')
+    await writeFile(zip, Buffer.concat([...Array(count).fill(local), ...entries, end]))
+    await expect(extractSkillArchive(zip, join(directory, 'out'))).rejects.toThrow('extraction limits')
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
