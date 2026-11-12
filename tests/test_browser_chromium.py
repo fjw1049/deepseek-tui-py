@@ -487,6 +487,23 @@ async def test_shadow_and_same_origin_frame_targets(chrome):
     assert "FRAME_CLICKED" in frame["observation"]["text"]
 
 
+async def test_resize_between_observation_and_capture_is_not_actionable(chrome, monkeypatch):
+    service, run = chrome
+    capture = service._capture
+
+    async def resize_then_capture(current, **kwargs):
+        await current.session._internal.client.send("Emulation.setDeviceMetricsOverride", {
+            "width": 777, "height": 555, "deviceScaleFactor": 1, "mobile": False,
+        })
+        return await capture(current, **kwargs)
+
+    monkeypatch.setattr(service, "_capture", resize_then_capture)
+    result = await service.action("t", BrowserAction(action="screenshot"))
+    assert "screenshot_artifact_id" not in result["observation"]
+    assert result["image_manifest"]["actionable"] is False
+    assert "Page changed during capture" in result["observation_error"]
+
+
 async def test_coordinate_click_requires_current_capture(chrome):
     service, run = chrome
     observation = await read(service)

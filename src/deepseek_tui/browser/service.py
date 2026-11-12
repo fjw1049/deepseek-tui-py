@@ -726,10 +726,10 @@ class BrowserService:
 
     async def _sync_viewport(self, run: BrowserRun) -> None:
         """A Workbench page is as large as its panel, which the user may resize."""
-        metrics = await run.session._internal.client.send("Page.getLayoutMetrics")
-        view = metrics.get("cssLayoutViewport") or {}
-        run.width = int(view.get("clientWidth") or run.width)
-        run.height = int(view.get("clientHeight") or run.height)
+        # Match the full CSS viewport used by Workbench screenshots, including scrollbars.
+        view = await evaluate(run.session._internal.client, "({width:innerWidth,height:innerHeight})")
+        run.width = int(view["width"])
+        run.height = int(view["height"])
 
     async def _bind_native_tab(self, run: BrowserRun, tab_id: str = "") -> None:
         """Caller holds run.lock and has checked ownership/generation."""
@@ -2363,7 +2363,11 @@ class BrowserService:
                     # coordinate clicks re-check layout and pixels at the point.
                     same_layout = await evaluate(await root_context(run),
                         "window.__deepseekObservation?.id === "
-                        + json.dumps(observation["observation_id"]))
+                        + json.dumps(observation["observation_id"])
+                        + " && window.__deepseekObservation.width === innerWidth"
+                        + " && window.__deepseekObservation.height === innerHeight"
+                        + " && window.__deepseekObservation.scrollX === scrollX"
+                        + " && window.__deepseekObservation.scrollY === scrollY")
                 except Exception:
                     same_page, same_layout = False, False
                 if same_page and same_layout is True and not (a.full_page or a.crop or a.frame_id):

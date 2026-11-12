@@ -35,6 +35,9 @@ async function harness(useDownloadPreferences = false) {
         const id = sid ? attached.get(sid)! : 'root'
         return { frameTree: { frame: { id, parentId: ({ child: 'root', grandchild: 'child', other: 'outside' } as Record<string, string>)[id] } } }
       }
+      if (method === 'Runtime.evaluate' && String(params.expression).includes('innerWidth')) {
+        return { result: { value: { width: 640, height: 480, scale: 2, x: 0, y: 0, url: 'http://example.test' } } }
+      }
       return { target: sid ? attached.get(sid) : 'root' }
     })
   })
@@ -182,6 +185,42 @@ it('registers child windows with the parent browser and keeps ownership across r
     expect((await h.send('Workbench.listTabs')).result.tabs).toHaveLength(2)
     await h.send('Workbench.closeTab', { tabId: popup.tab_id })
     expect(child.destroy).toHaveBeenCalledOnce()
+  } finally { h.socket.close() }
+})
+
+it.each([
+  { width: 1280, height: 960 }, // Retina capture includes the scrollbar.
+  { width: 640, height: 960 } // Height must also be normalized.
+])('keeps screenshot coordinates in the full CSS viewport: %j', async size => {
+  const h = await harness()
+  const resized = { toJPEG: () => Buffer.from('normalized') }
+  const image = { isEmpty: () => false, getSize: () => size, resize: vi.fn(() => resized) }
+  Object.assign(h.guest, { capturePage: vi.fn().mockResolvedValue(image) })
+  const original = h.debug.sendCommand.getMockImplementation()!
+  h.debug.sendCommand.mockImplementation(async (method, params, sid) => method === 'Page.getLayoutMetrics'
+    ? { cssLayoutViewport: { clientWidth: size.width === 640 ? 640 : 625, clientHeight: 480 } } : original(method, params, sid))
+  try {
+    expect((await h.send('Page.captureScreenshot')).result.data).toBe(Buffer.from('normalized').toString('base64'))
+    expect(image.resize).toHaveBeenCalledWith({ width: 640, height: 480, quality: 'good' })
+  } finally { h.socket.close() }
+})
+
+it('rejects a capture if the viewport changes while the compositor paints it', async () => {
+  const h = await harness()
+  let width = 640
+  const original = h.debug.sendCommand.getMockImplementation()!
+  h.debug.sendCommand.mockImplementation(async (method, params, sid) => method === 'Runtime.evaluate'
+    ? { result: { value: { width, height: 480, scale: 2, x: 0, y: 0, url: 'http://example.test' } } }
+    : method === 'Page.getLayoutMetrics' ? { cssLayoutViewport: { clientWidth: width, clientHeight: 480 } }
+    : original(method, params, sid))
+  const resize = vi.fn()
+  Object.assign(h.guest, { capturePage: vi.fn(async () => {
+    width = 800
+    return { isEmpty: () => false, getSize: () => ({ width: 1280, height: 960 }), resize }
+  }) })
+  try {
+    expect((await h.send('Page.captureScreenshot')).error.message).toContain('viewport changed')
+    expect(resize).not.toHaveBeenCalled()
   } finally { h.socket.close() }
 })
 

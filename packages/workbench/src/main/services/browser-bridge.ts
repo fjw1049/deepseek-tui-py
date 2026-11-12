@@ -335,6 +335,14 @@ export function createBrowserBridge(deps: Deps) {
     /** Captures at CSS-pixel size, also while the panel is hidden. */
     async function screenshot(params: Record<string, unknown>): Promise<unknown> {
       if (params.clip || params.captureBeyondViewport) return debug.sendCommand('Page.captureScreenshot', params)
+      const viewport = async () => {
+        const result = await debug.sendCommand('Runtime.evaluate', {
+          expression: '({width:innerWidth,height:innerHeight,scale:devicePixelRatio,x:scrollX,y:scrollY,url:location.href})',
+          returnByValue: true
+        }) as { result: { value: { width: number; height: number; scale: number; x: number; y: number; url: string } } }
+        return result.result.value
+      }
+      const before = await viewport()
       let image = await guest.capturePage(undefined, { stayHidden: true })
       // A click/navigation can briefly replace the compositor surface. Wait for
       // a painted frame instead of terminating an otherwise healthy recording.
@@ -345,9 +353,13 @@ export function createBrowserBridge(deps: Deps) {
         await new Promise(resolve => setTimeout(resolve, 50))
         image = await guest.capturePage(undefined, { stayHidden: true })
       }
-      const metrics = await debug.sendCommand('Page.getLayoutMetrics') as { cssLayoutViewport: { clientWidth: number; clientHeight: number } }
-      const { clientWidth: width, clientHeight: height } = metrics.cssLayoutViewport
-      if (image.getSize().width !== width) image = image.resize({ width, height, quality: 'good' })
+      if (JSON.stringify(before) !== JSON.stringify(await viewport())) {
+        throw new Error('Browser viewport changed during capture; take a fresh screenshot')
+      }
+      // capturePage includes scrollbars; clientWidth excludes them and would squeeze
+      // the image, shifting screenshot coordinates away from their DOM targets.
+      const { width, height } = before
+      if (image.getSize().width !== width || image.getSize().height !== height) image = image.resize({ width, height, quality: 'good' })
       const data = params.format === 'png' ? image.toPNG() : image.toJPEG(Number(params.quality ?? 80))
       return { data: data.toString('base64') }
     }

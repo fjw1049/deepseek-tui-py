@@ -85,7 +85,9 @@ class FakeBridge:
             elif method == "Target.getTargetInfo":
                 result = {"targetInfo": {"targetId": tab}}
             elif method == "Page.getLayoutMetrics":
-                result = {"cssLayoutViewport": {"clientWidth": 640, "clientHeight": 480}}
+                result = {"cssLayoutViewport": {"clientWidth": 625, "clientHeight": 480}}
+            elif method == "Runtime.evaluate" and "innerWidth" in params.get("expression", ""):
+                result = {"result": {"value": {"width": 640, "height": 480}}}
             elif method == "Page.getFrameTree":
                 frame = {"id": tab, "loaderId": "doc", "url": self.tabs[tab]["url"]}
                 result = {"frameTree": {"frame": frame}}
