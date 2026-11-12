@@ -204,9 +204,9 @@ def _skill_directory(name: str, context: ToolContext) -> Path:
 
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) or len(name) > 63:
         raise ValueError("Unknown skill name")
-    registry = context.metadata.get("skill_registry") or discover_in_workspace(
-        workspace=context.working_directory
-    )
+    registry = context.metadata.get("skill_registry")
+    if registry is None:
+        registry = discover_in_workspace(workspace=context.working_directory)
     skill = registry.get(name)
     if skill is not None:
         return Path(skill.path).parent
