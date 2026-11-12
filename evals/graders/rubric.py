@@ -52,6 +52,7 @@ def grade_rubric(case: EvalCase, observation: EvalObservation) -> GradeResult:
         raise ValueError("rubric evidence is missing")
     judge = data["judge"]
     checks = [*_session_checks(case, data), *data["checks"]]
+    data["grading_checks"] = checks
     critical = [check for check in checks if check["critical"] and not check["passed"]]
     soft = [check for check in checks if not check["critical"] and not check["passed"]]
     verdict = judge["verdict"]

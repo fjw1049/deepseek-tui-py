@@ -59,7 +59,6 @@ def decide(
     for run in (baseline, candidate):
         if run["manifest"].get("settings", {}).get("regrade"):
             reasons.append("重评记录需核对有效评分器和题集，不能直接用于自动放行")
-    invalid = bool(reasons)
     sa = ma.get("settings", {}).get("source_snapshot") or {}
     sb = mb.get("settings", {}).get("source_snapshot") or {}
     if sa.get("product_hash") and sa.get("product_hash") == sb.get("product_hash"):
@@ -84,6 +83,7 @@ def decide(
         if aa_disagreement > policy.max_aa_disagreement:
             reasons.append(f"A/A 逐题波动 {aa_disagreement:.3f} 超过预设上限")
 
+    invalid = bool(reasons)
     task_ids = {r["case_id"] for r in candidate["cases"]
                 if r.get("runner") in {"product_session", "workspace_task"}}
     task_rows = [r for r in comparison["rows"] if r["case_id"] in task_ids]
@@ -118,7 +118,8 @@ def decide(
     for row in candidate["cases"]:
         if row.get("risk") == "critical" and row["status"] == "failed":
             failures.append(f"关键保护题失败：{row['case_id']}")
-        checks = (row.get("observation") or {}).get("data", {}).get("checks", [])
+        data = (row.get("observation") or {}).get("data", {})
+        checks = data.get("grading_checks", data.get("checks", []))
         if any(check.get("critical") and check.get("passed") is False for check in checks):
             failures.append(f"关键事实检查失败：{row['case_id']}")
     for row in usable:

@@ -158,3 +158,48 @@ def test_same_product_source_cannot_claim_an_architecture_gain():
     result = decide(a, b, DecisionPolicy(), deepcopy(a))
     assert result["decision"] == "insufficient_evidence"
     assert any("产品源码相同" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize("status,answers", [("timeout", ["未完成"]), ("completed", [])])
+def test_generated_critical_checks_block_candidate_review(status, answers):
+    from evals.graders.rubric import grade_rubric
+    from evals.schema import EvalObservation
+
+    a, b = paired_runs()
+    for run in (a, b):
+        for row in run["cases"]:
+            row["grade"] = {"metrics": {"task.overclaim_rate": 0}}
+    case = EvalCase(id="task.0", suite="test", runner="product_session", grader="rubric",
+                    live=True, input={"turns": ["finish"]})
+    observation = EvalObservation(data={
+        "turns": [{"status": status}], "answers": answers, "session": {}, "checks": [],
+        "judge": {"verdict": "fail", "claims_complete": False,
+                  "undisclosed_problems": [], "reason": "incomplete"},
+    })
+    verdict = grade_rubric(case, observation)
+    b["cases"][0].update(status="failed", grade=verdict.model_dump(),
+                         observation=observation.model_dump())
+    result = decide(a, b, DecisionPolicy(), deepcopy(a))
+    assert result["decision"] == "keep_baseline"
+    assert any("关键事实检查" in reason for reason in result["reasons"])
+    grade_rubric(case, observation)
+    assert len(observation.data["grading_checks"]) == 4
+
+
+@pytest.mark.parametrize("invalid_aa", ["noise", "source", "missing"])
+def test_invalid_aa_cannot_support_a_regression_decision(invalid_aa):
+    a, b = paired_runs()
+    for run in (a, b):
+        for row in run["cases"]:
+            if row["case_id"] == "task.0":
+                row["task_family"] = "protected"
+                row["status"] = "passed" if run is a else "failed"
+    repeat = deepcopy(a)
+    if invalid_aa == "noise":
+        for row in repeat["cases"]:
+            row["status"] = "passed"
+    elif invalid_aa == "source":
+        repeat["manifest"]["git_commit"] = "different"
+    else:
+        repeat = None
+    assert decide(a, b, DecisionPolicy(), repeat)["decision"] == "insufficient_evidence"
