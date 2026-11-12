@@ -233,7 +233,7 @@ async def test_yolo_command_changes_mode(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_n4_trusted_mcp_does_not_bypass_agent_never_policy(tmp_path):
+async def test_n4_trusted_mcp_runs_like_readonly_under_agent_never_policy(tmp_path):
     import sys
 
     from deepseek_tui.config import Config
@@ -266,7 +266,7 @@ async def test_n4_trusted_mcp_does_not_bypass_agent_never_policy(tmp_path):
             "test",
         )
         assert engine.mode == "agent"
-        assert result is None
+        assert result is not None and result.success
         engine._app_config.mcp_read_only_tools = []
         result = await engine._execute_single_tool(
             ToolCall(id="read2", name="mcp_fixture_echo", arguments={"message": "audit"}),
