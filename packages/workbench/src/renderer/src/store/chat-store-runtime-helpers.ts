@@ -45,9 +45,9 @@ export function mergePendingUserInputBlocks(
   const pendingIds = new Set(pending.map((item) => item.requestId))
   let recovered = false
   const restored = blocks.map((block): ChatBlock => {
-    if (block.kind !== 'user_input' || block.status !== 'error' || !pendingIds.has(block.requestId)) return block
+    if (block.kind !== 'user_input' || !['error', 'cancelled'].includes(block.status) || !pendingIds.has(block.requestId)) return block
     recovered = true
-    return { ...block, status: 'pending', submissionFailed: false, submitting: false }
+    return { ...block, status: 'pending', errorMessage: undefined, submissionFailed: false, submitting: false }
   })
   if (recovered) blocks = restored
   const existing = new Set(

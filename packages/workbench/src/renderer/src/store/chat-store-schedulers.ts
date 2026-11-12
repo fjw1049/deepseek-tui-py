@@ -66,6 +66,11 @@ function armBusyWatchdog(
   clearBusyWatchdog()
   const timer = setTimeout(() => {
     if (!get().busy) return
+    // A pending question explains silence even while the runtime is unreachable.
+    if (get().blocks.some(block => block.kind === 'user_input' && block.status === 'pending' && !block.taskId)) {
+      armBusyWatchdog(set, get, options)
+      return
+    }
     void (options.isWaitingOnHuman?.() ?? Promise.resolve(false))
       .catch(() => false)
       .then((waiting) => {

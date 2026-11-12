@@ -20,6 +20,7 @@ import {
   LayoutGrid,
   Loader2,
   MessageSquare,
+  MessageCircleQuestion,
   PanelTopClose,
   Pin,
   PinOff,
@@ -1274,6 +1275,10 @@ export function ThreadRow({
   onArchive,
   onTogglePin
 }: ThreadRowProps): ReactElement {
+  const waitingForAnswer = useChatStore(s => s.activeThreadId === thread.id &&
+    s.blocks.some(block => block.kind === 'user_input' && block.status === 'pending'))
+  const showWaiting = waitingForAnswer || thread.activityWaiting === true
+  showRunning = showRunning && !showWaiting
   const splitWorkspace = useChatStore(s => s.threads.find(th => th.id === s.activeThreadId)?.workspace ?? s.workspaceRoot)
   const splitLayout = useChatLayoutStore(s => s.layouts[resolveChatLayoutKey(s, splitWorkspace)])
   const canSplit = Boolean(thread.workspace && !thread.archived &&
@@ -1305,7 +1310,7 @@ export function ThreadRow({
 
   // All rows surface thread completion: green check for completed/idle.
   const status = thread.status?.trim().toLowerCase()
-  const showCompleted = !showRunning && !showConflict && (status === 'completed' || status === 'idle')
+  const showCompleted = !showWaiting && !showRunning && !showConflict && (status === 'completed' || status === 'idle')
 
   const threadPath = normalizeWorkspaceRoot(thread.workspace)
   const hasPath = threadPath.length > 0 && !isInternalTemporaryWorkspace(thread.workspace)
@@ -1474,7 +1479,9 @@ export function ThreadRow({
         aria-label={
           selectionMode
             ? thread.title
-            : showRunning
+            : showWaiting
+              ? thread.title + ' — ' + t('sidebarThreadWaiting')
+              : showRunning
               ? `${thread.title} — ${t('sidebarThreadRunning')}`
               : showConflict
                 ? `${thread.title} — ${t('sidebarThreadConflict')}`
@@ -1494,6 +1501,9 @@ export function ThreadRow({
             ) : (
               <Square className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
             )
+          ) : showWaiting ? (
+            <MessageCircleQuestion className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400"
+              aria-label={t('sidebarThreadWaiting')} />
           ) : showRunning ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" strokeWidth={2.1} />
           ) : showConflict ? (
@@ -1551,7 +1561,12 @@ export function ThreadRow({
             })()}
           />
         )}
-        {selectionMode || (!showConflict && !showCompleted && !sourceLabel) ? null : (
+        {showWaiting && !selectionMode && (
+          <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">
+            {t('sidebarThreadWaiting')}
+          </span>
+        )}
+        {selectionMode || showWaiting || (!showConflict && !showCompleted && !sourceLabel) ? null : (
           <span
             className="ds-sidebar-thread-meta group-hover:hidden group-focus-within:hidden"
             title={

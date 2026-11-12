@@ -64,6 +64,16 @@ describe('finalizeOrphanRuntimeBlocks', () => {
 })
 
 describe('mergePendingUserInputBlocks', () => {
+  it('restores expired cards only when the runtime confirms they are pending', () => {
+    const blocks: ChatBlock[] = ['live', 'ended'].map(id => ({
+      kind: 'user_input', id, requestId: id, questions: [], status: 'cancelled', errorMessage: 'expired'
+    }))
+    const result = mergePendingUserInputBlocks(blocks, [{ requestId: 'live', questions: [] }])
+    expect(result.blocks).toHaveLength(2)
+    expect(result.blocks[0]).toMatchObject({ status: 'pending', errorMessage: undefined })
+    expect(result.blocks[1]).toMatchObject({ status: 'cancelled', errorMessage: 'expired' })
+  })
+
   it('adds bridged task prompts even when none exist in thread detail', () => {
     const blocks: ChatBlock[] = [tool('t1', 'success')]
     const merged = mergePendingUserInputBlocks(blocks, [

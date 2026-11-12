@@ -14,7 +14,7 @@ const options = (isWaitingOnHuman?: () => Promise<boolean>) => ({
 beforeEach(() => {
   vi.useFakeTimers()
   recoverActiveTurn = vi.fn(async () => true)
-  const state = { busy: true, activeThreadId: 'a', recoverActiveTurn } as unknown as ChatState
+  const state = { busy: true, blocks: [], activeThreadId: 'a', recoverActiveTurn } as unknown as ChatState
   get = () => state
 })
 afterEach(() => { vi.useRealTimers() })
@@ -52,4 +52,18 @@ it('drops a check that stream activity overtook', async () => {
   answer(false)
   await vi.advanceTimersByTimeAsync(0)
   expect(recoverActiveTurn).not.toHaveBeenCalled()
+})
+
+it('keeps unanswered questions alive through a day of silence', async () => {
+  const scheduler = createChatSchedulers()
+  get().blocks = [{ kind: 'user_input', id: 'q', requestId: 'q', questions: [], status: 'pending' }]
+  const probe = vi.fn(async () => { throw new Error('offline') })
+  scheduler.armBusyWatchdog(set, get, options(probe))
+  await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000)
+  expect(recoverActiveTurn).not.toHaveBeenCalled()
+  expect(probe).not.toHaveBeenCalled()
+  get().blocks = []
+  await vi.advanceTimersByTimeAsync(TIMEOUT)
+  expect(recoverActiveTurn).toHaveBeenCalledOnce()
+  scheduler.dispose()
 })

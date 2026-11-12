@@ -2704,6 +2704,7 @@
   "pluginUseNow": "立即使用",
   "computerUseTaskPrefix": "请使用电脑控制完成以下任务：",
   "pluginUninstall": "卸载",
+  "sidebarThreadWaiting": "等待用户回答",
   "userInputExpired": "该请求已过期：所属轮次已结束。",
   "cuaPreviewOpenApp": "前往原始应用",
   "cuaPreviewOpenAppFailedShort": "无法打开应用",

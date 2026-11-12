@@ -49,5 +49,14 @@ it('gives the title the former timestamp space and keeps direct hover actions', 
   await act(async () => deleteItem.click())
   expect(props.onDelete).toHaveBeenCalledTimes(1)
   expect(props.onSelect).not.toHaveBeenCalled()
+  await act(async () => root.render(createElement(ThreadRow, {
+    ...props, showRunning: true, thread: { ...props.thread, activityWaiting: true }
+  })))
+  expect(container.querySelector('.lucide-loader-circle, .lucide-loader-2')).toBeNull()
+  expect(container.querySelector('[aria-label="sidebarThreadWaiting"]')?.classList.contains('text-amber-500')).toBe(true)
+  expect(container.textContent).toContain('sidebarThreadWaiting')
+  await act(async () => root.render(createElement(ThreadRow, { ...props, showRunning: true })))
+  expect(container.querySelector('[aria-label="sidebarThreadWaiting"]')).toBeNull()
+  expect(container.querySelector('.animate-spin')).not.toBeNull()
   await act(async () => root.unmount())
 })

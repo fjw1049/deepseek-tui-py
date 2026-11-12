@@ -2705,6 +2705,7 @@
   "pluginUseNow": "Use now",
   "computerUseTaskPrefix": "Use computer control to complete this task:",
   "pluginUninstall": "Uninstall",
+  "sidebarThreadWaiting": "Waiting for your answer",
   "userInputExpired": "This request expired because its turn ended.",
   "cuaPreviewOpenApp": "Show original app",
   "cuaPreviewOpenAppFailedShort": "Couldn’t open app",
