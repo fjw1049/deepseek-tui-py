@@ -215,7 +215,7 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
             "concurrency": options.concurrency,
             "judge_provider": options.judge_provider or options.provider,
             "judge_model": options.judge_model or options.model,
-            "retry_policy": "metered-attempts-v1",
+            "retry_policy": "shared-metered-attempts-v2",
             "expected_trials": sum(options.trials if c.live else 1 for c in cases),
             "case_trials": {c.id: options.trials if c.live else 1 for c in cases},
         },
@@ -323,7 +323,7 @@ async def run_evaluations(
                 if (
                     case.live
                     and options.max_cost_usd is not None
-                    and context.cost_usd >= options.max_cost_usd
+                    and context.budget.cost_usd >= options.max_cost_usd
                 ):
                     finish(
                         trial_result(
@@ -401,7 +401,9 @@ async def run_evaluations(
                             "known_cost_usd": cost,
                         }
                     )
-                    if requests > 0 and priced == requests:
+                    if case.runner == "product_session":
+                        result.observation.usage["unmetered_product_trials"] = 1
+                    elif requests > 0 and priced == requests:
                         result.observation.usage["cost_usd"] = cost
                     write_json(
                         output / "traces" / f"{case.id}-trial-{trial}.json", trial_context.trace

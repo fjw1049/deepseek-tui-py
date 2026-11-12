@@ -101,6 +101,7 @@ def summarize(run_id: str, results: list[TrialResult]) -> RunSummary:
         "known_cost_usd",
         "cost_usd",
         "cache_read_input_tokens",
+        "unmetered_product_trials",
     ):
         values = [
             r.observation.usage[name]

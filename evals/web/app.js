@@ -205,6 +205,7 @@ function costLabel(r) {
   const metrics = r.summary?.metrics || {};
   const requests = metrics['usage.requests']?.sum;
   const priced = metrics['usage.priced_requests']?.sum;
+  if (metrics['usage.unmetered_product_trials']?.sum) return '费用不完整（产品请求未计价）';
   if (!requests) return r.manifest.mode === 'offline' ? '不调用模型' : '未知';
   if (requests !== priced) return '费用不完整';
   return `$${(metrics['usage.known_cost_usd']?.sum || 0).toFixed(4)}`;

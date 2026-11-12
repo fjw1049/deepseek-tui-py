@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from deepseek_tui.client.base import LLMClient, RetryConfig
@@ -18,6 +19,12 @@ if TYPE_CHECKING:
 
 class BudgetExceeded(RuntimeError):
     pass
+
+
+@dataclass
+class LiveBudget:
+    remaining_requests: int
+    cost_usd: float = 0.0
 
 
 class BudgetedClient(LLMClient):
@@ -38,7 +45,7 @@ class BudgetedClient(LLMClient):
         ctx = self.context
         if ctx.remaining_live_requests <= 0:
             raise BudgetExceeded("请求预算已用完")
-        if ctx.max_cost_usd is not None and ctx.cost_usd >= ctx.max_cost_usd:
+        if ctx.max_cost_usd is not None and ctx.budget.cost_usd >= ctx.max_cost_usd:
             raise BudgetExceeded("已记录费用达到预算")
         ctx.remaining_live_requests -= 1
         ctx.requests += 1
@@ -80,6 +87,7 @@ class BudgetedClient(LLMClient):
                     if cost is not None:
                         ctx.priced_requests += 1
                         ctx.cost_usd += cost.usd
+                        ctx.budget.cost_usd += cost.usd
                 yield event
         finally:
             ctx.trace.append({"type": "request_finished", "usage_reported": metered})

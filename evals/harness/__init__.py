@@ -6,6 +6,7 @@ import copy
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from evals.harness.budget import LiveBudget
 from evals.harness.judge_probe import run_judge_probe
 from evals.harness.live import run_live_cache, run_live_decision
 from evals.harness.offline import (
@@ -42,7 +43,7 @@ class HarnessContext:
         self.provider = provider
         self.model = model
         self.max_output_tokens = max_output_tokens
-        self.remaining_live_requests = remaining_live_requests
+        self.budget = LiveBudget(remaining_live_requests)
         self.max_cost_usd = max_cost_usd
         self.prompt_suffix = prompt_suffix
         self.judge_provider = judge_provider
@@ -58,8 +59,16 @@ class HarnessContext:
         self.trace: list[dict[str, object]] = []
         self.product_run = ProductRun()
 
+    @property
+    def remaining_live_requests(self) -> int:
+        return self.budget.remaining_requests
+
+    @remaining_live_requests.setter
+    def remaining_live_requests(self, value: int) -> None:
+        self.budget.remaining_requests = value
+
     def fork(self) -> HarnessContext:
-        """One trial's view: its own trace, budgets as they stand, the shared preflight state."""
+        """Keep trial accounting local; share the live budget and preflight state."""
         trial = copy.copy(self)
         trial.usage = dict(self.usage)
         trial.trace = []
@@ -67,8 +76,6 @@ class HarnessContext:
 
     def absorb(self, trial: HarnessContext, before: HarnessContext) -> None:
         """Add what a finished trial spent, measured from its fork point."""
-        spent = before.remaining_live_requests - trial.remaining_live_requests
-        self.remaining_live_requests -= spent
         self.requests += trial.requests - before.requests
         self.metered_requests += trial.metered_requests - before.metered_requests
         self.priced_requests += trial.priced_requests - before.priced_requests

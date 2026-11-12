@@ -55,7 +55,8 @@ bash scripts/dev-eval.sh
 比较按题等权展示成功率变化，拒绝题集/评分器/预算不同、缺题、错误、跳过和中断的实验。
 区间是探索性场景重采样估计，不自动宣称统计显著或推荐发布。
 费用同时显示已知部分和计费覆盖；未上报用量或未知价格不填零。
-成本上限是逐请求检查的软上限，最后一次请求仍可能超额；请求/输出上限另行限制。
+成本上限是逐请求检查的软上限，已在途的并发请求仍可能超额；请求额度由并发试验共享。
+产品任务的完整费用标记为不完整，已知费用当前仅包含评审；产品请求和 preflight 尚未计价。
 
 ## 自动架构实验（campaign）
 
@@ -69,6 +70,10 @@ PYTHONPATH=src:. .venv/bin/python -m evals campaign evals/campaigns/offline-smok
 # 公司批跑模板：先填写公司的 provider/model，再检查预算。共 36 个独立试验。
 PYTHONPATH=src:. .venv/bin/python -m evals campaign evals/campaigns/system-pilot.json \
   --output evals/artifacts/architecture-pilot-001
+
+# 已配置公司 endpoint 的本机：执行与评审均使用 deepseek-v4-1-flash。
+PYTHONPATH=src:. .venv/bin/python -m evals campaign evals/campaigns/system-company-flash.json \
+  --output evals/artifacts/company-flash-001
 ```
 
 `HEAD` 表示已提交基线，`working-tree` 包含当前未提交及未忽略的新源码；也可填写

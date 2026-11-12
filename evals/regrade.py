@@ -46,7 +46,8 @@ async def regrade(
         fresh = await grade_session(case, session_dir, turns, context, saved_judge=saved)
         if "trial_isolation" in observation.data:
             fresh.data["trial_isolation"] = observation.data["trial_isolation"]
-        fresh.usage = observation.usage
+        fresh.usage = {**observation.usage, "unmetered_product_trials": 1}
+        fresh.usage.pop("cost_usd", None)
         verdict = grade(case, fresh)
         result = original.model_copy(
             update={

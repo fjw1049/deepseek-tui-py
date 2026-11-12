@@ -302,3 +302,79 @@ async def test_live_failure_persists_trace_and_debits_request_budget(tmp_path, m
     assert "cost_usd" not in rows[0]["observation"]["usage"]
     trace = output / rows[0]["observation"]["data"]["trace_file"]
     assert json.loads(trace.read_text())[0]["type"] == "model_request"
+
+
+async def test_concurrent_trials_share_request_budget(tmp_path, monkeypatch):
+    from deepseek_tui.protocol.messages import MessageRequest
+    from evals.schema import GradeResult
+
+    calls = []
+
+    class Client(LLMClient):
+        async def stream_chat_completion(self, request):
+            calls.append(request)
+            await asyncio.sleep(0.01)
+            yield StreamDone()
+
+    async def harness(case, context):
+        client = BudgetedClient(Client(), context)
+        for _ in range(2):
+            _ = [event async for event in client.stream_chat_completion(
+                MessageRequest(model="test", messages=[])
+            )]
+        return EvalObservation()
+
+    monkeypatch.setattr("evals.runner.run_harness", harness)
+    monkeypatch.setattr("evals.runner.grade", lambda *args: GradeResult(passed=True, score=1))
+    _, summary = await run_evaluations(
+        RunOptions(mode="live", trials=4, concurrency=4, max_live_requests=2,
+                   output_dir=tmp_path / "budget"), cases=[simple_case("authority")],
+    )
+    assert len(calls) == 2
+    assert summary.metrics["usage.requests"]["sum"] == 2
+    assert summary.skipped == 4
+
+
+async def test_cost_budget_is_visible_before_trial_finishes(monkeypatch):
+    from types import SimpleNamespace
+
+    from deepseek_tui.protocol.messages import MessageRequest
+
+    class Client(LLMClient):
+        async def stream_chat_completion(self, request):
+            yield StreamDone(usage=Usage(input_tokens=100, output_tokens=10))
+
+    monkeypatch.setattr("evals.harness.budget.calculate_turn_cost_estimate_from_usage",
+                        lambda *args: SimpleNamespace(usd=1.0))
+    context = HarnessContext(workspace=".", remaining_live_requests=10, max_cost_usd=1)
+    first, second = context.fork(), context.fork()
+    request = MessageRequest(model="test", messages=[])
+    _ = [event async for event in BudgetedClient(Client(), first).stream_chat_completion(request)]
+    with pytest.raises(BudgetExceeded):
+        client = BudgetedClient(Client(), second)
+        _ = [event async for event in client.stream_chat_completion(request)]
+    assert first.cost_usd == 1 and second.cost_usd == 0
+    assert context.remaining_live_requests == 9
+
+
+async def test_product_cost_is_incomplete_even_with_a_priced_judge(tmp_path, monkeypatch):
+    from evals.schema import GradeResult
+
+    async def harness(case, context):
+        context.requests += 1
+        context.priced_requests += 1
+        context.cost_usd += 0.001
+        context.usage["input_tokens"] = 11000
+        return EvalObservation()
+
+    monkeypatch.setattr("evals.runner.run_harness", harness)
+    monkeypatch.setattr("evals.runner.grade", lambda *args: GradeResult(passed=True, score=1))
+    case = EvalCase(id="cost", suite="test", runner="product_session", grader="rubric",
+                    live=True, input={"turns": ["task"]}, expect={"rubric": ["done"]})
+    output, summary = await run_evaluations(
+        RunOptions(mode="live", output_dir=tmp_path / "cost"), cases=[case],
+    )
+    usage = json.loads((output / "cases.jsonl").read_text())["observation"]["usage"]
+    assert "cost_usd" not in usage
+    assert usage["known_cost_usd"] == 0.001
+    assert summary.metrics["usage.unmetered_product_trials"]["sum"] == 1

@@ -1,0 +1,30 @@
+{
+  "hypothesis": "检查当前候选相对 HEAD 在现状识别、提交超时恢复及跨应用目标选择上是否出现退化；这是开发诊断，不是泛化证明。",
+  "baseline_revision": "HEAD",
+  "candidate_revision": "working-tree",
+  "case_ids": [
+    "system.current_state_proposal_only",
+    "system.current_state_changed",
+    "system.retry_receipt",
+    "system.transfer_target"
+  ],
+  "mode": "live",
+  "provider": "endpoint",
+  "model": "deepseek-v4-1-flash",
+  "repetitions": 3,
+  "max_live_requests": 20,
+  "max_output_tokens": 2048,
+  "timeout_seconds": 180,
+  "worker_timeout_seconds": 600,
+  "campaign_timeout_seconds": 7200,
+  "policy": {
+    "min_source_groups": 8,
+    "min_trials": 3,
+    "min_gain": 0.05,
+    "max_family_regression": 0,
+    "max_aa_disagreement": 0.15,
+    "require_holdout": true
+  },
+  "judge_provider": "endpoint",
+  "judge_model": "deepseek-v4-1-flash"
+}
