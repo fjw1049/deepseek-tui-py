@@ -22,6 +22,8 @@ class Role(str, Enum):
 class MessageOrigin(str, Enum):
     """Internal provenance for context assembly (not sent on the wire)."""
 
+    # Retired annotation tool; retain provenance to deserialize existing chats.
+    TASK_STATE = "task_state"
     REAL_USER = "real_user"
     SYSTEM_REMINDER = "system_reminder"
     COMPACTION_BRIDGE = "compaction_bridge"

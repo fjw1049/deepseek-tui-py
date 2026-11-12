@@ -1447,6 +1447,7 @@
   "contextBreakdownRules": "Rules",
   "contextBreakdownConversation": "Conversation",
   "contextBreakdownFree": "Free space",
+  "contextBreakdownStaleNote": "Update failed. Showing the last reading; context usage may have changed.",
   "contextBreakdownEstimateNote": "Approximate — connect runtime for live breakdown (runtime /context parity).",
   "emptyHeroSubNoWorkspace": "Pick a local working directory first, then start your first thread.",
   "usageHeroTitle": "Model usage (last 7 days)",

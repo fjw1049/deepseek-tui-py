@@ -211,6 +211,7 @@ def is_compaction_bridge_message(message: Message) -> bool:
 
 SYNTHETIC_ORIGINS = frozenset(
     {
+        MessageOrigin.TASK_STATE,
         MessageOrigin.SYSTEM_REMINDER,
         MessageOrigin.COMPACTION_BRIDGE,
         # No live producer — soft seams were removed. A session persisted
@@ -499,10 +500,9 @@ def prepend_compaction_bridge(
 ) -> list[Message]:
     """Return messages with a leading bridge and the user's request history.
 
-    The summary in *bridge_text* is a paraphrase and drifts a little further
-    on every re-summarisation. *prior_requests* rides alongside it verbatim,
-    so a constraint the user stated twenty turns ago does not depend on the
-    summarizer having chosen to keep it.
+    The summary in *bridge_text* is a paraphrase. The bounded request ledger
+    preserves excerpts alongside it, but can truncate long requests and omit
+    middle entries. It is not a complete or authoritative constraint store.
     """
     from deepseek_tui.protocol.messages import Message as Msg
 

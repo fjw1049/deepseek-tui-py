@@ -710,7 +710,7 @@ class AppRuntime:
 
     async def list_skills(self, *, workspace: str | None = None) -> dict[str, Any]:
         """List available skills."""
-        from deepseek_tui.integrations.skills import discover_in_workspace
+        from deepseek_tui.integrations.skills import default_skills_dir, discover_in_workspace
 
         skills_dir = Path(self.config.skills_dir).expanduser()  # noqa: ASYNC240 — pure path expansion, not I/O
         wd = (
@@ -720,8 +720,9 @@ class AppRuntime:
         )
         try:
             registry = discover_in_workspace(
-                skills_dir=skills_dir,
+                skills_dir=skills_dir if skills_dir != default_skills_dir() else None,
                 workspace=wd,
+                disabled_sources=self.config.disabled_skill_sources,
             )
         except (OSError, ValueError) as exc:
             return {"ok": False, "error": f"skill discovery failed: {exc}"}
@@ -732,6 +733,8 @@ class AppRuntime:
                     "name": s.name,
                     "description": s.description,
                     "path": str(s.path),
+                    "user_invocable": s.user_invocable,
+                    "disable_model_invocation": s.disable_model_invocation,
                 }
                 for s in registry.skills
             ],

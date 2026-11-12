@@ -761,7 +761,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         ReadFileTool,
         WriteFileTool,
     )
-    from deepseek_tui.tools.knowledge import NoteTool, PlanUpdateTool, SkillLoadTool
+    from deepseek_tui.tools.knowledge import NoteTool, PlanUpdateTool, SkillLoadTool, SkillSearchTool
     from deepseek_tui.tools.mcp import (
         ListMcpResourcesTool,
         ListMcpResourceTemplatesTool,
@@ -876,6 +876,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(NoteTool(read_only=mode in {"ask", "plan"}))
     registry.register(PlanUpdateTool())
     registry.register(SkillLoadTool())
+    registry.register(SkillSearchTool())
 
     # Engine-intercepted special tools (always active)
     registry.register(RequestUserInputTool())

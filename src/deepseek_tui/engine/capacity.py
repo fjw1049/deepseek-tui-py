@@ -594,6 +594,7 @@ async def _create_summary(
     )
     request = template.model_copy(update={
         "model": model,
+        "tool_choice": "none" if template.tools else None,
         "messages": [*messages, Message.user(instruction)],
         "max_tokens": min(
             LARGE_CONTEXT_SUMMARY_MAX_TOKENS, limits.max_tokens * max(1, output_multiplier)

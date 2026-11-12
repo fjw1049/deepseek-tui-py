@@ -216,6 +216,44 @@ class PlanUpdateTool(ToolSpec):
 # ===========================================================================
 
 
+class SkillSearchTool(ToolSpec):
+    def name(self) -> str:
+        return "search_skills"
+
+    def description(self) -> str:
+        return "Search all model-invocable skills by name or description, including skills omitted from the prompt. Returns names and source paths; use load_skill for instructions."
+
+    def input_schema(self) -> dict[str, object]:
+        return {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.READ_ONLY]
+
+    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
+        import json
+        from deepseek_tui.integrations.skills import discover_in_workspace
+
+        query = _require_string(input_data, "query").casefold()
+        registry = context.metadata.get("skill_registry")
+        if registry is None:
+            registry = discover_in_workspace(workspace=context.working_directory)
+        terms = query.split()
+        ranked = []
+        for skill in registry.skills:
+            if skill.disable_model_invocation:
+                continue
+            text = f"{skill.name} {skill.description}".casefold()
+            score = sum(term in text for term in terms) + 10 * (query == skill.name.casefold())
+            if score:
+                ranked.append((score, skill))
+        ranked.sort(key=lambda entry: (-entry[0], entry[1].name))
+        return ToolResult(success=True, content=json.dumps({
+            "matches": [{"name": skill.name, "description": skill.description[:500],
+                         "path": str(skill.path)} for _, skill in ranked[:20]],
+            "total_matches": len(ranked),
+        }, ensure_ascii=False))
+
+
 class SkillLoadTool(ToolSpec):
     """Load a skill body + companion files into the next turn's context.
 
@@ -287,6 +325,8 @@ class SkillLoadTool(ToolSpec):
                     f"refusing to read sensitive file: {skill_path} "
                     "(matched the credential-file blocklist)"
                 )
+            from deepseek_tui.integrations.skills import _parse_skill_file
+
             try:
                 content = await asyncio.to_thread(
                     _read_skill_text, skill_path
@@ -295,6 +335,7 @@ class SkillLoadTool(ToolSpec):
                 raise ToolError(f"Skill file not found: {skill_path}") from exc
             except OSError as exc:
                 raise ToolError(f"Error reading {skill_path}: {exc}") from exc
+            _check_skill_invocation(_parse_skill_file(skill_path, content=content), context)
             return ToolResult(
                 success=True,
                 content=content,
@@ -315,9 +356,9 @@ class SkillLoadTool(ToolSpec):
         # Without this, plugin skills - which are merged into the engine
         # registry in Engine.create but not by discover_in_workspace - would
         # be unreachable by name despite being listed in the system prompt.
-        registry = context.metadata.get("skill_registry") or discover_in_workspace(
-            workspace=context.working_directory
-        )
+        registry = context.metadata.get("skill_registry")
+        if registry is None:
+            registry = discover_in_workspace(workspace=context.working_directory)
         skill = registry.get(name)
         if skill is None:
             available = registry.list_names()
@@ -342,6 +383,7 @@ class SkillLoadTool(ToolSpec):
                     )
             raise ToolError(hint)
 
+        _check_skill_invocation(skill, context)
         companions = _collect_companion_files(skill)
         body = _format_skill_body(skill, companions=companions)
         root = Path(skill.path).parent.resolve()
@@ -355,6 +397,12 @@ class SkillLoadTool(ToolSpec):
                 "companion_files": [str(p) for p in companions],
             },
         )
+
+
+def _check_skill_invocation(skill: Any, context: ToolContext) -> None:
+    authorized = context.metadata.get("user_invoked_skill_path")
+    if skill.disable_model_invocation and str(skill.path.resolve()) != authorized:
+        raise ToolError(f"Skill '{skill.name}' requires explicit user invocation with /{skill.name}. Do not reproduce its workflow automatically.")
 
 
 def _read_skill_text(path: Path) -> str:

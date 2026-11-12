@@ -1429,6 +1429,7 @@
   "contextBreakdownRules": "规则",
   "contextBreakdownConversation": "对话",
   "contextBreakdownFree": "Free space",
+  "contextBreakdownStaleNote": "读取失败，当前显示上一次用量；实际上下文可能已变化。",
   "contextBreakdownEstimateNote": "当前显示估算用量，连接运行时后可查看实时明细。",
   "emptyHeroSubNoWorkspace": "先选择一个本地工作目录，然后再开始第一轮会话。",
   "usageHeroTitle": "模型用量（近 7 天）",

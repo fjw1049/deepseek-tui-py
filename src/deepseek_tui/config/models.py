@@ -352,6 +352,9 @@ class Config(BaseModel):
     # User-level defaults (cross-project). Project overlays remain optional
     # via ``<workspace>/.deepseek/skills`` discovery, not these Config paths.
     skills_dir: Path = Field(default_factory=user_skills_dir)
+    disabled_skill_sources: list[
+        Literal["claude", "cursor", "codex", "opencode", "qwen", "gemini", "codebuddy"]
+    ] = Field(default_factory=list)
     mcp_config_path: Path = Field(default_factory=user_mcp_config_path)
     # Explicit user trust; tool/server readOnlyHint never grants this permission.
     mcp_read_only_tools: list[str] = Field(default_factory=list)

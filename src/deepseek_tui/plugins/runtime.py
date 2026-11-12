@@ -152,6 +152,17 @@ class CompositeMcpManager(McpManager):
         return {name: items for manager, group in zip(self._managers, groups)
                 for name, items in group.items() if self._manager_for_server(name) is manager}
 
+    async def list_resource_templates(self, server: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        await self.reload_if_config_changed()
+        if server is not None:
+            manager = self._manager_for_server(server)
+            if manager is None:
+                raise McpError(f"Unknown or ambiguous MCP server: {server}")
+            return await manager.list_resource_templates(server)
+        groups = await asyncio.gather(*(m.list_resource_templates() for m in self._managers))
+        return {name: items for manager, group in zip(self._managers, groups)
+                for name, items in group.items() if self._manager_for_server(name) is manager}
+
     async def read_resource(self, server: str, uri: str) -> dict[str, Any]:
         await self.reload_if_config_changed()
         manager = self._manager_for_server(server)

@@ -24,7 +24,7 @@ REQUEST_USER_INPUT_NAME = "request_user_input"
 # writes a plan, tracks a checklist, or proposes a mode transition.
 ASK_MODE_TOOL_ALLOWLIST = frozenset({
     "read_file", "grep_files", "file_search", "web_search", "fetch_url",
-    "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "load_skill",
+    "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "load_skill", "search_skills",
     "task_list", "task_output", "cron_list", "GetGoal", "note", REQUEST_USER_INPUT_NAME,
 })
 
@@ -41,6 +41,7 @@ PLAN_MODE_TOOL_ALLOWLIST = frozenset(
         "list_mcp_resources",
         "list_mcp_resource_templates",
         "load_skill",
+        "search_skills",
         "note",
         "read_file",
         "read_mcp_resource",

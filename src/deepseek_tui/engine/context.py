@@ -670,6 +670,7 @@ logger = logging.getLogger(__name__)
 
 # Candidate context files, in priority order.
 PROJECT_CONTEXT_FILES: tuple[str, ...] = (
+    "AGENTS.override.md",
     "AGENTS.md",
     ".claude/instructions.md",
     "CLAUDE.md",
@@ -857,35 +858,51 @@ def load_cursor_rules(workspace: Path) -> tuple[str | None, list[Path], list[str
 
 
 def _load_project_layer(workspace: Path, *, allow_auto_generate: bool = True) -> ProjectContext:
-    """Project-scoped instructions: workspace → parents → optional auto-gen.
+    """Merge project instructions from repository root to workspace.
 
     Does not read ``~/.deepseek/AGENTS.md``; that is merged separately.
     """
-    ctx = load_project_context(workspace)
-
-    # A repository owns its instructions, and home holds unrelated ones: the search
-    # stops at the repository root and never reaches home.
+    workspace = workspace.resolve()
+    ctx = ProjectContext.empty(workspace)
     home = Path.home().resolve()
-    if not ctx.has_instructions() and not (workspace / ".git").exists():
-        current = workspace.parent
-        seen: set[Path] = {workspace.resolve()}
-        while current is not None:
-            resolved = current.resolve()
-            if resolved in seen or resolved == home:  # filesystem root: parent is itself
+    directories = [workspace]
+    current = workspace
+    while not (current / ".git").exists():
+        parent = current.parent
+        if parent == current or parent == home:
+            break
+        directories.append(parent)
+        current = parent
+    in_repository = (current / ".git").exists()
+    layers = []
+    # Outside Git, retain the old nearest-file fallback, never combine parents.
+    for directory in directories:
+        layer = load_project_context(directory)
+        ctx.warnings.extend(layer.warnings)
+        if layer.has_instructions():
+            layers.append(layer)
+            if not in_repository:
                 break
-            seen.add(resolved)
-            parent_ctx = load_project_context(current)
-            ctx.warnings.extend(parent_ctx.warnings)
-            if parent_ctx.has_instructions():
-                ctx.instructions = parent_ctx.instructions
-                ctx.source_path = parent_ctx.source_path
-                break
-            if (resolved / ".git").exists():
-                break
-            next_parent = current.parent
-            if next_parent == current:
-                break
-            current = next_parent
+    if layers:
+        # Prefer local rules when the aggregate budget is exhausted. Omit whole
+        # files and report it instead of truncating an instruction mid-sentence.
+        kept = []
+        used = 0
+        for layer in layers:
+            block = f"<!-- instructions: {layer.source_path} -->\n{layer.instructions}"
+            size = len(block.encode("utf-8")) + 2 if len(layers) > 1 else len(layer.instructions.encode("utf-8"))
+            if used + size > MAX_CONTEXT_SIZE:
+                ctx.warnings.append(f"Context budget exceeded; omitted {layer.source_path}")
+                continue
+            kept.append(layer)
+            used += size
+        layers = list(reversed(kept))
+        if layers:
+            ctx.instructions = (layers[0].instructions if len(layers) == 1 else
+                "\n\n".join(f"<!-- instructions: {layer.source_path} -->\n{layer.instructions}"
+                             for layer in layers))
+            ctx.source_path = layers[-1].source_path
+            ctx.source_paths = [layer.source_path for layer in layers if layer.source_path is not None]
 
     # Auto-generate only when the caller has no global AGENTS either —
     # otherwise an empty project would get a noisy placeholder alongside
@@ -905,7 +922,7 @@ def _load_project_layer(workspace: Path, *, allow_auto_generate: bool = True) ->
                 ctx.instructions = generated
                 ctx.source_path = None
 
-    if ctx.has_instructions() and ctx.source_path is not None:
+    if ctx.has_instructions() and ctx.source_path is not None and not ctx.source_paths:
         ctx.source_paths = [ctx.source_path]
     return ctx
 
@@ -978,11 +995,24 @@ def load_project_context_with_parents(
             (
                 project_text,
                 f"<!-- deepseek: project ({label}) -->",
-                [project_path] if project_path is not None else [],
+                project_ctx.source_paths or ([project_path] if project_path is not None else []),
             )
         )
     if cursor_text:
         layers.append((cursor_text, None, cursor_paths))
+
+    bounded_layers = []
+    used = 0
+    for text, header, paths in reversed(layers):
+        # Count instruction text only: the project layer is already bounded,
+        # and this pass's own headers must not push it over the same limit.
+        size = len(text.encode("utf-8"))
+        if used + size > MAX_CONTEXT_SIZE:
+            merged.warnings.append(f"Context budget exceeded; omitted {', '.join(map(str, paths))}")
+            continue
+        bounded_layers.append((text, header, paths))
+        used += size
+    layers = list(reversed(bounded_layers))
 
     if len(layers) == 1:
         text, _header, paths = layers[0]
@@ -997,7 +1027,7 @@ def load_project_context_with_parents(
         merged.instructions = "\n\n".join(parts) + "\n"
         merged.source_paths = [p for _t, _h, paths in layers for p in paths]
         # The project's own file stays the headline source when there is one.
-        merged.source_path = project_path or (
+        merged.source_path = (project_path if project_path in merged.source_paths else None) or (
             merged.source_paths[-1] if merged.source_paths else None
         )
 

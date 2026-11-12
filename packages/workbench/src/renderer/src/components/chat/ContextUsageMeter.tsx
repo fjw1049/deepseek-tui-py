@@ -106,6 +106,7 @@ export function ContextUsageMeter({
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
+  const [readFailed, setReadFailed] = useState(false)
   const [snapshot, setSnapshot] = useState<{
     threadId: string
     model: string
@@ -133,13 +134,21 @@ export function ContextUsageMeter({
           `/v1/threads/${encodeURIComponent(threadId)}/context`,
           'GET'
         )
-        if (!r.ok || cancelled) return
+        if (cancelled) return
+        if (!r.ok) {
+          setReadFailed(true)
+          return
+        }
         const data: unknown = JSON.parse(r.body)
         if (isContextBreakdown(data)) {
           setSnapshot({ threadId, model, data })
+          setReadFailed(false)
+        } else {
+          setReadFailed(true)
         }
       } catch {
-        // Keep the last reading for this thread during transient failures.
+        // Keep the last reading, but identify it as stale.
+        if (!cancelled) setReadFailed(true)
       } finally {
         if (!cancelled && busy) timer = setTimeout(() => void fetchBreakdown(), 2000)
       }
@@ -295,9 +304,9 @@ export function ContextUsageMeter({
               ))}
             </ul>
 
-            {!liveBreakdown ? (
+            {!liveBreakdown || readFailed ? (
               <p className="mt-3 border-t border-ds-border-muted pt-2.5 text-[11px] leading-4 text-ds-muted">
-                {t('contextBreakdownEstimateNote')}
+                {t(liveBreakdown && readFailed ? 'contextBreakdownStaleNote' : 'contextBreakdownEstimateNote')}
               </p>
             ) : null}
           </div>,

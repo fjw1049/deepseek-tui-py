@@ -1015,7 +1015,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         for skill in self._active_plugin_skills():
             declared = getattr(skill, "allowed_tools", None)
             if declared:
-                allowed |= set(declared)
+                from deepseek_tui.integrations.skills import focus_tool_names
+
+                allowed |= focus_tool_names(declared)
         contribs = None
         if self.plugin_session is not None:
             try:
@@ -1272,7 +1274,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         归一 config → 起/复用工具运行时 → 发现 skills → 修正工作区 context(踩坑补丁) → 造实例 → 包计费 → 建 TurnLoop → 装容量/实验特性 → 同步沙箱 → 接线子代理 → 返回。
         """
         from deepseek_tui.config.models import Config
-        from deepseek_tui.integrations.skills import discover_in_workspace
+        from deepseek_tui.integrations.skills import default_skills_dir, discover_in_workspace
         from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
 
         async with AsyncExitStack() as cleanup:
@@ -1345,7 +1347,11 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 )
                 cleanup.push_async_callback(runtime.shutdown)
             # Discover skills for system prompt injection
-            skill_reg = discover_in_workspace(workspace=working_directory)
+            skill_reg = discover_in_workspace(
+                workspace=working_directory,
+                skills_dir=cfg.skills_dir if cfg.skills_dir != default_skills_dir() else None,
+                disabled_sources=cfg.disabled_skill_sources,
+            )
             if plugin_skill_contribs is not None and plugin_skill_contribs.skills:
                 from deepseek_tui.integrations.plugins import merge_plugin_skills
 
@@ -1641,7 +1647,13 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     skills=workspace_skills,
                     warnings=list(registry.warnings),
                 )
-        return render_available_skills_context(registry) or None
+        invoked_path = self.tool_context.metadata.get("user_invoked_skill_path")
+        # A single explicit focus target differs from a mounted plugin's skill list.
+        if only is not None and not isinstance(only, (list, tuple)):
+            invoked_path = only.path
+        return render_available_skills_context(
+            registry, invoked_skill_path=Path(invoked_path) if invoked_path else None,
+        ) or None
 
     def _record_session_usage(self, item: Any) -> None:
         """Account each completed request once, including late background usage."""
@@ -2262,6 +2274,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         # MCP 连接器聚焦：已在 prepare_turn_for_model 之前预先检测（避免与
         # 文件 mention 展开冲突），此处复用结果。与 skill 聚焦互斥：skill
         # 命中时让位（首 token 不可能同时以 `/` 和 `@` 开头，互斥由构造保证）。
+        self.tool_context.metadata.pop("user_invoked_skill_path", None)
+        if focus_skill is not None:
+            self.tool_context.metadata["user_invoked_skill_path"] = str(focus_skill.path.resolve())
         focus_mcp = focus_mcp_ahead if focus_skill is None else None
         if focus_skill is not None:
             logger.info("skill_focus_mode skill=%s", getattr(focus_skill, "name", "?"))
@@ -2399,7 +2414,9 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 declared = getattr(focus_skill, "allowed_tools", None)
                 allowed = set(FOCUS_SKILL_BASE)
                 if declared:
-                    allowed |= set(declared)
+                    from deepseek_tui.integrations.skills import focus_tool_names
+
+                    allowed |= focus_tool_names(declared)
                 self._focus_tool_whitelist = frozenset(allowed)
                 self._focus_allowed_servers = frozenset()
             elif focus_mcp is not None:
@@ -2620,6 +2637,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                 )
                 self.record_transcript("interrupted", self.session_messages)
                 await self._auto_persist_session()
+            self.tool_context.metadata.pop("user_invoked_skill_path", None)
             self._completed_tool_messages = {}
             self._turn_prompt_builder = None
             self._active_context_messages = None

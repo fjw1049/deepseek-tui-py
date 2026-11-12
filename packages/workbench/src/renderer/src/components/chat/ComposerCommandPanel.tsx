@@ -300,7 +300,7 @@ function SkillsPanel({
   onPickSkill?: (name: string) => void
   onClose: () => void
 }): ReactElement {
-  const [skills, setSkills] = useState<Array<{ name: string; description?: string }>>([])
+  const [skills, setSkills] = useState<Array<{ name: string; description?: string; user_invocable?: boolean }>>([])
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     if (!runtimeReady) {
@@ -321,7 +321,7 @@ function SkillsPanel({
   }
   return (
     <div className="space-y-2">
-      {skills.map((skill) => (
+      {skills.filter((skill) => skill.user_invocable !== false).map((skill) => (
         <button
           key={skill.name}
           type="button"

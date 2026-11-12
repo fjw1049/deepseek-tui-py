@@ -220,6 +220,7 @@ async def produce_briefing(
     )
     request = template.model_copy(update={
         "model": model,
+        "tool_choice": "none" if template.tools else None,
         "messages": messages,
         "max_tokens": min(max_briefing_tokens * 2, 8192),
     })

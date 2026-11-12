@@ -16,7 +16,7 @@ from deepseek_tui.tools.subagent.loop import _compact_subagent_messages
 
 
 @pytest.mark.parametrize("operation", ["summary", "cycle"])
-async def test_summary_preserves_request_prefix_and_tool_mode(operation):
+async def test_summary_preserves_request_prefix_and_disables_tool_calls(operation):
     messages = [Message.user("constraint"), Message.assistant("head " + "middle" * 10000 + " tail")]
     tools = [{"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}]
     captured = []
@@ -36,7 +36,7 @@ async def test_summary_preserves_request_prefix_and_tool_mode(operation):
         )
     request = captured[0]
     assert request.messages[:-1] == messages
-    assert request.tool_choice is None
+    assert request.tool_choice == "none"
     assert (
         first_divergence(
             fingerprint_request("stable", messages, tools),

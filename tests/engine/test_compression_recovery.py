@@ -70,8 +70,10 @@ async def test_summary_copies_effective_request_including_thinking_off(operation
         await native.close()
     assert summary["messages"][:-1] == main["messages"]
     assert "reasoning_content" not in summary["messages"][-2]
-    for key in main.keys() - {"messages", "max_tokens"}:
+    for key in main.keys() - {"messages", "max_tokens", "tool_choice"}:
         assert summary[key] == main[key]
+    assert summary["tool_choice"] == "none"
+    assert main["tool_choice"] == "auto"
     assert request.max_tokens == 1024
     assert captured[0].max_tokens <= 8192
 
@@ -258,13 +260,14 @@ async def test_engine_sends_compacted_history_and_matching_request_controls(tmp_
         for field in (
             "system_prompt",
             "tools",
-            "tool_choice",
             "reasoning_effort",
             "temperature",
             "top_p",
             "extra_body",
         ):
             assert getattr(summary_request, field) == getattr(task_request, field)
+        assert summary_request.tool_choice == "none"
+        assert task_request.tool_choice == {"type": "auto"}
         events = [
             e for e in engine.handle.drain_events() if getattr(e, "kind", None) == "compaction"
         ]

@@ -82,7 +82,8 @@ def _detect_focus_skill(text: str, registry: object | None) -> object | None:
     name = _detect_focus_prefix(text, "/")
     if name is None:
         return None
-    return registry.get(name)
+    skill = registry.get(name)
+    return skill if skill is not None and getattr(skill, "user_invocable", True) else None
 
 
 def _detect_focus_mcp(text: str, manager: object | None) -> str | None:

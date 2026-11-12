@@ -121,6 +121,8 @@ class Skill:
     An intentional addition for the focus-mode feature; unions rather
     than replaces the focus base.
     """
+    disable_model_invocation: bool = False
+    user_invocable: bool = True
 
 
 @dataclass(slots=True)
@@ -186,18 +188,20 @@ class SkillRegistry:
 
 
 
-def _parse_skill_file(path: Path) -> Skill:
+def _parse_skill_file(path: Path, *, content: str | None = None) -> Skill:
     """Parse a SKILL.md file into a Skill instance.
 
     Frontmatter is parsed as YAML so folded/literal blocks (``>``, ``|``)
     keep their full description text. ``allowed-tools`` still accepts the
     legacy comma-string / inline-array / block-list shapes.
     """
-    content = path.read_text(encoding="utf-8")
+    if content is None:
+        content = path.read_text(encoding="utf-8")
     name = path.parent.name
     description = ""
     allowed_tools: tuple[str, ...] | None = None
     body = content
+    meta: dict[str, Any] = {}
 
     raw, body = split_frontmatter(content)
     if raw is not None:
@@ -231,6 +235,8 @@ def _parse_skill_file(path: Path) -> Skill:
         body=body.strip(),
         path=path,
         allowed_tools=allowed_tools,
+        disable_model_invocation=str(meta.get("disable-model-invocation", False)).lower() == "true",
+        user_invocable=str(meta.get("user-invocable", True)).lower() != "false",
     )
 
 
@@ -248,7 +254,7 @@ def _coerce_allowed_tools(value: Any) -> tuple[str, ...] | None:
             return None
         if text.startswith("[") and text.endswith("]"):
             text = text[1:-1]
-        items = [tok.strip().strip("'\"") for tok in text.split(",")]
+        items = [tok.strip().strip("'\"") for tok in re.findall(r"[^\s,(]+(?:\([^)]*\))?", text)]
         tools = tuple(t for t in items if t)
         return tools or None
     if isinstance(value, (list, tuple)):
@@ -257,12 +263,27 @@ def _coerce_allowed_tools(value: Any) -> tuple[str, ...] | None:
     return None
 
 
+def focus_tool_names(declarations: tuple[str, ...]) -> set[str]:
+    """Translate bare tool aliases without widening argument-scoped matchers."""
+    from deepseek_tui.integrations.plugin_compat import FOREIGN_TOOL_NAME_MAP
+
+    names: set[str] = set()
+    for declaration in declarations:
+        if not re.fullmatch(r"[A-Za-z0-9_]+", declaration):
+            _LOG.warning("Unsupported allowed-tools matcher %r; not added to focus tools", declaration)
+            continue
+        names.update(FOREIGN_TOOL_NAME_MAP.get(declaration.lower(), (declaration,)))
+    return names
+
+
 # ── Workspace discovery ──────────────────────────────────────────────────
 
 
 def skills_directories(
     skills_dir: Path | None = None,
     workspace: Path | None = None,
+    *,
+    disabled_sources: list[str] | tuple[str, ...] = (),
 ) -> list[Path]:
     """Return ordered list of skill directories to scan.
 
@@ -284,14 +305,17 @@ def skills_directories(
     An explicit ``skills_dir`` override (tests, CLI flag) is honored first
     so deterministic precedence holds for callers that pin a directory.
 
+    ``disabled_sources`` excludes vendor project and global roots; explicit
+    ``skills_dir``, native, shared Agent Skills and bundled roots remain enabled.
+
     De-duplication uses ``Path.resolve()`` so two paths that canonicalize
     to the same dir (symlink chains, ``./foo`` vs ``foo``) are merged.
     """
     dirs: list[Path] = []
     seen: set[Path] = set()
 
-    def _add(p: Path | None) -> None:
-        if p is None:
+    def _add(p: Path | None, source: str | None = None) -> None:
+        if p is None or source in disabled_sources:
             return
         try:
             canonical = p.resolve()
@@ -309,21 +333,21 @@ def skills_directories(
         _add(workspace / ".agent" / "skills")
         _add(workspace / "skills")
         _add(workspace / ".deepseek" / "skills")
-        _add(workspace / ".opencode" / "skills")
-        _add(workspace / ".claude" / "skills")
-        _add(workspace / ".cursor" / "skills")
-        _add(workspace / ".codex" / "skills")
-        _add(workspace / ".qwen" / "skills")
-        _add(workspace / ".gemini" / "skills")
-        _add(workspace / ".codebuddy" / "skills")
+        _add(workspace / ".opencode" / "skills", "opencode")
+        _add(workspace / ".claude" / "skills", "claude")
+        _add(workspace / ".cursor" / "skills", "cursor")
+        _add(workspace / ".codex" / "skills", "codex")
+        _add(workspace / ".qwen" / "skills", "qwen")
+        _add(workspace / ".gemini" / "skills", "gemini")
+        _add(workspace / ".codebuddy" / "skills", "codebuddy")
 
     _add(agents_global_skills_dir())
-    _add(claude_global_skills_dir())
-    _add(cursor_global_skills_dir())
-    _add(codex_global_skills_dir())
-    _add(_user_ecosystem_skills_dir(".qwen"))
-    _add(_user_ecosystem_skills_dir(".gemini"))
-    _add(_user_ecosystem_skills_dir(".codebuddy"))
+    _add(claude_global_skills_dir(), "claude")
+    _add(cursor_global_skills_dir(), "cursor")
+    _add(codex_global_skills_dir(), "codex")
+    _add(_user_ecosystem_skills_dir(".qwen"), "qwen")
+    _add(_user_ecosystem_skills_dir(".gemini"), "gemini")
+    _add(_user_ecosystem_skills_dir(".codebuddy"), "codebuddy")
     if skills_dir is None:
         _add(default_skills_dir())
     _add(bundled_skills_dir())
@@ -346,6 +370,8 @@ def bundled_skills_dir() -> Path | None:
 def discover_in_workspace(
     skills_dir: Path | None = None,
     workspace: Path | None = None,
+    *,
+    disabled_sources: list[str] | tuple[str, ...] = (),
 ) -> SkillRegistry:
     """Discover skills across all skill directories.
 
@@ -353,12 +379,16 @@ def discover_in_workspace(
     """
     merged = SkillRegistry()
     seen_names: set[str] = set()
-    for d in skills_directories(skills_dir, workspace):
+    for d in skills_directories(skills_dir, workspace, disabled_sources=disabled_sources):
         reg = SkillRegistry.discover(d)
         for skill in reg.skills:
             if skill.name.lower() not in seen_names:
                 merged.skills.append(skill)
                 seen_names.add(skill.name.lower())
+            else:
+                winner = merged.get(skill.name)
+                if winner.path.resolve() != skill.path.resolve():
+                    _LOG.info("Skill %s at %s shadowed by %s", skill.name, skill.path, winner.path)
         merged.warnings.extend(reg.warnings)
     return merged
 
@@ -378,6 +408,7 @@ _HOW_TO_USE_SKILLS = (
     "mean use them all. Do not carry skills across turns unless re-mentioned.\n"
     "- Missing/blocked: If a named skill is missing or its `SKILL.md` cannot "
     "be read, say so briefly and continue with the best fallback.\n"
+    "- Search: Use `search_skills(query=...)` to find skills beyond this catalog.\n"
     "- Progressive disclosure: After deciding to use a skill, call "
     "`load_skill(name=...)` to read its full instructions. When it references "
     "relative paths such as `scripts/foo.py`, resolve them relative to the "
@@ -406,6 +437,8 @@ def truncate_for_prompt(value: str, max_chars: int) -> str:
 
 def render_available_skills_context(
     registry: SkillRegistry,
+    *,
+    invoked_skill_path: Path | None = None,
 ) -> str:
     """Render the progressive-disclosure skills block for the system prompt.
 
@@ -430,7 +463,16 @@ def render_available_skills_context(
     rendered_lines: list[str] = []
     omitted = 0
     running = sum(len(p) for p in parts)
-    for skill in registry.skills:
+    skills = registry.skills
+    invoked_path = invoked_skill_path.resolve() if invoked_skill_path else None
+    if invoked_path is not None:
+        # Reserve catalog space for the skill the user explicitly requested.
+        skills = sorted(skills, key=lambda skill: skill.path.resolve() != invoked_path)
+    for skill in skills:
+        if skill.disable_model_invocation and (
+            invoked_path is None or skill.path.resolve() != invoked_path
+        ):
+            continue
         desc = truncate_for_prompt(skill.description, MAX_SKILL_DESCRIPTION_CHARS)
         line = (
             f"- {skill.name}: (file: {skill.path})\n"
@@ -446,7 +488,7 @@ def render_available_skills_context(
 
     if omitted > 0:
         parts.append(
-            f"- ... {omitted} additional skills omitted from this prompt budget.\n"
+            f"- ... {omitted} additional skills omitted from this prompt budget; use search_skills(query=...) to discover them.\n"
         )
 
     if registry.warnings:
