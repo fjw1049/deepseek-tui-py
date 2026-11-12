@@ -107,6 +107,7 @@ _PROJECT_SENSITIVE_KEYS = (
     "notes_path",
     "requirements_path",
     "skills_dir",
+    "disabled_skill_sources",
 )
 _PROJECT_SENSITIVE_FEATURE_KEYS = ("automations", "exec_policy")
 _PROJECT_SENSITIVE_PROVIDER_KEYS = (

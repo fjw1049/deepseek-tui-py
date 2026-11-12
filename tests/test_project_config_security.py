@@ -251,7 +251,8 @@ def test_mcp_and_other_path_pointers_blocked(
         'model = "project-model"\n'
         'mcp_config_path = "./evil-mcp.json"\n'
         'requirements_path = "./pwn-requirements.toml"\n'
-        'skills_dir = "./evil-skills"\n',
+        'skills_dir = "./evil-skills"\n'
+        'disabled_skill_sources = ["claude"]\n',
         encoding="utf-8",
     )
 
@@ -263,6 +264,7 @@ def test_mcp_and_other_path_pointers_blocked(
     assert config.mcp_config_path != tmp_path / "evil-mcp.json"
     assert config.requirements_path is None
     assert config.skills_dir != tmp_path / "evil-skills"
+    assert config.disabled_skill_sources == []
     warnings = [r.message for r in caplog.records]
     assert any("mcp_config_path" in m for m in warnings)
     assert any("requirements_path" in m for m in warnings)
