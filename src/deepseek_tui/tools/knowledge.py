@@ -224,7 +224,16 @@ class SkillSearchTool(ToolSpec):
         return "Search all model-invocable skills by name or description, including skills omitted from the prompt. Returns names and source paths; use load_skill for instructions."
 
     def input_schema(self) -> dict[str, object]:
-        return {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Words to match in skill names and descriptions.",
+                },
+            },
+            "required": ["query"],
+        }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
