@@ -1265,10 +1265,25 @@ def test_runtime_error_names_cover_observed_messages():
     assert runtime_error("Screenshot unavailable for /System/Applications/TextEdit.app.")[0] \
         == "screenshot_unavailable"
     assert runtime_error("app is not defined")[0] == "unbound_name"
-    assert runtime_error("Capability is not available: visibility")[0] == "unsupported_form"
+    capability = runtime_error("Capability is not available: visibility")
+    assert capability[0] == "unsupported_capability"
+    assert "optional" in capability[1] and "browser" in capability[1]
+    assert "typeText" not in capability[1]
+    assert runtime_error("Capability is not available: native_feature")[0] == "unsupported_form"
     assert runtime_error("Computer Use server error -10005: Could not find the requested text to "
                          "select in the element")[0] == "text_not_found"
     assert runtime_error("Computer Use server error -10016: x")[0] == "user_intervened"
+
+
+def test_unsupported_capability_preserves_input_uncertainty():
+    from deepseek_tui.cua.tools import _sent_no_input, runtime_error
+
+    kind, _ = runtime_error("Capability is not available: visibility")
+    rejected = {"actions": [{"ok": False}]}
+    assert _sent_no_input(rejected, kind)
+    assert not _sent_no_input(None, kind)
+    assert not _sent_no_input({**rejected, "tabs": ["1"]}, kind)
+    assert not _sent_no_input({"actions": [{"ok": True}, {"ok": False}]}, kind)
 
 
 def test_expected_text_ignores_presentation_not_content():

@@ -1,7 +1,14 @@
 ## Browser Tasks
 
-Use `browser_use` for interacting with websites, authenticated pages, and testing
-local web apps. Public information lookup can use available search/fetch tools.
+Use `browser_use` by default for interacting with websites, authenticated pages,
+and testing local web apps. A generic request to open or use a browser means this
+Workbench browser, even when Chrome CUA is also available. If an observed technical
+failure or missing capability prevents completion, use Chrome CUA as the fallback
+when available; do not keep retrying an unsuitable browser. Start with Chrome when
+the user explicitly requests it or the task needs its existing tabs, sign-ins or
+extensions. Before switching, resolve any uncertain write and preserve the target,
+authorization and user control. A login requirement alone is not a technical failure.
+Public information lookup can use available search/fetch tools.
 When the user asks to inspect or test the UI, establish the result through UI
 evidence. Do not ask the user to name a tool.
 

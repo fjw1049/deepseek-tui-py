@@ -969,6 +969,17 @@ async def run_subagent_loop(
             )
         elif context.metadata.get("cua_error"):
             system_prompt += "\n\nComputer use unavailable: " + context.metadata["cua_error"]
+        if not any(t["function"]["name"] == "browser_use" for t in api_tools):
+            system_prompt += (
+                "\n\nThis child has no Workbench browser. If a step needs its UI, "
+                "return that step to the parent with the target and remaining work. "
+                "Do not substitute Chrome CUA merely because browser_use is absent. "
+                "Chrome CUA is appropriate when the parent reports an observed browser_use "
+                "technical failure or missing capability, or when the assignment requests "
+                "Chrome or needs its existing session. Preserve authorization and resolve "
+                "uncertain writes before switching. Public information lookup may use "
+                "available search/fetch tools."
+            )
         pause_generation_seen = 0
         while steps - attempt_start_steps < DEFAULT_MAX_STEPS:
             pause = getattr(runtime.manager, "parent_pause", None)

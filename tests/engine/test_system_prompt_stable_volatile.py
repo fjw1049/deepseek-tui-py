@@ -196,6 +196,13 @@ def test_action_surfaces_list_only_available_surfaces_in_tier_order():
         < both.index("## Runtime Authority Boundary")
     )
     assert both.count("## Browser Tasks") == 1
+    assert "A generic request to open or use a browser means this" in both
+    assert "as fallback when `browser_use` cannot complete" in both
+    assert "never repeat an uncertain effect" in both
+    assert "The browser-specific exception is `browser_use` → Chrome CUA" in both
+    assert "diagnose or report it instead of redoing the same effect through a lower tier" in both
+    assert "write `cua_js` code for browser tabs" not in both
+    assert "Workbench tabs are not CUA tabs" in both
     web = build_system_prompt(browser_guidelines=True, project_context_enabled=False)
     assert "## Action Surfaces" in web
     assert "Desktop apps:" not in web and "## Computer Use" not in web

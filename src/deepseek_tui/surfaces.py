@@ -30,7 +30,7 @@ SURFACES: tuple[Surface, ...] = (
     Surface(
         "browser",
         "web",
-        "the Workbench browser via `browser_use`, for sites, web apps and local previews",
+        "the Workbench browser via `browser_use`, the default for sites, web apps and local previews",
         frozenset({"browser_use", "browser_skill"}),
         guide="browser.md",
         context_keys=("action", "ref", "selector", "frame_id", "observation_id", "full_page",
@@ -40,8 +40,8 @@ SURFACES: tuple[Surface, ...] = (
     Surface(
         "chrome",
         "web",
-        "the user's own Chrome via `cua_js`, when the task needs its tabs, sign-ins or "
-        "extensions",
+        "the user's own Chrome via `cua_js`, as fallback when `browser_use` cannot complete "
+        "the step, or first when the user requests Chrome or needs its existing session",
         CUA_TOOLS,
     ),
     Surface(

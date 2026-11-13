@@ -683,11 +683,14 @@ class AgentTool(ToolSpec):
             f"Manage sub-agents. Actions — {blurbs}. To list agents, fetch "
             "their results, or stop them (and durable tasks / background "
             "shell processes), use the task_list / task_output / task_stop "
-            "tools instead"
+            "tools instead. Ordinary sub-agents do not share this chat's Workbench browser; "
+            "keep browser UI steps in the parent. Chrome CUA may be delegated after the parent "
+            "establishes that browser_use cannot complete the step, or when the user requests "
+            "Chrome or the task needs its existing session."
         )
         if self._allow_resume:
             text += (
-                ". Alternatively, pass 'resume' with a sub-agent id (and no "
+                " Alternatively, pass 'resume' with a sub-agent id (and no "
                 "'action' — the two are mutually exclusive) to continue that "
                 "child from its durable transcript. Prefer resume over "
                 "spawning a new agent when the work continues earlier work "

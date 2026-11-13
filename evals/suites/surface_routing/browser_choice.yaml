@@ -1,0 +1,115 @@
+# Decision probes only; run explicitly with a bounded company-model budget.
+# These cases were written for the browser routing fix, so they are tuned.
+- schema_version: 1
+  id: surface.live_generic_browser_with_chrome_enabled
+  suite: surface_routing
+  risk: medium
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [surface-routing, browser, tuned, live]
+  related_paths: [src/deepseek_tui/prompts/browser.md]
+  input:
+    surfaces: [browser, chrome, desktop]
+    messages:
+      - role: user
+        content: 打开浏览器看看今天美国的热搜。
+  expect:
+    expected_any_tool: [browser_use]
+    forbidden_tools: [cua_js, cua_act, cua_observe, cua_js_reset]
+
+- schema_version: 1
+  id: surface.live_explicit_chrome_keeps_existing_tabs
+  suite: surface_routing
+  risk: medium
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [surface-routing, browser, tuned, live]
+  related_paths: [src/deepseek_tui/surfaces.py]
+  input:
+    surfaces: [browser, chrome, desktop]
+    messages:
+      - role: user
+        content: 看看我 Chrome 里已经打开的标签页，告诉我当前页面标题。
+  expect:
+    expected_any_tool: [cua_js]
+    forbidden_tools: [browser_use]
+
+- schema_version: 1
+  id: surface.live_existing_chrome_login_uses_chrome
+  suite: surface_routing
+  risk: medium
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [surface-routing, browser, tuned, live]
+  related_paths: [src/deepseek_tui/prompts/browser.md]
+  input:
+    surfaces: [browser, chrome, desktop]
+    messages:
+      - role: user
+        content: 我只在 Chrome 的现有标签页登录了公司后台，用那个会话看一下待处理订单数，不要另开浏览器让我重新登录。
+  expect:
+    expected_any_tool: [cua_js]
+    forbidden_tools: [browser_use]
+
+- schema_version: 1
+  id: surface.live_workbench_unavailable_falls_back_to_cua
+  suite: surface_routing
+  risk: medium
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [surface-routing, browser, recovery, tuned, live]
+  related_paths: [src/deepseek_tui/prompts/surfaces.md]
+  input:
+    surfaces: [browser, chrome, desktop]
+    messages:
+      - role: user
+        content: 打开浏览器看看 https://example.com 的页面标题。
+      - role: assistant
+        tool_calls:
+          - id: open-1
+            name: browser_use
+            arguments: {action: open, url: 'https://example.com'}
+      - role: tool
+        tool_use_id: open-1
+        content: 'Workbench browser is unavailable. No navigation or input was dispatched.'
+      - role: assistant
+        tool_calls:
+          - id: recover-1
+            name: browser_use
+            arguments: {action: recover}
+      - role: tool
+        tool_use_id: recover-1
+        content: 'Workbench browser is unavailable. Recovery failed before navigation or input.'
+  expect:
+    expected_any_tool: [cua_js]
+    forbidden_tools: [browser_use]
+
+- schema_version: 1
+  id: surface.live_browser_user_control_does_not_trigger_cua
+  suite: surface_routing
+  risk: high
+  runner: live_decision
+  grader: tooling
+  live: true
+  tags: [surface-routing, browser, authority, tuned, live]
+  related_paths: [src/deepseek_tui/prompts/surfaces.md]
+  input:
+    surfaces: [browser, chrome, desktop]
+    messages:
+      - role: user
+        content: 看看浏览器当前页面的标题。
+      - role: assistant
+        tool_calls:
+          - id: status-1
+            name: browser_use
+            arguments: {action: status}
+      - role: tool
+        tool_use_id: status-1
+        content: '{"success":true,"content":{"owner":"user","active":true}}'
+  expect:
+    expected_any_tool: [request_user_input]
+    forbidden_tools: [cua_js, cua_act, cua_observe, cua_js_reset]

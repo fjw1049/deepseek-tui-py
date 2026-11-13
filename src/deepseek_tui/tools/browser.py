@@ -32,8 +32,13 @@ class BrowserUseTool(ToolSpec):
 
     def description(self) -> str:
         return (
+            "Default tool for website interaction and local web UI tests. "
             "Operate this Workbench thread's browser: the native pages shared with the user, "
             "or a temporary private session.\n"
+            "A generic request to open a browser starts here. Fall back to Chrome CUA when an "
+            "observed technical failure or missing capability prevents completion. Start with "
+            "Chrome when the user requests it or needs its existing session. Resolve uncertain "
+            "writes before switching; never bypass a denial or user-held control.\n"
             "Core loop: open an http(s) URL, observe, then act on an element using the ref (or "
             "selector) that observation returned. Every action returns a fresh observation of "
             "the page's text and interactive elements, so read that instead of observing again; "

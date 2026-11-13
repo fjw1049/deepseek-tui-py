@@ -102,6 +102,11 @@ _RUNTIME_ERRORS = (
     ("invalid_key", (), r"keyNotFound",
      "Use xdotool-style key names, which are case-sensitive: \"Return\", \"Tab\", \"Down\", "
      "\"super+Down\" (super is Command on macOS)."),
+    ("unsupported_capability", (), r"Capability is not available: visibility\b",
+     "The selected target does not support the named capability. Check its runtime "
+     "documentation and capabilities; omit an optional argument only if that still meets "
+     "the task's requirements. An unsupported optional browser capability (such as "
+     "visibility) does not mean the browser itself is unavailable. Do not guess browser IDs."),
     ("unsupported_form", (), r"only supported on Linux|accepts pages, not pixels|"
      r"requires an app name, path, or bundle ID|is unavailable on (macOS|Linux|Windows)|"
      r"Capability is not available",
@@ -381,7 +386,8 @@ def _coordinate_input(trace: dict[str, Any] | None, input_data: dict[str, Any]) 
 
 # Rejected while validating the request, before any input is sent.
 _PRE_DISPATCH = frozenset({"stale_element", "text_not_found", "invalid_key", "unsupported_form",
-                           "unknown_app", "state_changed", "no_window", "stale_coordinates"})
+                           "unsupported_capability", "unknown_app", "state_changed", "no_window",
+                           "stale_coordinates"})
 
 
 def _sent_no_input(trace: dict[str, Any] | None, kind: str | None) -> bool:

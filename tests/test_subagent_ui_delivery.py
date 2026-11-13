@@ -16,6 +16,16 @@ def call(name, call_id, **arguments):
 REPORT = [StreamTextDelta(text="### SUMMARY\nChecked 1 desktop window."), StreamDone(usage=None)]
 
 
+async def test_child_without_browser_returns_web_ui_work_to_parent(tmp_path, desktop):
+    clients = []
+    await _run([REPORT], tmp_path, clients)
+    request = clients[0].requests[0]
+    assert not any(t["function"]["name"] == "browser_use" for t in request.tools)
+    assert any(t["function"]["name"] == "cua_js" for t in request.tools)
+    assert "return that step to the parent" in request.system_prompt
+    assert "Do not substitute Chrome CUA" in request.system_prompt
+
+
 @pytest.fixture
 def desktop(monkeypatch, tmp_path):
     from deepseek_tui.tools import registry
