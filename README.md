@@ -160,29 +160,25 @@ mcp_read_only_tools = ["mcp_my_docs_search", "mcp_my_docs_read"]
 
 项目记忆可通过聊天使用：“记住这个项目使用 pnpm”“查找之前记住的测试要求”“更新这条记忆”“忘记这条记忆”。Agent 使用 `memory_read` 检索/读取，使用 `memory_write` 保存/更新/删除；ask/plan 仅开放读取。记录保存到 `$DEEPSEEK_HOME/memories/`（默认 `~/.deepseek/memories/`），同一本机 Git 仓库的子目录和 linked worktree 共享，独立 clone 不共享；非 Git 项目按工作目录隔离。
 
-每条记忆包含来源、适用条件和版本号，更新/删除须先读取当前版本。来源表示保存操作所在会话，不代表内容已经验证；历史记忆不能替代当前代码和测试结果。有效记忆在预算内时完整提供项目上下文；超出预算才按最近三条真实用户请求检索，词项集合至少命中两项（查询只有一个词项时命中一项即可），最多选取 5 条，不使用子串匹配。全量结果与查询无关，固定放在消息最前面以命中前缀缓存；检索结果附在末尾。小库全量提供不表示每条内容均与当前任务相关；模型仍须判断适用性。召回最多 4,000 字符，并用上下文 token 估算器检查窗口余量，余量不足时跳过。召回正文独立标记，不进入系统提示词、用户请求账本、压缩器输入或成功/失败/取消后的会话历史。条件检查在用户轮次内缓存，新一轮、写工具执行后或记忆文件变化时刷新；同次检查共用分支和文件指纹结果。自动上下文每条仅一行 ID、正文和非空的适用说明，不携带来源；revision 等元数据用 `memory_read` 查看。旧 `note` 不自动迁入；没有跨项目用户记忆、向量服务或额外模型提炼调用。
+每条记忆包含来源、适用条件和版本号，更新/删除须先读取当前版本。来源表示保存操作所在会话，不代表内容已经验证；历史记忆不能替代当前请求、代码和测试结果。
 
-`memory_write` 可指定 `branch`、带时区的 ISO8601 `expires_at`、`files`（最多 10 个相对路径，记录文件内容指纹）和 `topic`（同一决策的稳定标识）。分支不匹配、文件变化/丢失或过期时停止自动召回。写入或接受候选遇到同 topic 的有效条目时立即报错并返回旧 ID，需读取后更新旧条目；当前因分支或文件条件暂不召回的条目也算冲突（已过期的除外），不同分支的变体请用不同 topic。自由文本 `applicability` 随正文提供，由模型核实适用性，不作为自动屏蔽条件。`memory_read` 仍可查看失效原因，显式查询支持单个完整词项；内容更正默认保留 kind、原条件与文件指纹，需要重新验证后显式传入 `files` 才刷新指纹。未标记 topic 的语义冲突不能保证自动识别。
+有效记忆在预算内时完整提供，超预算时只提示记录总数及 `memory_read` 的分页入口，不用关键词、停用词或固定相关性分数筛掉内容。模型通过省略 query 浏览记录、跟随 `next_offset` 读取后续页面并判断适用性。`query` 仅作显式字面子串过滤，不是语义搜索；没有字面匹配时仍可不带 query 浏览。返回完整条目，页码按实际返回的条目数推进，字符预算截断不会跳过记录。`search_skills` 同样支持省略 query 和按 `next_offset` 浏览完整的可调用技能目录，不做相关性打分。
 
-后台候选提炼默认关闭，在**用户级** `~/.deepseek/config.toml` 中启用；项目配置不能覆盖此设置：
+`memory_write` 可指定 `branch`、带时区的 ISO8601 `expires_at`、`files`（最多 10 个相对路径，记录文件指纹）和 `topic`。分支不匹配、文件变化/丢失或过期时停止自动召回，每次注入前重新校验，同次检查共享分支和文件指纹结果。同内容但不同类别、topic、分支、期限或文件条件的记录不会被静默当作重复。内容更正默认保留已有条件，显式传入 `files` 才刷新指纹；同一 active topic 要读取后更新，自由文本适用条件由模型判断。
+
+不再后台提炼候选，只有用户明确要求时才由 Agent 保存。旧配置中的 `capture_candidates`、`idle_seconds`、`max_candidates_per_pass` 被忽略，不再启动后台工作。已有候选可用 `memory_read(status="candidate")` 查看，用 `accept` 确认或 `forget` 删除；接受前仍核验旧来源有效性。
 
 ```toml
+# 用户级 ~/.deepseek/config.toml；项目配置不能覆盖
 [memory]
 enabled = true
 auto_recall = true
-capture_candidates = true
-idle_seconds = 60
 max_recall_chars = 4000
-max_candidates_per_pass = 5
 ```
 
-候选提炼在成功轮次结束或恢复会话后的空闲期运行：仅处理当前会话日志中已提交的真实用户消息，保留带“以后/本项目/偏好/纠正”等线索的短原文，并跳过常见凭据与嵌入内容。它是确定性的本地规则，不理解任意语义，不总结助手/工具结论，不额外调用模型。每次最多新增 5 条，日志上限 8 MB / 4,000 条记录。`memory_read(status="candidate")` 查看候选；确认后 `memory_write(action="accept", id="...", revision=1)` 生效，拒绝用 `forget`。可先 `update` 候选补充条件。接受时校验来源仍有效，接受后成为独立记忆，日志增长、删除或回滚不再使其失效。显式 remember 相同候选正文时直接提升为 active，并记录本次显式保存的来源。
+自动召回正文最多 4,000 字符，并检查上下文 token 余量；不足时跳过。正文带独立来源标记，不进入系统提示词、用户请求账本、压缩器或持久会话历史。单条正文最多 2,000 字符，最多 1,000 条 active/candidate。显式记忆独立于聊天删除/回滚；忘记会清除正文和来源。`enabled=false` 关闭记忆工具和自动召回，`auto_recall=false` 只关闭自动召回，修改配置后重启 Runtime。常见凭据检查不是完整秘密识别器。
 
-单条正文最多 2,000 字符，手动检索输出最多 6,000 字符，项目最多 1,000 条 active/candidate；删除标记不占此容量。另分别保留最多 1,000 个删除标记和被替换正文的摘要标记，超限淘汰旧标记，不阻止新写入。可使用具体查询、条目 ID 或 `offset` 翻页。`enabled=false` 关闭记忆工具和自动工作；`auto_recall=false` 只关闭自动召回。配置修改后重启 Runtime。常见凭据检查是启发式检测，不能当作完整的秘密识别器。
-
-显式保存的记忆独立于聊天删除/回滚。忘记操作清除记忆正文和来源，保留规范化内容的摘要标记，仅阻止后台候选静默重建；用户可以显式重新保存相同正文，或将更新后的正文改回原文。这不是语义去重，也不会清除旧聊天中已经出现的内容。旧标记被淘汰后，对应内容可能再次成为待审核候选，不会自动成为 active。彻底重置可在停止 Runtime 后删除对应项目的记忆 JSON 文件，这也会清除防重建标记。
-
-离线验证：`uv run pytest tests/test_project_memory.py tests/test_memory_lifecycle.py tests/test_memory_review_regressions.py -q -s`。包含超预算检索金标对照、小库全量与“继续”跟进、过期/冲突/回滚隔离、失败/取消后的历史隔离、缓存失效、容量边界、真实 Engine 接线，以及确定性本地 Agent 执行测试脚本的有记忆/无记忆对照。它们验证机制和固定场景，不等同于真实模型成功率评测；公司环境的真实模型批测需另外明确 provider/model 与预算后运行。
+离线验证：`uv run pytest tests/test_project_memory.py tests/test_memory_lifecycle.py tests/test_memory_review_regressions.py tests/test_memory_generalization.py -q`。真实产品验证使用 `scripts/verify_memory_generalization.py`，必须显式填写公司 provider/model；默认并发 2、每例两次，使用隔离目录和脱敏重建的标注审核任务，覆盖跨会话保存、超预算分页、跨语言、当前指令覆盖、失效条件和技能发现。机制测试和有限案例均不能证明未知任务普遍有效。
 
 可选的 `NetworkPolicyDecider` 尚未接入应用配置，标准运行时保持 `network_policy=None`。已有网络审批桥供显式注入策略的集成使用；本轮只修复该路径的超时计数共享，没有默认启用网络审批。
 

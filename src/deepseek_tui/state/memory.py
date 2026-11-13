@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import subprocess
 import unicodedata
 import uuid
@@ -84,56 +83,6 @@ def _fingerprint(content: str, applicability: str) -> str:
     ).hexdigest()
 
 
-def _terms(text: str) -> set[str]:
-    # Chinese has no word separators. Bigrams preserve useful partial matches;
-    # identifiers and paths remain intact for precise code-oriented retrieval.
-    terms = set(re.findall(r"[a-z0-9_./:-]{2,}", _normalize(text)))
-    for run in re.findall(r"[\u3400-\u9fff]+", text):
-        terms.update(run[i : i + 2] for i in range(len(run) - 1))
-        if len(run) == 1:
-            terms.add(run)
-    return terms - {
-        "the",
-        "this",
-        "that",
-        "project",
-        "what",
-        "which",
-        "how",
-        "should",
-        "use",
-        "please",
-        "with",
-        "for",
-        "and",
-        "our",
-        "remember",
-        "之前",
-        "这个",
-        "项目",
-        "怎么",
-        "如何",
-        "请问",
-        "应该",
-        "什么",
-        "使用",
-        "记住",
-        "以后",
-        "我们",
-    }
-
-
-def rank_memories(
-    entries: list[MemoryEntry], query: str, *, min_matches: int = 2
-) -> list[MemoryEntry]:
-    terms = _terms(query)
-    # A one-keyword query can only ever match once.
-    min_matches = max(1, min(min_matches, len(terms)))
-    ranked = [(len(terms & _terms(e.content + " " + e.applicability)), e) for e in entries]
-    ranked.sort(key=lambda pair: (pair[0], pair[1].updated_at), reverse=True)
-    return [entry for score, entry in ranked if score >= min_matches]
-
-
 class MemoryStore:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace.resolve()
@@ -158,18 +107,25 @@ class MemoryStore:
         status: str = "active",
         offset: int = 0,
     ) -> list[MemoryEntry]:
+        entries = self.matching_entries(query=query, entry_id=entry_id, status=status)
+        return entries[offset : offset + max(1, min(limit, 20))]
+
+    def matching_entries(
+        self, *, query: str = "", entry_id: str = "", status: str = "active"
+    ) -> list[MemoryEntry]:
+        """Literal filtering only. Semantic relevance belongs to the caller/model."""
         entries = [
-            entry
-            for entry in self._load().entries
+            entry for entry in self._load().entries
             if entry.status == status or (status == "all" and entry.status != "deleted")
         ]
         if entry_id:
             return [entry for entry in entries if entry.id == entry_id]
         if query.strip():
-            entries = rank_memories(entries, query, min_matches=1)
-        else:
-            entries.sort(key=lambda entry: entry.updated_at, reverse=True)
-        return entries[offset : offset + max(1, min(limit, 20))]
+            needle = _normalize(query)
+            entries = [entry for entry in entries if needle in _normalize(
+                entry.content + " " + entry.applicability + " " + entry.topic
+            )]
+        return sorted(entries, key=lambda entry: (entry.updated_at, entry.id), reverse=True)
 
     def stale_reason(self, entry: MemoryEntry, cache: dict | None = None) -> str | None:
         cache = {} if cache is None else cache
@@ -222,14 +178,17 @@ class MemoryStore:
         return hashlib.sha256(content).hexdigest()
 
     def recall(self, query: str) -> list[MemoryEntry]:
-        return rank_memories(self.eligible(), query)[:5]
+        needle = _normalize(query)
+        return [entry for entry in self.eligible() if needle in _normalize(
+            entry.content + " " + entry.applicability + " " + entry.topic
+        )]
 
     def eligible(self) -> list[MemoryEntry]:
         cache = {}
         return [
             entry
-            for entry in self._load().entries
-            if entry.status == "active" and not self.stale_reason(entry, cache)
+            for entry in self.matching_entries()
+            if not self.stale_reason(entry, cache)
         ]
 
     def write(
@@ -281,6 +240,12 @@ class MemoryStore:
                 write_json_atomic(self.path, state.model_dump(mode="json"))
                 return entry
             if action != "forget":
+                condition_hashes = (
+                    entry.file_hashes if action == "update" and files is None
+                    else {name: self.file_hash(name) for name in files or []}
+                )
+                expiry = (datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                          if isinstance(expires_at, str) else expires_at)
                 if action == "propose" and fingerprint in state.blocked_fingerprints:
                     raise ValueError("This memory was forgotten or replaced")
                 duplicate = next(
@@ -288,6 +253,8 @@ class MemoryStore:
                         item
                         for item in state.entries
                         if item.fingerprint == fingerprint and item is not entry
+                        and (item.kind, item.topic, item.branch, item.expires_at, item.file_hashes)
+                        == (kind, topic, branch, expiry, condition_hashes)
                     ),
                     None,
                 )
@@ -328,7 +295,7 @@ class MemoryStore:
                     topic=topic,
                     branch=branch,
                     expires_at=expires_at,
-                    file_hashes={name: self.file_hash(name) for name in files or []},
+                    file_hashes=condition_hashes,
                 )
                 state.entries.append(entry)
             elif action == "update":
@@ -345,11 +312,7 @@ class MemoryStore:
                         "topic": topic,
                         "branch": branch,
                         "expires_at": expires_at,
-                        "file_hashes": (
-                            entry.file_hashes
-                            if files is None
-                            else {name: self.file_hash(name) for name in files}
-                        ),
+                        "file_hashes": condition_hashes,
                     }
                 )
                 state.entries[state.entries.index(entry)] = replacement

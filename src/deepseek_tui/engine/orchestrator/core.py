@@ -681,8 +681,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         self.session_messages.clear()
         self.session_messages.extend(messages)
         self.record_transcript("sync", self.session_messages)
-        if getattr(self, "memory_session", None) is not None:
-            self.memory_session.schedule_capture(self.transcript)
         self.last_real_input_tokens = 0
         self.last_real_input_estimate = 0
         if model:
@@ -1533,11 +1531,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
 
             engine.memory_session = MemorySession(
                 engine.tool_context.working_directory, cfg.memory,
-                on_candidates=lambda count: engine.handle.try_emit(StatusEvent(message=(
-                    f"发现 {count} 条项目记忆候选；可要求查看并确认，尚未自动生效。"
-                    if engine.reply_locale == "zh" else
-                    f"Found {count} project memory candidates. Ask to review; none applied yet."
-                ))),
             )
             engine.tool_context.metadata["memory_config"] = cfg.memory
             engine.tool_context.metadata["task_config"] = cfg
@@ -1586,8 +1579,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
     async def shutdown_session(self) -> None:
         """Release all owned resources, even when one release fails."""
         async with AsyncExitStack() as cleanup:
-            if getattr(self, "memory_session", None) is not None:
-                cleanup.push_async_callback(self.memory_session.close)
             cleanup.push_async_callback(self._close_cua)
             if self.handle.hooks is not None:
                 cleanup.push_async_callback(self.handle.hooks.close)
@@ -2338,8 +2329,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
         }
 
         prior_count = len(self.session_messages)
-        if getattr(self, "memory_session", None) is not None:
-            await self.memory_session.close()
         working_messages = [*self.session_messages, user_message]
         # The handoff reminder is volatile — inject as a user reminder before
         # the real query, never into the system prompt (KV cache).
@@ -2571,8 +2560,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     self.session_messages = persisted_messages
                 self.record_transcript("commit", self.session_messages)
                 turn_committed = True
-                if not op.hidden and getattr(self, "memory_session", None) is not None:
-                    self.memory_session.schedule_capture(self.transcript)
             if not result.cancelled:
                 from deepseek_tui.state.session import clear_checkpoint
 
@@ -3346,8 +3333,6 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             self.last_real_input_tokens = 0
             self.last_real_input_estimate = 0
         self._context_measurement_model = model
-        if getattr(self, "memory_session", None) is not None:
-            self.memory_session.invalidate()
         from deepseek_tui.engine.completion import TurnFacts
         from deepseek_tui.engine.context_pressure import find_last_real_user_query
 

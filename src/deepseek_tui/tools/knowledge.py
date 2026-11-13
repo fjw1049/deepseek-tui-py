@@ -221,7 +221,12 @@ class SkillSearchTool(ToolSpec):
         return "search_skills"
 
     def description(self) -> str:
-        return "Search all model-invocable skills by name or description, including skills omitted from the prompt. Returns names and source paths; use load_skill for instructions."
+        return (
+            "Browse all model-invocable skills, including those omitted from the prompt. "
+            "Follow next_offset for more entries and choose relevance from their descriptions. "
+            "Optional query filters a literal substring of name or description; it is not semantic "
+            "search. If a query misses, omit it and browse. Use load_skill for full instructions."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -229,10 +234,15 @@ class SkillSearchTool(ToolSpec):
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Words to match in skill names and descriptions.",
+                    "description": "Optional literal substring; omit to browse.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "next_offset from the previous page.",
                 },
             },
-            "required": ["query"],
+            "additionalProperties": False,
         }
 
     def capabilities(self) -> list[ToolCapability]:
@@ -240,27 +250,47 @@ class SkillSearchTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         import json
+
         from deepseek_tui.integrations.skills import discover_in_workspace
 
-        query = _require_string(input_data, "query").casefold()
+        query = input_data.get("query", "")
+        offset = input_data.get("offset", 0)
+        if not isinstance(query, str) or type(offset) is not int or offset < 0:
+            raise ToolError("query must be a string and offset a nonnegative integer")
+        query = query.strip().casefold()
         registry = context.metadata.get("skill_registry")
         if registry is None:
             registry = discover_in_workspace(workspace=context.working_directory)
-        terms = query.split()
-        ranked = []
-        for skill in registry.skills:
-            if skill.disable_model_invocation:
-                continue
-            text = f"{skill.name} {skill.description}".casefold()
-            score = sum(term in text for term in terms) + 10 * (query == skill.name.casefold())
-            if score:
-                ranked.append((score, skill))
-        ranked.sort(key=lambda entry: (-entry[0], entry[1].name))
-        return ToolResult(success=True, content=json.dumps({
-            "matches": [{"name": skill.name, "description": skill.description[:500],
-                         "path": str(skill.path)} for _, skill in ranked[:20]],
-            "total_matches": len(ranked),
-        }, ensure_ascii=False))
+        matches = sorted(
+            (
+                skill
+                for skill in registry.skills
+                if not skill.disable_model_invocation
+                and query in f"{skill.name} {skill.description}".casefold()
+            ),
+            key=lambda skill: skill.name,
+        )
+        page = matches[offset : offset + 20]
+        end = offset + len(page)
+        return ToolResult(
+            success=True,
+            content=json.dumps(
+                {
+                    "matches": [
+                        {
+                            "name": skill.name,
+                            "description": skill.description[:500],
+                            "path": str(skill.path),
+                        }
+                        for skill in page
+                    ],
+                    "total_matches": len(matches),
+                    "next_offset": end if end < len(matches) else None,
+                    "query_mode": "literal substring; omit query to browse",
+                },
+                ensure_ascii=False,
+            ),
+        )
 
 
 class SkillLoadTool(ToolSpec):

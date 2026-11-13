@@ -408,7 +408,7 @@ _HOW_TO_USE_SKILLS = (
     "mean use them all. Do not carry skills across turns unless re-mentioned.\n"
     "- Missing/blocked: If a named skill is missing or its `SKILL.md` cannot "
     "be read, say so briefly and continue with the best fallback.\n"
-    "- Search: Use `search_skills(query=...)` to find skills beyond this catalog.\n"
+    "- Search: Use `search_skills()` and follow next_offset to browse skills beyond this catalog. Optional query is a literal filter; choose semantic relevance from descriptions.\n"
     "- Progressive disclosure: After deciding to use a skill, call "
     "`load_skill(name=...)` to read its full instructions. When it references "
     "relative paths such as `scripts/foo.py`, resolve them relative to the "
@@ -488,7 +488,7 @@ def render_available_skills_context(
 
     if omitted > 0:
         parts.append(
-            f"- ... {omitted} additional skills omitted from this prompt budget; use search_skills(query=...) to discover them.\n"
+            f"- ... {omitted} additional skills omitted from this prompt budget; use search_skills() and follow next_offset to browse them.\n"
         )
 
     if registry.warnings:

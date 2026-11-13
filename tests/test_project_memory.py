@@ -32,7 +32,7 @@ def test_persistence_search_update_forget(workspace):
     entry = save(store)
     save(store, "frontend uses pnpm")
     reopened = MemoryStore(workspace)
-    assert reopened.read(query="怎么运行接口测试")[0].id == entry.id
+    assert reopened.read(query="接口测试")[0].id == entry.id
     assert reopened.read(query="unrelated zebra") == []
     assert save(store).id == entry.id
     updated = store.write(

@@ -178,15 +178,23 @@ class SnapshotConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    """Local recall and deterministic candidate capture; no extra model calls."""
+    """Explicit project memory with bounded context; no background extraction."""
 
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     auto_recall: bool = True
-    capture_candidates: bool = False
-    idle_seconds: float = Field(default=60, ge=0, le=3600)
     max_recall_chars: int = Field(default=4000, ge=512, le=6000)
-    max_candidates_per_pass: int = Field(default=5, ge=1, le=20)
+
+    @model_validator(mode="before")
+    @classmethod
+    def retire_capture_settings(cls, value: Any) -> Any:
+        # Old user configs must still load after removing automatic extraction.
+        if isinstance(value, dict):
+            return {
+                k: v for k, v in value.items()
+                if k not in {"capture_candidates", "idle_seconds", "max_candidates_per_pass"}
+            }
+        return value
 
 
 class ContextConfig(BaseModel):

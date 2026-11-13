@@ -1,8 +1,4 @@
-"""Bounded, offline candidate extraction from committed human messages.
-
-No semantic inference: retain exact short user statements with durable-language
-cues for human review. Never read assistant/tool claims as user preferences.
-"""
+"""Validate provenance of legacy candidates; no automatic extraction."""
 
 from __future__ import annotations
 
@@ -11,15 +7,8 @@ import json
 import re
 from pathlib import Path
 
-from deepseek_tui.state.memory import MemoryStore
-
 MAX_LOG_BYTES = 8_000_000
 MAX_RECORDS = 4000
-CUE = re.compile(
-    r"记住|以后|始终|长期|本项目|这个项目|不要再|纠正|更正|偏好|"
-    r"\b(remember|always|never|prefer|correction|this project)\b",
-    re.I,
-)
 SECRET = re.compile(
     r"sk-[\w-]{12,}|-----BEGIN .*PRIVATE KEY|"
     r"(?:api[_ -]?key|token|password|secret|密码|密钥)\s*[:=：]\s*\S+",
@@ -75,32 +64,3 @@ def source_is_live(source: dict[str, str]) -> bool:
         )
     except (OSError, ValueError, KeyError, TypeError):
         return False
-
-
-def capture_candidates(workspace: Path, transcript: Path, limit: int = 5) -> int:
-    store = MemoryStore(workspace)
-    created = 0
-    known = {entry.fingerprint for entry in store._load().entries}
-    # Most recent first, so large historical logs cannot crowd out corrections.
-    for text, turn_id, seq in reversed(committed_users(transcript)):
-        if not 10 <= len(text) <= 1500 or not CUE.search(text):
-            continue
-        if SECRET.search(text) or any(marker in text for marker in ("```", "<", ">")):
-            continue
-        source = {
-            "type": "local_candidate",
-            "transcript": str(transcript.resolve()),
-            "turn_id": turn_id,
-            "seq": str(seq),
-            "quote_hash": hashlib.sha256(text.encode()).hexdigest(),
-        }
-        try:
-            entry = store.write(action="propose", content=text, source=source, kind="constraint")
-        except ValueError:
-            continue  # Deleted/replaced statements are never resurrected.
-        if entry.fingerprint not in known:
-            known.add(entry.fingerprint)
-            created += 1
-        if created >= limit:
-            break
-    return created

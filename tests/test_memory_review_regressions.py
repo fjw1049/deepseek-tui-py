@@ -12,7 +12,6 @@ from deepseek_tui.engine.memory import MemorySession
 from deepseek_tui.engine.transcript import Transcript, read_transcript
 from deepseek_tui.protocol.messages import Message, MessageOrigin
 from deepseek_tui.state.memory import MemoryStore
-from deepseek_tui.state.memory_capture import capture_candidates
 from tests.test_audit_tool_pipeline import _engine
 from tests.test_project_memory import save
 
@@ -92,16 +91,25 @@ def test_accepted_candidate_survives_origin_log_growth(workspace):
         [Message.user("以后本项目的接口测试都使用本地 Redis。", origin=MessageOrigin.REAL_USER)],
         turn_id="t1",
     )
-    capture_candidates(workspace, log.path)
+    import hashlib
+
+    text, turn_id, seq = memory_capture.committed_users(log.path)[0]
+    MemoryStore(workspace).write(
+        action="propose", content=text, source={
+            "type": "local_candidate", "transcript": str(log.path),
+            "turn_id": turn_id, "seq": str(seq),
+            "quote_hash": hashlib.sha256(text.encode()).hexdigest(),
+        },
+    )
     store = MemoryStore(workspace)
     c = store.read(status="candidate")[0]
     store.write(action="accept", source={}, entry_id=c.id, revision=c.revision)
-    assert store.recall("接口测试 Redis")
+    assert store.recall("接口测试")
     for i in range(memory_capture.MAX_RECORDS):
         log.record(
             "commit", [Message.user(f"msg {i}", origin=MessageOrigin.REAL_USER)], turn_id=f"x{i}"
         )
-    assert store.recall("接口测试 Redis"), store.stale_reason(store.read()[0])
+    assert store.recall("接口测试"), store.stale_reason(store.read()[0])
 
 
 def test_topic_conflict_is_rejected_without_silencing_original(workspace):
@@ -115,7 +123,7 @@ def test_topic_conflict_is_rejected_without_silencing_original(workspace):
 def test_applicability_does_not_disable_recall(workspace):
     store = MemoryStore(workspace)
     save(store, "run tests with --offline", applicability="when running the test suite")
-    assert store.recall("run tests --offline")
+    assert store.recall("run tests")
 
 
 async def test_cancelled_turn_does_not_persist_recall(workspace, monkeypatch):
@@ -161,14 +169,17 @@ async def test_followup_recall_with_small_and_over_budget_stores(workspace, budg
     session = MemorySession(workspace, MemoryConfig(max_recall_chars=budget))
     await session.recall(messages, "继续")
     recalled = next(m for m in messages if m.origin is MessageOrigin.MEMORY_RECALL)
-    assert target.id in recalled.text_content()
-    assert "on supported versions" in recalled.text_content()
+    assert (target.id in recalled.text_content()) == (budget == 4000)
+    if budget == 512:
+        assert "memory_read" in recalled.text_content()
+    else:
+        assert "on supported versions" in recalled.text_content()
     assert "source" not in recalled.text_content()
     assert len(recalled.text_content()) <= budget
     assert all((e.id in recalled.text_content()) == (budget == 4000) for e in others)
 
 
-async def test_recall_cache_reuses_conditions_and_notices_memory_changes(workspace):
+async def test_recall_rechecks_conditions_and_notices_memory_changes(workspace):
     store = MemoryStore(workspace)
     save(store, "test command v1")
     session = MemorySession(workspace, MemoryConfig())
@@ -177,15 +188,14 @@ async def test_recall_cache_reuses_conditions_and_notices_memory_changes(workspa
     with patch.object(store, "eligible", wraps=store.eligible) as check:
         await session.recall(messages, "继续")
         await session.recall(messages, "继续")
-        assert check.call_count == 1
+        assert check.call_count == 2
         assert sum(m.origin is MessageOrigin.MEMORY_RECALL for m in messages) == 1
         added = save(store, "new command v2")
         await session.recall(messages, "继续")
-        assert check.call_count == 2
-        assert any(added.id in m.text_content() for m in messages)
-        session.invalidate()
-        await session.recall(messages, "继续")
         assert check.call_count == 3
+        assert any(added.id in m.text_content() for m in messages)
+        await session.recall(messages, "继续")
+        assert check.call_count == 4
 
 
 async def test_mutating_tool_invalidates_cached_file_conditions(workspace):
@@ -276,7 +286,7 @@ async def test_full_mode_is_compact_and_leads_for_prefix_cache(workspace):
     assert history[0].text_content() == first.text_content()
 
 
-async def test_over_budget_single_keyword_query_recalls(workspace):
+async def test_over_budget_requires_explicit_read_without_keyword_selection(workspace):
     store = MemoryStore(workspace)
     for n in range(80):
         save(store, f"filler memory {n} about alpha{n} beta{n}")
@@ -285,7 +295,9 @@ async def test_over_budget_single_keyword_query_recalls(workspace):
     messages = [Message.user("pnpm?", origin=MessageOrigin.REAL_USER)]
     await session.recall(messages, "pnpm?")
     assert messages[-1].origin is MessageOrigin.MEMORY_RECALL
-    assert target.id in messages[-1].text_content()
+    assert target.id not in messages[-1].text_content()
+    assert "memory_read" in messages[-1].text_content()
+    assert store.read(query="pnpm")[0].id == target.id
 
 
 def test_topic_conflict_includes_branch_stale_entries(workspace):
