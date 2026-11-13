@@ -447,3 +447,23 @@ it('switches three native apps in one viewer, folds without input, and stops onl
   expect(request.mock.calls.filter(call => call[1] === 'POST').map(call => call[0]))
     .toEqual(['/v1/cua/tasks/calc-job/stop'])
 })
+
+it('colors the connection independently of preview expansion and clears it on disconnect', async () => {
+  await expand()
+  const icon = () => document.querySelector('[aria-label="cuaPreviewOpenApp"] .lucide-monitor')!
+  expect(icon().classList.contains('text-emerald-600')).toBe(true)
+  await collapse()
+  expect(document.querySelector('.lucide-monitor')?.classList.contains('text-emerald-600')).toBe(true)
+  await expand()
+  request.mockRejectedValue(new Error('offline'))
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+  expect(icon().classList.contains('text-ds-muted')).toBe(true)
+  request.mockResolvedValue({ ok: true, body: JSON.stringify({
+    used: true, active: true, available: true, turn_id: 'turn', owner: 'assistant',
+    waiting: false, awaiting_permission: true
+  }) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+  expect(icon().classList.contains('text-ds-muted')).toBe(true)
+  await act(async () => noteCuaTurnEnded('thread'))
+  expect(icon().classList.contains('text-ds-muted')).toBe(true)
+})

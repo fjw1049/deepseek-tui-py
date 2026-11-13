@@ -28,7 +28,7 @@ export function useCuaTasks(): CuaTask[] {
           active = next.length > 0
           setTasks(old => JSON.stringify(old) === JSON.stringify(next) ? old : next)
         }
-      } catch { /* Keep the last snapshot. Stop addresses an exact ticket. */ }
+      } catch { if (!disposed) setTasks([]) }
       if (!disposed) timer = setTimeout(() => void poll(), active ? 600 : 1800)
     }
     void poll()

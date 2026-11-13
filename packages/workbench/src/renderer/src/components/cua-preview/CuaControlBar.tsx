@@ -40,8 +40,9 @@ function heldFor(value: CuaControlState): 'user' | 'paused' | undefined {
  * Keeps the card in step with the host and offers Stop. It shows no status of its own:
  * whatever needs the person (app permission, a manual step) is asked in the conversation.
  */
-export function CuaControlBar({ threadId, stopTarget }: {
+export function CuaControlBar({ threadId, stopTarget, onConnectionChange }: {
   threadId: string; stopTarget?: HTMLElement | null
+  onConnectionChange?: (turnId: string | null) => void
 }): React.JSX.Element | null {
   const { t } = useTranslation('common')
   const [state, setState] = useState<CuaControlState | null>(null)
@@ -72,6 +73,7 @@ export function CuaControlBar({ threadId, stopTarget }: {
           const value = JSON.parse(response.body) as CuaControlState
           if (!disposed && version === requestVersion.current) {
             setState(controllable(value))
+            onConnectionChange?.(value.active && value.available && value.used !== false && !value.waiting && !value.awaiting_permission ? value.turn_id : null)
             noteCuaControl(threadId, heldFor(value))
             restoreCuaPreview(threadId, { ...value, used: value.used === true })
             const over = !value.active
@@ -82,6 +84,7 @@ export function CuaControlBar({ threadId, stopTarget }: {
             if (idlePolls === 2) noteCuaTurnEnded(threadId)
           }
         } catch {
+          if (!disposed) onConnectionChange?.(null)
           // The next poll tries again; Stop stays usable meanwhile.
         }
       }
@@ -95,7 +98,7 @@ export function CuaControlBar({ threadId, stopTarget }: {
       disposed = true; alive.current = false; clearTimeout(timer)
       pollNow.current = () => undefined
     }
-  }, [path, threadId])
+  }, [path, threadId, onConnectionChange])
 
   // Calls and handoffs change control at once; do not make them wait for the next poll.
   const revision = useCuaPreviewStore(store => store.sessions[threadId]?.revision)

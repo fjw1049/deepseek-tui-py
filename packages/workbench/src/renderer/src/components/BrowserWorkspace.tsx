@@ -834,7 +834,6 @@ export function BrowserWorkspace({ threadId: conversationId, visible = true, blo
       </form>
       {detectedUrls.length ? <div className="ds-dev-browser__chips">{detectedUrls.map(target => <button key={target} className="ds-dev-browser__chip" disabled={pending || !fresh} title={target} onClick={() => void openPreview(target)}>{formatDevPreviewUrlLabel(target)}</button>)}</div> : null}
     </div>
-    {agentTab ? <div className="ds-browser-notice" role="status"><span>{t('browserAgentTarget', { name: agentTab.title || agentTab.url })}</span></div> : null}
     {remote && image && (!fresh || !state?.active || state?.healthy === false) ? <div className="ds-browser-notice" role="status">{t('browserStaleFrame')}</div> : null}
     {state?.reclaimed && !state.active ? <div className="ds-browser-notice" role="status">{t('browserReclaimed')}</div> : null}
     {state?.video_error || state?.recording_error ? <div className="ds-browser-notice" role="alert"><span>{t('browserRecordingFailed', { error: state.video_error || state.recording_error })}</span>
