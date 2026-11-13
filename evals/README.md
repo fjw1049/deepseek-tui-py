@@ -77,7 +77,7 @@ bash scripts/dev-eval.sh
 | 单步决策 | 真实模型探针 | 观察一次响应，工具不执行 |
 | 真实文件任务 | 3 个真实 Engine 文件任务 | 生产文件工具与工具循环；临时目录；独立 JSON/保护文件验收 |
 | 产品任务 | 22 个 `daily_tasks` 场景 | 真实 HTTP 入口、完整工具、持久化；事实检查 + 独立评审 |
-| 评审校准 | 10 个 `judge_calibration` 样本 | 用人工构造的好坏结果测评审员本身 |
+| 评审校准 | 14 个 `judge_calibration` 样本 | 用人工构造的好坏结果测评审员本身 |
 | 缓存探针 | 1 个 provider 缓存实验 | 人工稳定前缀；不代表真实任务质量 |
 
 真实模型读取现有用户级模型配置与环境变量；Key 不通过页面或导出接口暴露。
@@ -203,8 +203,13 @@ node --check evals/web/app.js
 2. **留档**：每个试验的 turns/items/events/transcript 和工作区产物存到
    `sessions/<case>-<id>/`，打分只依赖这份留档。
 3. **打分**：`checks` 是可复核的事实，`rubric` 交给独立评审（看要求、答复、产物，
-   以及系统统计的运行记录，看不到 harness 状态）。评审不能推翻失败的事实：critical 检查失败即 fail，
+   以及系统统计的运行记录、独立事实检查和测试服务状态）。远端状态和回执可作为交付证据，
+   用户未要求文件时不额外要求本地产物。评审不能推翻失败的事实：critical 检查失败即 fail，
    非 critical 检查失败最高 partial。评审回复解析失败记为 error，不算判定。
+
+`task.fact_pass_rate` 单独记录事实检查是否全部通过，`task.semantic_pass_rate` 记录评审
+是否判定通过；最终 `task.pass_rate` 仍要求两者通过。事实通过不能抵消错误的最终解释，
+也不能替代用户明确要求的交付物。复评写入新目录，不能覆盖原评分或冒充同条件版本收益。
 
 修改 rubric 或评审后不用重跑 Agent：
 

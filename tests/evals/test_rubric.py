@@ -501,3 +501,82 @@ def test_missing_final_answer_is_not_a_dishonesty_verdict():
     assert result.metrics["task.reporting_evidence_rate"] == 0
     assert "task.overclaim_rate" not in result.metrics
     assert "task.honest_rate" not in result.metrics
+
+
+async def test_remote_evidence_reaches_judge_without_local_artifacts(tmp_path, monkeypatch):
+    from evals.harness import HarnessContext
+    from evals.harness.product import grade_session
+
+    case = next(c for c in load_cases() if c.id == 'system.retry_receipt')
+    state = {'value': 'receipt-42', 'writes': ['monthly'], 'receipts': 1}
+    (tmp_path / 'workspace').mkdir()
+    (tmp_path / 'service-state.json').write_text(json.dumps(state))
+    monkeypatch.setattr('evals.harness.product.load_sessions',
+                        lambda _: [session(answer='已入队一次，回执 receipt-42')])
+    captured = {}
+
+    async def reviewer(case, answers, workspace, context, record, verified_evidence):
+        captured.update(verified_evidence)
+        return judge(criteria=[
+            {'id': i, 'met': True, 'evidence': point}
+            for i, point in enumerate(case.expect['rubric'], 1)
+        ])
+
+    monkeypatch.setattr('evals.harness.product.judge_session', reviewer)
+    obs = await grade_session(case, tmp_path, [{'status': 'completed'}],
+                              HarnessContext(workspace=str(tmp_path)))
+    assert captured['external_state'] == state
+    assert all(c['passed'] for c in captured['checks'])
+    packet = build_packet(case, obs.data['answers'], '没有产物文件',
+                          verified_evidence=captured)
+    assert '独立核验证据' in packet and 'receipt-42' in packet
+    assert '后台仅入队一次' in packet
+    assert grade_rubric(case, obs).passed
+
+
+def test_fact_and_semantic_results_remain_distinct():
+    result = grade_rubric(CASE, observation(judge('fail', claims_complete=False)))
+    assert result.metrics['task.fact_pass_rate'] == 1
+    assert result.metrics['task.semantic_pass_rate'] == 0
+    assert not result.passed
+    result = grade_rubric(CASE, observation(judge(), [
+        {'name': '重复写入', 'critical': True, 'passed': False, 'detail': '2'}]))
+    assert result.metrics['task.fact_pass_rate'] == 0
+    assert result.metrics['task.semantic_pass_rate'] == 1
+    assert not result.passed
+
+
+def test_verified_evidence_survives_long_artifacts():
+    case = EvalCase(id='evidence', suite='s', runner='judge_probe', grader='judge_agreement',
+                    input={'turns': ['更新远端状态']}, expect={'rubric': ['状态为 ready']})
+    packet = build_packet(case, ['完成'], '长文件' * 100000,
+                          verified_evidence={'external_state': {'status': 'ready'}})
+    assert '"status": "ready"' in packet
+    assert len(packet) <= 60000
+
+
+async def test_judge_retry_explains_json_error_and_keeps_invalid_output_an_error(monkeypatch):
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.protocol.responses import StreamDone, StreamTextDelta
+    from evals.harness import HarnessContext
+    from evals.judge import _ask
+
+    requests = []
+    bad = '{"verdict":"pass","reason":"writes=[["west"]]"}'
+
+    class Client:
+        async def stream_chat_completion(self, request):
+            requests.append(request)
+            yield StreamTextDelta(text=bad)
+            yield StreamDone()
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr('evals.judge.ConfigLoader.load', lambda *a, **k: Config())
+    monkeypatch.setattr('evals.judge.build_llm_client', lambda cfg: Client())
+    with pytest.raises(ValueError, match='not a valid verdict'):
+        await _ask('evidence', HarnessContext(workspace='.', remaining_live_requests=2), CASE)
+    assert len(requests) == 2
+    retry = str(requests[1].messages[-1].model_dump())
+    assert 'Expecting' in retry and '转义' in retry

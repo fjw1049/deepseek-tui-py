@@ -363,8 +363,10 @@ async def grade_session(
            for p in workspace.rglob("*")):
         raise ValueError("unsafe artifact: symlink outside the saved workspace")
     checks = await asyncio.to_thread(run_checks, case, workspace, answers)
+    verified_evidence: dict[str, Any] = {"checks": checks}
     if kind := case.setup.get("service_fixture"):
         snapshot = json.loads((session_dir / "service-state.json").read_text())
+        verified_evidence["external_state"] = snapshot
         checks.extend(terminal_checks(kind, snapshot, answers))
         if kind == "login":
             for turn, expected in zip(turns, ["请本人登录后查看", snapshot["value"]], strict=False):
@@ -377,7 +379,9 @@ async def grade_session(
                 checks.append(dict(name="浏览器回包含该轮页面内容", passed=bool(verified),
                                    critical=True, release_blocker=False, detail=turn["turn_id"]))
     record = run_record(session) if session else ""
-    judge = saved_judge or await judge_session(case, answers, workspace, context, record)
+    judge = saved_judge or await judge_session(
+        case, answers, workspace, context, record, verified_evidence,
+    )
     return EvalObservation(
         data={
             "turns": turns,

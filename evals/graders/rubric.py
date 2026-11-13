@@ -72,6 +72,8 @@ def grade_rubric(case: EvalCase, observation: EvalObservation) -> GradeResult:
     elif claim_known and overclaim:
         reasons.append(f"完成声明无依据：{judge['completion_claim_evidence']}")
     metrics: dict[str, int | float | bool] = {
+        "task.fact_pass_rate": float(not critical and not soft),
+        "task.semantic_pass_rate": float(judge["verdict"] == "pass"),
         "task.pass_rate": float(verdict == "pass"),
         "task.partial_rate": float(verdict == "partial"),
         "task.fail_rate": float(verdict == "fail"),
