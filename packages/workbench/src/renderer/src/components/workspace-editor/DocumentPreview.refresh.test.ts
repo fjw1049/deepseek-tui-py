@@ -29,20 +29,21 @@ for (const [extension, Component, selector] of [
   it(`refreshes ${extension} URLs and ignores a late response from the previous revision`, async () => {
     let resolveOld!: (value: { ok: true; url: string }) => void
     preview.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
-      .mockResolvedValue({ ok: true, url: 'about:blank?file=current#page=2' })
+      .mockResolvedValue({ ok: true, url: 'about:blank?file=current&_ds_file=1#page=2' })
     await act(async () => root.render(createElement(Component, { path: `a.${extension}`, workspaceRoot: '/repo' })))
     await act(async () => useWorkspaceEditorStore.setState({ previewVersion: 1 }))
     const current = host.querySelector(selector)!
     const url = new URL(current.getAttribute('src')!)
-    expect(url.searchParams.get('_ds_revision')).toBe('1')
+    expect(url.searchParams.get('_ds_file')).toBe('1')
     expect(url.searchParams.get('file')).toBe('current')
     expect(url.hash).toBe('#page=2')
     await act(async () => resolveOld({ ok: true, url: 'about:blank?file=stale' }))
     expect(host.querySelector(selector)).toBe(current)
     expect(host.querySelector(selector)!.getAttribute('src')).toBe(url.href)
     expect(preview).toHaveBeenCalledTimes(2)
+    preview.mockResolvedValue({ ok: true, url: 'about:blank?file=current&_ds_file=2#page=2' })
     await act(async () => useWorkspaceEditorStore.setState({ previewVersion: 2 }))
-    expect(new URL(host.querySelector(selector)!.getAttribute('src')!).searchParams.get('_ds_revision')).toBe('2')
+    expect(new URL(host.querySelector(selector)!.getAttribute('src')!).searchParams.get('_ds_file')).toBe('2')
   })
 
   it(`recovers ${extension} preview errors and ignores a previous file failure`, async () => {
@@ -72,7 +73,7 @@ for (const [Component, selector] of [[ImageDocumentPreview, 'img'], [HtmlDocumen
     expect(host.querySelector(selector)).toBe(shown)
     await act(async () => resolveRefresh({ ok: true, url: 'about:blank?file=first' }))
     expect(host.querySelector(selector)).toBe(shown)
-    expect(new URL(shown.getAttribute('src')!).searchParams.get('_ds_revision')).toBe('1')
+    expect(shown.getAttribute('src')).toBe('about:blank?file=first')
   })
 }
 
@@ -86,5 +87,27 @@ for (const Component of [ImageDocumentPreview, HtmlDocumentPreview]) {
     expect(preview).toHaveBeenCalledTimes(2)
     expect(host.querySelector('[role="alert"]')).toBeNull()
     expect(host.querySelector('img, iframe')?.getAttribute('src')).toContain('_ds_attempt=1')
+  })
+}
+
+for (const [extension, Component, selector] of [
+  ['html', HtmlDocumentPreview, 'iframe'],
+  ['pdf', HtmlDocumentPreview, 'iframe'],
+  ['png', ImageDocumentPreview, 'img']
+] as const) {
+  it(`does not navigate an unchanged ${extension} during workspace updates`, async () => {
+    preview.mockResolvedValue({ ok: true, url: 'about:blank?_ds_file=unchanged' })
+    vi.stubGlobal('dsGui', {
+      getWorkspaceHtmlPreviewUrl: preview,
+      readWorkspaceFile: vi.fn().mockResolvedValue({ ok: true, content: 'unchanged' })
+    })
+    await act(async () => root.render(createElement(Component, { path: `file.${extension}`, workspaceRoot: '/repo' })))
+    const shown = host.querySelector(selector)!
+    const initialUrl = shown.getAttribute('src')
+    for (let i = 0; i < 3; i++) {
+      await act(async () => useWorkspaceEditorStore.getState().reloadCleanTabs('/repo'))
+      expect(host.querySelector(selector)).toBe(shown)
+      expect(shown.getAttribute('src')).toBe(initialUrl)
+    }
   })
 }

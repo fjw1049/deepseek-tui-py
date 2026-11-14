@@ -1,5 +1,5 @@
 import { openBrowserLink } from '../../lib/open-browser-link'
-import { isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { isValidElement, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Element, Root } from 'hast'
@@ -75,6 +75,13 @@ export function MarkdownDocumentPreview({ content, path, workspaceRoot, fragment
   const article = useRef<HTMLElement>(null)
   const [linkError, setLinkError] = useState(false)
   const body = content.trim() ? content : '\u00a0'
+  // ReactMarkdown treats these renderers as component types. Keep the image type
+  // stable so a parent update does not unmount loaded images and shift the page.
+  const renderImage = useMemo(() => function RenderImage({ src, alt, title }: {
+    src?: string; alt?: string; title?: string
+  }) {
+    return <DocumentImage src={src} alt={alt} title={title} path={path} workspaceRoot={workspaceRoot} />
+  }, [path, workspaceRoot])
   const reveal = (value: string): void => {
     const heading = Array.from(article.current?.querySelectorAll('[id]') ?? []).find((node) => node.id === `doc-${value}`)
     heading?.scrollIntoView({ block: 'start' })
@@ -91,7 +98,7 @@ export function MarkdownDocumentPreview({ content, path, workspaceRoot, fragment
         <div className="ds-markdown ds-markdown--document">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[documentHeadingIds]} components={{
             pre: DocumentCodeBlock,
-            img: ({ src, alt, title }) => <DocumentImage key={`${path}:${src}`} src={src} alt={alt} title={title} path={path} workspaceRoot={workspaceRoot} />,
+            img: renderImage,
             a: ({ href, children }) => <a href={href} onClick={(event) => {
               event.preventDefault()
               if (!href) return

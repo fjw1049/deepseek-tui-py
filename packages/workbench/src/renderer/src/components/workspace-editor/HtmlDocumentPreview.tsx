@@ -47,7 +47,8 @@ export function HtmlDocumentPreview({ path, workspaceRoot }: Props): ReactElemen
         }
         shownRef.current = shownKey
         const nextUrl = new URL(result.url)
-        nextUrl.searchParams.set('_ds_revision', String(revision))
+        // Workspace notifications only recheck the file; the server URL versions
+        // the file itself so unrelated writes cannot reset the preview.
         if (attempt > 0) nextUrl.searchParams.set('_ds_attempt', String(attempt))
         setUrl(nextUrl.toString())
       })

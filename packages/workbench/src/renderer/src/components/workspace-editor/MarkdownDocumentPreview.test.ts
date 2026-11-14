@@ -23,6 +23,13 @@ it('loads local images, opens local documents, and scrolls to headings without n
     })))
     expect(getWorkspaceHtmlPreviewUrl).toHaveBeenCalledWith({ path: '/project/images/a.png', workspaceRoot: '/project' })
     expect(host.querySelector('img')?.src).toBe('data:image/png;base64,AA==')
+    const image = host.querySelector('img')
+    await act(async () => root.render(createElement(MarkdownDocumentPreview, {
+      content: '# 使用方法\n\n![图示](../images/a.png)\n\n[下一篇](next.md#详情)\n\n[定位](#使用方法)\n\n[网站](https://example.com)',
+      path: 'docs/guide.md', workspaceRoot: '/project', onOpenFile
+    })))
+    expect(host.querySelector('img')).toBe(image)
+    expect(getWorkspaceHtmlPreviewUrl).toHaveBeenCalledTimes(1)
     const links = host.querySelectorAll('a')
     await act(async () => links[0]!.click())
     expect(onOpenFile).toHaveBeenCalledWith('/project/docs/next.md', '详情')

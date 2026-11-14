@@ -48,6 +48,21 @@ describe('getWorkspacePreviewUrl', () => {
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
+  it.each(['html', 'pdf', 'png'])('versions only the target %s file, not unrelated writes', async (extension) => {
+    const root = await mkdtemp(join(tmpdir(), 'ds-preview-version-'))
+    dirs.push(root)
+    const path = `document.${extension}`
+    await writeFile(join(root, path), 'original')
+    const first = await getWorkspacePreviewUrl({ path, workspaceRoot: root })
+    expect(first.ok).toBe(true)
+    await writeFile(join(root, 'unrelated.txt'), 'agent progress')
+    expect(await getWorkspacePreviewUrl({ path, workspaceRoot: root })).toEqual(first)
+    await writeFile(join(root, path), 'updated document')
+    const changed = await getWorkspacePreviewUrl({ path, workspaceRoot: root })
+    expect(changed.ok).toBe(true)
+    if (first.ok && changed.ok) expect(changed.url).not.toBe(first.url)
+  })
+
   it('shares one server between concurrent requests for the same workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ds-preview-concurrent-'))
     dirs.push(root)
@@ -158,7 +173,7 @@ describe('getWorkspacePreviewUrl', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
 
-    expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/dashboard\.html$/)
+    expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/dashboard\.html\?_ds_file=[\d.-]+$/)
     const response = await fetch(result.url)
     expect(response.status).toBe(200)
     expect(await response.text()).toContain('ok')
@@ -211,7 +226,7 @@ describe('getWorkspacePreviewUrl', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
 
-    expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/dot\.png$/)
+    expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/dot\.png\?_ds_file=[\d.-]+$/)
     const response = await fetch(result.url)
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toMatch(/image\/png/)

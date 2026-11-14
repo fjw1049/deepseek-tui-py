@@ -203,7 +203,8 @@ export async function getWorkspacePreviewUrl(options: {
       ? resolve(expandHomePath(workspaceRoot))
       : process.cwd()
     const absolute = isAbsolute(expanded) ? resolve(expanded) : resolve(absoluteHint, expanded)
-    if (!(await stat(absolute).catch(() => null))?.isFile()) {
+    const fileStat = await stat(absolute).catch(() => null)
+    if (!fileStat?.isFile()) {
       return { ok: false, message: `File not found: ${rawPath}` }
     }
     const target = await canonicalPath(absolute)
@@ -234,7 +235,10 @@ export async function getWorkspacePreviewUrl(options: {
     const entry = await ensureWorkspacePreviewServer(root)
     const rel = relative(root, target).split(sep).join('/')
     const url = `http://127.0.0.1:${entry.port}/${rel.split('/').map(encodeURIComponent).join('/')}`
-    return { ok: true, url, path: target }
+    // Do not use workspace-wide refresh counters: changing an iframe URL reloads
+    // its document and discards scroll, form input and PDF viewer state.
+    const version = `${fileStat.mtimeMs}-${fileStat.ctimeMs}-${fileStat.size}`
+    return { ok: true, url: `${url}?_ds_file=${version}`, path: target }
   } catch (error) {
     return {
       ok: false,

@@ -20,5 +20,13 @@ it('bounds table rows while allowing navigation through the preview', async () =
     expect(host.textContent).toContain('value-149')
     expect(host.querySelectorAll('tbody tr')).toHaveLength(50)
     expect(next.disabled).toBe(true)
+    const viewport = host.querySelector('.ds-table-document__scroll')!
+    viewport.scrollTop = 300
+    await act(async () => root.render(createElement(TableDocumentPreview, {
+      path: 'table.csv', content: Array.from({ length: 150 }, (_, index) => `${index},value-${index}`).join('\n')
+    })))
+    expect(host.querySelector('.ds-table-document__scroll')).toBe(viewport)
+    expect(viewport.scrollTop).toBe(300)
+    expect(host.textContent).toContain('value-149')
   } finally { await act(async () => root.unmount()); host.remove() }
 })
