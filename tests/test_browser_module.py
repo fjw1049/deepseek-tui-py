@@ -220,6 +220,23 @@ async def test_failed_actions_and_recording_preserve_evidence(browser):
 
 
 @pytest.mark.asyncio
+async def test_unknown_fill_blocks_retry_until_review(browser):
+    run = browser.runs["one"]
+    browser._remember_response(run, {
+        "success": False, "content": "Autosave response lost",
+        "receipt": {"action_id": "autosave", "action": "fill",
+                    "execution": "unknown", "effect": "unchecked"},
+    })
+    assert "autosave" in run.unresolved
+    result = await browser.action("one", BrowserAction(action="fill", selector="#draft", text="draft"))
+    assert not result["success"]
+    assert result["receipt"]["reason"] == "unresolved_operation"
+    run.session.fill.assert_not_awaited()
+    await browser.close("one")
+    assert browser.state("one")["unresolved"][0]["action_id"] == "autosave"
+
+
+@pytest.mark.asyncio
 async def test_text_check_waits_for_dynamic_content_and_captures_failure(browser):
     run = browser.runs["one"]
     run.session.eval_js.side_effect = [

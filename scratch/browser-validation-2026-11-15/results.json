@@ -1,0 +1,170 @@
+[
+  {
+    "name": "日程日期自动保存",
+    "policy": "before",
+    "passed": false,
+    "truth": {
+      "saves": 2,
+      "value": "2026-11-15"
+    }
+  },
+  {
+    "name": "日程日期自动保存",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": 1,
+      "value": "2026-11-15"
+    }
+  },
+  {
+    "name": "提醒时间自动保存",
+    "policy": "before",
+    "passed": false,
+    "truth": {
+      "saves": 2,
+      "value": "09:30"
+    }
+  },
+  {
+    "name": "提醒时间自动保存",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": 1,
+      "value": "09:30"
+    }
+  },
+  {
+    "name": "主题颜色自动保存",
+    "policy": "before",
+    "passed": false,
+    "truth": {
+      "saves": 2,
+      "value": "#123456"
+    }
+  },
+  {
+    "name": "主题颜色自动保存",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": 1,
+      "value": "#123456"
+    }
+  },
+  {
+    "name": "音量范围自动保存",
+    "policy": "before",
+    "passed": false,
+    "truth": {
+      "saves": 2,
+      "value": "75"
+    }
+  },
+  {
+    "name": "音量范围自动保存",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": 1,
+      "value": "75"
+    }
+  },
+  {
+    "name": "异常后读取保存状态仍保留未决",
+    "policy": "before",
+    "passed": false,
+    "truth": {
+      "saves": 1,
+      "value": "2026-11-15"
+    }
+  },
+  {
+    "name": "异常后读取保存状态仍保留未决",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": 1,
+      "value": "2026-11-15"
+    }
+  },
+  {
+    "name": "关闭会话后仍保留未决",
+    "policy": "before",
+    "passed": false,
+    "truth": {
+      "saves": 1,
+      "value": "2026-11-15"
+    }
+  },
+  {
+    "name": "关闭会话后仍保留未决",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": 1,
+      "value": "2026-11-15"
+    }
+  },
+  {
+    "name": "核对后继续下一次合法编辑",
+    "policy": "before",
+    "passed": true,
+    "truth": {
+      "saves": 2,
+      "value": "2026-11-16"
+    }
+  },
+  {
+    "name": "核对后继续下一次合法编辑",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": 2,
+      "value": "2026-11-16"
+    }
+  },
+  {
+    "name": "正常草稿保存-en-0",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": {
+        "A": 1,
+        "B": 0
+      },
+      "values": {
+        "A": "benchmark draft"
+      }
+    }
+  },
+  {
+    "name": "正常草稿保存-zh-1",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": {
+        "A": 1,
+        "B": 0
+      },
+      "values": {
+        "A": "benchmark draft"
+      }
+    }
+  },
+  {
+    "name": "正常草稿保存-en-2",
+    "policy": "after",
+    "passed": true,
+    "truth": {
+      "saves": {
+        "A": 1,
+        "B": 0
+      },
+      "values": {
+        "A": "benchmark draft"
+      }
+    }
+  }
+]

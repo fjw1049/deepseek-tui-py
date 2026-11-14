@@ -976,11 +976,10 @@ class BrowserService:
         saved = {"success": response["success"], "content": str(response.get("content", ""))[:2000],
                  "receipt": dict(receipt)}
         run.operations[action_id] = saved
-        # Loading a page again settles a timed-out navigation, and filling a field again
-        # replaces its value; holding either for human review would lock the page for a
-        # run with nobody there to review.
+        # Filling can trigger autosave or other input/change effects. Replacing the
+        # same field value does not make those effects safe to repeat after a timeout.
         if (receipt["execution"] == "unknown"
-                and receipt.get("action") not in {*NAVIGATION_ACTIONS, "fill"}):
+                and receipt.get("action") not in NAVIGATION_ACTIONS):
             run.unresolved[action_id] = dict(receipt)
         while len(run.operations) > 80:
             expired = next((key for key in run.operations if key not in run.unresolved), None)
