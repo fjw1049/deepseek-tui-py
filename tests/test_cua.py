@@ -1721,6 +1721,50 @@ async def test_returning_to_a_released_app_shows_its_state_instead_of_an_error(
         await session.close()
 
 
+async def test_unscoped_transition_observes_under_the_new_lease_before_input(
+    session, tmp_path, monkeypatch
+):
+    from deepseek_tui.cua import app_scope
+
+    monkeypatch.setattr(app_scope, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "native_app", lambda name: name)
+    monkeypatch.setattr(cua_session, "sys", SimpleNamespace(platform="darwin"))
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    request = {"code": 'await app.pressKey("super+s"); await app.getAXState();'}
+    try:
+        await session.connect()
+        tool = CuaTool(session, session.descriptors[0])
+        await tool.execute({"code": 'let app = await cua.getApp("dev.fixture");'}, context)
+        held = await tool.execute(request, context)
+        assert not held.success and held.metadata["cua_stats"]["replaced_by_observation"]
+        assert "1 text Saved" in held.content
+        assert request not in [r.get("args") for r in _calls(tmp_path)]
+        assert session.lease.fd is not None and session.lease.app is None
+        segment = session.runtime_turn_id
+        assert (await tool.execute(request, context)).success
+        assert session.runtime_turn_id == segment  # Recovery must not release control again.
+        assert sum(r.get("args") == request for r in _calls(tmp_path)) == 1
+    finally:
+        await session.close()
+
+
+async def test_malformed_completion_is_rejected_without_unknown_outcome_or_reset(session, tmp_path):
+    try:
+        await session.call("js", {"code": "read"}, "t", "1")
+        segment = session.runtime_turn_id
+        count = len(_calls(tmp_path))
+        for extra in ({"title": "Done"}, {"code": "click"}, {"timeout_ms": 1000}):
+            with pytest.raises(ToolError, match="completion_summary must be the only field"):
+                await session.call("js", {"completion_summary": "Read the app", **extra}, "t", "bad")
+        assert len(_calls(tmp_path)) == count
+        assert session.runtime_turn_id == segment and not session.broken
+        assert session.unresolved is None and not session.reset_reason
+        result = await session.call("js", {"completion_summary": "Read the app"}, "t", "2")
+        assert not result.get("isError") and session.lease.fd is None
+    finally:
+        await session.close()
+
+
 @pytest.mark.parametrize("unrestricted", [False, True])
 async def test_typed_actions_run_as_documented_calls_scoped_to_their_app(
     session, tmp_path, monkeypatch, unrestricted

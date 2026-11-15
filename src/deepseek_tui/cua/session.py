@@ -561,6 +561,8 @@ class CuaSession:
         """Run a tool; scope identifies the target even when its keys need an exclusive lease."""
         if name not in {"js", "js_reset", "observe"} or not turn_id or not call_id:
             raise ToolError("CUA requires a public tool and real host turn/call identities")
+        if name == "js" and "completion_summary" in arguments and set(arguments) != {"completion_summary"}:
+            raise ToolError("completion_summary must be the only field. Nothing was executed.")
         async with self.lock:
             self.last_activity = time.time()
             self.turn_used = True
@@ -579,6 +581,7 @@ class CuaSession:
             if self.turn_id is not None and self.turn_id != turn_id:
                 raise ToolError("Previous CUA turn has not been cleaned up")
             app = None
+            observed_app = None
             binding = None
             summary = name == "js" and set(arguments) == {"completion_summary"}
             if sys.platform == "darwin":
@@ -586,6 +589,11 @@ class CuaSession:
                     app = await asyncio.to_thread(native_app, arguments["app"])
                     if app:
                         arguments = {**arguments, "app": app}
+                        observed_app = app
+                        # Recovery must read under the lease that will execute the next
+                        # code, rather than ending exclusive control again to observe.
+                        if self.lease.fd is not None and self.lease.app is None:
+                            app = None
                 elif summary or name == "js_reset":
                     app = self.lease.app
                 elif name == "js" and scope:
@@ -627,6 +635,12 @@ class CuaSession:
                 target_app in self._app_bindings.values() or target_app in self._scoped_apps)
             if name == "js" and (self.lease.contended or old_binding):
                 self._needs_observation.add(target_app)
+            if (name == "js" and not app and not scope and not summary
+                    and not discovery_only(arguments.get("code") or "")
+                    and (reacquiring or switching)):
+                self._needs_observation.update(self._app_bindings.values())
+                self._needs_observation.update(self._scoped_apps)
+                self._unrestricted_repl = True
             if (name == "js" and not summary and not binding_only(arguments.get("code", ""))
                     and (target_app in self._needs_observation
                          or (not target_app and self._needs_observation))):
@@ -680,7 +694,7 @@ class CuaSession:
                         # quit or crashed cannot hold code execution blocked for good.
                         # A wait for exclusive desktop access had no known target.
                         self._needs_observation.discard(None)
-                        self._needs_observation.discard(app)
+                        self._needs_observation.discard(observed_app or app)
                         self.outside_change = ""
                         self.reset_reason = ""
                         if self._unresolved and not arguments.get("poll"):

@@ -252,10 +252,20 @@ async function handle(request) {
           if (first.isError) result = first;
           else {
             result = await client.call('js', {
-              code: request.arguments.poll
+              code: request.arguments.poll || request.arguments.screenshot === false
                 ? `await ${slot}.getAXState({disableDiffing: true});`
                 : `await ${slot}.getAXStateAndScreenshot({disableDiffing: true});`,
             }, context);
+            let screenshotError;
+            const failure = (result.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+            if (result.isError && !request.arguments.poll && request.arguments.screenshot !== false
+                && /Coordinate guard: (?:window |geometry)|Screenshot unavailable for|The screen capture failed|SCStreamErrorDomain Code=-3811/.test(failure)) {
+              // Retry only the read, once. Never replay input or relax coordinate checks.
+              screenshotError = failure;
+              result = await client.call('js', {
+                code: `await ${slot}.getAXState({disableDiffing: true});`,
+              }, { ...context, toolCallId: `${context.toolCallId}:text` });
+            }
             if (result.isError) {
               // A closed tab or window must not stay cached.
               await client.call('js', { code: `delete ${slot};` },
@@ -266,9 +276,15 @@ async function handle(request) {
             // The observation is captured before joining documentation/entry-point output.
             // The host judges completeness and expected text from it (cua/tools.py).
             result.observation = { target, text };
+            if (screenshotError) {
+              result.observation.screenshot_error = screenshotError;
+              result.content.push({ type: 'text', text: 'Screenshot unavailable; this observation contains accessibility text only. '
+                + 'Do not use coordinates or claim visual verification.\n' + screenshotError });
+            }
             // Binding prints the target's state too; the observation below is the current copy,
             // so keep only what else binding printed (first-use documentation).
             const bound = printed(first).filter(b => b.type === 'text' && !LISTING.test(b.text));
+            if (bound.length) result.observation.documentation = bound.map(b => b.text).join('\n');
             result.content = [...bound, ...(result.content ?? [])];
             if (!text.trim() && !images.length) {
               result.isError = true;
@@ -289,7 +305,14 @@ async function handle(request) {
         } else {
           result = await client.call(request.name, request.arguments, context);
         }
-        if (request.type === 'observe' && install) result.content = [...printed(install), ...(result.content ?? [])];
+        if (request.type === 'observe' && install) {
+          const documentation = printed(install);
+          result.content = [...documentation, ...(result.content ?? [])];
+          if (result.observation && documentation.length) {
+            result.observation.documentation = [...documentation.map(b => b.text),
+              result.observation.documentation ?? ''].filter(Boolean).join('\n');
+          }
+        }
         return { ...result, instructions: client.instructions, tools: client.publicTools() };
       } finally { await coordinateGuard?.stop(); calls.delete(request.id); }
     }

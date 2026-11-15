@@ -46,11 +46,16 @@ class BrowserUseTool(ToolSpec):
             "observation_id unless targeting a specific one); a stale observation is rejected, "
             "never guessed at: observe again.\n"
             "Reading: status reports the browser's state when there is no current observation. "
+            "read_observation reads a cached observation_id without contacting the page; text "
+            "optionally searches literal case-sensitive text, text_offset continues results. "
+            "Only the latest four collected observations are cached. Results are historical "
+            "reading evidence, never fresh targets or proof of absence on the whole page. "
             "observe returns visible text, elements and observation_id; level=full expands "
             "elements. check_text tests for expected text, optionally scoped to a unique "
             "selector. console reads the page's console messages and uncaught errors; on "
-            "localhost pages action results also list new console_errors. screenshot saves "
-            "evidence; coordinate actions (x/y) need the latest observation to be a viewport "
+            "localhost pages action results also list new console_errors. screenshot is for "
+            "visual details or requested image evidence, not reconfirming observed text; "
+            "coordinate actions (x/y) need the latest observation to be a viewport "
             "screenshot.\n"
             "Navigation: open keeps the user's own page (from a tab the user was using it opens "
             "a new tab). new_tab opens an http(s) URL or a blank tab; tabs lists tabs; "
@@ -73,7 +78,9 @@ class BrowserUseTool(ToolSpec):
             "selector are supplied together, text is matched inside that unique element; "
             "wait_state=hidden waits for that condition to disappear.\n"
             "Results: execution is dispatch status; effect=unchecked does NOT mean the user's "
-            "task succeeded. If observation fails after execution, observe again instead of "
+            "task succeeded. Read the returned observation: if it establishes the requested "
+            "result, finish; if an asynchronous result is missing, use a scoped conditional wait. "
+            "If observation fails after execution, observe again instead of "
             "repeating the completed operation.\n"
             "Native dialogs and file choosers appear in status with an ID for handle_dialog and "
             "upload; downloads lists saved files; recover starts a new session after a "
@@ -120,7 +127,8 @@ class BrowserUseTool(ToolSpec):
                 "contenteditable selector, read its text, selection offsets and current block; "
                 "with check_text/wait on that selector, match its text. Ordinary field and "
                 "password values stay excluded. scope_ref continuations keep it."),
-            "text_offset": ("Continue at next_text_offset with the returned scope_ref; "
+            "text_offset": ("For read_observation, continue its cached cursor with the same observation_id and text query. "
+                            "For observe, continue at next_text_offset with the returned scope_ref; "
                             "keep selector and frame_id if supplied."),
             "element_offset": (
                 "Continue at next_element_offset with the returned scope_ref "
@@ -148,10 +156,11 @@ class BrowserUseTool(ToolSpec):
             "to_y": "For a coordinate drag from x/y, the destination viewport y in CSS pixels.",
             "button": "Mouse button for click, default left; right opens the page's context menu.",
             "clicks": "Consecutive clicks for click, default 1; 2 double-clicks, 3 triple-clicks.",
-            "observation_id": "Observation to act on. Omit to use the latest; after navigation observe first.",
+            "observation_id": "Observation to act on. Omit to use the latest for live actions; read_observation requires an explicit ID. After navigation observe first.",
             "selector": "CSS selector for a unique observed target, or a read/wait scope.",
             "text": (
-                "Text to insert, select value, or visible text expected by check_text/wait. "
+                "For read_observation, optional literal case-sensitive search. Otherwise text to insert, "
+                "select value, or visible text expected by check_text/wait. "
                 "fill on date/time/color/range inputs takes their HTML value format, e.g. "
                 "2026-10-14, 13:45, #ff0000."
             ),
@@ -198,6 +207,7 @@ class BrowserUseTool(ToolSpec):
                 "console",
                 "tabs",
                 "observe",
+                "read_observation",
                 "describe",
                 "check_text",
                 "wait",
@@ -217,7 +227,7 @@ class BrowserUseTool(ToolSpec):
 
     def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
         return input_data.get("action") in {
-            "status", "operation_status", "downloads", "console", "tabs", "observe", "describe", "check_text", "wait", "request_assistance",
+            "status", "operation_status", "read_observation", "downloads", "console", "tabs", "observe", "describe", "check_text", "wait", "request_assistance",
         }
 
     def supports_parallel(self) -> bool:

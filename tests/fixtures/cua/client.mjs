@@ -55,6 +55,9 @@ export function createCuaClient({ cwd, onElicitation }) {
       const capture = args.code?.match(/^await (globalThis\.__deepseekObservations\[.*\])\.getAXState(?:AndScreenshot)?\(/);
       if (capture) {
         const appId = observations.get(capture[1]);
+        if (['dev.no-screenshot', 'dev.no-evidence'].includes(appId) && args.code.includes('AndScreenshot')) {
+          return { content: [{ type: 'text', text: 'Coordinate guard: window geometry unavailable' }], isError: true };
+        }
         if (appId === 'dev.loading') {
           // Finishes loading on its third read.
           loads += 1;
@@ -63,7 +66,7 @@ export function createCuaClient({ cwd, onElicitation }) {
         }
         if (appId === 'dev.huge') return { content: [{ type: 'text', text: hugeListing() }],
           _meta: { 'codex/toolSurface': { kind: 'computerUse', app: { appId } } } };
-        if (appId === 'dev.unobservable') {
+        if (appId === 'dev.unobservable' || appId === 'dev.no-evidence') {
           return { content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }], isError: true };
         }
         const surface = typeof appId === 'object' ? {kind: 'browserUse'}

@@ -641,9 +641,10 @@ class CuaObserveTool(CuaTool):
                "background)" if sys.platform == "darwin" else
                "Supply window_id (from the runtime inventory)")
             + ", or browser and tab_id from the runtime inventory. "
-            "Returns full accessibility state and a screenshot through the same CUA runtime; "
-            "existing access permissions apply. Use after actions to verify the expected "
-            "change, when the user changes the interface, and before reporting a result. "
+            "Returns full accessibility state and, by default, a screenshot through the same "
+            "CUA runtime; existing access permissions apply. Set screenshot=false for a "
+            "text-only check. Use when current result evidence is missing or the user changes "
+            "the interface; reuse adequate state already returned by cua_act or cua_js. "
             "For text-verifiable changes, supply expect with exact visible text fragments "
             "that would show success; width, quote style, case and spacing are ignored. "
             "A missing fragment means not yet verified, not absent. "
@@ -664,12 +665,19 @@ class CuaObserveTool(CuaTool):
             "expect": {"type": "array", "maxItems": 8,
                        "items": {"type": "string", "minLength": 1}},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_MS},
+            "screenshot": {"type": "boolean", "default": True,
+                           "description": "False reads accessibility text only; coordinates and "
+                                          "visual details need a fresh screenshot."},
         }, "additionalProperties": False,
             "oneOf": [{"required": list(native)}, {"required": ["browser", "tab_id"]}]}
 
     async def execute(self, input_data: dict[str, Any], context: ToolContext) -> ToolResult:
-        target = {k: v for k, v in input_data.items() if k not in {"expect", "wait_ms"}}
+        target = {k: v for k, v in input_data.items()
+                  if k not in {"expect", "wait_ms", "screenshot"}}
         expected = input_data.get("expect", [])
+        screenshot = input_data.get("screenshot", True)
+        if type(screenshot) is not bool:
+            raise ToolError("screenshot must be a boolean.")
         wait_ms = input_data.get("wait_ms", 0)
         if type(wait_ms) is not int or not 0 <= wait_ms <= MAX_WAIT_MS:
             raise ToolError(f"wait_ms must be a whole number from 0 to {MAX_WAIT_MS}.")
@@ -688,25 +696,36 @@ class CuaObserveTool(CuaTool):
             # Nothing to watch for: let the app settle, then observe once.
             await asyncio.sleep(wait_ms / 1000)
             waited = wait_ms / 1000
-        result = await super().execute(input_data, context)
+        # Poll text first: intermediate screenshots add no evidence to the final result.
+        waiting = bool(wait_ms and expected)
+        result = await super().execute(
+            {**input_data, "screenshot": False} if waiting else input_data, context)
         checks = result.metadata.get("cua_observation", {}).get("expectations", [])
-        if wait_ms and expected and result.success and not all(c["matched"] for c in checks):
-            started = time.monotonic()
-            await self._wait_for(target, expected, started + wait_ms / 1000, context)
-            waited = time.monotonic() - started
+        if waiting and result.success:
+            unmet = not all(c["matched"] for c in checks)
+            if unmet:
+                started = time.monotonic()
+                await self._wait_for(target, expected, started + wait_ms / 1000, context)
+                waited = time.monotonic() - started
             # Preserve the warning already settled by the first observation.
             unknown_note = result.metadata.get("unknown_outcome_note")
+            documentation = result.metadata.get("cua_observation", {}).get("documentation")
             # One fresh observation after the wait, whatever the polls saw.
-            result = await super().execute(input_data, context)
-            if unknown_note:
-                result = replace(result, content=result.content + "\n" + unknown_note)
+            if unmet or screenshot:
+                result = await super().execute(input_data, context)
+                if unknown_note:
+                    result = replace(result, content=result.content + "\n" + unknown_note)
+                if documentation:
+                    result = replace(result, content=documentation + "\n" + result.content)
             checks = result.metadata.get("cua_observation", {}).get("expectations", [])
-            result = replace(result, content=result.content
-                             + f"\nWaited {waited:.1f}s for the expected text.")
+            if unmet:
+                result = replace(result, content=result.content
+                                 + f"\nWaited {waited:.1f}s for the expected text.")
         if wait_ms:
             result = _with_stats(result, waited_ms=round(waited * 1000))
             if expected:
-                result = _with_stats(result, expect_met=all(c["matched"] for c in checks))
+                result = _with_stats(result, expect_met=(result.success and bool(checks)
+                                                        and all(c["matched"] for c in checks)))
         if checks:
             summary = "\n".join(
                 ("Observed: " if check["matched"] else "Not verified: ") + check["text"]

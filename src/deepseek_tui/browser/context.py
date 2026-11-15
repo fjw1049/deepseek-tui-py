@@ -144,6 +144,21 @@ def project_result(result: dict[str, Any], budget: int) -> str:
     data = json.loads(encode(result))
     observation = data.get("observation")
     if not isinstance(observation, dict):
+        cached = data.get("content")
+        if isinstance(cached, dict) and cached.get("historical") is True:
+            # Trim delivery, not the cached baseline. Cursors address the original text.
+            while len(encode(data)) > budget:
+                data["context_truncated"] = True
+                if len(cached.get("matches", [])) > 1:
+                    removed = cached["matches"].pop()
+                    cached["next_text_offset"] = removed["offset"]
+                elif len(cached.get("text", "")) > 100:
+                    cached["text"] = cached["text"][:len(cached["text"]) // 2]
+                    cached["next_text_offset"] = cached.get("text_offset", 0) + len(cached["text"])
+                else:
+                    break
+            if len(encode(data)) <= budget:
+                return encode(data)
         return _bounded_result(data, budget)
     _trim_for_model(data, observation)
     # Leads the observation so it frames every page-written string that follows.

@@ -44,6 +44,13 @@ only switch using fresh tab IDs. Multi-tab workflows use logical task tab aliase
 
 ### Observing
 
+For text already collected, use `read_observation` with its explicit observation_id
+instead of capturing the page again. Supply text for literal case-sensitive search,
+or text_offset to read the next fragment. Only four observations are retained in
+memory; coverage is limited to their collected text and element names. Results
+are historical and cannot refresh action targets, settle unknown effects, or prove
+absence from the entire page. Observe again when current state is needed.
+
 Observe before acting: interactive elements for controls, full content for
 reading. An element's `scope` names an entry in `observation.scopes` (its enclosing
 record, row or form with text and data keys); use it to tell same-named controls
@@ -144,9 +151,11 @@ an approval.
 
 ### Verifying results
 
-After actions, collect the cheapest check that establishes the expected result.
-Do not request both DOM and screenshots routinely, and do not request a redundant
-read of an observation an action already returned.
+First read the observation returned by the action. If it already shows the
+requested record and result, use it as evidence and finish. If an expected
+asynchronous result is missing, use one scoped conditional `wait`; a screenshot
+is not a way to wait for text. Use screenshots for visual questions, coordinate
+targets, missing DOM content, or evidence the user requested.
 
 For changes and tests, successful tool execution is not business completion.
 `check_text` checks a substring of the whole page by default, or a unique
@@ -154,11 +163,17 @@ For changes and tests, successful tool execution is not business completion.
 success notice or unrelated matching text does not prove this operation worked.
 Verify the specific record, values, or unique task result; stop rechecking once
 reliable evidence establishes the outcome without contradiction. Save screenshots
-or recordings when useful for the requested evidence, not for every task.
+or recordings when useful for the requested evidence, not for every task. Do not
+reload solely to reconfirm a visible result unless persistence across reload is
+part of the task. Field labels are not field values; do not use a guessed initial
+value as a precondition for replacing an authorized field.
 
 For reading tasks, account for filters, pagination, and truncated observations
 before claiming complete coverage. Distinguish inspected content from the whole
 dataset and stop collecting once the requested answer is adequately supported.
+Text already present in the observation does not need `check_text` to prove that
+you read it. Use cached retrieval when the needed collected text is no longer in
+context; use live observation when the answer requires current state.
 
 ### Failures and uncertain outcomes
 

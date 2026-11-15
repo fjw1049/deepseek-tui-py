@@ -212,9 +212,9 @@ async def test_timed_out_navigation_does_not_lock_the_page(tmp_path, monkeypatch
     assert not run.unresolved
 
 
-@pytest.mark.parametrize("action,held", [("fill", False), ("click", True), ("press", True)])
+@pytest.mark.parametrize("action,held", [("fill", True), ("click", True), ("press", True)])
 def test_only_repeatable_actions_escape_review_after_an_unknown_outcome(tmp_path, action, held):
-    # Filling again replaces the value and cannot submit; a click may already have acted.
+    # Input/change handlers can autosave even when filling the same value again.
     service, run, _, _ = browser(tmp_path)
     service._remember_response(run, {
         "success": False, "content": "outcome unknown",

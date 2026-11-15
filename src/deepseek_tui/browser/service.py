@@ -143,6 +143,7 @@ class BrowserAction(BaseModel):
     action: Literal[
         "status",
         "operation_status",
+        "read_observation",
         "resolve_operation",
         "upload",
         "downloads",
@@ -237,6 +238,8 @@ class BrowserAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_action(self, info: ValidationInfo) -> BrowserAction:
+        if self.action == "read_observation" and not self.observation_id:
+            raise ValueError("read_observation requires an explicit observation_id")
         if self.include_editable and (
             self.action not in {"observe", "check_text", "wait"}
             or not (self.selector or (self.action == "observe" and self.scope_ref))
@@ -384,6 +387,7 @@ class BrowserRun:
     tabs: list[dict[str, Any]] = field(default_factory=list)
     assistance: dict[str, Any] | None = None
     latest_observation: dict[str, Any] | None = None
+    observation_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     handoff_baseline: dict[str, Any] | None = None
     healthy: bool = True
     observation_context: Any = None
@@ -943,6 +947,10 @@ class BrowserService:
         return operations[action_id]
 
     def _remember_response(self, run, response, *, persist=True):
+        if response.get("observation"):
+            from deepseek_tui.browser.snapshots import remember
+
+            remember(run.observation_cache, response["observation"])
         receipt = response["receipt"]
         receipt.setdefault("observation", "available" if response.get("observation") else "unavailable")
         receipt.setdefault("evidence", "unavailable" if response.get("evidence_warning") else
@@ -1427,15 +1435,26 @@ class BrowserService:
                 "video_error",
             )
         }
-        checks = [entry for entry in state["log"] if entry["action"] in {"check_text", "verify"}]
+        checks = [entry for entry in state["log"] if entry["action"] in {"check_text", "verify"}
+                  or (entry["action"] == "wait" and entry.get("verification"))]
         report["assertions"] = checks
-        report["verification"] = (
+        report["assertion_status"] = (
             "failed"
             if any(not check["success"] for check in checks)
             else "passed"
             if checks
             else "not_checked"
         )
+        report["unresolved"] = state.get("unresolved", [])
+        execution_failed = (state.get("demo_status") in {"failed", "interrupted"}
+                            or any(not e.get("success", False) for e in state["log"]))
+        report["execution_status"] = (
+            "unknown" if report["unresolved"] else "failed" if execution_failed else "no_recorded_failure")
+        report["verification"] = (
+            "failed" if report["assertion_status"] == "failed" else
+            "inconclusive" if report["unresolved"] or execution_failed else report["assertion_status"])
+        report["coverage"] = {"scope": "retained_session_window", "complete_task": False,
+                              "step_limit": 80, "artifact_limit": 12}
         report["steps"] = state["log"]
         report["artifacts"] = [
             {"id": item["id"], "label": item["label"]} for item in state["artifacts"]
@@ -1449,6 +1468,8 @@ class BrowserService:
                         "Browser acceptance evidence\n"
                         "report.json: execution outcomes and explicit text assertions.\n"
                         "verification=not_checked means no business text assertion was executed.\n"
+                        "assertion_status covers retained checks only; verification is not a whole-task verdict.\n"
+                        "Unknown operations or recorded execution failures prevent a passed verification.\n"
                         "Includes the latest 80 steps and 12 artifacts retained by this session.\n"
                         "Video: 5 fps, maximum 180 seconds; GIF: post-action snapshots.\n"
                         "Pages, assertions and images may contain private data.\n"
@@ -1596,6 +1617,13 @@ class BrowserService:
         if actor == "agent" and not self.agent_settings()["agent_enabled"]:
             raise ValueError("AI browser control is disabled in Browser settings")
         run = self.runs.get(thread_id)
+        if action.action == "read_observation":
+            from deepseek_tui.browser.snapshots import read
+
+            snapshot = read(run.observation_cache if run else {}, action.observation_id,
+                            action.text, action.text_offset)
+            return {"success": True, "content": snapshot, "artifact": None,
+                    "page": {"url": snapshot["url"]}}
         if action.action == "operation_status":
             return self.operation(thread_id, action.operation_id)
         if action.action == "resolve_operation":
@@ -2453,7 +2481,19 @@ class BrowserService:
                     pass  # A missing probe must not imply that the page failed to scroll.
             try:
                 # Interactive elements are what the next step acts on; level=full is on request.
-                observation = await observe(run, full=False, frame_id=a.frame_id)
+                # Explicit editor assertions also return structure. Ordinary waits may
+                # match several elements, so retain their page-wide observation.
+                scoped_check = (a.action in {"check_text", "wait"} and success
+                                and a.include_editable and a.wait_state != "hidden")
+                observed_frame = (run.observation_context.frame_id
+                                  if scoped_check and (a.frame_selector or a.frame_path)
+                                  else a.frame_id)
+                observation = await observe(
+                    run, full=False, frame_id=observed_frame,
+                    selector=a.selector if scoped_check else None,
+                    shadow_path=a.shadow_path if scoped_check else [],
+                    include_editable=a.include_editable if scoped_check else False,
+                )
                 from deepseek_tui.browser.context import observation_changes
 
                 # A copy: the stored observation is the next action's baseline.
@@ -2470,14 +2510,15 @@ class BrowserService:
                    if a.action in {"check_text", "wait"} else effect,
                    "before_observation_id": before_id,
                    "after_observation_id": (observation or {}).get("observation_id")}
-        if a.action in {"fill", "select", "set_checked", "wait", "check_text"}:
+        if a.action in {"fill", "select", "set_checked", "check_text"} or (
+                a.action == "wait" and (a.condition or a.text or a.selector or a.url_contains)):
             from datetime import datetime, timezone
 
             receipt["verification"] = {"kind": a.condition or (
                 "field_state" if a.action in {"fill", "select", "set_checked"} else "page_condition"),
                 "verified_at": datetime.now(timezone.utc).isoformat(),
                 "observation_id": (observation or {}).get("observation_id"),
-                "frame_id": a.frame_id, "selector": a.selector}
+                "frame_id": (observation or {}).get("frame_id", a.frame_id), "selector": a.selector}
         if a.action == "scroll":
             receipt["verification"] = {"kind": "observed_scroll_position", "x": a.x, "y": a.y,
                                        "movement": scroll_movement}

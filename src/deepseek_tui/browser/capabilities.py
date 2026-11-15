@@ -4,6 +4,7 @@
 def browser_capabilities(*, video_ready=False):
     return {
         "observation": {
+            "cached_read": {"snapshots": 4, "max_chars": 64000, "live": False},
             "frame_depth": 8,
             "open_shadow": True,
             "oopif": True,

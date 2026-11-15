@@ -109,6 +109,37 @@ def observed(text):
     )
 
 
+async def test_capture_failure_returns_fresh_text_without_replaying_input(session, tmp_path):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        result = await CuaObserveTool(session).execute(
+            {"app": "dev.no-screenshot", "expect": ["Saved"]}, context)
+        assert result.success
+        observation = result.metadata["cua_observation"]
+        assert observation["screenshot_error"] == "Coordinate guard: window geometry unavailable"
+        assert observation["expectations"] == [{"text": "Saved", "matched": True}]
+        assert "Screenshot unavailable" in result.content
+        assert not result.images
+        reads = [r["args"]["code"] for r in _calls(tmp_path)]
+        assert sum(".getAXStateAndScreenshot(" in code for code in reads) == 1
+        assert sum(".getAXState(" in code for code in reads) == 1
+        assert all(".click(" not in code and ".typeText(" not in code for code in reads)
+    finally:
+        await session.close()
+
+
+@pytest.mark.parametrize("app,reads", [("dev.unobservable", 1), ("dev.no-evidence", 2)])
+async def test_observation_fallback_is_bounded_and_does_not_hide_failure(session, tmp_path, app, reads):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        result = await CuaObserveTool(session).execute({"app": app, "expect": ["Saved"]}, context)
+        assert not result.success
+        assert not result.metadata["cua_observation"]["expectations"][0]["matched"]
+        assert sum(".getAXState" in r["args"]["code"] for r in _calls(tmp_path)) == reads
+    finally:
+        await session.close()
+
+
 def test_focus_ids_and_filtered_prints_do_not_disguise_stall():
     progress = UiProgress()
     for i in range(12):
@@ -574,9 +605,10 @@ async def test_wait_polls_text_until_expected_then_observes_once(session, tmp_pa
             {"app": "dev.loading", "expect": ["Done"], "wait_ms": 5000}, context)
         assert result.success and "Waited" in result.content and "Observed: Done" in result.content
         assert result.metadata["cua_stats"]["expect_met"] is True
+        assert "Original observation documentation" in result.content
         reads = [c for c in _calls(tmp_path) if "getAXStateAndScreenshot" in c["args"]["code"]]
-        assert len(reads) == 2
-        assert sum(".getAXState(" in c["args"]["code"] for c in _calls(tmp_path)) == 2
+        assert len(reads) == 1
+        assert sum(".getAXState(" in c["args"]["code"] for c in _calls(tmp_path)) == 3
         missed = await observe.execute(
             {"app": "dev.loading", "expect": ["Never"], "wait_ms": 50}, context)
         assert "Not verified: Never" in missed.content
@@ -688,5 +720,59 @@ async def test_waited_observation_preserves_unknown_outcome_warning(session, tmp
         assert "lost-submit" in result.content and session.unresolved is not None
         again = await CuaObserveTool(session).execute({"app": "dev.fixture"}, context)
         assert "unknown outcome" in again.content
+    finally:
+        await session.close()
+
+
+@pytest.mark.parametrize("wait_ms", [0, 1])
+async def test_text_only_observation_never_requests_screenshot(session, tmp_path, wait_ms):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        result = await CuaObserveTool(session).execute({
+            "app": "dev.fixture", "expect": ["Missing"],
+            "screenshot": False, "wait_ms": wait_ms,
+        }, context)
+        assert result.success
+        assert result.metadata["cua_observation"]["expectations"][0]["matched"] is False
+        code = [c.get("args", {}).get("code", "") for c in _calls(tmp_path)]
+        assert any("getAXState(" in c for c in code)
+        assert not any("getAXStateAndScreenshot(" in c for c in code)
+    finally:
+        await session.close()
+
+
+async def test_wait_captures_only_final_image(session, tmp_path):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    try:
+        result = await CuaObserveTool(session).execute({
+            "app": "dev.loading", "expect": ["Done"], "wait_ms": 2000,
+        }, context)
+        assert result.metadata["cua_stats"]["expect_met"] is True
+        code = [c.get("args", {}).get("code", "") for c in _calls(tmp_path)]
+        assert sum("getAXStateAndScreenshot(" in c for c in code) == 1
+    finally:
+        await session.close()
+
+
+async def test_wait_does_not_claim_success_if_final_observation_fails(
+        session, tmp_path, monkeypatch):
+    context = ToolContext(tmp_path, metadata={"cua_turn_id": "t", "cua_call_id": "c"})
+    request = session._request
+
+    async def failed_capture(kind, **kwargs):
+        if kind == "observe" and kwargs["arguments"].get("screenshot") is not False:
+            return {"isError": True, "content": [{"type": "text", "text": "capture failed"}],
+                    "instructions": session.instructions, "tools": session.descriptors}
+        return await request(kind, **kwargs)
+
+    monkeypatch.setattr(session, "_request", failed_capture)
+    try:
+        result = await CuaObserveTool(session).execute({
+            "app": "dev.fixture", "expect": ["Saved"], "wait_ms": 100,
+        }, context)
+        assert not result.success and result.metadata["cua_stats"]["expect_met"] is False
+        with pytest.raises(ToolError, match="boolean"):
+            await CuaObserveTool(session).execute({"app": "dev.fixture", "screenshot": "false"},
+                                                   context)
     finally:
         await session.close()
