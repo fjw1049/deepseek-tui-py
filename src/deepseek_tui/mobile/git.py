@@ -100,6 +100,19 @@ def _filter(result: dict, root: Path, thread_id: str) -> dict:
     return result
 
 
+def _session_paths(request: Request, thread_id: str) -> set[str]:
+    """Use the same persisted turn deltas as the conversation change viewer."""
+    paths: set[str] = set()
+    for turn in request.app.state.thread_manager.store.list_turns_for_thread(thread_id):
+        snapshot = turn.diff_snapshot or {}
+        for file in snapshot.get("files", []):
+            for key in ("path", "old_path"):
+                path = file.get(key)
+                if isinstance(path, str) and path:
+                    paths.add(path)
+    return paths
+
+
 @router.get("/{action}")
 async def read_git(
     request: Request,
@@ -108,17 +121,28 @@ async def read_git(
     path: str = "",
     scope: str = "working-tree",
     untracked: bool = False,
+    session_only: bool = False,
 ) -> dict:
     if action not in {"branches", "changes", "diff"} or scope not in _SCOPES:
         raise HTTPException(400, "Unsupported Git query")
     root = _root(request, thread_id)
+    session_paths = _session_paths(request, thread_id) if session_only else None
     if action == "diff":
         _safe(root, path, thread_id)
+        if session_paths is not None and path not in session_paths:
+            raise HTTPException(403, "File is not recorded in this conversation")
     try:
         result = await _invoke(root, action, path=path, scope=scope, untracked=untracked)
     except asyncio.TimeoutError as exc:
         raise HTTPException(504, "Git query timed out") from exc
-    return _filter(result, root, thread_id) if action == "changes" else result
+    if action == "changes":
+        result = _filter(result, root, thread_id)
+        if session_paths is not None:
+            for key in ("files", "stagedFiles", "unstagedFiles"):
+                if key in result:
+                    result[key] = [file for file in result[key] if file["path"] in session_paths]
+        result["session_only"] = session_only
+    return result
 
 
 @router.post("/{action}")
@@ -138,7 +162,10 @@ async def write_git(request: Request, thread_id: str, action: str) -> dict:
         raise HTTPException(409, "Review and explicitly confirm the Git operation")
     root = _root(request, thread_id)
     args = {}
-    if action in {"stage", "unstage"}:
+    session_only = body.get("session_only") is True
+    if session_only and action not in {"stage", "unstage", "commit"}:
+        raise HTTPException(400, "Branch and remote actions apply to the repository")
+    if action in {"stage", "unstage"} or (action == "commit" and ("paths" in body or session_only)):
         paths = body.get("paths")
         if not isinstance(paths, list) or not paths or len(paths) > 100:
             raise HTTPException(400, "Select between 1 and 100 files")
@@ -173,7 +200,11 @@ async def write_git(request: Request, thread_id: str, action: str) -> dict:
             if not await project_lease.acquire(nonblocking=True):
                 raise HTTPException(409, "Project is being updated; retry after it finishes")
             try:
-                if action == "commit":
+                if session_only:
+                    allowed = _session_paths(request, thread_id)
+                    if any(path not in allowed for path in args["paths"]):
+                        raise HTTPException(403, "Selected files are not recorded in this conversation")
+                if action == "commit" and "paths" not in args:
                     staged = await _invoke(root, "changes", scope="staged")
                     for file in staged.get("files", []):
                         _safe(root, file["path"], thread_id)

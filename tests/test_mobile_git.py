@@ -36,7 +36,12 @@ def mobile_git(tmp_path, monkeypatch):
     active = AsyncMock(return_value=False)
     app = FastAPI()
     app.state.thread_manager = SimpleNamespace(
-        store=SimpleNamespace(load_thread=lambda _: SimpleNamespace(workspace=str(root))),
+        store=SimpleNamespace(
+            load_thread=lambda _: SimpleNamespace(workspace=str(root)),
+            list_turns_for_thread=lambda thread_id: [SimpleNamespace(diff_snapshot={
+                "files": [{"path": "hello.txt" if thread_id == "a" else "other.txt"}]
+            })],
+        ),
         is_thread_turn_active=active,
     )
     app.include_router(router)
@@ -107,3 +112,37 @@ def test_blocks_active_sensitive_paths_and_sensitive_staged_commit(mobile_git):
         ).status_code
         == 400
     )
+
+
+def test_session_selection_does_not_commit_another_sessions_staged_file(mobile_git):
+    client, root, _ = mobile_git
+    (root / "other.txt").write_text("other base\n")
+    git(root, "add", "other.txt")
+    git(root, "commit", "-m", "second file")
+    (root / "other.txt").write_text("other session update\n")
+    git(root, "add", "other.txt")
+    (root / "hello.txt").write_text("this session update\n")
+    own = client.get("/v1/threads/a/git/changes?session_only=true")
+    assert own.status_code == 200
+    assert own.json()["session_only"] is True
+    assert [f["path"] for f in own.json()["files"]] == ["hello.txt"]
+    assert own.json()["stagedFiles"] == []
+    other = client.get("/v1/threads/b/git/changes?session_only=true")
+    assert [f["path"] for f in other.json()["files"]] == ["other.txt"]
+    assert client.get("/v1/threads/a/git/diff?path=other.txt&session_only=true").status_code == 403
+    for action in ("stage", "unstage", "commit"):
+        denied = client.post(f"/v1/threads/a/git/{action}", json={
+            "paths": ["other.txt"], "message": "wrong selection", "session_only": True, "confirm": True,
+        })
+        assert denied.status_code == 403
+    assert client.post("/v1/threads/a/git/commit", json={
+        "message": "must select", "session_only": True, "confirm": True,
+    }).status_code == 400
+    result = client.post("/v1/threads/a/git/commit", json={
+        "message": "own session", "paths": ["hello.txt"], "session_only": True, "confirm": True,
+    })
+    assert result.status_code == 200, result.text
+    assert git(root, "show", "HEAD:hello.txt") == "this session update"
+    assert git(root, "show", "HEAD:other.txt") == "other base"
+    assert git(root, "diff", "--cached", "--name-only") == "other.txt"
+    assert (root / "other.txt").read_text() == "other session update\n"
