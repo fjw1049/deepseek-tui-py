@@ -1390,6 +1390,7 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
             owned_plugin_mcp_manager = None
             if isinstance(tool_runtime, ToolRuntime):
                 from deepseek_tui.tools.runtime import build_subagent_manager
+                from deepseek_tui.tools.path_access import PathGrants
 
                 per_engine_subagent_manager, _ = build_subagent_manager(cfg, ws, state_path=subagent_state_path)
                 if per_engine_subagent_manager is not None:
@@ -1399,6 +1400,8 @@ class Engine(CuaEngineMixin, ToolExecutionMixin, SessionMaintenanceMixin, Lifecy
                     working_directory=ws,
                     subagent_manager=per_engine_subagent_manager,
                     metadata=dict(runtime.context.metadata),
+                    # Grants and their persistence callback belong to this engine's session.
+                    path_grants=PathGrants(),
                     # Same reason as metadata: replace() would otherwise alias the
                     # runtime's dict into every engine built from it.
                     file_reads={},

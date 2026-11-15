@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   getGitBranches,
+  getGitFileDiff,
   getGitHubRepository,
   getGitLog,
   getGitWorkingChanges,
@@ -22,6 +23,48 @@ import {
 const REPO_ROOT = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
 
 describe('git-service integration', () => {
+  it('supports status, layered diffs, unstage and first commit before HEAD exists', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'deepseek-git-unborn-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    try {
+      git('init', '-b', 'main')
+      git('config', 'user.name', 'Workbench Test')
+      git('config', 'user.email', 'workbench@example.test')
+      expect(await getGitBranches(repo)).toMatchObject({ ok: true, currentBranch: 'main', dirtyCount: 0 })
+      expect(await getGitWorkingChanges(repo)).toMatchObject({ ok: true, files: [] })
+      writeFileSync(join(repo, 'first.txt'), 'staged first version\n')
+      expect(await getGitBranches(repo)).toMatchObject({ ok: true, dirtyCount: 1 })
+      const untracked = await getGitWorkingChanges(repo)
+      expect(untracked.ok && untracked.files[0]?.patch).toContain('+staged first version')
+      expect(await stageGitChanges(repo, ['first.txt'])).toMatchObject({ ok: true, fileCount: 1 })
+      expect(await unstageGitChanges(repo, ['first.txt'])).toMatchObject({ ok: true, fileCount: 1 })
+      expect(git('ls-files')).toBe('')
+      expect(await stageGitChanges(repo, ['first.txt'])).toMatchObject({ ok: true })
+      writeFileSync(join(repo, 'first.txt'), 'working first version\n')
+      const changes = await getGitWorkingChanges(repo)
+      expect(changes.ok).toBe(true)
+      if (!changes.ok) return
+      expect(changes.files[0]?.patch).toContain('+working first version')
+      expect(changes.stagedFiles?.[0]?.patch).toContain('+staged first version')
+      expect(changes.unstagedFiles?.[0]?.patch).toContain('-staged first version')
+      for (const scope of ['working-tree', 'staged', 'branch'] as const) {
+        const diff = await getGitFileDiff({ workspaceRoot: repo, path: 'first.txt', scope })
+        expect(diff.ok && diff.patch).toContain(scope === 'staged' ? '+staged first version' : '+working first version')
+      }
+      const branch = await getGitWorkingChanges(repo, 'branch')
+      expect(branch.ok && branch.files[0]?.patch).toContain('+working first version')
+      expect(await commitGitChanges(repo, 'first commit')).toMatchObject({ ok: true })
+      expect(git('show', 'HEAD:first.txt')).toBe('staged first version')
+      expect(git('rev-list', '--count', 'HEAD')).toBe('1')
+      const after = await getGitWorkingChanges(repo)
+      expect(after.ok && after.files[0]?.patch).toContain('-staged first version')
+      expect(await getGitBranches(repo)).toMatchObject({ ok: true, currentBranch: 'main' })
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
   it('getGitWorkingChanges returns files when branches report dirty count', async () => {
     const branches = await getGitBranches(REPO_ROOT)
     expect(branches.ok).toBe(true)

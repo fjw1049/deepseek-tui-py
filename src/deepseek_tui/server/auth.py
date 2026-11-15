@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-
-
+import asyncio
+import hmac
 import os
 import uuid
 from dataclasses import dataclass
@@ -107,9 +107,7 @@ class RuntimeAuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)  # type: ignore[arg-type]
         self._token = (auth_token or "").strip()
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if not self._token:
             return await call_next(request)
         path = request.url.path
@@ -118,8 +116,14 @@ class RuntimeAuthMiddleware(BaseHTTPMiddleware):
         # Default-deny: every other route (including /legacy/*) requires the
         # bearer token. A /v1-only allowlist previously left the legacy
         # prompt/tool routes callable by any local process.
+        from deepseek_tui.mobile.devices import PAIR_PATH, device_for_token
+
+        if request.method == "POST" and path == PAIR_PATH:
+            return await call_next(request)
         token = self._extract_token(request)
-        if token != self._token:
+        is_admin = bool(token and hmac.compare_digest(token.encode(), self._token.encode()))
+        device = None if is_admin else await asyncio.to_thread(device_for_token, token)
+        if not is_admin and not device:
             return JSONResponse(
                 status_code=401,
                 content={
@@ -127,7 +131,36 @@ class RuntimeAuthMiddleware(BaseHTTPMiddleware):
                     "message": "Bearer token required for runtime API routes.",
                 },
             )
-        return await call_next(request)
+        request.state.runtime_role = "admin" if is_admin else "device"
+        request.state.runtime_device = device
+        response = await call_next(request)
+        if device and response.headers.get("content-type", "").startswith("text/event-stream"):
+            original = response.body_iterator
+
+            async def revocable_stream():
+                pending = None
+                try:
+                    while True:
+                        if pending is None:
+                            pending = asyncio.create_task(anext(original))
+                        ready, _ = await asyncio.wait({pending}, timeout=5)
+                        if not await asyncio.to_thread(device_for_token, token):
+                            return
+                        if ready:
+                            try:
+                                chunk = pending.result()
+                            except StopAsyncIteration:
+                                return
+                            pending = None
+                            yield chunk
+                finally:
+                    if pending is not None:
+                        pending.cancel()
+                        await asyncio.gather(pending, return_exceptions=True)
+                    await original.aclose()
+
+            response.body_iterator = revocable_stream()
+        return response
 
     @staticmethod
     def _extract_token(request: Request) -> str | None:

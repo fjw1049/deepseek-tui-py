@@ -60,6 +60,9 @@ def attach_runtime_api(
         }
 
     app.include_router(build_runtime_api_router())
+    from deepseek_tui.mobile import attach_mobile_api
+
+    attach_mobile_api(app)
     app.add_middleware(RuntimeAuthMiddleware, auth_token=auth_token)
     if cors_origins:
         attach_cors(app, cors_origins)
@@ -535,6 +538,9 @@ def build_fastapi_app(
             await app.state.thread_manager.reclaim_idle_worktrees()
             yield
         finally:
+            from deepseek_tui.mobile import close_mobile_services
+
+            await close_mobile_services(app)
             await app.state.thread_manager.aclose()
 
     app = FastAPI(

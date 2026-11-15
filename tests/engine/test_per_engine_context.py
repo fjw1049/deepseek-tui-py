@@ -167,3 +167,36 @@ async def test_same_workspace_still_gets_engine_scoped_subagents(
         await engine.shutdown_session()
         await runtime.shutdown()
         handle.drain_events()
+
+
+async def test_shared_runtime_keeps_path_grants_and_callbacks_engine_scoped(
+    tmp_path: Path, isolated_config: Config
+):
+    runtime = await _make_shared_runtime(isolated_config, tmp_path)
+    engines = []
+    saved_a, saved_b = [], []
+    try:
+        for _ in range(2):
+            engines.append(await Engine.create(
+                handle=EngineHandle(), client=AsyncMock(), config=isolated_config,
+                working_directory=tmp_path, tool_runtime=runtime,
+            ))
+        a, b = (engine.tool_context for engine in engines)
+        assert a.path_grants is not b.path_grants
+        assert a.path_grants is not runtime.context.path_grants
+        a.path_grants.on_change = saved_a.append
+        b.path_grants.on_change = saved_b.append
+        private_file = tmp_path / "private.txt"
+        a.path_grants.add(private_file)
+        b.path_grants.load([])
+        assert a.path_grants.allows(private_file, write=False)
+        assert not b.path_grants.allows(private_file, write=False)
+        assert len(saved_a) == 1
+        assert saved_b == []
+        for context in (a, b):
+            assert context.subagent_manager.loop_runtime.path_grants is context.path_grants
+    finally:
+        for engine in engines:
+            await engine.shutdown_session()
+            engine.handle.drain_events()
+        await runtime.shutdown()

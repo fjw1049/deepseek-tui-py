@@ -267,6 +267,7 @@ async function resolveRecentAncestorBranch(
     : defaultBranch
   if (currentBranch === defaultLocalName) return null
 
+  if (!(await gitRefExists(cwd, 'HEAD'))) return null
   const headCommit = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim()
   const merged = await listLocalBranches(cwd, true)
   const recent = merged.find(
@@ -561,13 +562,27 @@ async function buildLayerFiles(
   return files.sort((a, b) => a.path.localeCompare(b.path))
 }
 
+// An unborn branch has no HEAD tree. Ask Git for its empty-tree object ID
+// instead of hard-coding SHA-1, so SHA-256 repositories work as well.
+async function resolveWorkingTreeBase(cwd: string): Promise<string> {
+  if (await gitRefExists(cwd, 'HEAD')) return 'HEAD'
+  await runGit(cwd, ['symbolic-ref', '--quiet', 'HEAD'])
+  const pending = execFileAsync('git', ['hash-object', '-t', 'tree', '--stdin'], {
+    cwd,
+    timeout: 10_000
+  })
+  pending.child.stdin?.end()
+  return String((await pending).stdout).trim()
+}
+
 async function buildCombinedFiles(
   cwd: string,
   entries: ParsedPorcelainEntry[],
   readUntracked = untrackedPatch
 ): Promise<GitWorkingChangeFile[]> {
   if (entries.length === 0) return []
-  const trackedDiff = await runGitStdout(cwd, ['diff', 'HEAD', '--no-color'], {
+  const base = await resolveWorkingTreeBase(cwd)
+  const trackedDiff = await runGitStdout(cwd, ['diff', base, '--no-color'], {
     timeout: 30_000,
     maxBuffer: DIFF_MAX_BUFFER,
     allowNonZero: true
@@ -581,7 +596,7 @@ async function buildCombinedFiles(
         entry.status === 'untracked'
           ? await readUntracked(cwd, entry.path)
           : patchByPath.get(entry.path) ??
-            (await runGitStdout(cwd, ['diff', 'HEAD', '--no-color', '--', entry.path], {
+            (await runGitStdout(cwd, ['diff', base, '--no-color', '--', entry.path], {
               timeout: 20_000,
               maxBuffer: DIFF_MAX_BUFFER,
               allowNonZero: true
@@ -638,7 +653,8 @@ async function resolveBranchBase(
       // Try the next conventional base.
     }
   }
-  return { baseRef: 'HEAD', baseCommit: 'HEAD' }
+  const baseCommit = await resolveWorkingTreeBase(cwd)
+  return { baseRef: baseCommit === 'HEAD' ? 'HEAD' : 'empty tree', baseCommit }
 }
 
 function parseNameStatus(raw: string): Array<{ path: string; status: GitWorkingChangeStatus }> {
@@ -831,7 +847,7 @@ export async function getGitFileDiff(target: GitFileDiffTarget): Promise<GitFile
     }
     const args = ['--literal-pathspecs', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=2147483647']
     if (target.scope === 'staged') args.push('--cached')
-    else if (target.scope === 'working-tree') args.push('HEAD')
+    else if (target.scope === 'working-tree') args.push(await resolveWorkingTreeBase(repositoryRoot))
     else if (target.scope === 'branch') args.push((await resolveBranchBase(repositoryRoot, target.baseRef)).baseCommit)
     let patch = await runGitStdout(repositoryRoot, [...args, '--', ...paths], {
       timeout: 20_000,
