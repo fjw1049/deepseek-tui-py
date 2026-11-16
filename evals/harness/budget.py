@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -11,7 +13,14 @@ from typing import TYPE_CHECKING
 from deepseek_tui.client.base import LLMClient, RetryConfig
 from deepseek_tui.client.pricing import calculate_turn_cost_estimate_from_usage
 from deepseek_tui.protocol.messages import MessageRequest
-from deepseek_tui.protocol.responses import StreamDone, StreamEvent
+from deepseek_tui.protocol.responses import (
+    StreamDone,
+    StreamError,
+    StreamEvent,
+    StreamTextDelta,
+    StreamThinkingDelta,
+    StreamToolCallComplete,
+)
 
 if TYPE_CHECKING:
     from evals.harness import HarnessContext
@@ -51,8 +60,7 @@ class BudgetedClient(LLMClient):
             raise BudgetExceeded("已记录费用达到预算")
         ctx.remaining_live_requests -= 1
         ctx.requests += 1
-        if self.on_update:
-            self.on_update()
+        request_id = ctx.requests
         request = request.model_copy(
             update={
                 "max_tokens": min(
@@ -64,7 +72,7 @@ class BudgetedClient(LLMClient):
         ctx.trace.append(
             {
                 "type": "model_request",
-                "request": ctx.requests,
+                "request": request_id,
                 "model": request.model,
                 "system_hash": hashlib.sha256((request.system_prompt or "").encode()).hexdigest(),
                 "tools_hash": hashlib.sha256(tools_json.encode()).hexdigest(),
@@ -73,12 +81,31 @@ class BudgetedClient(LLMClient):
                 "messages": [m.model_dump(mode="json") for m in request.messages],
             }
         )
+        if self.on_update:
+            self.on_update()
+        started = time.monotonic()
+        receipt = {"type": "request_finished", "request": request_id,
+                   "outcome": "stream_ended", "truncated": None, "usage": None,
+                   "has_text": False, "has_thinking": False, "tool_call_count": 0}
         metered = False
         try:
             async for event in self.inner.stream_chat_completion(request):
+                if isinstance(event, StreamDone):
+                    receipt["truncated"] = event.truncated
+                    if receipt["outcome"] != "error":
+                        receipt["outcome"] = "completed"
+                elif isinstance(event, StreamError):
+                    receipt.update(outcome="error", retryable=event.retryable)
+                elif isinstance(event, StreamTextDelta):
+                    receipt["has_text"] |= bool(event.text.strip())
+                elif isinstance(event, StreamThinkingDelta):
+                    receipt["has_thinking"] |= bool(event.thinking.strip())
+                elif isinstance(event, StreamToolCallComplete):
+                    receipt["tool_call_count"] += 1
                 if isinstance(event, StreamDone) and event.usage is not None and not metered:
                     metered = True
                     usage = event.usage
+                    receipt["usage"] = usage.model_dump(mode="json")
                     ctx.metered_requests += 1
                     for key, value in {
                         "input_tokens": usage.total_input_tokens,
@@ -93,7 +120,17 @@ class BudgetedClient(LLMClient):
                         ctx.cost_usd += cost.usd
                         ctx.budget.cost_usd += cost.usd
                 yield event
+        except (asyncio.CancelledError, GeneratorExit):
+            if receipt["outcome"] == "stream_ended":
+                receipt["outcome"] = "cancelled"
+            raise
+        except Exception as exc:
+            receipt.update(outcome="error", error_type=type(exc).__name__)
+            raise
         finally:
-            ctx.trace.append({"type": "request_finished", "usage_reported": metered})
+            receipt.update(
+                usage_reported=metered, elapsed_ms=round((time.monotonic() - started) * 1000),
+            )
+            ctx.trace.append(receipt)
             if self.on_update:
                 self.on_update()

@@ -146,14 +146,21 @@ class ReadFileTool(ToolSpec):
         start = max((offset or 0) - 1, 0)
         # limit=0 would return an empty page; treat it like an omitted limit.
         effective_limit = limit or _DEFAULT_READ_LIMIT
-        page = await asyncio.to_thread(
-            _read_text_page,
-            path,
-            start,
-            effective_limit,
-            display_path=rel,
-            cwd=context.working_directory,
-        )
+        try:
+            page = await asyncio.to_thread(
+                _read_text_page,
+                path,
+                start,
+                effective_limit,
+                display_path=rel,
+                cwd=context.working_directory,
+            )
+        except ToolError as exc:
+            if isinstance(exc.__cause__, FileNotFoundError):
+                # A missing read observes a new state too. Retain that state
+                # so another writer recreating the path still trips the guard.
+                context.file_reads[path] = None
+            raise
         numbered: list[str] = []
         for line_no, line in page.lines:
             if len(line) > _MAX_READ_LINE_LEN:

@@ -192,7 +192,8 @@ class ToolContext:
     # overwrite based on a stale read is caught before it lands. Deliberately
     # per-engine: a shared registry would let one session's write mark another
     # session's stale read as current, which is the one error worth avoiding.
-    file_reads: dict[Path, tuple[int, int]] = field(default_factory=dict)
+    # None means read_file observed absence, rather than never reading the path.
+    file_reads: dict[Path, tuple[int, int] | None] = field(default_factory=dict)
     # Per-call authorization callback; metadata remains shared turn state.
     network_approval: Callable[[str, str], Awaitable[bool]] | None = None
     # (working directory, (project root, copy root) or None) once looked up.
@@ -254,11 +255,13 @@ class ToolContext:
         not evidence of a change, and guessing would block the legitimate
         case of writing a file the agent has good reason not to have read.
         """
-        seen = self.file_reads.get(path)
-        if seen is None:
+        if path not in self.file_reads:
             return False
+        seen = self.file_reads[path]
         try:
             stat = path.stat()
+        except FileNotFoundError:
+            return seen is not None
         except OSError:
             return True
         return (stat.st_mtime_ns, stat.st_size) != seen

@@ -24,7 +24,7 @@ def test_a_later_success_of_the_same_call_clears_the_failure():
     record(facts, "exec_shell", {"command": "pytest"}, success=False, error="1 failed")
     assert facts.outcome([], [])["status"] == "partial"
     record(facts, "exec_shell", {"command": "pytest"})
-    assert facts.outcome([], [])["status"] == "completed_with_evidence"
+    assert facts.outcome([], [])["status"] == "completed_unverified"
     assert facts.note([], []) is None
 
 
@@ -49,21 +49,42 @@ def test_edits_with_no_run_in_the_turn_say_nothing():
     assert facts.note([], []) is None
 
 
-def test_edit_after_the_last_run_is_reported_until_the_next_run():
+def test_shell_success_does_not_claim_verification_of_an_edit():
     facts = TurnFacts()
     record(facts, "exec_shell", {"command": "pytest"})
     record(facts, "edit_file", {"path": "app.py"})
-    assert "app.py" in facts.note([], [], "en")
-    assert facts.outcome([], [])["status"] == "completed_unverified"
-    record(facts, "exec_shell", {"command": "pytest"})
+    for command in ("ls", "python unrelated.py", "pytest"):
+        record(facts, "exec_shell", {"command": command})
+        # Exit status alone cannot establish scope or what assertions checked.
+        assert facts.outcome([], [])["status"] == "completed_unverified"
     assert facts.note([], []) is None
 
 
-def test_files_a_command_writes_are_its_output_not_a_later_edit():
+def test_different_success_preserves_failure_without_claiming_verification():
     facts = TurnFacts()
-    record(facts, "write_file", {"path": "draft.txt"})
-    record(facts, "exec_shell", {"command": "python build.py"})
-    assert facts.edited_after_run == []
+    record(facts, "exec_shell", {"command": "cd missing && python check.py"},
+           success=False, error="missing directory")
+    record(facts, "exec_shell", {"command": "python check.py"})
+    assert facts.outcome([], [])["status"] == "partial"
+    note = facts.note([], [], "en")
+    assert "missing directory" in note
+    assert "Unresolved tool failures" not in note
+
+
+def test_failed_file_write_still_reports_an_unfinished_operation():
+    facts = TurnFacts()
+    record(facts, "write_file", {"path": "report.txt"}, success=False, error="denied")
+    assert facts.outcome([], [])["status"] == "partial"
+
+
+def test_long_command_prefixes_do_not_alias_failure_identities():
+    facts = TurnFacts()
+    prefix = "python -c '" + "# " + "x" * 120 + "\n"
+    record(facts, "exec_shell", {"command": prefix + "raise RuntimeError()'"},
+           success=False, error="failure")
+    record(facts, "exec_shell", {"command": prefix + "print(1)'"})
+    assert len(facts.failures) == 1
+    assert "failure" in facts.note([], [])
 
 
 def test_a_document_edited_after_the_last_run_is_not_reported():
@@ -130,13 +151,13 @@ def test_a_problem_alone_still_reaches_the_user():
 
 
 def test_long_lists_stay_bounded():
-    facts = TurnFacts(ran=True, edited_after_run=[f"f{i}" for i in range(9)])
+    facts = TurnFacts(failures={("exec_shell", f"f{i}"): "failed" for i in range(9)})
     note = facts.note([], [], "en")
     assert "f4" in note and "f5" not in note and "+4" in note
 
 
 def test_note_never_reads_as_the_models_words():
-    note = TurnFacts(ran=True, edited_after_run=["a"]).note([], [])
+    note = TurnFacts(failures={("exec_shell", "check"): "failed"}).note([], [])
     text = f"答案\n\n{note}"
     assert without_completion_note(text, {COMPLETION_NOTE_KEY: note}) == "答案"
     assert without_completion_note("答案", None) == "答案"

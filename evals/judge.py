@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, ValidationError
 from deepseek_tui.client.factory import build_llm_client
 from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.protocol.messages import Message, MessageRequest
-from deepseek_tui.protocol.responses import StreamDone, StreamTextDelta
+from deepseek_tui.protocol.responses import StreamTextDelta
 from evals.harness.budget import BudgetedClient
 from evals.rubric import read_text, task_boundary, validate_criteria
 from evals.schema import EvalCase
@@ -169,11 +169,11 @@ async def _ask(packet: str, context: HarnessContext, case: EvalCase) -> JudgeVer
                 reasoning_effort="off",
             )
             text = ""
+            # Exhaust the stream so its transport and attempt receipt finish
+            # before closing the client or exporting the evaluation trace.
             async for event in client.stream_chat_completion(request):
                 if isinstance(event, StreamTextDelta):
                     text += event.text
-                elif isinstance(event, StreamDone):
-                    break
             try:
                 verdict = parse_verdict(text)
                 validate_criteria(case, verdict.model_dump())

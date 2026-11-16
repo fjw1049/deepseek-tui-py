@@ -131,10 +131,13 @@ def should_resample_empty(
     *,
     fired: int,
     cancelled: bool,
+    truncated: bool = False,
     max_resamples: int = MAX_EMPTY_RESPONSE_RESAMPLES,
 ) -> bool:
     """Resample a successful-but-empty stream. Budget is not the transport one."""
-    return reason is not None and not cancelled and fired < max_resamples
+    # The outer loop already has a bounded recovery that changes the request
+    # after truncation. Resampling here would repeat the same capped request.
+    return reason is not None and not cancelled and not truncated and fired < max_resamples
 
 
 def should_resample_midstream(
@@ -641,6 +644,7 @@ class TurnLoop:
                         reason,
                         fired=empty_resamples,
                         cancelled=cancel_event.is_set(),
+                        truncated=truncated,
                     ):
                         empty_resamples += 1
                         logger.warning(
@@ -741,12 +745,13 @@ class TurnLoop:
                         error_message=err_msg,
                     )
 
+        cancelled = cancel_event.is_set()
         return TurnResult(
             assistant_message=buffer.build_message(),
             usage=usage,
             tool_calls=tool_calls,
-            cancelled=False,
-            outcome=TurnOutcomeStatus.SUCCESS,
+            cancelled=cancelled,
+            outcome=TurnOutcomeStatus.INTERRUPTED if cancelled else TurnOutcomeStatus.SUCCESS,
             truncated=truncated,
         )
 

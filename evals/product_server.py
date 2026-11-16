@@ -39,9 +39,18 @@ def install_meter(path: Path, max_requests: int, max_output_tokens: int) -> None
     original = factory.build_llm_client
 
     def save() -> None:
+        attempts: dict[int, dict] = {}
+        for record in context.trace:
+            if record["type"] == "model_request":
+                attempts[record["request"]] = {
+                    "request": record["request"], "model": record["model"],
+                    "max_tokens": record["max_tokens"], "outcome": "in_progress",
+                }
+            elif record["type"] == "request_finished":
+                attempts[record["request"]].update(record)
         snapshot = {"requests": context.requests, "metered_requests": context.metered_requests,
                     "priced_requests": context.priced_requests, "known_cost_usd": context.cost_usd,
-                    "usage": context.usage}
+                    "usage": context.usage, "attempts": list(attempts.values())}
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(snapshot), encoding="utf-8")
         temporary.replace(path)

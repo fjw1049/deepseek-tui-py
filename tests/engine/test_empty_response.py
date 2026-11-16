@@ -173,3 +173,34 @@ async def test_visible_text_is_not_resampled() -> None:
     result, _ = await _run_turn(client)
     assert result.outcome == TurnOutcomeStatus.SUCCESS
     assert client.calls == 1
+
+
+@pytest.mark.parametrize("thinking", ["", "unfinished reasoning"])
+async def test_truncated_empty_sample_returns_to_the_outer_recovery(thinking) -> None:
+    client = _ScriptedClient([
+        [StreamThinkingDelta(thinking=thinking), StreamDone(truncated=True)],
+        [StreamTextDelta(text="must not resample unchanged"), StreamDone()],
+    ])
+    result, _ = await _run_turn(client)
+    assert result.truncated
+    assert client.calls == 1
+    assert not result.tool_calls
+
+
+async def test_cancellation_after_empty_done_does_not_resample() -> None:
+    cancelled = asyncio.Event()
+
+    class CancellingClient(_ScriptedClient):
+        async def stream_chat_completion(self, request):
+            async for event in super().stream_chat_completion(request):
+                yield event
+            cancelled.set()
+
+    client = CancellingClient([[StreamDone()]])
+    result = await TurnLoop(client).run(
+        MessageRequest(model="test", messages=[Message.user("hi")]),
+        emit=lambda event: asyncio.sleep(0), cancel_event=cancelled,
+    )
+    assert client.calls == 1
+    assert result.cancelled
+    assert result.outcome is TurnOutcomeStatus.INTERRUPTED

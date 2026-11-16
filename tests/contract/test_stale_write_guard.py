@@ -107,6 +107,59 @@ async def test_re_reading_clears_the_block(workspace: Path, ctx: ToolContext) ->
     assert target.read_text(encoding="utf-8") == "v3 informed by v2\n"
 
 
+async def test_reading_a_deleted_file_acknowledges_its_absence(workspace, ctx):
+    target = workspace / "generated.py"
+    target.write_text("old\n")
+    await _read(ctx, target.name)
+    _touch_externally(target, "external\n")
+    with pytest.raises(ToolError, match="changed on disk"):
+        await _write(ctx, target.name, "replacement\n")
+    target.unlink()
+    # Deletion alone must not silently waive the stale-read protection.
+    with pytest.raises(ToolError, match="changed on disk"):
+        await _write(ctx, target.name, "replacement\n")
+    with pytest.raises(ToolError, match="does not exist"):
+        await _read(ctx, target.name)
+    assert (await _write(ctx, target.name, "replacement\n")).success
+    assert target.read_text() == "replacement\n"
+
+
+@pytest.mark.parametrize("previously_existed", [False, True])
+async def test_recreation_after_a_missing_read_is_still_protected(
+    workspace, ctx, previously_existed,
+):
+    target = workspace / "shared.txt"
+    if previously_existed:
+        target.write_text("old")
+        await _read(ctx, target.name)
+        target.unlink()
+    with pytest.raises(ToolError, match="does not exist"):
+        await _read(ctx, target.name)
+    target.write_text("new work by another writer")
+    with pytest.raises(ToolError, match="changed on disk"):
+        await _write(ctx, target.name, "stale replacement")
+    assert target.read_text() == "new work by another writer"
+
+
+async def test_read_permission_failure_does_not_acknowledge_a_change(workspace, ctx, monkeypatch):
+    from deepseek_tui.tools import file as file_tools
+
+    target = workspace / "restricted.txt"
+    target.write_text("old")
+    await _read(ctx, target.name)
+    _touch_externally(target, "new work")
+
+    def denied(*args, **kwargs):
+        raise ToolError("permission denied") from PermissionError()
+
+    monkeypatch.setattr(file_tools, "_read_text_page", denied)
+    with pytest.raises(ToolError, match="permission denied"):
+        await _read(ctx, target.name)
+    with pytest.raises(ToolError, match="changed on disk"):
+        await _write(ctx, target.name, "replacement")
+    assert target.read_text() == "new work"
+
+
 # --- what must NOT be blocked ---------------------------------------------
 
 

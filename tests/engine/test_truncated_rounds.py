@@ -9,6 +9,7 @@ from deepseek_tui.protocol.messages import Message
 from deepseek_tui.protocol.responses import (
     StreamDone,
     StreamTextDelta,
+    StreamThinkingDelta,
     StreamToolCallComplete,
     ToolCall,
 )
@@ -22,13 +23,20 @@ class Cut:
         self.reply = reply
 
 
+class Thinking:
+    def __init__(self, text):
+        self.text = text
+
+
 class CappingClient(ScriptedClient):
     async def stream_chat_completion(self, request):
         self.requests.append(request)
         reply = next(self.replies)
         cut = isinstance(reply, Cut)
         reply = reply.reply if cut else reply
-        if isinstance(reply, ToolCall):
+        if isinstance(reply, Thinking):
+            yield StreamThinkingDelta(thinking=reply.text)
+        elif isinstance(reply, ToolCall):
             yield StreamToolCallComplete(tool_call=reply)
         else:
             yield StreamTextDelta(text=reply)
@@ -104,6 +112,43 @@ async def test_an_earlier_cut_off_does_not_count_against_a_later_one(tmp_path):
         result = await engine._run_conversation([Message.user("Work")], "test", "sys", None)
         assert result.outcome is TurnOutcomeStatus.SUCCESS
         assert result.assistant_message.text_content() == "Done."
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_thinking_truncation_reaches_recovery_and_real_file_delivery(tmp_path):
+    engine, client = await engine_for(tmp_path, [
+        Cut(Thinking("unfinished private reasoning")), write("result.txt"), "Delivered.",
+    ])
+    engine._handle_approval_flow = _allow
+    try:
+        result = await engine._run_conversation([Message.user("Write")], "test", "sys", None)
+        assert len(client.requests) == 3
+        retry = str(client.requests[1].messages)
+        assert "cut off at the output cap" in retry
+        assert "unfinished private reasoning" not in retry
+        assert (tmp_path / "result.txt").read_text() == "x"
+        assert result.outcome is TurnOutcomeStatus.SUCCESS
+    finally:
+        await engine.shutdown_session()
+
+
+async def test_thinking_truncation_is_bounded_by_existing_recovery_limit(tmp_path):
+    from evals.harness import HarnessContext
+    from evals.harness.budget import BudgetedClient
+
+    engine, client = await engine_for(tmp_path, [Cut(Thinking("first")), Cut(Thinking("second"))])
+    context = HarnessContext(workspace=str(tmp_path), remaining_live_requests=2)
+    engine.set_model_route(BudgetedClient(client, context), engine._app_config, "test")
+    try:
+        result = await engine._run_conversation([Message.user("Work")], "test", "sys", None)
+        assert len(client.requests) == context.requests == 2
+        assert context.remaining_live_requests == 0
+        assert result.outcome is TurnOutcomeStatus.FAILED
+        assert result.task_outcome["status"] == "partial"
+        receipts = [r for r in context.trace if r['type'] == 'request_finished']
+        assert len(receipts) == 2
+        assert all(r['truncated'] and r['has_thinking'] for r in receipts)
     finally:
         await engine.shutdown_session()
 
